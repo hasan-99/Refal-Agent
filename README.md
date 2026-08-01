@@ -85,6 +85,7 @@ pricing
 
 - QR does not show: close the terminal and run `npm run start:windows` again.
 - WhatsApp logged out: run `npm run reset:session`, then run `npm run start:windows` and scan again.
+- PowerShell profile warnings: the bot launcher uses `-NoProfile`, so those warnings are unrelated to the bot.
 - Bot does not reply: test from another WhatsApp account, not the same linked number.
 - Bot goes offline: keep the PC awake and keep the terminal open.
 - Company answers are wrong: edit `config/company.json`, save, then restart the bot.
