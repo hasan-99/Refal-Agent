@@ -10,6 +10,7 @@ const rootDir = path.join(__dirname, "..");
 const dataPath = process.env.BOT_DATA_PATH || path.join(rootDir, "data", "users.json");
 const companyPath = process.env.COMPANY_CONFIG_PATH || path.join(rootDir, "config", "company.json");
 const allowGroups = process.env.ALLOW_GROUPS === "true";
+const selfTestPrefix = process.env.SELF_TEST_PREFIX || "!bot";
 
 const store = new JsonStore(dataPath);
 const company = loadCompany(companyPath);
@@ -40,6 +41,7 @@ client.on("qr", (qr) => {
 client.on("ready", () => {
   console.log(`WhatsApp bot is ready for ${company.companyName}.`);
   console.log(`Data file: ${dataPath}`);
+  console.log(`Self-test: send "${selfTestPrefix} hi" from your linked WhatsApp account.`);
 });
 
 client.on("authenticated", () => {
@@ -49,6 +51,17 @@ client.on("authenticated", () => {
 client.on("auth_failure", (message) => {
   console.error("WhatsApp authentication failed:", message);
 });
+
+async function answerMessage(message, userId, text) {
+  const response = routeMessage({
+    userId,
+    text,
+    store,
+    company
+  });
+
+  await message.reply(response);
+}
 
 client.on("message", async (message) => {
   try {
@@ -64,16 +77,36 @@ client.on("message", async (message) => {
       return;
     }
 
-    const response = routeMessage({
-      userId: message.from,
-      text: message.body,
-      store,
-      company
-    });
-
-    await message.reply(response);
+    await answerMessage(message, message.from, message.body);
   } catch (error) {
     console.error("Failed to handle message:", error);
+    await message.reply("Sorry, something went wrong. Please try again.");
+  }
+});
+
+client.on("message_create", async (message) => {
+  try {
+    if (!message.fromMe) return;
+    if (message.type !== "chat") return;
+
+    const body = String(message.body || "").trim();
+    if (!body.toLowerCase().startsWith(selfTestPrefix.toLowerCase())) return;
+
+    const target = message.to || message.from;
+    if (target === "status@broadcast") return;
+    if (target.endsWith("@broadcast")) return;
+    if (!target.endsWith("@c.us") && !target.endsWith("@g.us")) return;
+    if (!allowGroups && target.endsWith("@g.us")) return;
+
+    const text = body.slice(selfTestPrefix.length).trim();
+    if (!text) {
+      await message.reply(`Self-test mode is on. Send "${selfTestPrefix} hi" or "${selfTestPrefix} services".`);
+      return;
+    }
+
+    await answerMessage(message, `self-test:${target}`, text);
+  } catch (error) {
+    console.error("Failed to handle self-test message:", error);
     await message.reply("Sorry, something went wrong. Please try again.");
   }
 });

@@ -19,6 +19,7 @@ Write-Host ""
 Write-Host "Starting WhatsApp Company Bot..."
 Write-Host "On your phone, open WhatsApp > Settings > Linked devices > Link a device."
 Write-Host "Scan the QR code that appears here. Keep this window open while the bot is online."
+Write-Host "Self-test from your own WhatsApp with: !bot hi"
 Write-Host "Press Ctrl+C to stop the bot."
 Write-Host ""
 
