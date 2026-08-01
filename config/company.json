@@ -1,0 +1,46 @@
+{
+  "companyName": "Qualia Solutions",
+  "shortDescription": "Qualia Solutions builds practical software, automation, AI, and web systems for businesses.",
+  "contact": {
+    "phone": "+357 XX XXX XXX",
+    "email": "hello@example.com",
+    "website": "https://example.com"
+  },
+  "location": "Nicosia, Cyprus",
+  "hours": "Monday to Friday, 09:00 to 18:00",
+  "services": [
+    "Websites and web apps",
+    "Business automation",
+    "AI assistants and chatbots",
+    "CRM and internal tools",
+    "Voice and messaging integrations"
+  ],
+  "faqs": [
+    {
+      "title": "services",
+      "keywords": ["service", "services", "what do you do", "offer", "build", "website", "automation", "ai", "bot"],
+      "answer": "We build websites, web apps, business automation, AI assistants, chatbots, CRM tools, and messaging integrations."
+    },
+    {
+      "title": "contact",
+      "keywords": ["contact", "phone", "email", "call", "number", "reach"],
+      "answer": "You can contact us by phone at +357 XX XXX XXX or by email at hello@example.com."
+    },
+    {
+      "title": "location",
+      "keywords": ["location", "address", "where", "office", "cyprus", "nicosia"],
+      "answer": "We are based in Nicosia, Cyprus."
+    },
+    {
+      "title": "hours",
+      "keywords": ["hours", "open", "working", "time", "when"],
+      "answer": "Our usual working hours are Monday to Friday, 09:00 to 18:00."
+    },
+    {
+      "title": "pricing",
+      "keywords": ["price", "pricing", "cost", "quote", "budget"],
+      "answer": "Pricing depends on the project. Send your name, company, and what you need, and we will reply with the next step."
+    }
+  ],
+  "fallbackAnswer": "I can help with services, contact details, location, working hours, and pricing. You can also type 'reset' to update your saved details."
+}
