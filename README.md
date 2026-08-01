@@ -38,6 +38,8 @@ Scan the QR. Keep this terminal open while you want the bot online.
 - Local debug events save in `logs/events.log`.
 - Customers can send normal messages like `hi` or `services`.
 - From your own linked WhatsApp account, use self-test messages with the `!bot` prefix.
+- If `OPENROUTER_API_KEY` is set in `.env`, normal free-form questions use AI through OpenRouter.
+- The default AI model is `openrouter/free`, which routes to currently available free models.
 
 ## Test It Yourself
 
@@ -69,6 +71,19 @@ config/company.json
 ```
 
 Change the company name, services, contact details, FAQs, and fallback answer. Restart the bot after editing.
+
+## AI Mode
+
+The local `.env` file controls AI:
+
+```text
+OPENROUTER_API_KEY=your-key
+OPENROUTER_MODEL=openrouter/free
+```
+
+Do not commit `.env`. It contains the private API key.
+
+The bot still uses fixed logic for `reset`, `profile`, onboarding, and direct commands. AI is used for normal conversation and questions that are not directly matched by the local FAQ.
 
 ## User Data
 
@@ -113,3 +128,4 @@ pricing
 - Bot sees a WhatsApp Status instead of a chat: Status messages are ignored; test in a normal chat thread.
 - Bot goes offline: keep the PC awake and keep the terminal open.
 - Company answers are wrong: edit `config/company.json`, save, then restart the bot.
+- AI does not reply naturally: check that `.env` has `OPENROUTER_API_KEY` and restart the bot.

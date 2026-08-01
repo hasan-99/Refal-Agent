@@ -2,11 +2,15 @@ const path = require("node:path");
 const fs = require("node:fs");
 const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const { loadProjectEnv } = require("./env");
+const { askOpenRouter } = require("./ai");
 const { JsonStore } = require("./store");
 const { loadCompany } = require("./knowledge");
-const { routeMessage } = require("./messageRouter");
+const { routeMessageResult } = require("./messageRouter");
 
 const rootDir = path.join(__dirname, "..");
+loadProjectEnv(rootDir);
+
 const dataPath = process.env.BOT_DATA_PATH || path.join(rootDir, "data", "users.json");
 const companyPath = process.env.COMPANY_CONFIG_PATH || path.join(rootDir, "config", "company.json");
 const logPath = process.env.BOT_LOG_PATH || path.join(rootDir, "logs", "events.log");
@@ -41,7 +45,7 @@ function isSupportedChatId(chatId) {
   if (chatId === "status@broadcast") return false;
   if (chatId.endsWith("@broadcast")) return false;
   if (chatId.endsWith("@g.us")) return allowGroups;
-  return chatId.endsWith("@c.us");
+  return chatId.endsWith("@c.us") || chatId.endsWith("@lid");
 }
 
 const client = new Client({
@@ -65,6 +69,7 @@ client.on("ready", () => {
   console.log(`WhatsApp bot is ready for ${company.companyName}.`);
   console.log(`Data file: ${dataPath}`);
   console.log(`Log file: ${logPath}`);
+  console.log(`AI: ${process.env.OPENROUTER_API_KEY ? `enabled (${process.env.OPENROUTER_MODEL || "openrouter/free"})` : "disabled"}`);
   console.log(`Self-test: send "${selfTestPrefix} hi" from your linked WhatsApp account.`);
   logEvent("ready", { company: company.companyName });
 });
@@ -78,12 +83,26 @@ client.on("auth_failure", (message) => {
 });
 
 async function answerMessage(message, userId, text) {
-  const response = routeMessage({
+  const routed = routeMessageResult({
     userId,
     text,
     store,
     company
   });
+
+  let response = routed.response;
+  if (routed.shouldUseAi) {
+    try {
+      const aiResponse = await askOpenRouter({ text, user: routed.user, company });
+      if (aiResponse) response = aiResponse;
+      logEvent("ai", { enabled: Boolean(aiResponse), userId });
+    } catch (error) {
+      console.error("OpenRouter failed:", error.message);
+      logEvent("ai_error", { message: error.message, userId });
+    }
+
+    store.addHistory(userId, text, response);
+  }
 
   await message.reply(response);
 }

@@ -89,7 +89,11 @@ function validateStepAnswer(step, answer) {
   return null;
 }
 
-function routeMessage({ userId, text, store, company }) {
+function isOnlyPunctuation(text) {
+  return /^[^\p{L}\p{N}]+$/u.test(text);
+}
+
+function routeMessageResult({ userId, text, store, company }) {
   const incoming = String(text || "").trim();
   const lower = incoming.toLowerCase();
   let response;
@@ -97,14 +101,14 @@ function routeMessage({ userId, text, store, company }) {
   if (!incoming) {
     response = "Please send a text message.";
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false };
   }
 
   if (lower === "reset") {
     const user = store.resetUser(userId);
     response = currentStep(user).question;
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user };
   }
 
   const user = store.ensureUser(userId);
@@ -113,34 +117,42 @@ function routeMessage({ userId, text, store, company }) {
   if (["help", "menu"].includes(lower)) {
     response = withOnboardingPrompt(HELP, user);
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user };
   }
 
   if (lower === "profile") {
     response = profileText(user);
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user };
   }
 
   if (DIRECT_COMPANY_COMMANDS.has(lower)) {
     response = withOnboardingPrompt(findCompanyAnswerMatch(company, incoming).answer, user);
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user };
   }
 
   if (["start", "hi", "hello"].includes(lower)) {
     const step = currentStep(user);
     response = step ? step.question : greeting(user, company.companyName);
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user };
   }
 
   const step = currentStep(user);
   const companyAnswer = findCompanyAnswerMatch(company, incoming);
+  if (step?.key === "name" && looksLikeQuestion(incoming) && !isOnlyPunctuation(incoming)) {
+    return {
+      response: withOnboardingPrompt(companyAnswer.answer, user),
+      shouldUseAi: true,
+      user
+    };
+  }
+
   if (companyAnswer.matched && step?.key === "name" && looksLikeQuestion(incoming)) {
     response = withOnboardingPrompt(companyAnswer.answer, user);
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user };
   }
 
   if (step) {
@@ -148,7 +160,7 @@ function routeMessage({ userId, text, store, company }) {
     if (validationError) {
       response = validationError;
       store.addHistory(userId, incoming, response);
-      return response;
+      return { response, shouldUseAi: false, user };
     }
 
     const updated = store.updateUser(userId, (draft) => {
@@ -161,12 +173,24 @@ function routeMessage({ userId, text, store, company }) {
       ? `Saved. ${next.question}`
       : `Saved. ${profileText(updated)}\n\nNow you can ask me about ${company.companyName}. Type 'help' for commands.`;
     store.addHistory(userId, incoming, response);
-    return response;
+    return { response, shouldUseAi: false, user: updated };
   }
 
   response = companyAnswer.answer;
+  if (!companyAnswer.matched) {
+    return { response, shouldUseAi: true, user };
+  }
+
   store.addHistory(userId, incoming, response);
-  return response;
+  return { response, shouldUseAi: false, user };
 }
 
-module.exports = { routeMessage, profileText };
+function routeMessage({ userId, text, store, company }) {
+  const result = routeMessageResult({ userId, text, store, company });
+  if (result.shouldUseAi) {
+    store.addHistory(userId, text, result.response);
+  }
+  return result.response;
+}
+
+module.exports = { routeMessage, routeMessageResult, profileText };
