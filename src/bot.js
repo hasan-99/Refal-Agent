@@ -53,9 +53,14 @@ client.on("auth_failure", (message) => {
 client.on("message", async (message) => {
   try {
     if (message.fromMe) return;
+    if (message.from === "status@broadcast") return;
+    if (message.from.endsWith("@broadcast")) return;
+    if (!message.from.endsWith("@c.us") && !message.from.endsWith("@g.us")) return;
     if (!allowGroups && message.from.endsWith("@g.us")) return;
     if (message.type !== "chat") {
-      await message.reply("Please send text only.");
+      const response = "Please send text only.";
+      store.addHistory(message.from, `[${message.type}]`, response);
+      await message.reply(response);
       return;
     }
 

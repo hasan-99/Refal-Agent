@@ -13,18 +13,28 @@ function loadCompany(filePath) {
 }
 
 function findCompanyAnswer(company, text) {
+  return findCompanyAnswerMatch(company, text).answer;
+}
+
+function findCompanyAnswerMatch(company, text) {
   const normalized = normalize(text);
 
   if (!normalized) {
-    return company.fallbackAnswer;
+    return { answer: company.fallbackAnswer, matched: false };
   }
 
   if (["about", "company", "info", "information"].includes(normalized)) {
-    return `${company.companyName}: ${company.shortDescription}`;
+    return {
+      answer: `${company.companyName}: ${company.shortDescription}`,
+      matched: true
+    };
   }
 
   if (["services", "service"].includes(normalized)) {
-    return `Services:\n- ${company.services.join("\n- ")}`;
+    return {
+      answer: `Services:\n- ${company.services.join("\n- ")}`,
+      matched: true
+    };
   }
 
   for (const faq of company.faqs || []) {
@@ -32,10 +42,10 @@ function findCompanyAnswer(company, text) {
       return normalized.includes(normalize(keyword));
     });
 
-    if (found) return faq.answer;
+    if (found) return { answer: faq.answer, matched: true };
   }
 
-  return company.fallbackAnswer;
+  return { answer: company.fallbackAnswer, matched: false };
 }
 
-module.exports = { findCompanyAnswer, loadCompany, normalize };
+module.exports = { findCompanyAnswer, findCompanyAnswerMatch, loadCompany, normalize };

@@ -6,6 +6,9 @@
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",
+    "start:windows": "powershell -ExecutionPolicy Bypass -File .\\start-bot.ps1",
+    "check": "npm test",
+    "reset:session": "powershell -ExecutionPolicy Bypass -File .\\reset-session.ps1",
     "test": "node src/smoke.test.js"
   },
   "dependencies": {
