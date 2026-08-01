@@ -1,4 +1,5 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const { JsonStore } = require("./store");
@@ -12,6 +13,12 @@ const allowGroups = process.env.ALLOW_GROUPS === "true";
 
 const store = new JsonStore(dataPath);
 const company = loadCompany(companyPath);
+const chromePaths = [
+  process.env.CHROME_PATH,
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+].filter(Boolean);
+const executablePath = chromePaths.find((chromePath) => fs.existsSync(chromePath));
 
 const client = new Client({
   authStrategy: new LocalAuth({
@@ -19,6 +26,7 @@ const client = new Client({
     dataPath: path.join(rootDir, ".wwebjs_auth")
   }),
   puppeteer: {
+    ...(executablePath ? { executablePath } : {}),
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"]
   }
