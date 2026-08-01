@@ -62,6 +62,13 @@ class JsonStore {
     return this.data.users[userId] || null;
   }
 
+  deleteUser(userId) {
+    if (!this.data.users[userId]) return false;
+    delete this.data.users[userId];
+    this.save();
+    return true;
+  }
+
   ensureUser(userId) {
     if (!this.data.users[userId]) {
       const now = new Date().toISOString();

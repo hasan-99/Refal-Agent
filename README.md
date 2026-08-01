@@ -35,6 +35,7 @@ Scan the QR. Keep this terminal open while you want the bot online.
 - Customers message your normal WhatsApp number inside the WhatsApp app.
 - Replies are sent from that same linked number while the bot is running.
 - Per-user answers and chat history save locally in `data/users.json`.
+- Local debug events save in `logs/events.log`.
 - Customers can send normal messages like `hi` or `services`.
 - From your own linked WhatsApp account, use self-test messages with the `!bot` prefix.
 
@@ -109,5 +110,6 @@ pricing
 - WhatsApp logged out: run `npm run reset:session`, then run `npm run start:windows` and scan again.
 - PowerShell profile warnings: the bot launcher uses `-NoProfile`, so those warnings are unrelated to the bot.
 - Bot does not reply to your own message: use the `!bot` prefix, for example `!bot hi`.
+- Bot sees a WhatsApp Status instead of a chat: Status messages are ignored; test in a normal chat thread.
 - Bot goes offline: keep the PC awake and keep the terminal open.
 - Company answers are wrong: edit `config/company.json`, save, then restart the bot.

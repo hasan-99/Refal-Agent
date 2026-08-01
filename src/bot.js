@@ -9,6 +9,7 @@ const { routeMessage } = require("./messageRouter");
 const rootDir = path.join(__dirname, "..");
 const dataPath = process.env.BOT_DATA_PATH || path.join(rootDir, "data", "users.json");
 const companyPath = process.env.COMPANY_CONFIG_PATH || path.join(rootDir, "config", "company.json");
+const logPath = process.env.BOT_LOG_PATH || path.join(rootDir, "logs", "events.log");
 const allowGroups = process.env.ALLOW_GROUPS === "true";
 const selfTestPrefix = process.env.SELF_TEST_PREFIX || "!bot";
 
@@ -20,6 +21,28 @@ const chromePaths = [
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
 ].filter(Boolean);
 const executablePath = chromePaths.find((chromePath) => fs.existsSync(chromePath));
+
+function logEvent(event, fields = {}) {
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const entry = {
+    at: new Date().toISOString(),
+    event,
+    ...fields
+  };
+  fs.appendFileSync(logPath, `${JSON.stringify(entry)}\n`);
+}
+
+function messagePreview(text) {
+  return String(text || "").replace(/\s+/g, " ").slice(0, 120);
+}
+
+function isSupportedChatId(chatId) {
+  if (!chatId) return false;
+  if (chatId === "status@broadcast") return false;
+  if (chatId.endsWith("@broadcast")) return false;
+  if (chatId.endsWith("@g.us")) return allowGroups;
+  return chatId.endsWith("@c.us");
+}
 
 const client = new Client({
   authStrategy: new LocalAuth({
@@ -41,7 +64,9 @@ client.on("qr", (qr) => {
 client.on("ready", () => {
   console.log(`WhatsApp bot is ready for ${company.companyName}.`);
   console.log(`Data file: ${dataPath}`);
+  console.log(`Log file: ${logPath}`);
   console.log(`Self-test: send "${selfTestPrefix} hi" from your linked WhatsApp account.`);
+  logEvent("ready", { company: company.companyName });
 });
 
 client.on("authenticated", () => {
@@ -65,11 +90,20 @@ async function answerMessage(message, userId, text) {
 
 client.on("message", async (message) => {
   try {
+    logEvent("message", {
+      from: message.from,
+      to: message.to,
+      fromMe: message.fromMe,
+      type: message.type,
+      body: messagePreview(message.body)
+    });
+
     if (message.fromMe) return;
-    if (message.from === "status@broadcast") return;
-    if (message.from.endsWith("@broadcast")) return;
-    if (!message.from.endsWith("@c.us") && !message.from.endsWith("@g.us")) return;
-    if (!allowGroups && message.from.endsWith("@g.us")) return;
+    if (!isSupportedChatId(message.from)) {
+      logEvent("ignored", { reason: "unsupported_chat", from: message.from, type: message.type });
+      return;
+    }
+
     if (message.type !== "chat") {
       const response = "Please send text only.";
       store.addHistory(message.from, `[${message.type}]`, response);
@@ -78,14 +112,24 @@ client.on("message", async (message) => {
     }
 
     await answerMessage(message, message.from, message.body);
+    logEvent("replied", { mode: "customer", to: message.from });
   } catch (error) {
     console.error("Failed to handle message:", error);
+    logEvent("error", { mode: "customer", message: error.message });
     await message.reply("Sorry, something went wrong. Please try again.");
   }
 });
 
 client.on("message_create", async (message) => {
   try {
+    logEvent("message_create", {
+      from: message.from,
+      to: message.to,
+      fromMe: message.fromMe,
+      type: message.type,
+      body: messagePreview(message.body)
+    });
+
     if (!message.fromMe) return;
     if (message.type !== "chat") return;
 
@@ -93,10 +137,11 @@ client.on("message_create", async (message) => {
     if (!body.toLowerCase().startsWith(selfTestPrefix.toLowerCase())) return;
 
     const target = message.to || message.from;
-    if (target === "status@broadcast") return;
-    if (target.endsWith("@broadcast")) return;
-    if (!target.endsWith("@c.us") && !target.endsWith("@g.us")) return;
-    if (!allowGroups && target.endsWith("@g.us")) return;
+    if (!isSupportedChatId(target)) {
+      logEvent("ignored", { reason: "unsupported_self_test_target", target });
+      await message.reply("Self-test only works in a normal person chat. Open a chat with yourself or another number, then send \"!bot hi\".");
+      return;
+    }
 
     const text = body.slice(selfTestPrefix.length).trim();
     if (!text) {
@@ -105,8 +150,10 @@ client.on("message_create", async (message) => {
     }
 
     await answerMessage(message, `self-test:${target}`, text);
+    logEvent("replied", { mode: "self-test", to: target });
   } catch (error) {
     console.error("Failed to handle self-test message:", error);
+    logEvent("error", { mode: "self-test", message: error.message });
     await message.reply("Sorry, something went wrong. Please try again.");
   }
 });
