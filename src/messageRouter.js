@@ -300,7 +300,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null }) 
   if (["start", "hi", "hello", "hey", "مرحبا", "اهلا"].includes(lower)) {
     response = user.profile?.name
       ? localized(language, { arabic: "مرحبًا، كيف يمكنني مساعدتك؟", greek: "Γεια σας, πώς μπορώ να βοηθήσω;", english: "Hi, how can I help?" })
-      : localized(language, { arabic: "مرحبًا، أنا رفا. كيف μπορώ να βοηθήσω;".replace("μπορώ να βοηθήσω", "يمكنني مساعدتك؟"), greek: "Γεια σας, είμαι η RAFA. Πώς μπορώ να βοηθήσω;", english: "Hi, I’m RAFA. How can I help?" });
+      : localized(language, { arabic: "مرحبًا، أنا رفا. كيف يمكنني مساعدتك؟", greek: "Γεια σας, είμαι η RAFA. Πώς μπορώ να βοηθήσω;", english: "Hi, I’m RAFA. How can I help?" });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
   }
