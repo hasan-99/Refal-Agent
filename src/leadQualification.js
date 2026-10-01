@@ -5,6 +5,7 @@ const CONSENT_STATES = Object.freeze({ UNKNOWN: "unknown", GRANTED: "granted", D
 
 const OPT_OUT_RE = /\b(?:stop|unsubscribe|do not contact|don't contact|dont contact|stop messaging|don't message|remove me|leave me alone|no more messages)\b|لا\s*(?:تراسلني|ترسل لي|ترسلولي|أريد رسائل|اريد رسائل)|(?:أوقف|اوقف|إلغاء|الغاء)\s*(?:الرسائل|الاشتراك|التواصل)?|احذف\s*(?:رقمي|بياناتي)|(?:σταμάτα|σταματήστε|μη\s*μου\s*στέλνεις|μη\s*μου\s*στείλετε|διαγραφή|διαγράψτε|δεν\s*θέλω\s*μηνύματα)/i;
 const OPT_IN_RE = /\b(?:yes|yeah|yep|ok|okay|sure|contact me|keep me posted|follow up|you can message me|send me more)\b|(?:نعم|موافق|موافقة|تواصل معي|تابع معي|أرسل لي|ارسل لي|يمكنك مراسلتي|يمكنك مراسلتي)|\b(?:ναι|εντάξει|επικοινωνήστε μαζί μου|κρατήστε με ενήμερο|στείλτε μου|μπορείτε να επικοινωνήσετε)\b/i;
+const DENY_RE = /\b(?:no thanks|no thank you|not now|don't follow up|do not follow up|no follow.?up)\b|(?:لا شكرًا|لا شكرا|ليس الآن|لا تتابع معي|لا أريد متابعة)|\b(?:όχι ευχαριστώ|όχι τώρα|μην επικοινωνήσετε)\b/i;
 
 const PRIORITY_PATTERNS = Object.freeze([
   ["major_development", /\b(?:major|large|land|development|developer|construction|tender)\b|تطوير|أرض|إنشاء|مقاول|مناقصة|ανάπτυξη|κατασκευή|οικόπεδο/i],
@@ -66,6 +67,7 @@ function qualifyLead({ history = [], profile = {}, booking = null, dimensions = 
 function consentFromText(text) {
   const value = String(text || "");
   if (OPT_OUT_RE.test(value)) return CONSENT_STATES.REVOKED;
+  if (DENY_RE.test(value)) return CONSENT_STATES.DENIED;
   if (OPT_IN_RE.test(value)) return CONSENT_STATES.GRANTED;
   return CONSENT_STATES.UNKNOWN;
 }
@@ -104,6 +106,7 @@ module.exports = {
   DIMENSIONS,
   OPT_IN_RE,
   OPT_OUT_RE,
+  DENY_RE,
   clampScore,
   consentFromText,
   detectPriority,
@@ -112,6 +115,11 @@ module.exports = {
   inferDimensions,
   ownerThresholds,
   qualifyLead,
+  calculateLeadQualification: qualifyLead,
+  getLeadQualification: qualifyLead,
+  detectConsent: consentFromText,
+  detectOptOut: (text) => consentFromText(text) === CONSENT_STATES.REVOKED,
+  canFollowUp: hasFollowUpPermission,
   recordFollowUpConsent,
   scoreLead: qualifyLead
 };

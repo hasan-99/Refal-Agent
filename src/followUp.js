@@ -1,5 +1,5 @@
 const cron = require("node-cron");
-const { CONSENT_STATES, hasFollowUpPermission } = require("./leadQualification");
+const { CONSENT_STATES, getConsentState, hasFollowUpPermission } = require("./leadQualification");
 
 const FOLLOW_UP_MESSAGE = "لسا مهتم تعرف أكتر؟ أنا هون لو عندك أي سؤال ";
 
@@ -23,7 +23,8 @@ function lastHistoryEntry(user) {
 function shouldSendFollowUp(user, now = new Date()) {
   if (!user?.id || user.id.startsWith("self-test:")) return false;
   const last = lastHistoryEntry(user);
-  if ([CONSENT_STATES.DENIED, CONSENT_STATES.REVOKED].includes(user.consent?.followUp) || [CONSENT_STATES.DENIED, CONSENT_STATES.REVOKED].includes(user.followUpConsent) || user.optedOut === true) return false;
+  const consent = getConsentState({ user });
+  if ([CONSENT_STATES.DENIED, CONSENT_STATES.REVOKED].includes(consent) || user.optedOut === true || user.blocked || user.followUpBlocked) return false;
   const consentAware = user.consent?.followUp !== undefined || user.followUpConsent !== undefined || user.optedOut !== undefined;
   if (consentAware && !hasFollowUpPermission(user)) return false;
   if (!last?.at || !last.response || last.automated || last.message === "[auto-follow-up]" || isNaturalConversationEnd(last.message)) return false;
@@ -35,13 +36,13 @@ function shouldSendFollowUp(user, now = new Date()) {
 
 function getFollowUpDecision(user, now = new Date()) {
   const allowed = shouldSendFollowUp(user, now);
-  const state = user?.consent?.followUp ?? user?.followUpConsent ?? CONSENT_STATES.UNKNOWN;
-  let reason = "eligible";
-  if ([CONSENT_STATES.DENIED, CONSENT_STATES.REVOKED].includes(state) || user?.optedOut === true) reason = "consent_denied";
-  else if (state !== CONSENT_STATES.GRANTED && user?.consent?.followUp !== undefined) reason = "consent_required";
-  else if (!allowed) reason = "conversation_not_eligible";
+  const state = getConsentState({ user });
+  let reason = "ready";
+  if ([CONSENT_STATES.DENIED, CONSENT_STATES.REVOKED].includes(state) || user?.optedOut === true) reason = "opted_out";
+  else if (state !== CONSENT_STATES.GRANTED) reason = "consent_required";
+  else if (!allowed) reason = "not_due";
   const lastAt = lastHistoryEntry(user)?.at ? new Date(lastHistoryEntry(user).at).getTime() : NaN;
-  return { allowed, reason, consent: state, delayMs: followUpDelayMs(), dueAt: Number.isFinite(lastAt) ? new Date(lastAt + followUpDelayMs()).toISOString() : null };
+  return { allowed, eligible: allowed, reason, consent: state, delayMs: followUpDelayMs(), dueAt: Number.isFinite(lastAt) ? new Date(lastAt + followUpDelayMs()).toISOString() : null };
 }
 
 async function runFollowUpCheck({ store, sendFollowUp, now = new Date(), logEvent = () => {} }) {
@@ -75,4 +76,4 @@ function startFollowUpSchedule({ store, sendFollowUp, logEvent }) {
   }, { timezone });
 }
 
-module.exports = { FOLLOW_UP_MESSAGE, getFollowUpDecision, isNaturalConversationEnd, runFollowUpCheck, shouldSendFollowUp, startFollowUpSchedule };
+module.exports = { CONSENT_STATES, FOLLOW_UP_MESSAGE, getFollowUpDecision, isNaturalConversationEnd, runFollowUpCheck, shouldSendFollowUp, startFollowUpSchedule };
