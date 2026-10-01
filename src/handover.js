@@ -35,6 +35,13 @@ function clean(value, max = MAX_FIELD_LENGTH) {
   return String(value ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+function safeValue(value, max = MAX_FIELD_LENGTH) {
+  return clean(value, max)
+    .replace(/(?:password|passcode|pin|token|api[_ -]?key|secret|cvv)\s*[:=]?\s*\S+/giu, "[redacted]")
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Z]{2,}\b/giu, "[email withheld]")
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, "[phone withheld]");
+}
+
 function normalizeIntent(value) {
   return clean(value, 80).toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -70,16 +77,16 @@ function buildRefalLeadSummary({ customer = {}, conversation = {}, intent, inten
     priority: priority.level,
     priorityTriggers: priority.triggers,
     customer: {
-      name: clean(customer.name || customer.fullName, 120) || null,
-      phone: clean(customer.phone || customer.userId, 80) || null,
-      language: clean(language || customer.language, 30) || null
+      name: safeValue(customer.name || customer.fullName, 120) || null,
+      phone: safeValue(customer.phone || customer.userId, 80) || null,
+      language: safeValue(language || customer.language, 30) || null
     },
-    need: clean(need || conversation.need, 500) || null,
-    timing: clean(timing || conversation.timing, 200) || null,
-    value: clean(value || conversation.value, 200) || null,
-    authority: clean(authority || conversation.authority, 200) || null,
-    contact: clean(contact || conversation.preferredContact, 120) || null,
-    notes: clean(notes || conversation.notes, 500) || null
+    need: safeValue(need || conversation.need, 500) || null,
+    timing: safeValue(timing || conversation.timing, 200) || null,
+    value: safeValue(value || conversation.value, 200) || null,
+    authority: safeValue(authority || conversation.authority, 200) || null,
+    contact: safeValue(contact || conversation.preferredContact, 120) || null,
+    notes: safeValue(notes || conversation.notes, 500) || null
   };
   return summary;
 }
@@ -126,4 +133,20 @@ function createHandover({ input, customerMessage, customer, conversation, intent
   };
 }
 
-module.exports = { DEPARTMENTS, INTENT_ROUTES, normalizeIntent, normalizeIntents, routeIntentToDepartment, buildRefalLeadSummary, formatRefalLeadSummary, separateCustomerAndInternalMessages, createHandover };
+function routeIntent({ intent, message = "", complaint = false, existingClient = false } = {}) {
+  return routeIntentToDepartment({ intent: complaint ? "complaint" : existingClient ? "existing_client" : intent, defaultDepartment: DEPARTMENTS.general });
+}
+
+function createLeadSummary(input = {}) {
+  return buildRefalLeadSummary(input);
+}
+
+function formatLeadSummary(summary) {
+  return formatRefalLeadSummary(summary);
+}
+
+function buildHandover({ message = "", ...input } = {}) {
+  return createHandover({ input: message, ...input });
+}
+
+module.exports = { DEPARTMENTS, INTENT_ROUTES, normalizeIntent, normalizeIntents, routeIntentToDepartment, routeIntent, buildRefalLeadSummary, createLeadSummary, formatRefalLeadSummary, formatLeadSummary, separateCustomerAndInternalMessages, createHandover, buildHandover, safeValue };

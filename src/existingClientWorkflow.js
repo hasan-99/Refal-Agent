@@ -4,6 +4,8 @@ const MAX_ATTEMPTS = 3;
 
 function initialExistingClientState() { return { state: STATES.unauthenticated, attempts: 0, authenticated: false, accountDisclosureAllowed: false }; }
 
+function beginExistingClientFlow() { return transitionExistingClientState(initialExistingClientState(), EVENTS.detect); }
+
 function transitionExistingClientState(current = initialExistingClientState(), event, data = {}) {
   const state = { ...initialExistingClientState(), ...current };
   if (event === EVENTS.reset || event === EVENTS.logout) return initialExistingClientState();
@@ -26,4 +28,6 @@ function existingClientCustomerMessage(state) {
 
 function canDiscloseAccountInformation(state) { return Boolean(state && state.state === STATES.authenticated && state.authenticated === true && state.accountDisclosureAllowed === true); }
 
-module.exports = { STATES, EVENTS, MAX_ATTEMPTS, initialExistingClientState, transitionExistingClientState, existingClientCustomerMessage, canDiscloseAccountInformation };
+function canDiscloseExistingClientDetails(state) { return canDiscloseAccountInformation(state); }
+
+module.exports = { STATES, EVENTS, MAX_ATTEMPTS, initialExistingClientState, beginExistingClientFlow, transitionExistingClientState, existingClientCustomerMessage, canDiscloseAccountInformation, canDiscloseExistingClientDetails };

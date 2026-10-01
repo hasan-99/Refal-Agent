@@ -24,4 +24,16 @@ function assessPriority({ text = "", intent, intents = [], metadata = {} } = {})
   return { level: urgent ? "urgent" : triggers.length ? "high" : "normal", triggers, handoverRequired: triggers.length > 0 };
 }
 
-module.exports = { TRIGGERS, assessPriority };
+function detectPriorityTriggers({ message = "", text = "", intent, intents = [], complaint = false, existingClient = false, metadata = {} } = {}) {
+  const result = assessPriority({ text: [message, text].filter(Boolean).join(" "), intent, intents, metadata });
+  if (complaint && !result.triggers.includes("complaint")) result.triggers.push("complaint");
+  if (existingClient && !result.triggers.includes("existing_client")) result.triggers.push("existing_client");
+  return result.triggers.map((id) => ({ id, priority: ["safety_or_threat", "severe_complaint"].includes(id) ? "urgent" : "high" }));
+}
+
+function evaluatePriority(input = {}) {
+  const result = assessPriority(input);
+  return { isPriority: result.handoverRequired, priority: result.level, triggers: detectPriorityTriggers(input), reasons: result.triggers };
+}
+
+module.exports = { TRIGGERS, assessPriority, detectPriorityTriggers, evaluatePriority };

@@ -9,6 +9,11 @@ function classifyComplaint(text = "") {
   return { isComplaint: true, severity: priority.level, triggers: priority.triggers };
 }
 
+function detectComplaint(text = "") {
+  const result = classifyComplaint(text);
+  return { ...result, reasons: result.triggers };
+}
+
 function complaintResponse(language = "english") {
   if (language === "arabic") return "أفهم أن هذا الأمر مزعج. سنسجل ملاحظتك ونوجّهها إلى الفريق المختص للمراجعة. ما التفاصيل الأساسية التي تريد مشاركتها؟";
   if (language === "greek") return "Κατανοώ ότι αυτό είναι ενοχλητικό. Θα καταγράψουμε το θέμα και θα το προωθήσουμε στην αρμόδια ομάδα για εξέταση. Ποια είναι η βασική λεπτομέρεια που θέλετε να μοιραστείτε;";
@@ -22,7 +27,7 @@ function handleComplaint({ text = "", language = "english", customer = {}, notes
     customerMessage: complaintResponse(language),
     internalMessage: `Complaint received. Severity: ${classification.severity}. Customer: ${String(customer.name || "not provided").slice(0, 120)}. Details: ${String(notes || text).replace(/\s+/g, " ").trim().slice(0, 1000)}`
   });
-  return { ...classification, handoverRequired: true, messages };
+  return { ...classification, isComplaint: true, intent: "complaint", department: "complaints", shouldHandover: true, handoverRequired: true, customerMessage: messages.customerMessage, internalMessage: messages.internalMessage, messages };
 }
 
-module.exports = { classifyComplaint, complaintResponse, handleComplaint };
+module.exports = { classifyComplaint, detectComplaint, complaintResponse, handleComplaint };
