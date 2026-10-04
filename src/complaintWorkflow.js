@@ -3,7 +3,7 @@ const { separateCustomerAndInternalMessages } = require("./handover");
 
 function classifyComplaint(text = "") {
   const value = String(text || "");
-  const isComplaint = /\b(complaint|complain|unhappy|dissatisfied|bad service|disappointed|problem|issue|wrong|delay)\b|شكوى|أشتكي|غير راض|مشكلة|تأخير|παράπονο|δυσαρεστημένος|πρόβλημα/iu.test(value);
+  const isComplaint = /\b(complaint|complain|unhappy|dissatisfied|bad service|disappointed|problem|issue|wrong|delay|still upset|upset about|frustrated with)\b|شكوى|أشتكي|غير راض|مشكلة|تأخير|لسا زعلان|لسا متضايق|مو راضي|مو راضية|παράπονο|δυσαρεστημένος|πρόβλημα|ακόμα αναστατωμ/iu.test(value);
   if (!isComplaint) return { isComplaint: false, severity: "none", triggers: [] };
   const priority = assessPriority({ text: value, intent: "complaint" });
   return { isComplaint: true, severity: priority.level, triggers: priority.triggers };

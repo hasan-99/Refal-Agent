@@ -49,6 +49,14 @@
   color: #527080;
 }
 
+.conversation-temperature-summary { padding: 14px 17px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; border: 1px solid #dce7ed; border-radius: 7px; background: #f8fbfc; }
+.conversation-temperature-stat { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.conversation-temperature-ring { --temperature-color: #8b9da6; --temperature-progress: 0%; width: 42px; flex: 0 0 42px; aspect-ratio: 1; padding: 4px; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--temperature-color) var(--temperature-progress), #e3ebef 0); }
+.conversation-temperature-ring span { width: 100%; height: 100%; display: grid; place-items: center; border-radius: 50%; color: var(--ink, #182a30); background: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.conversation-temperature-stat > span { min-width: 0; display: grid; gap: 3px; }
+.conversation-temperature-stat strong { color: var(--ink, #182a30); font-size: 11px; }
+.conversation-temperature-stat small { color: var(--muted, #718087); font-size: 9px; }
+
 .conversations-toolbar {
   min-width: 0;
   display: flex;
@@ -157,7 +165,7 @@
 .conversation-table-scroll { min-width: 0; overflow-x: auto; }
 .conversation-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 840px;
   border-collapse: collapse;
   text-align: left;
 }
@@ -212,6 +220,8 @@
 .conversation-contact-copy { min-width: 0; display: grid; gap: 4px; }
 .conversation-contact-copy strong { overflow: hidden; color: #213d4d; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-contact-copy small { color: #82929b; font-size: 10px; }
+.conversation-whatsapp-number { color: #355f72; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.conversation-whatsapp-number.is-hidden { color: #87959c; font-style: italic; }
 .conversation-workflow-badges { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px; }
 .conversation-workflow-badge { padding: 2px 5px; border: 1px solid #d8e8ee; border-radius: 999px; color: #39758d; background: #f1f8fb; font-size: 8px; font-weight: 700; line-height: 1.2; }
 .conversation-workflow-summary { padding: 13px 15px; display: grid; gap: 11px; border: 1px solid #d7e7ed; border-radius: 8px; background: linear-gradient(135deg, #f8fcfd, #fff); }
@@ -247,7 +257,11 @@
 .conversation-status.needs-reply { color: #965d21; }
 .conversation-status.needs-reply::before { background: #d5943b; }
 .conversation-time { color: #758993; white-space: nowrap; }
-.conversation-row-action { width: 50px; text-align: right; }
+.conversation-row-action { width: 88px; text-align: right; }
+.conversation-row-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.conversation-delete-button { width: 32px; min-width: 32px; min-height: 32px; color: #a24949; }
+.conversation-delete-button:hover:not(:disabled) { color: #8d2525; background: #fff1f0; border-color: #f0caca; }
+.conversation-delete-button:disabled { opacity: .6; cursor: wait; }
 .conversation-open-button { width: 32px; min-width: 32px; min-height: 32px; color: #80939d; }
 .conversation-open-button:hover { color: #287da8; }
 
@@ -272,11 +286,27 @@
 @keyframes conversation-spin { to { transform: rotate(360deg); } }
 .conversation-alert { min-height: 44px; padding: 9px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #efcfcc; border-radius: 6px; color: #8d3f39; background: #fff6f5; font-size: 11px; }
 .conversation-alert button { min-height: 30px; padding: 4px 9px; border-color: #e6bdb8; color: #8d3f39; background: white; font-size: 10px; }
+.conversation-dialog-backdrop { position: fixed; z-index: 1000; inset: 0; padding: 20px; display: grid; place-items: center; background: rgb(14 31 39 / 48%); backdrop-filter: blur(2px); }
+.conversation-delete-dialog { width: min(100%, 440px); padding: 24px; border: 1px solid #d8e5eb; border-radius: 12px; background: #fff; box-shadow: 0 22px 70px rgb(15 37 48 / 25%); }
+.conversation-delete-dialog-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: #a24949; background: #fff1f0; }
+.conversation-delete-dialog h2 { margin: 15px 0 6px; color: #173a50; font-size: 18px; line-height: 1.35; }
+.conversation-delete-dialog > p { margin: 8px 0 0; color: #637b87; font-size: 12px; line-height: 1.6; }
+.conversation-delete-dialog > .conversation-delete-dialog-contact { color: #284656; font-weight: 700; }
+.conversation-delete-dialog-actions { margin-top: 22px; display: flex; justify-content: flex-end; gap: 9px; }
+.conversation-delete-dialog-actions button { min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #d6e3e9; border-radius: 6px; color: #41687d; background: #fff; font-size: 11px; font-weight: 650; }
+.conversation-delete-dialog-actions button:disabled { opacity: .65; cursor: wait; }
+.conversation-delete-dialog-actions .conversation-delete-confirm-button { border-color: #a63f3f; color: #fff; background: #a63f3f; }
+.conversation-delete-dialog-actions .conversation-delete-confirm-button:hover:not(:disabled) { border-color: #8d3030; background: #8d3030; }
 
 .conversation-detail { gap: 16px; }
 .conversation-detail-header { min-height: 84px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid #d4e3ea; border-radius: 8px; background: #fff; box-shadow: 0 3px 10px rgb(35 69 87 / 6%); }
+.conversation-detail-nav { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .conversation-back { min-height: 36px; padding: 0 10px 0 0; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; border: 0; border-radius: 5px; color: #3e6d84; background: transparent; font-size: 11px; font-weight: 650; white-space: nowrap; }
 .conversation-back:hover { color: #1c6e94; background: #f2f8fb; }
+.conversation-refresh-button { width: 34px; min-width: 34px; min-height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #d6e3e9; border-radius: 5px; color: #41687d; background: #fff; }
+.conversation-refresh-button:hover:not(:disabled) { border-color: #9fcbdc; color: #1c6e94; background: #f0f8fb; }
+.conversation-refresh-button:disabled { opacity: .65; cursor: wait; }
+.conversation-refresh-button .is-spinning { animation: conversation-spin .8s linear infinite; }
 .conversation-person-heading { min-width: 0; max-width: min(420px, 55vw); display: flex; align-items: center; justify-content: flex-end; gap: 12px; text-align: right; }
 .conversation-person-heading > div { min-width: 0; }
 .conversation-detail-person-actions { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
@@ -319,6 +349,7 @@
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
 @media (max-width: 760px) {
+  .conversation-temperature-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversations-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
   .conversations-toolbar > .conversation-search { grid-column: 1 / -1; }
   .conversation-filter-group { width: 100%; min-width: 0; padding: 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-column: 1 / -1; gap: 8px; border: 1px solid #d8e5eb; border-radius: 7px; background: #f5f9fb; }
@@ -361,7 +392,9 @@
   .conversation-table .conversation-row td[data-label="Status"],
   .conversation-table .conversation-row td[data-label="Updated"] { margin-left: 10px; }
   .conversation-table .conversation-row td[data-label="Updated"]::before { content: "·"; margin-right: 9px; color: #9aabb3; }
-  .conversation-table .conversation-row .conversation-row-action { position: absolute; top: 17px; right: 8px; width: 34px; }
+  .conversation-table .conversation-row .conversation-row-action { position: absolute; top: 17px; right: 8px; width: 70px; }
+  .conversation-table .conversation-row-actions { gap: 2px; }
+  .conversation-table .conversation-row-action .conversation-delete-button,
   .conversation-table .conversation-row-action .conversation-open-button { width: 30px; min-width: 30px; }
   .conversation-preview { max-width: 100%; }
   .conversation-message { max-width: 92%; }

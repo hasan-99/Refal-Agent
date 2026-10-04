@@ -29,6 +29,7 @@ function loadEnv(filePath) {
 
 function loadProjectEnv(rootDir) {
   loadEnv(path.join(rootDir, ".env"));
+  loadEnv(path.join(rootDir, ".env.rafa"));
 }
 
 module.exports = { loadProjectEnv };

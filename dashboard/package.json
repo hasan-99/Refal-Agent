@@ -1,0 +1,27 @@
+{
+  "name": "whatsapp-company-bot-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "hash-password": "node scripts/hash-password.js",
+    "start": "node server.js",
+    "dev": "vite --host 127.0.0.1",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.117.2",
+    "@vitejs/plugin-react": "^5.0.0",
+    "bcryptjs": "^3.0.3",
+    "cheerio": "1.2.0",
+    "express": "^5.1.0",
+    "libphonenumber-js": "1.13.14",
+    "lucide-react": "^0.468.0",
+    "qrcode": "1.5.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "vite": "^7.1.0"
+  }
+}

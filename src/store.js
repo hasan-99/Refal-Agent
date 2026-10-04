@@ -1,61 +1,8 @@
-const fs = require("node:fs");
-const path = require("node:path");
+const { redactSensitiveData } = require("./sensitiveData");
 
-class JsonStore {
-  constructor(filePath) {
-    this.filePath = filePath;
+class MemoryStore {
+  constructor() {
     this.data = { users: {} };
-    this.load();
-  }
-
-  load() {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-
-    if (!fs.existsSync(this.filePath)) {
-      this.save();
-      return;
-    }
-
-    const raw = fs.readFileSync(this.filePath, "utf8").trim();
-    try {
-      this.data = raw ? JSON.parse(raw) : { users: {} };
-    } catch (error) {
-      const backupPath = `${this.filePath}.bak`;
-      if (fs.existsSync(backupPath)) {
-        const backupRaw = fs.readFileSync(backupPath, "utf8").trim();
-        this.data = backupRaw ? JSON.parse(backupRaw) : { users: {} };
-        this.save();
-        console.error(`User data file was invalid JSON. Recovered from ${backupPath}.`);
-        return;
-      }
-
-      const brokenPath = `${this.filePath}.corrupt-${Date.now()}.json`;
-      fs.renameSync(this.filePath, brokenPath);
-      this.data = { users: {} };
-      this.save();
-      console.error(`User data file was invalid JSON. Moved it to ${brokenPath}.`);
-      return;
-    }
-
-    if (!this.data.users) this.data.users = {};
-  }
-
-  save() {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const backupPath = `${this.filePath}.bak`;
-    const tempPath = `${this.filePath}.tmp`;
-    if (fs.existsSync(this.filePath)) {
-      fs.copyFileSync(this.filePath, backupPath);
-    }
-
-    const handle = fs.openSync(tempPath, "w");
-    try {
-      fs.writeFileSync(handle, `${JSON.stringify(this.data, null, 2)}\n`);
-      fs.fsyncSync(handle);
-    } finally {
-      fs.closeSync(handle);
-    }
-    fs.renameSync(tempPath, this.filePath);
   }
 
   getUser(userId) {
@@ -65,8 +12,16 @@ class JsonStore {
   deleteUser(userId) {
     if (!this.data.users[userId]) return false;
     delete this.data.users[userId];
-    this.save();
     return true;
+  }
+
+  deleteConversation(userId) {
+    const user = this.data.users[userId];
+    if (!user) return { deleted: false, deletedTurns: 0 };
+    const deletedTurns = Array.isArray(user.history) ? user.history.length : 0;
+    user.history = [];
+    user.updatedAt = new Date().toISOString();
+    return { deleted: true, deletedTurns };
   }
 
   ensureUser(userId) {
@@ -81,9 +36,7 @@ class JsonStore {
         createdAt: now,
         updatedAt: now
       };
-      this.save();
     }
-
     return this.data.users[userId];
   }
 
@@ -91,18 +44,17 @@ class JsonStore {
     const user = this.ensureUser(userId);
     updater(user);
     user.updatedAt = new Date().toISOString();
-    this.save();
     return user;
   }
 
   resetUser(userId) {
-    const now = new Date().toISOString();
     const previous = this.data.users[userId];
+    const now = new Date().toISOString();
     this.data.users[userId] = {
       id: userId,
       phone: userId.replace(/@.+$/, ""),
       profile: {},
-      step: "name",
+      step: null,
       history: previous?.history || [],
       createdAt: previous?.createdAt || now,
       updatedAt: now
@@ -110,22 +62,27 @@ class JsonStore {
     this.data.users[userId].history.push({
       at: now,
       message: "reset",
-      response: "Profile reset"
+      response: "Your saved details have been cleared."
     });
-    this.save();
     return this.data.users[userId];
   }
 
   addHistory(userId, message, response) {
+    let turn;
     this.updateUser(userId, (user) => {
-      user.history.push({
-        at: new Date().toISOString(),
-        message,
-        response
-      });
-
+      turn = { at: new Date().toISOString(), message: redactSensitiveData(message), response: redactSensitiveData(response) };
+      user.history.push(turn);
     });
+    return turn;
+  }
+
+  allUsers() {
+    return Object.values(this.data.users);
+  }
+
+  toJsonData() {
+    return this.data;
   }
 }
 
-module.exports = { JsonStore };
+module.exports = { MemoryStore };

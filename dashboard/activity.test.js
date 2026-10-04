@@ -74,3 +74,10 @@ test("operator signals normalize workflow metadata without exposing raw credenti
   assert.match(signals.handover.summary, /\[redacted\]/);
   assert.doesNotMatch(signals.handover.summary, /secret-value/);
 });
+
+test("operator signals render structured handover summaries as readable text", () => {
+  const signals = operatorSignals({ profile: { handover: { required: true, summary: { need: "Set up a company", opportunity: "Cyprus registration", project: "Investment company", nextAction: "Ask about activity" } } } });
+  assert.match(signals.handover.summary, /Need: Set up a company/);
+  assert.match(signals.handover.summary, /Activity: Investment company/);
+  assert.doesNotMatch(signals.handover.summary, /\[object Object\]/);
+});

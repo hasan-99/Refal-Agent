@@ -3,9 +3,12 @@ import {
   ArrowDown, ArrowDownLeft, ArrowLeft, ArrowUp, ArrowUpDown, ArrowUpRight, BadgeCheck,
   CalendarCheck2, CalendarClock, CalendarDays, Check, ChevronDown, CircleAlert, CircleDashed,
   Clock3, Flame, MessageCircle, MessageCircleMore, MoreHorizontal, Pencil, RefreshCw,
-  RotateCcw, Search, Send, SlidersHorizontal, Snowflake, Sun, UsersRound, X, Save
+  RotateCcw, Search, Send, SlidersHorizontal, Snowflake, Sun, UsersRound, X, Save, Trash2
 } from "lucide-react";
 import "./conversations.css";
+import { requestConversationDeletion } from "./conversationActions.js";
+import { fetchConversationLists, watchForConversationListChanges } from "./conversationListRefresh.js";
+import { LeadTemperatureSummary } from "./leadTemperatureSummary.js";
 
 const EMPTY = [];
 
@@ -26,36 +29,52 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [deletingId, setDeletingId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+  const listRefreshController = useRef(null);
 
-  const loadRows = useCallback(async (signal) => {
-    setLoading(true);
-    setError("");
+  const loadRows = useCallback(async (signal, { quiet = false } = {}) => {
+    if (!quiet) {
+      setLoading(true);
+      setError("");
+    }
     try {
-      const [conversationResponse, leadResponse] = await Promise.all([
-        fetch("/api/conversations", { credentials: "include", cache: "no-store", signal }),
-        fetch("/api/leads", { credentials: "include", cache: "no-store", signal })
-      ]);
-      const [conversationPayload, leadPayload] = await Promise.all([
-        conversationResponse.json().catch(() => ({})), leadResponse.json().catch(() => ({}))
-      ]);
-      if (!conversationResponse.ok) throw new Error(conversationPayload.error || `Could not load conversations (${conversationResponse.status}).`);
-      if (!leadResponse.ok) throw new Error(leadPayload.error || `Could not load leads (${leadResponse.status}).`);
-      if (!Array.isArray(conversationPayload.conversations) || !Array.isArray(leadPayload.users)) throw new Error("The inbox service returned an invalid response.");
-      setRows(conversationPayload.conversations);
-      setLeads(leadPayload.users);
+      const lists = await fetchConversationLists(fetch, signal);
+      setRows(lists.rows);
+      setLeads(lists.leads);
     } catch (cause) {
-      if (cause.name !== "AbortError") setError(cause.message || "Could not load conversations.");
+      if (!quiet && cause.name !== "AbortError") setError(cause.message || "Could not load conversations.");
     } finally {
-      if (!signal.aborted) setLoading(false);
+      if (!quiet && !signal.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
+    listRefreshController.current?.abort();
     loadRows(controller.signal);
     return () => controller.abort();
   }, [loadRows, refreshKey]);
+
+  useEffect(() => {
+    const refreshLists = () => {
+      listRefreshController.current?.abort();
+      const controller = new AbortController();
+      listRefreshController.current = controller;
+      loadRows(controller.signal, { quiet: true }).finally(() => {
+        if (listRefreshController.current === controller) listRefreshController.current = null;
+      });
+    };
+    const stopWatching = watchForConversationListChanges({ refresh: refreshLists });
+    return () => {
+      stopWatching();
+      listRefreshController.current?.abort();
+      listRefreshController.current = null;
+    };
+  }, [loadRows]);
 
   useEffect(() => setView(initialView), [initialView]);
   useEffect(() => setSelectedIdState(selectedConversationId || ""), [selectedConversationId]);
@@ -100,7 +119,7 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
       if (!controller.signal.aborted) setDetailLoading(false);
     });
     return () => controller.abort();
-  }, [selectedId]);
+  }, [selectedId, detailRefreshKey]);
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -154,11 +173,31 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
     direction: current.key === key && current.direction === "desc" ? "asc" : "desc"
   }));
 
+  const deleteConversation = async (row) => {
+    const userId = String(row.userId || row.user?.id || row.id || "");
+    const name = row.user?.name || row.user?.pushName || row.user?.phone || userId;
+    if (!isAdmin || !userId || deletingId) return;
+    setDeleteError("");
+    setDeletingId(userId);
+    try {
+      const deletion = await requestConversationDeletion({ userId, displayName: name, confirmed: true });
+      if (deletion.cancelled) return;
+      setDeleteTarget(null);
+      setRows((current) => current.filter((item) => String(item.userId || item.user?.id || item.id || "") !== userId));
+      setLeads((current) => current.map((lead) => String(lead.id || "") === userId ? { ...lead, conversationCount: 0, lastMessagePreview: "", lastMessageAt: "" } : lead));
+    } catch (cause) {
+      setDeleteError(cause.message || "Could not delete this conversation.");
+    } finally {
+      setDeletingId("");
+    }
+  };
+
   if (selectedId) return <ConversationDetail
     id={selectedId}
     detail={detail}
     loading={detailLoading}
     error={detailError}
+    onRefresh={() => setDetailRefreshKey((key) => key + 1)}
     isAdmin={isAdmin}
     onNavigate={onNavigate}
     onBack={() => { setSelectedId(""); setDetail(null); }}
@@ -166,7 +205,11 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
       setDetail((current) => current && ({ ...current, turns: current.turns.map((turn) => turn.id === turnId ? savedTurn : turn) }));
       setRefreshKey((key) => key + 1);
     }}
-    onContactSaved={(user) => setDetail((current) => current && ({ ...current, user: { ...current.user, ...user } }))}
+    onContactSaved={(user) => {
+      setDetail((current) => current && ({ ...current, user: { ...current.user, ...user } }));
+      setRows((current) => current.map((row) => String(row.userId || row.user?.id || "") === selectedId ? { ...row, user: { ...row.user, ...user } } : row));
+      setLeads((current) => current.map((lead) => String(lead.id || "") === selectedId ? { ...lead, name: user.name || "", phone: user.phone || user.rawPhone || "" } : lead));
+    }}
   />;
 
   return <section className="conversations-workspace" aria-labelledby="conversations-title">
@@ -180,6 +223,8 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
         <RefreshCw size={17} />
       </button>
     </header>
+
+    <LeadTemperatureSummary leads={leads} />
 
     <div className="conversations-view-switch" role="tablist" aria-label="Inbox views">
       <button type="button" role="tab" aria-selected={view === "inbox"} className={view === "inbox" ? "active" : ""} onClick={() => { setView("inbox"); onViewChange?.("inbox"); setFilter("all"); setSecondaryFilter("all"); }}><MessageCircleMore size={15} /> Conversations <span>{rows.length}</span></button>
@@ -212,6 +257,19 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
     </div>
 
     {error && <div className="conversation-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setRefreshKey((key) => key + 1)}>Try again</button></div>}
+    {deleteError && <div className="conversation-alert" role="alert"><span>{deleteError}</span><button type="button" onClick={() => setDeleteError("")}>Dismiss</button></div>}
+    {deleteTarget && <div className="conversation-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingId) setDeleteTarget(null); }}>
+      <section className="conversation-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="conversation-delete-title" aria-describedby="conversation-delete-description">
+        <span className="conversation-delete-dialog-icon"><Trash2 size={19} /></span>
+        <h2 id="conversation-delete-title">Delete conversation history?</h2>
+        <p className="conversation-delete-dialog-contact">{deleteTarget.user?.name || deleteTarget.user?.pushName || deleteTarget.user?.phone || deleteTarget.userId || deleteTarget.id}</p>
+        <p id="conversation-delete-description">This permanently removes the customer's messages and REFAL's replies from Supabase. The contact/lead record, appointments, and related workflow or audit records will remain. This cannot be undone.</p>
+        <div className="conversation-delete-dialog-actions">
+          <button type="button" className="conversation-subtle-button" onClick={() => setDeleteTarget(null)} disabled={Boolean(deletingId)}>Cancel</button>
+          <button type="button" className="conversation-delete-confirm-button" onClick={() => deleteConversation(deleteTarget)} disabled={Boolean(deletingId)}>{deletingId ? <><span className="conversation-spinner small" /> Deleting…</> : <><Trash2 size={14} /> Delete history</>}</button>
+        </div>
+      </section>
+    </div>}
     <div className="conversation-table-shell">
       <div className="conversation-table-scroll">
         <table className="conversation-table">
@@ -223,6 +281,7 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
             <th>Latest message</th><th><span className="visually-hidden">Open conversation</span></th>
           </> : <>
             <th><SortButton label="Contact" column="contact" sort={sort} onClick={changeSort} /></th>
+            <th>WhatsApp number</th>
             <th><SortButton label="Last message" column="lastMessage" sort={sort} onClick={changeSort} /></th>
             <th><SortButton label="Direction" column="direction" sort={sort} onClick={changeSort} /></th>
             <th><SortButton label="Reply status" column="status" sort={sort} onClick={changeSort} /></th>
@@ -230,9 +289,9 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
             <th><span className="visually-hidden">Open conversation</span></th>
           </>}</tr></thead>
           <tbody>
-            {loading && rows.length === 0 && <tr><td colSpan="6"><div className="conversation-loading"><span className="conversation-spinner" />Loading conversations</div></td></tr>}
-            {!loading && !error && filtered.length === 0 && <tr><td colSpan="6"><div className="conversation-empty"><span className="conversation-empty-icon"><MessageCircle size={20} /></span><strong>{(view === "leads" ? leads.length : rows.length) ? `No matching ${view === "leads" ? "leads" : "conversations"}` : `No ${view === "leads" ? "leads" : "conversations"} yet`}</strong><span>{(view === "leads" ? leads.length : rows.length) ? "Try another search or filter." : "Records will appear here when the service has data."}</span></div></td></tr>}
-            {view === "leads" ? filtered.map((lead, index) => <LeadContactRow key={lead.id || index} lead={lead} onOpen={() => openConversation(lead)} />) : filtered.map((row, index) => <ConversationRow key={row.userId || row.user?.id || row.id || index} row={row} onOpen={() => openConversation(row)} />)}
+            {loading && rows.length === 0 && <tr><td colSpan={view === "leads" ? 6 : 7}><div className="conversation-loading"><span className="conversation-spinner" />Loading conversations</div></td></tr>}
+            {!loading && !error && filtered.length === 0 && <tr><td colSpan={view === "leads" ? 6 : 7}><div className="conversation-empty"><span className="conversation-empty-icon"><MessageCircle size={20} /></span><strong>{(view === "leads" ? leads.length : rows.length) ? `No matching ${view === "leads" ? "leads" : "conversations"}` : `No ${view === "leads" ? "leads" : "conversations"} yet`}</strong><span>{(view === "leads" ? leads.length : rows.length) ? "Try another search or filter." : "Records will appear here when the service has data."}</span></div></td></tr>}
+            {view === "leads" ? filtered.map((lead, index) => <LeadContactRow key={lead.id || index} lead={lead} onOpen={() => openConversation(lead)} />) : filtered.map((row, index) => <ConversationRow key={row.userId || row.user?.id || row.id || index} row={row} isAdmin={isAdmin} deleting={deletingId === String(row.userId || row.user?.id || row.id || "")} onOpen={() => openConversation(row)} onDelete={() => setDeleteTarget(row)} />)}
           </tbody>
         </table>
       </div>
@@ -264,21 +323,25 @@ function SortButton({ label, column, sort, onClick }) {
   </button>;
 }
 
-function ConversationRow({ row, onOpen }) {
+function ConversationRow({ row, isAdmin, deleting, onOpen, onDelete }) {
   const user = row.user || {};
-  const name = user.name || user.pushName || row.name || user.phone || row.phone || row.userId || "Unknown contact";
-  const phone = user.phone || row.phone || "";
+  const phone = user.phoneOverride || user.phone || user.rawPhone || row.phone || "Number hidden by WhatsApp";
+  const name = user.nameOverride || user.name || user.pushName || user.whatsappName || phone || "Unknown contact";
   const message = row.lastMessage || row.lastMessageText || "No message preview";
   const direction = row.lastMessageDirection || row.direction || "unknown";
   const status = row.needsReply ? "needs reply" : row.hasAgentReply ? "answered" : "no reply";
   const when = row.lastMessageAt || row.updatedAt;
   return <tr className="conversation-row" onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }} tabIndex="0" aria-label={`Open conversation with ${name}`}>
-    <td data-label="Contact"><div className="conversation-contact"><span className="conversation-avatar">{initials(name)}</span><span className="conversation-contact-copy"><strong>{name}</strong><small>{phone && phone !== name ? phone : "WhatsApp contact"}</small><WorkflowBadges workflow={row.user?.workflow} /></span></div></td>
+    <td data-label="Contact"><div className="conversation-contact"><span className="conversation-avatar">{initials(name)}</span><span className="conversation-contact-copy"><strong>{name}</strong><WorkflowBadges workflow={row.user?.workflow} /></span></div></td>
+    <td data-label="WhatsApp number"><span className={`conversation-whatsapp-number${phone.includes("hidden by WhatsApp") ? " is-hidden" : ""}`}>{phone}</span></td>
     <td data-label="Last message"><span className="conversation-preview" title={message}>{message}</span></td>
     <td data-label="Direction"><span className={`conversation-direction ${directionClass(direction)}`}>{directionLabel(direction)}</span></td>
     <td data-label="Reply status"><span className={`conversation-status ${statusClass(status, row.needsReply)}`}>{statusLabel(status)}</span></td>
     <td data-label="Updated"><time className="conversation-time" dateTime={when || undefined}>{formatDate(when)}</time></td>
-    <td className="conversation-row-action"><button type="button" className="conversation-open-button" aria-label={`Open ${name} conversation`} onClick={(event) => { event.stopPropagation(); onOpen(); }}><MoreHorizontal size={16} /></button></td>
+    <td className="conversation-row-action"><span className="conversation-row-actions">
+      {isAdmin && <button type="button" className="conversation-delete-button" disabled={deleting} aria-label={`Delete ${name} conversation history`} title="Delete conversation history" onClick={(event) => { event.stopPropagation(); onDelete(); }}>{deleting ? <span className="conversation-spinner" aria-label="Deleting" /> : <Trash2 size={15} />}</button>}
+      <button type="button" className="conversation-open-button" aria-label={`Open ${name} conversation`} onClick={(event) => { event.stopPropagation(); onOpen(); }}><MoreHorizontal size={16} /></button>
+    </span></td>
   </tr>;
 }
 
@@ -295,7 +358,8 @@ function LeadContactRow({ lead, onOpen }) {
   </tr>;
 }
 
-function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onSaved, onNavigate, onContactSaved }) {
+function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRefresh, onSaved, onNavigate, onContactSaved }) {
+  const threadRef = useRef(null);
   const [editingContact, setEditingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState({ nameOverride: "", phoneOverride: "" });
   const [contactSaving, setContactSaving] = useState(false);
@@ -306,6 +370,15 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onSav
   useEffect(() => {
     setContactDraft({ nameOverride: detail?.user?.nameOverride || "", phoneOverride: detail?.user?.phoneOverride || "" });
   }, [detail?.user?.nameOverride, detail?.user?.phoneOverride]);
+
+  useEffect(() => {
+    if (!detail || loading) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const thread = threadRef.current;
+      if (thread) thread.scrollTop = thread.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [detail, loading]);
 
   const saveContact = async (event) => {
     event.preventDefault();
@@ -331,7 +404,10 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onSav
 
   return <section className="conversations-workspace conversation-detail" aria-labelledby="conversation-detail-title">
     <header className="conversation-detail-header">
-      <button type="button" className="conversation-back" onClick={onBack}><ArrowLeft size={16} /> <span>All conversations</span></button>
+      <div className="conversation-detail-nav">
+        <button type="button" className="conversation-back" onClick={onBack}><ArrowLeft size={16} /> <span>All conversations</span></button>
+        <button type="button" className="conversation-refresh-button" onClick={onRefresh} disabled={loading} aria-label="Refresh conversation messages" title="Refresh messages"><RefreshCw size={16} className={loading ? "is-spinning" : ""} /></button>
+      </div>
       {detail && <div className="conversation-detail-person-actions">
         {isAdmin && <button className="conversation-contact-edit-button" type="button" onClick={() => { setEditingContact((current) => !current); setContactNotice(""); }} aria-label={editingContact ? "Close contact editor" : "Edit contact details"}>{editingContact ? <X size={15} /> : <Pencil size={15} />}<span>{editingContact ? "Close" : "Edit contact"}</span></button>}
         <div className="conversation-person-heading">
@@ -353,7 +429,7 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onSav
     {loading && <div className="conversation-detail-state"><span className="conversation-spinner" />Loading conversation</div>}
     {error && <div className="conversation-alert" role="alert"><span>{error}</span><button type="button" onClick={onBack}>Back to inbox</button></div>}
     {detail && !loading && <div className="conversation-thread-wrap">
-      <div className="conversation-thread" aria-label="Conversation messages">
+      <div ref={threadRef} className="conversation-thread" aria-label="Conversation messages">
         {detail.turns.length === 0 ? <div className="conversation-empty"><strong>No messages in this conversation</strong><span>The transcript is currently empty.</span></div> : detail.turns.map((turn, index) => <MessageTurn key={turn.id || `${turn.at || turn.createdAt || "turn"}-${index}`} turn={turn} userId={id} isAdmin={isAdmin} onNavigate={onNavigate} onSaved={onSaved} />)}
       </div>
       <footer className="conversation-thread-footer"><span><MessageCircle size={15} /> Transcript</span><span>{detail.turns.length} {detail.turns.length === 1 ? "message" : "messages"}</span></footer>
@@ -438,7 +514,7 @@ function deliveryMessage(delivery, wasEditable) {
 }
 
 function sortValue(row, key) {
-  if (key === "contact") return row.user?.name || row.user?.phone || row.name || row.phone || row.userId || row.id || "";
+  if (key === "contact") return row.user?.nameOverride || row.user?.name || row.user?.pushName || row.user?.whatsappName || row.user?.phone || row.user?.rawPhone || row.phone || "";
   if (key === "conversationCount") return Number(row.conversationCount || 0);
   if (key === "temperature") return row.leadTemperatureStatus || "new";
   if (key === "lastMessage") return row.lastMessage || row.lastMessagePreview || row.lastMessageText || "";

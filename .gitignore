@@ -4,7 +4,19 @@ node_modules/
 !.env.example
 .wwebjs_auth/
 .wwebjs_cache/
+auth_info_baileys/
+auth_info_baileys.*/
 data/users.json
 data/*.tmp
 data/*.bak
+reports/
 *.log
+
+# Generated frontend and local runtime/browser state
+dashboard/dist/
+blocked-before.png
+refal-rules-audit.html
+--out=reports/
+supabase/.temp/
+.playwright-mcp/
+.runtime-logs/

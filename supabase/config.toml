@@ -1,0 +1,15 @@
+
+[functions.rafa-admin-api]
+enabled = true
+verify_jwt = true
+import_map = "./functions/rafa-admin-api/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/rafa-admin-api/index.ts"
+
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/rafa_dashboard_access_token_hook"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/rafa-admin-api/*.html" ]

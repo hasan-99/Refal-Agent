@@ -14,3 +14,9 @@ test("complaint workflow is neutral, asks for useful details, and keeps internal
 test("non-complaints do not start the complaint workflow", () => {
   assert.deepEqual(classifyComplaint("Tell me about your services"), { isComplaint: false, severity: "none", triggers: [] });
 });
+
+test("a customer who says they are still upset remains in the complaint path", () => {
+  for (const text of ["I am still upset", "أنا لسا متضايق", "Είμαι ακόμα αναστατωμένος"]) {
+    assert.equal(classifyComplaint(text).isComplaint, true, text);
+  }
+});

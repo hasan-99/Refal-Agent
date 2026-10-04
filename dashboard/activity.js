@@ -1,10 +1,12 @@
+import { isPlausibleCustomerName } from "./contactIdentity.js";
+
 function recentConversations(users, limit = 5) {
   return users.flatMap((user) => (user.history || []).map((turn, index) => {
     const preview = String(turn.message || "").replace(/\s+/g, " ").trim();
     const at = turn.at || "";
     const name = String(
       user.profile?.nameOverride ||
-      user.profile?.name ||
+      (isPlausibleCustomerName(user.profile?.name) ? user.profile.name : "") ||
       user.whatsapp?.pushName ||
       user.profile?.whatsappName ||
       "WhatsApp contact"
@@ -58,6 +60,21 @@ function cleanOperatorText(value, limit = 280) {
     .slice(0, limit);
 }
 
+function cleanHandoverSummary(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return cleanOperatorText(value, 700);
+  const fields = [
+    ["Need", value.need],
+    ["Opportunity", value.opportunity],
+    ["Activity", value.project],
+    ["Next step", value.nextAction]
+  ];
+  return fields
+    .filter(([, field]) => field !== undefined && field !== null && String(field).trim())
+    .map(([label, field]) => `${label}: ${cleanOperatorText(field, 180)}`)
+    .join(" · ")
+    .slice(0, 700);
+}
+
 function normalizeIntent(value) {
   const normalized = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   return INTENT_VALUES.has(normalized) ? normalized : "unknown";
@@ -80,7 +97,8 @@ function operatorSignals(user) {
   const consent = firstValue(profile.consent?.followUp, profile.followUpConsent, profile.follow_up_consent);
   const consentState = CONSENT_STATES.has(String(consent)) ? String(consent) : "unknown";
   const lastFollowUpSent = firstValue(user.lastFollowUpSent, profile.lastFollowUpSent, profile.followUp?.lastSent);
-  const handoverSummary = cleanOperatorText(firstValue(handover.summary, handover.internalSummary, profile.internalHandoverSummary), 700);
+  const rawHandoverSummary = firstValue(handover.summary, handover.internalSummary, profile.internalHandoverSummary);
+  const handoverSummary = cleanHandoverSummary(rawHandoverSummary);
   const department = cleanOperatorText(firstValue(handover.department, handover.routing?.department, classification.department), 80);
   const nextAction = cleanOperatorText(firstValue(handover.nextAction, handover.followUpAction, profile.nextAction), 180);
 

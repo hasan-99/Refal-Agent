@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 Set-Location $PSScriptRoot
 
-$paths = @(".wwebjs_auth", ".wwebjs_cache")
+$paths = @("auth_info_baileys", ".wwebjs_auth", ".wwebjs_cache")
 
 foreach ($relativePath in $paths) {
   $target = Resolve-Path -LiteralPath $relativePath -ErrorAction SilentlyContinue
@@ -12,4 +12,4 @@ foreach ($relativePath in $paths) {
   }
 }
 
-Write-Host "WhatsApp Web session cleared. Run npm run start:windows and scan the QR again."
+Write-Host "WhatsApp session cleared. Run npm run start:windows and scan the QR again."

@@ -1,3 +1,5 @@
+const { redactSensitiveData } = require("./sensitiveData");
+
 function requireRafaApiConfig() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
@@ -71,6 +73,12 @@ class EdgeApiStore {
     return Boolean(deleted);
   }
 
+  async deleteConversation(userId) {
+    const { deleted, deletedTurns } = await this.request(`/contacts/${encodeURIComponent(userId)}/conversation`, { method: "DELETE" });
+    if (deleted && this.data.users[userId]) this.data.users[userId].history = [];
+    return { deleted: Boolean(deleted), deletedTurns: Number(deletedTurns) || 0 };
+  }
+
   async ensureUser(userId) {
     const { user } = await this.request("/contacts/ensure", {
       method: "POST",
@@ -120,8 +128,8 @@ class EdgeApiStore {
     const { turn, user } = await this.request(`/contacts/${encodeURIComponent(userId)}/history`, {
       method: "POST",
       body: JSON.stringify({
-        message,
-        response,
+        message: redactSensitiveData(message),
+        response: redactSensitiveData(response),
         automated: Boolean(extra.automated),
         source: extra.source || "whatsapp",
         metadata: extra.metadata || {},
@@ -188,6 +196,11 @@ class EdgeApiStore {
   async saveFollowUpState(userId, state) {
     const { followUp } = await this.persistWorkflow("follow-up", { userId, ...state });
     return followUp;
+  }
+
+  async saveOpportunityIntake(userId, intake, options = {}) {
+    const { intake: saved } = await this.persistWorkflow("opportunity-intake", { userId, ...intake, sourceTurnId: options.sourceTurnId });
+    return saved;
   }
 
   async createHandover(userId, handover) {
@@ -281,6 +294,11 @@ class EdgeApiStore {
 
   async createNotification(notification) {
     return this.request("/notifications", { method: "POST", body: JSON.stringify(notification) });
+  }
+
+  async queueNotificationDraft(notificationId) {
+    const { notification } = await this.request(`/notifications/${encodeURIComponent(notificationId)}/send`, { method: "POST", body: JSON.stringify({}) });
+    return notification;
   }
 
   async claimDueNotifications(limit = 25) {

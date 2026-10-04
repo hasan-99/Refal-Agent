@@ -1,4 +1,5 @@
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 const http = require("node:http");
 const {
   default: makeWASocket,
@@ -11,23 +12,26 @@ const {
 const P = require("pino");
 const qrcode = require("qrcode-terminal");
 const { loadProjectEnv } = require("./env");
-const { askOpenRouter, embedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
+const { askOpenRouter, embedText, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
 const { createStore } = require("./supabaseStore");
-const { routeMessageResult, prepareInboundMessage, buildReplyEditPayload, persistWhatsAppSentMessage } = require("./messageRouter");
+const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
 const { generateAndEmailReport } = require("./report");
 const { startMonthlyReportSchedule } = require("./reportScheduler");
 const { startFollowUpSchedule } = require("./followUp");
 const { startReminderSchedule } = require("./reminderScheduler");
 const { startNotificationSchedule } = require("./notificationScheduler");
+const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
 const { AI_LIMIT_MESSAGE, allowAiMessage, allowIncomingMessage } = require("./rateLimiter");
-const { answerFromEvidence, noApprovedEvidenceReply } = require("./refalcoAnswer");
+const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply } = require("./refalcoAnswer");
 const { detectMessageLanguage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
 const { isPairingOnly } = require("./runtimePolicy");
 const { classifyLeadTemperature } = require("./leadTemperature");
 const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = require("./whatsappPairing");
 const { buildConversationContext, refreshCustomerTopicSummary } = require("./conversationMemory");
+const { buildLocalConversationRecap } = require("./conversationRecap");
+const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTelemetry");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -86,19 +90,22 @@ if (process.env.RAFA_DASHBOARD_MANAGED === "true") {
 }
 
 function logEvent(event, fields = {}) {
+  const safeEvent = buildOperationalEvent(event, fields);
   if (store.logEvent) {
-    store.logEvent(event, fields).catch((error) => {
-      console.error("RAFA event log failed:", error.message);
+    return store.logEvent(safeEvent.event, safeEvent.fields).catch((error) => {
+      console.error("RAFA event log failed:", safeErrorDiagnostics(error));
     });
-    return;
   }
 
-  console.warn("RAFA event store is unavailable:", event, fields);
+  console.warn("RAFA event store is unavailable:", safeEvent.event, safeEvent.fields);
 }
 
-function messagePreview(text) {
-  return String(text || "").replace(/\s+/g, " ").slice(0, 120);
-}
+const embeddingWarmStartedAt = performance.now();
+void warmEmbeddingPipeline().then(() => {
+  logEvent("response_stage", { stage: "embedding_model_warmup", durationMs: Math.round(performance.now() - embeddingWarmStartedAt) });
+}).catch((error) => {
+  logEvent("embedding_warmup_error", safeErrorDiagnostics(error));
+});
 
 function removeCustomerCitations(text) {
   return String(text || "")
@@ -119,8 +126,8 @@ function startDisconnectAlertTimer(disconnectedAt) {
         disconnectAlertState.alertSent = true;
         logEvent("disconnect_alert_sent", { disconnectedAt: disconnectedAt.toISOString() });
       } catch (error) {
-        console.error("Disconnect alert failed:", error.message);
-        logEvent("disconnect_alert_error", { message: error.message });
+        console.error("Disconnect alert failed:", safeErrorDiagnostics(error));
+        logEvent("disconnect_alert_error", safeErrorDiagnostics(error));
       }
     }, Number(process.env.DISCONNECT_ALERT_DELAY_MS || 120000))
   };
@@ -143,8 +150,8 @@ async function clearDisconnectAlertOnRecovery() {
       recoveredAt: recoveredAt.toISOString()
     });
   } catch (error) {
-    console.error("Recovery alert failed:", error.message);
-    logEvent("recovery_alert_error", { message: error.message });
+    console.error("Recovery alert failed:", safeErrorDiagnostics(error));
+    logEvent("recovery_alert_error", safeErrorDiagnostics(error));
   }
 }
 
@@ -156,20 +163,44 @@ function isSupportedChatId(chatId) {
   return chatId.endsWith("@s.whatsapp.net") || chatId.endsWith("@c.us") || chatId.endsWith("@lid");
 }
 
-async function rememberWhatsAppContact(userId, message) {
+async function rememberWhatsAppContact(userId, message, socket) {
   const pushName = String(message.pushName || "").trim();
+  const phoneJid = await resolvePhoneJid(userId, message, socket?.signalRepository?.lidMapping);
   await store.updateUser(userId, (user) => {
     user.whatsapp = {
       ...(user.whatsapp || {}),
       jid: userId,
       lastSeenAt: new Date().toISOString()
     };
+    if (phoneJid) user.whatsapp.phoneJid = phoneJid;
 
     if (pushName) {
       user.whatsapp.pushName = pushName;
       if (!user.profile.whatsappName) user.profile.whatsappName = pushName;
     }
   });
+}
+
+async function backfillKnownWhatsAppPhoneNumbers(socket) {
+  try {
+    const lidMapping = socket?.signalRepository?.lidMapping;
+    if (typeof store.allUsers !== "function" || typeof lidMapping?.getPNsForLIDs !== "function") return;
+    const users = await store.allUsers({ includeHistory: false });
+    const candidates = (users || []).filter((user) => String(user.id || "").endsWith("@lid") && !user.whatsapp?.phoneJid);
+    if (!candidates.length) return;
+    const mappings = await lidMapping.getPNsForLIDs(candidates.map((user) => user.id));
+    const byLid = new Map((mappings || []).map((mapping) => [mapping.lid, mapping.pn]));
+    const updates = candidates.filter((user) => isPhoneJid(byLid.get(user.id)));
+    for (let index = 0; index < updates.length; index += 5) {
+      await Promise.all(updates.slice(index, index + 5).map((user) => store.updateUser(user.id, (draft) => {
+        const phoneJid = byLid.get(user.id);
+        if (isPhoneJid(phoneJid)) draft.whatsapp = { ...(draft.whatsapp || {}), jid: user.id, phoneJid };
+      })));
+    }
+    if (updates.length) logEvent("whatsapp_lid_phone_mappings_backfilled", { mappedCount: updates.length });
+  } catch (error) {
+    logEvent("whatsapp_lid_phone_mapping_backfill_error", safeErrorDiagnostics(error));
+  }
 }
 
 function unwrapMessage(content) {
@@ -221,25 +252,49 @@ function extractText(message) {
   ).trim();
 }
 
-async function answerMessage(socket, chatId, userId, text) {
+async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
+  const requestStartedAt = requestTrace.startedAt || performance.now();
+  const traceId = requestTrace.traceId || randomUUID();
+  const stage = (name, startedAt, fields = {}) => logEvent("response_stage", {
+    traceId,
+    stage: name,
+    durationMs: Math.round(performance.now() - startedAt),
+    ...fields
+  });
+  let stageStartedAt = performance.now();
   await setTyping(socket, chatId, true);
+  stage("typing_start", stageStartedAt);
   let response;
   let routed;
 
   try {
+  stageStartedAt = performance.now();
   const user = await store.ensureUser(userId);
+  stage("contact_load", stageStartedAt);
+  stageStartedAt = performance.now();
   const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
-  const booking = await handleBookingMessage({ userId, text, store, user });
+  stage("normalize_classify_prepare", stageStartedAt, { intentCount: prepared.classification.intents.length, language: prepared.classification.language });
+  const bookingStartedAt = performance.now();
+  // Regulated and privacy-risk messages must reach the safety router first;
+  // the booking parser can otherwise persist raw sensitive details.
+  const booking = prepared.safety?.restricted ? null : await handleBookingMessage({ userId, text, store, user });
+  stage("booking_gate", bookingStartedAt, { entered: Boolean(booking) });
   if (booking) {
     response = booking.response;
-    const turn = await store.addHistory(userId, text, response, { automated: true, source: "whatsapp", metadata: prepared.metadata });
+    stageStartedAt = performance.now();
+    const turn = (await recordHistory(store, userId, text, response, { metadata: prepared.metadata })).turn;
+    stage("turn_and_workflow_persistence", stageStartedAt, { route: "booking" });
+    stageStartedAt = performance.now();
     try {
       const user = await store.getUser(userId);
       await refreshCustomerTopicSummary({ store, userId, user, currentMessage: text });
     } catch (error) {
-      logEvent("conversation_summary_error", { userId, message: error.message });
+      logEvent("conversation_summary_error", safeErrorDiagnostics(error));
     }
+    stage("topic_summary", stageStartedAt);
+    stageStartedAt = performance.now();
     await refreshLeadTemperature(userId);
+    stage("lead_temperature", stageStartedAt);
 
     if (booking.appointment?.status === "pending_review" && booking.details && booking.user) {
       try {
@@ -270,58 +325,87 @@ async function answerMessage(socket, chatId, userId, text) {
           });
         }
       } catch (error) {
-        console.error("Booking notification queue failed:", error.message);
-        logEvent("booking_notification_queue_error", { message: String(error?.message || "Queue unavailable").slice(0, 300) });
+        console.error("Booking notification queue failed:", safeErrorDiagnostics(error));
+        logEvent("booking_notification_queue_error", safeErrorDiagnostics(error));
       }
     }
     await setTyping(socket, chatId, false);
+    stageStartedAt = performance.now();
     await sendStoredTextReply(socket, chatId, response, userId, turn);
+    stage("whatsapp_delivery", stageStartedAt);
+    stage("request_total", requestStartedAt);
     return;
   }
 
+  stageStartedAt = performance.now();
   routed = await routeMessageResult({
     userId,
     text,
     store,
-    existingUser: user
+    existingUser: user,
+    preparedInbound: prepared
   });
+  stage("route_and_deterministic_persistence", stageStartedAt, { aiRequired: routed.shouldUseAi });
 
   response = routed.response;
   if (routed.shouldUseAi) {
+    const customerText = routed.metadata?.privacySafeQuestion || String(text || "").trim();
     let evidence = [];
+    let stageAt = performance.now();
     try {
-      const embedding = await embedText(text);
-      evidence = store.searchKnowledge ? await store.searchKnowledge(text, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
+      const embedding = await embedText(customerText);
+      stage("embedding", stageAt);
+      stageAt = performance.now();
+      evidence = store.searchKnowledge ? await store.searchKnowledge(redactPersonalData(customerText), embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
+      stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
     } catch (error) {
-      console.error("Refalco knowledge search failed:", error.message);
-      logEvent("knowledge_search_error", { message: error.message });
+      console.error("Refalco knowledge search failed:", safeErrorDiagnostics(error));
+      logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
 
-    const grounded = answerFromEvidence(evidence);
-    const citations = grounded?.citations || [];
-    response = grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(text));
+    const grounded = answerFromEvidence(evidence, { allowPricing: routed.metadata?.intent?.intents?.includes("pricing") === true, customerQuestion: redactPersonalData(customerText) });
+    let modelRequestMade = false;
+    let modelResponseUsed = false;
+    const localRecap = buildLocalConversationRecap({ history: routed.user?.history || [], evidence, currentMessage: customerText, language: detectMessageLanguage(customerText), workflowState: { handover: routed.user?.profile?.handover, specialistFollowUp: routed.user?.profile?.specialistFollowUp } });
+    const citations = localRecap?.citations || grounded?.citations || [];
+    response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
 
-    if (evidence.length && process.env.OPENROUTER_API_KEY && !allowAiMessage(userId)) {
-      const turn = await store.addHistory(userId, text, AI_LIMIT_MESSAGE, { automated: true, source: "whatsapp", metadata: routed.metadata });
+    if (!localRecap && evidence.length && process.env.OPENROUTER_API_KEY && !allowAiMessage(userId)) {
+      stageAt = performance.now();
+      const knowledgeEvidence = knowledgeEvidenceMetadata(evidence);
+      const turn = (await recordHistory(store, userId, text, AI_LIMIT_MESSAGE, {
+        metadata: { ...routed.metadata, retrieval: "approved_knowledge", knowledgeEvidence, abstained: !grounded }
+      })).turn;
+      stage("turn_and_workflow_persistence", stageAt, { route: "ai_quota_limit" });
+      stageStartedAt = performance.now();
       await refreshLeadTemperature(userId);
+      stage("lead_temperature", stageStartedAt);
       await setTyping(socket, chatId, false);
+      stageStartedAt = performance.now();
       await sendStoredTextReply(socket, chatId, AI_LIMIT_MESSAGE, userId, turn);
-      logEvent("rate_limited_ai_daily", { userId });
+      stage("whatsapp_delivery", stageStartedAt);
+      stage("request_total", requestStartedAt);
+      logEvent("rate_limited_ai_daily", {});
       return;
     }
 
-    if (grounded && process.env.OPENROUTER_API_KEY) {
+    // Give the model the approved evidence bundle even when no deterministic
+    // excerpt is safe to send. The model can answer from history or clearly
+    // abstain; relevance controls only the local fallback, not helpfulness.
+    if (!localRecap && evidence.length && process.env.OPENROUTER_API_KEY) {
+      stageAt = performance.now();
       try {
-        const conversation = buildConversationContext(routed.user, { currentMessage: text });
+        const conversation = buildConversationContext(routed.user, { currentMessage: customerText });
+        modelRequestMade = true;
         const aiResponse = await askOpenRouter({
-          text,
+          text: customerText,
           evidence,
           includeSources: false,
           conversationSummary: conversation.summary,
           conversationTurns: conversation.turns,
           onUsage: async (usage) => {
             try {
-              await store.logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
+              await logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
                 source: "whatsapp",
                 userId,
                 model: usage.model,
@@ -331,41 +415,71 @@ async function answerMessage(socket, chatId, userId, text) {
                 costUsd: usage.costUsd
               });
             } catch (error) {
-              console.error("OpenRouter usage log failed:", error.message);
+              console.error("OpenRouter usage log failed:", safeErrorDiagnostics(error));
             }
           }
         });
-        if (aiResponse) response = aiResponse;
-        logEvent("ai", { enabled: Boolean(aiResponse), sourceCount: citations.length, userId });
+        if (aiResponse) {
+          response = aiResponse;
+          modelResponseUsed = true;
+        }
+        stage("model_generation", stageAt, { modelUsed: Boolean(aiResponse) });
+        logEvent("ai", { enabled: Boolean(aiResponse), sourceCount: citations.length });
       } catch (error) {
-        console.error("OpenRouter failed; using the source excerpt:", error.message);
-        logEvent("ai_error", { message: error.message, sourceCount: citations.length, userId });
+        console.error("OpenRouter failed; using a localized safe reply:", safeErrorDiagnostics(error));
+        // Keep the answer selected above: it is either a relevant, validated
+        // excerpt from approved evidence or a precise no-approved-evidence
+        // reply. Replacing it with a generic prompt loses the customer's ask.
+        stage("model_generation", stageAt, { modelUsed: false });
+        logEvent("ai_error", { ...safeErrorDiagnostics(error), sourceCount: citations.length });
       }
     }
 
     response = removeCustomerCitations(response);
+    if (routed.metadata?.privacySafeQuestion) {
+      const reminder = {
+        arabic: "ولحماية خصوصيتك، لا تبعت كلمات مرور أو بيانات بطاقات أو دخول هون.",
+        greek: "Για την προστασία του απορρήτου σας, μην στέλνετε κωδικούς πρόσβασης, στοιχεία κάρτας ή τραπεζικά στοιχεία εδώ.",
+        english: "For your privacy, please don’t send passwords, card details, or account credentials here."
+      }[detectMessageLanguage(customerText)] || "For your privacy, please don’t send passwords, card details, or account credentials here.";
+      response = `${response} ${reminder}`.trim();
+    }
 
-    routed.turn = await store.addHistory(userId, text, response, {
-      automated: true,
-      source: "whatsapp",
-      metadata: { ...routed.metadata, retrieval: "approved_knowledge", citations, abstained: !grounded }
+    stageAt = performance.now();
+    const knowledgeEvidence = knowledgeEvidenceMetadata(evidence, {
+      modelRequestMade,
+      modelResponseUsed,
+      fallbackCitations: citations
     });
+    routed.turn = (await recordHistory(store, userId, text, response, {
+      metadata: { ...routed.metadata, retrieval: "approved_knowledge", citations, knowledgeEvidence, abstained: !grounded }
+    })).turn;
+    stage("turn_and_workflow_persistence", stageAt, { route: "knowledge_answer" });
   }
 
+  stageStartedAt = performance.now();
   if (!routed.shouldUseAi || routed.turn) await refreshLeadTemperature(userId);
+  stage("lead_temperature", stageStartedAt);
   if (routed.turn) {
+    stageStartedAt = performance.now();
     try {
-      await refreshCustomerTopicSummary({ store, userId, user: routed.user, currentMessage: text });
+      if (!routed.metadata?.privacySafeQuestion) await refreshCustomerTopicSummary({ store, userId, user: routed.user, currentMessage: text });
     } catch (error) {
-      logEvent("conversation_summary_error", { userId, message: error.message });
+      logEvent("conversation_summary_error", safeErrorDiagnostics(error));
     }
+    stage("topic_summary", stageStartedAt);
   }
 
   } finally {
+    stageStartedAt = performance.now();
     await setTyping(socket, chatId, false);
+    stage("typing_stop", stageStartedAt);
   }
 
+  stageStartedAt = performance.now();
   await sendStoredTextReply(socket, chatId, response, userId, routed.turn);
+  stage("whatsapp_delivery", stageStartedAt);
+  stage("request_total", requestStartedAt);
 }
 
 async function refreshLeadTemperature(userId) {
@@ -377,7 +491,7 @@ async function refreshLeadTemperature(userId) {
       draft.profile.leadTemperature = { ...result, updatedAt: new Date().toISOString(), source: "conversation_signals_v1" };
     });
   } catch (error) {
-    console.error("Lead temperature update failed:", error.message);
+    console.error("Lead temperature update failed:", safeErrorDiagnostics(error));
   }
 }
 
@@ -393,7 +507,7 @@ async function backfillLeadTemperatures() {
       });
     }
   } catch (error) {
-    console.error("Lead temperature history backfill failed:", error.message);
+    console.error("Lead temperature history backfill failed:", safeErrorDiagnostics(error));
   }
 }
 
@@ -500,7 +614,7 @@ function startLocalControlServer() {
     console.log(`RAFA local control listening on 127.0.0.1:${port}`);
   });
   localControlServer.on("error", (error) => {
-    console.error("RAFA local control failed:", error.message);
+    console.error("RAFA local control failed:", safeErrorDiagnostics(error));
     localControlServer = null;
   });
 }
@@ -535,11 +649,19 @@ async function setTyping(socket, chatId, isTyping) {
   try {
     await socket.sendPresenceUpdate(isTyping ? "composing" : "paused", chatId);
   } catch (error) {
-    logEvent("presence_error", { chatId, message: error.message });
+    logEvent("presence_error", safeErrorDiagnostics(error));
   }
 }
 
 async function handleMessage(socket, message, upsertType) {
+  const inboundStartedAt = performance.now();
+  const traceId = randomUUID();
+  const stage = (name, startedAt, fields = {}) => logEvent("response_stage", {
+    traceId,
+    stage: name,
+    durationMs: Math.round(performance.now() - startedAt),
+    ...fields
+  });
   const remoteJid = message.key?.remoteJid;
   const fromMe = Boolean(message.key?.fromMe);
   const id = `${remoteJid || "unknown"}:${message.key?.id || "no-id"}:${fromMe}`;
@@ -553,13 +675,9 @@ async function handleMessage(socket, message, upsertType) {
 
   try {
     logEvent("message", {
-      id: message.key?.id,
-      from: remoteJid,
       fromMe,
-      pushName: message.pushName,
       upsertType,
-      type: messageType(message),
-      body: messagePreview(extractText(message))
+      type: messageType(message)
     });
 
     if (fromMe) {
@@ -568,48 +686,55 @@ async function handleMessage(socket, message, upsertType) {
     }
 
     if (!isSupportedChatId(remoteJid)) {
-      logEvent("ignored", { reason: "unsupported_chat", from: remoteJid, type: messageType(message) });
+      logEvent("ignored", { reason: "unsupported_chat", type: messageType(message) });
       receiptShouldComplete = true;
       return;
     }
 
     if (!fromMe && providerMessageId && typeof store.claimInboundMessage === "function") {
       try {
+        const stageStartedAt = performance.now();
         const receipt = await store.claimInboundMessage(remoteJid, providerMessageId);
+        stage("inbound_receipt_claim", stageStartedAt, { duplicate: Boolean(receipt.duplicate) });
         if (receipt.duplicate || receipt.claimed === false) {
-          logEvent("duplicate_inbound_message_ignored", { userId: remoteJid, messageId: providerMessageId });
+          logEvent("duplicate_inbound_message_ignored", { duplicate: true });
           return;
         }
         persistentReceipt = true;
       } catch (error) {
-        logEvent("inbound_message_dedupe_error", { userId: remoteJid, message: String(error?.message || "Message receipt store unavailable").slice(0, 200) });
+        logEvent("inbound_message_dedupe_error", safeErrorDiagnostics(error));
       }
     }
 
-    await rememberWhatsAppContact(remoteJid, message);
+    let stageStartedAt = performance.now();
+    await rememberWhatsAppContact(remoteJid, message, socket);
+    stage("whatsapp_contact_refresh", stageStartedAt);
 
     if (typeof store.isContactBlocked === "function") {
       try {
-        if (await store.isContactBlocked(remoteJid)) {
-          logEvent("blocked_contact_message_ignored", { userId: remoteJid, messageId: message.key?.id || "" });
+        stageStartedAt = performance.now();
+        const blocked = await store.isContactBlocked(remoteJid);
+        stage("blocklist_check", stageStartedAt, { blocked: Boolean(blocked) });
+        if (blocked) {
+          logEvent("blocked_contact_message_ignored", { blocked: true });
           receiptShouldComplete = true;
           return;
         }
       } catch (error) {
-        logEvent("blocklist_check_error", { userId: remoteJid, message: String(error?.message || "Blocklist check failed").slice(0, 200) });
+        logEvent("blocklist_check_error", safeErrorDiagnostics(error));
         return; // Do not send customer or automated messages when block status cannot be verified.
       }
     }
 
     if (!allowIncomingMessage(remoteJid)) {
-      logEvent("rate_limited_per_minute", { userId: remoteJid });
+      logEvent("rate_limited_per_minute", {});
       receiptShouldComplete = true;
       return;
     }
 
     let text = extractText(message);
     const hadAudio = Boolean(audioMessageContent(message));
-    if (hadAudio) logEvent("voice_transcription_unavailable", { userId: remoteJid });
+    if (hadAudio) logEvent("voice_transcription_unavailable", { messageType: "audio" });
 
     if (!text) {
       const response = hadAudio
@@ -621,24 +746,25 @@ async function handleMessage(socket, message, upsertType) {
       return;
     }
 
-    await answerMessage(socket, remoteJid, remoteJid, text);
+    stage("inbound_preprocess", inboundStartedAt, { messageType: messageType(message) });
+    await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt });
     receiptShouldComplete = true;
-    logEvent("replied", { mode: "customer", to: remoteJid });
+    logEvent("replied", { mode: "customer" });
   } catch (error) {
-    console.error("Failed to handle message:", error);
-    logEvent("error", { mode: "customer", message: error.message });
+    console.error("Failed to handle message:", safeErrorDiagnostics(error));
+    logEvent("error", { mode: "customer", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
       try {
         await sendTextReplyWithPresence(socket, remoteJid, "Sorry, something went wrong. Please try again.");
         receiptShouldComplete = true;
       } catch (sendError) {
-        logEvent("whatsapp_error_reply_failed", { userId: remoteJid, message: String(sendError?.message || "Fallback delivery failed").slice(0, 200) });
+        logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
       }
     }
   } finally {
     if (persistentReceipt && receiptShouldComplete) {
       try { await store.completeInboundMessage(remoteJid, providerMessageId); }
-      catch (error) { logEvent("inbound_message_receipt_complete_error", { userId: remoteJid, message: String(error?.message || "Could not complete receipt").slice(0, 200) }); }
+      catch (error) { logEvent("inbound_message_receipt_complete_error", safeErrorDiagnostics(error)); }
     } else if (!receiptShouldComplete && !fromMe) {
       processedMessageIds.delete(id);
     }
@@ -653,7 +779,7 @@ async function handleSelfTestMessage(socket, message) {
     if (!body.toLowerCase().startsWith(selfTestPrefix.toLowerCase())) return;
 
     if (!isSupportedChatId(remoteJid)) {
-      logEvent("ignored", { reason: "unsupported_self_test_target", target: remoteJid });
+      logEvent("ignored", { reason: "unsupported_self_test_target" });
       return;
     }
 
@@ -673,8 +799,8 @@ async function handleSelfTestMessage(socket, message) {
         });
         await sendTextReplyWithPresence(socket, remoteJid, `Report generated and emailed. Users: ${report.userCount}. Rows: ${report.rowCount}.`);
       } catch (error) {
-        console.error("Manual report failed:", error.message);
-        logEvent("manual_report_error", { message: error.message });
+        console.error("Manual report failed:", safeErrorDiagnostics(error));
+        logEvent("manual_report_error", safeErrorDiagnostics(error));
         await sendTextReplyWithPresence(socket, remoteJid, `Report failed: ${error.message}`);
       }
       return;
@@ -683,16 +809,16 @@ async function handleSelfTestMessage(socket, message) {
     if (text.toLowerCase() === "reset") {
       const deletedSelfTest = await store.deleteUser(selfTestUserId);
       const deletedDirect = await store.deleteUser(remoteJid);
-      logEvent("self_test_reset", { remoteJid, deletedSelfTest, deletedDirect });
+    logEvent("self_test_reset", { deletedSelfTest, deletedDirect });
       await sendTextReplyWithPresence(socket, remoteJid, `Self-test memory cleared. Send "${selfTestPrefix} hi" to start as a brand-new user.`);
       return;
     }
 
     await answerMessage(socket, remoteJid, selfTestUserId, text);
-    logEvent("replied", { mode: "self-test", to: remoteJid });
+    logEvent("replied", { mode: "self-test" });
   } catch (error) {
-    console.error("Failed to handle self-test message:", error);
-    logEvent("error", { mode: "self-test", message: error.message });
+    console.error("Failed to handle self-test message:", safeErrorDiagnostics(error));
+    logEvent("error", { mode: "self-test", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
       await sendTextReplyWithPresence(socket, remoteJid, "Sorry, something went wrong. Please try again.");
     }
@@ -736,7 +862,7 @@ async function startBaileysClient() {
         pairingCodeRequested = false;
         const message = pairingFailureMessage(error, requestedPhoneNumber);
         notifyDashboard({ type: "worker-error", message });
-        console.error(message);
+        console.error("WhatsApp pairing-code request failed:", safeErrorDiagnostics(error));
         stopWorker();
       }
     }
@@ -754,6 +880,7 @@ async function startBaileysClient() {
       whatsappConnected = true;
       await clearDisconnectAlertOnRecovery();
       notifyDashboard({ type: "connection", connection: "open", phoneNumber: linkedPhone ? `+${linkedPhone}` : "" });
+      void backfillKnownWhatsAppPhoneNumbers(socket);
 
       if (!pairingOnly) {
         void backfillLeadTemperatures();
@@ -773,7 +900,7 @@ async function startBaileysClient() {
 
       console.log("RAFA WhatsApp agent is ready.");
       console.log("Data store: Supabase");
-      console.log(`Auth folder: ${authPath}`);
+      console.log("WhatsApp credentials: local session store");
       console.log(`AI: ${process.env.OPENROUTER_API_KEY ? `enabled (${process.env.OPENROUTER_MODEL || "openrouter/free"})` : "disabled"}`);
       if (!pairingOnly) console.log(`Self-test: send "${selfTestPrefix} hi" from your linked WhatsApp account.`);
       startLocalControlServer();
@@ -798,8 +925,8 @@ async function startBaileysClient() {
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
           startBaileysClient().catch((error) => {
-            console.error("Failed to reconnect WhatsApp:", error);
-            logEvent("connection_error", { message: error.message });
+            console.error("Failed to reconnect WhatsApp:", safeErrorDiagnostics(error));
+            logEvent("connection_error", safeErrorDiagnostics(error));
             notifyDashboard({ type: "worker-error", message: "WhatsApp connection failed while reconnecting." });
           });
         }, 3000);
@@ -811,7 +938,7 @@ async function startBaileysClient() {
             await clearLoggedOutAuth(authPath);
             console.log("WhatsApp logged out; invalid local credentials were cleared for a fresh pairing.");
           } catch (error) {
-            console.error("Could not clear logged-out WhatsApp credentials:", error.message);
+            console.error("Could not clear logged-out WhatsApp credentials:", safeErrorDiagnostics(error));
           }
         }
         if (!stopping && process.env.RAFA_DASHBOARD_MANAGED === "true") {
@@ -853,8 +980,8 @@ if (!pairingOnly) {
 }
 
 startBaileysClient().catch((error) => {
-  console.error("Failed to start RAFA:", error);
-  logEvent("startup_error", { message: error.message });
+  console.error("Failed to start RAFA:", safeErrorDiagnostics(error));
+  logEvent("startup_error", safeErrorDiagnostics(error));
   notifyDashboard({ type: "worker-error", message: "RAFA could not start the WhatsApp worker. Check server configuration." });
   process.exitCode = 1;
 });

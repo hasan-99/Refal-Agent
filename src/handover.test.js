@@ -17,3 +17,23 @@ test("REFAL LEAD SUMMARY is structured and internal-only content is separated", 
   assert.doesNotMatch(handover.messages.customerMessage, /REFAL LEAD SUMMARY|Priority|development_construction/);
   assert.match(handover.messages.internalMessage, /REFAL LEAD SUMMARY/);
 });
+
+test("handover summaries reject greeting/service questions as names", () => {
+  const summary = buildRefalLeadSummary({
+    intent: "investment",
+    customer: { name: "مرحبا، شو خدماتكم" }
+  });
+
+  assert.equal(summary.customer.name, null);
+  assert.match(formatRefalLeadSummary(summary), /Customer: not provided/);
+});
+
+test("structured requirements are safely rendered instead of becoming [object Object]", () => {
+  const summary = buildRefalLeadSummary({
+    intent: "investment",
+    conversation: { requirements: { investment: { country: "Cyprus", sector: "Technology" } } }
+  });
+
+  assert.equal(summary.requirements, "investment.country: Cyprus; investment.sector: Technology");
+  assert.doesNotMatch(formatRefalLeadSummary(summary), /\[object Object\]/);
+});

@@ -2,17 +2,31 @@
   "name": "whatsapp-company-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Local WhatsApp company info bot with per-user JSON storage.",
+  "description": "RAFA WhatsApp agent with Supabase-backed conversations and leads.",
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",
+    "pair:whatsapp": "node scripts/pairWhatsApp.js",
+    "google:calendar:authorize": "node scripts/authorizeGoogleCalendar.js",
     "start:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-bot.ps1",
     "check": "npm test",
     "reset:session": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\reset-session.ps1",
-    "test": "node src/smoke.test.js"
+    "test": "node --test src/smoke.test.js src/ragPolicy.test.js src/responsePolicy.test.js src/safetyPolicy.test.js src/sensitiveData.test.js src/privacyIntent.test.js src/complaintWorkflow.test.js src/conversationMemory.test.js src/conversationRecap.test.js src/messageRouter.test.js src/intent.test.js src/objectionWorkflow.test.js src/reminderScheduler.test.js src/notificationScheduler.test.js src/booking.test.js src/calendarReadiness.test.js src/leadTemperature.test.js src/supabaseStore.history.test.js src/operationalTelemetry.test.js src/followUp.test.js src/handover.test.js src/existingClientWorkflow.test.js src/correctionWorkflow.test.js src/opportunityIntake.test.js src/appointmentDetails.test.js src/aiUsage.test.js src/aiPrivacy.test.js src/language.test.js src/redFlagRules.test.js src/priorityRules.test.js src/supabaseStore.workflow.test.js scripts/authorizeGoogleCalendar.test.js scripts/runConversationBenchmark.test.js scripts/conversationDeepScenarios.test.js scripts/benchmarkCustomerRoleplay.test.js scripts/ragMigration.test.js scripts/evaluateRag.test.js supabase/functions/rafa-agent-api/responsePolicy.test.mjs supabase/functions/rafa-agent-api/handoverPersistence.test.mjs",
+    "eval:knowledge": "node scripts/evaluateKnowledge.js",
+    "eval:conversation": "node scripts/evaluateWhatsappConversation.js",
+    "benchmark:conversations": "node scripts/runConversationBenchmark.js",
+    "benchmark:deep": "node scripts/runDeepConversationBenchmark.js",
+    "index:knowledge": "node scripts/backfillKnowledgeEmbeddings.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.3.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "chrono-node": "^2.10.1",
+    "googleapis": "^174.0.1",
+    "node-cron": "^4.6.0",
+    "nodemailer": "10.0.13",
+    "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.7"
+    "write-excel-file": "^4.1.1"
   }
 }

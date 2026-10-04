@@ -2,13 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { CONSENT_STATES, getFollowUpDecision, runFollowUpCheck, shouldSendFollowUp } = require("./followUp");
 
-function user(overrides = {}) { return { id: "contact-1", history: [{ at: "2026-09-30T00:00:00.000Z", message: "Yes, please follow up", response: "Of course." }], ...overrides }; }
+function user(overrides = {}) { return { id: "contact-1", history: [{ at: "2026-09-30T00:00:00.000Z", message: "Yes, please follow up", response: "Of course.", metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } } }], ...overrides }; }
 
 test("follow-up decision reports consent and timing reasons", () => {
   const now = new Date("2026-10-01T01:00:00.000Z"); const allowed = getFollowUpDecision(user(), now);
   assert.equal(allowed.consent, CONSENT_STATES.GRANTED); assert.equal(allowed.reason, "ready"); assert.equal(allowed.eligible, true);
   assert.equal(getFollowUpDecision({ id: "x", history: [] }, now).reason, "consent_required");
-  assert.equal(getFollowUpDecision(user({ history: [{ at: "2026-10-01T00:30:00Z", message: "Yes", response: "Sure" }] }), now).reason, "not_due");
+  assert.equal(getFollowUpDecision(user({ history: [{ at: "2026-10-01T00:30:00Z", message: "Yes", response: "Sure" }] }), now).reason, "consent_required");
 });
 
 test("opted-out and blocked contacts cannot be sent follow-ups", () => {
