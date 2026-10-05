@@ -103,7 +103,10 @@ const patterns = [
   [INTENTS.LAND_DEVELOPMENT, /land|plot|development|developer|masterplan|أرض|تطوير|مطور|مخطط|οικόπεδο|ανάπτυξη|developer|πολεοδομικό/iu],
   [INTENTS.CONSTRUCTION, /construct|construction|build|building|tender|contractor|مقاول|إنشاءات|إنشاء (?:مبنى|مبانٍ|مشروع|مرافق)|بناء|مناقصة|εργολάβ|κατασκευ|διαγωνισμός/iu],
   [INTENTS.REAL_ESTATE, /real estate|property|properties|apartment|villa|commercial|rent|sell|عقار|عقارات|شقة|فيلا|تجاري|إيجار|بيع|ακίνητ|διαμέρισμα|βίλα|ενοικίαση/iu],
-  [INTENTS.APPOINTMENT, /appointment|meeting|book|schedule|call|visit|availability|موعد|اجتماع|احجز|حجز|اتصال|زيارة|متاح|ραντεβού|συνάντηση|κλείσω|διαθεσιμότητα/iu],
+  // "book"/"call"/"visit" are wrapped in \b so they only match as whole words
+  // (with common inflections) and not as substrings of unrelated words such
+  // as "bookkeeping", "recall", "textbook", or "visitor".
+  [INTENTS.APPOINTMENT, /appointment|meeting|\bbook(?:s|ing|ed)?\b|schedule|\bcall(?:s|ing|ed)?\b|\bvisit(?:s|ing|ed)?\b|availability|موعد|اجتماع|احجز|حجز|اتصال|زيارة|متاح|ραντεβού|συνάντηση|κλείσω|διαθεσιμότητα/iu],
   [INTENTS.CONTACT, /contact|phone|email|where are you|address|reach you|تواصل|هاتف|إيميل|بريد|عنوان|أين|επικοινων|τηλέφων|email|διεύθυνση/iu],
   [INTENTS.CORPORATE_SERVICES, /corporate service|corporate services|business setup|خدمات الشركات|الخدمات المؤسسية|εταιρικές υπηρεσίες/iu],
   [INTENTS.SERVICES, /service|what do you do|what can you help|offer|خدمات|ماذا تقدم|شو بتقدموا|شو بتقدم|بماذا تساعد|υπηρεσί|τι προσφέρετε|τι κάνετε/iu],

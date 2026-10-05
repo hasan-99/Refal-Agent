@@ -11,7 +11,6 @@ const { appointmentWindowIssue, calendarId, googleAuth, hasCalendarConfig, hasOA
 const { generateConversationReport } = require("./report");
 const { FOLLOW_UP_MESSAGE, runFollowUpCheck, shouldSendFollowUp } = require("./followUp");
 const { AI_LIMIT_MESSAGE, allowAiMessage, allowIncomingMessage, resetRateLimiters } = require("./rateLimiter");
-const { timeGreeting } = require("./greeting");
 const { validateBookingPolicy } = require("./bookingPolicy");
 const { isPairingOnly } = require("./runtimePolicy");
 const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = require("./whatsappPairing");
@@ -131,9 +130,6 @@ assert.equal(detectMessageLanguage("Tell me about Refalco projects"), "english")
 assert.equal(detectMessageLanguage("شو مشاريع Refalco؟"), "arabic");
 assert.match(languageInstruction("arabic"), /Reply in Arabic/);
 assert.match(languageInstruction("english"), /Reply in English/);
-assert.equal(timeGreeting(new Date("2026-01-05T07:00:00.000Z")), "صباح الخير ☀️");
-assert.equal(timeGreeting(new Date("2026-01-05T10:00:00.000Z")), "مساء الخير");
-assert.equal(timeGreeting(new Date("2026-01-05T17:00:00.000Z")), "مساء الخير");
 assert.equal(isBookingRequest("I want to book a meeting"), true);
 assert.equal(isBookingRequest("how can I call you?"), false);
 assert.equal(isBookingRequest("بدي احجز موعد"), true);

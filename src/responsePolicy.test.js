@@ -88,6 +88,64 @@ test("response policy rejects unconsented promises of later human contact but al
   assert.equal(validateResponse("I can arrange for a specialist to follow up with you.", { minSentences: 0 }).unconsentedContactCommitment, true);
 });
 
+test("a third-person contact promise and an 'I've asked' contraction are caught, not just first-person 'I/we will' claims", () => {
+  // REFAL-AGENT-008: found via an agent-loop integration test where the
+  // Agent (incorrectly) asserted a handover had already happened after only
+  // an authorization check — this phrasing previously slipped past the
+  // first-person-only pattern.
+  assert.equal(validateResponse("I've asked a specialist to review your case and they will contact you shortly.", { minSentences: 0 }).unconsentedContactCommitment, true);
+  assert.equal(validateResponse("A specialist will contact you shortly.", { minSentences: 0 }).unconsentedContactCommitment, true);
+  assert.equal(validateResponse("The team will contact you about this.", { minSentences: 0 }).unconsentedContactCommitment, true);
+  // A conditional offer phrased in the third person must still be allowed through.
+  assert.equal(validateResponse("Would you like a specialist to contact you about this?", { minSentences: 0 }).unconsentedContactCommitment, false);
+});
+
+test("completed-booking claims require a verified booking, in all three languages and in third-person/contracted forms", () => {
+  // REFAL-AGENT-009: the booking equivalent of the handover gate. Until a
+  // booking tool reports a real persisted success (Tickets 010/017 pass
+  // allowVerifiedBookingClaim), no phrasing of "it is booked" may reach a
+  // customer — including the forms the Ticket 008 fix showed a
+  // first-person-only pattern misses.
+  for (const response of [
+    "I've booked your appointment for Tuesday at 10:30.",
+    "I have scheduled your meeting for Tuesday.",
+    "I'll book the meeting for Tuesday at 10:30.",
+    "Your appointment is booked.",
+    "Your appointment has been confirmed for Tuesday.",
+    "The meeting is now scheduled.",
+    "You're confirmed for Tuesday at 10:30.",
+    "You are booked for Tuesday at 10:30.",
+    "It's confirmed.",
+    "Your slot is reserved for Tuesday.",
+    // The deterministic confirmation formatter's own output: it may only be
+    // delivered by a caller that proved the booking, never by a model draft.
+    "Confirmed. Your meeting is booked for 6 Oct 2026, 10:30. Google Meet: https://meet.google.com/abc-defg-hij",
+    "تم تأكيد الموعد: 6 أكتوبر 2026، 10:30 ص.",
+    "موعدك مؤكد يوم الثلاثاء.",
+    "رح احجزلك الموعد يوم الثلاثاء.",
+    "Το ραντεβού σας επιβεβαιώθηκε για την Τρίτη.",
+    "Έκλεισα το ραντεβού σας για την Τρίτη."
+  ]) {
+    assert.ok(validateResponse(response, { minSentences: 0 }).reasons.includes("unverified_booking_action"), response);
+    assert.equal(validateResponse(response, { minSentences: 0, allowVerifiedBookingClaim: true }).unverifiedBookingAction, false, response);
+  }
+
+  // Offers, questions and the existing deterministic booking copy must still pass.
+  for (const response of [
+    "Would you like me to book an appointment for you?",
+    "I can check whether that time is free for a meeting.",
+    "I found that time available: 6 Oct 2026, 10:30 for 30 minutes. Reply yes to confirm or no to choose another time.",
+    "Your appointment request has been sent for review.",
+    "That time is no longer available. Please choose another time.",
+    "Your Refalco appointment has been cancelled.",
+    "الموعد متاح: 6 أكتوبر 2026 لمدة 30 دقيقة. أجب بنعم للتأكيد أو لا لاختيار وقت آخر.",
+    "تم إرسال طلب الموعد للمراجعة.",
+    "تم إلغاء موعدك مع ريفالكو.",
+    "Θα θέλατε να κλείσουμε ένα ραντεβού;",
+    "Το ραντεβού σας ακυρώθηκε."
+  ]) assert.equal(validateResponse(response, { minSentences: 0 }).unverifiedBookingAction, false, response);
+});
+
 test("request-recording claims require verified handover state", () => {
   for (const response of [
     "I’ll note your interest for a specialist follow-up.",

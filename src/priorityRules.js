@@ -1,12 +1,18 @@
+// Several English alternatives below ("media", "press", "land", "my account",
+// "my contract") used to be bare words/phrases that matched any mention,
+// not just the complaint/account/development context they were meant to
+// detect (e.g. "What social media accounts does REFALCO have?" falsely
+// triggered an urgent severe_complaint). Each now requires the qualifying
+// context it was actually meant to catch.
 const TRIGGERS = Object.freeze({
   urgent: [
     ["safety_or_threat", /\b(threat|unsafe|danger|injury|police|fraud|scam|stolen|data breach|immediately)\b|تهديد|خطر|احتيال|سرقة|شرطة|عاجل/iu],
-    ["severe_complaint", /\b(lawsuit|lawyer|regulator|formal complaint|media|press)\b|محامي|شكوى رسمية|إعلام|صحافة/iu]
+    ["severe_complaint", /\b(lawsuit|lawyer|regulator|formal complaint)\b|\b(?:media|press)\s+enquiry\b|\bjournalist(?:s)?\b|محامي|شكوى رسمية|إعلام|صحافة/iu]
   ],
   high: [
     ["complaint", /\b(complaint|complain|unhappy|dissatisfied|bad service|problem with your service)\b|شكوى|غير راض|مشكلة بالخدمة|παράπονο|δυσαρεστη/iu],
-    ["existing_client", /\b(existing|current) client|already a client|my account|my contract|\bmy case\s+(?:status|reference|number|was submitted|already exists)\b|عميل حالي|حسابي|ملفي|عقدي|πελάτης|λογαριασμό μου/iu],
-    ["material_business_opportunity", /\b(land|development|construction tender|institutional investor|family office|large investment|strategic partnership|major developer|corporate expansion)\b|أرض|تطوير|مناقصة|مستثمر مؤسسي|شراكة استراتيجية|επένδυση|ανάπτυξη/iu],
+    ["existing_client", /\b(?:existing|current)\s+client\b|\balready a client\b|\bmy\s+account\s+(?:status|issue|problem)\b|\bmy\s+contract\s+(?:status|issue|problem)\b|\bmy case\s+(?:status|reference|number|was submitted|already exists)\b|عميل حالي|حسابي|ملفي|عقدي|πελάτης|λογαριασμό μου/iu],
+    ["material_business_opportunity", /\bland\s+(?:development|deal|acquisition|parcel)\b|\b(?:development|construction tender|institutional investor|family office|large investment|strategic partnership|major developer|corporate expansion)\b|أرض|تطوير|مناقصة|مستثمر مؤسسي|شراكة استراتيجية|επένδυση|ανάπτυξη/iu],
     ["sensitive_or_complex", /\b(legal|tax|immigration|visa|permit|license|bank approval|residency)\b|قانوني|ضريبة|هجرة|تأشيرة|تصريح|ترخيص|φορολογ|μετανάστε/iu]
   ]
 });

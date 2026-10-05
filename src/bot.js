@@ -32,6 +32,7 @@ const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = 
 const { buildConversationContext, refreshCustomerTopicSummary } = require("./conversationMemory");
 const { buildLocalConversationRecap } = require("./conversationRecap");
 const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTelemetry");
+const { runShadowAgentTurn } = require("./agentShadow");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -274,6 +275,10 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
   stageStartedAt = performance.now();
   const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
   stage("normalize_classify_prepare", stageStartedAt, { intentCount: prepared.classification.intents.length, language: prepared.classification.language });
+  // REFAL-AGENT-010 — shadow-only: off by default (REFAL_AGENT_SHADOW_ENABLED),
+  // fire-and-forget, never awaited by the live reply path, and never allowed
+  // to change `response`/`routed` below. See src/agentShadow.js.
+  void runShadowAgentTurn({ userId, text, user, store, classification: prepared.classification, traceId, logEvent }).catch(() => {});
   const bookingStartedAt = performance.now();
   // Regulated and privacy-risk messages must reach the safety router first;
   // the booking parser can otherwise persist raw sensitive details.

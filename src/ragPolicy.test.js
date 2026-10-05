@@ -741,3 +741,60 @@ test("chat does not call a fallback model after the free daily quota is exhauste
   await assert.rejects(askOpenRouter({ text: "What does Refalco do?", evidence: [evidenceFixture] }), /free-models-per-day/);
   assert.equal(attempts, 1);
 });
+
+test("a content-policy rejection from the primary model gets one retry on the configured fallback model", async (t) => {
+  const originalFetch = global.fetch;
+  const env = Object.fromEntries(["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODEL"].map((key) => [key, process.env[key]]));
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.OPENROUTER_MODEL = "primary/test";
+  process.env.OPENROUTER_FALLBACK_MODEL = "fallback/test";
+  const requestedModels = [];
+  global.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    requestedModels.push(body.model);
+    if (body.model === "primary/test") {
+      // No terminal punctuation -> rejected as an unfinished sentence (a
+      // content-policy rejection, not a transport/provider failure).
+      return { ok: true, json: async () => ({ choices: [{ message: { content: "Refalco can help you set up a company in Cyprus" } }] }) };
+    }
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "Refalco can help you set up a company in Cyprus." } }] }) };
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  const answer = await askOpenRouter({ text: "Can you help me set up a company in Cyprus?", evidence: [evidenceFixture], includeSources: false });
+  assert.deepEqual(requestedModels, ["primary/test", "fallback/test"]);
+  assert.equal(answer, "Refalco can help you set up a company in Cyprus.");
+});
+
+test("a transport/provider error that is not a content-policy rejection still gives up without trying a different model", async (t) => {
+  // Regression guard for REFAL-AGENT-012: the fix only widens retry to
+  // content-policy rejections. A provider-side failure that is neither
+  // retryable (per isRetryableModelError) nor a content-policy rejection
+  // must still fail fast, exactly like the existing free-daily-quota case
+  // above, even when a distinct fallback model is configured.
+  const originalFetch = global.fetch;
+  const env = Object.fromEntries(["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODEL"].map((key) => [key, process.env[key]]));
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.OPENROUTER_MODEL = "primary/test";
+  process.env.OPENROUTER_FALLBACK_MODEL = "fallback/test";
+  let attempts = 0;
+  global.fetch = async () => {
+    attempts += 1;
+    return { ok: true, json: async () => ({ error: { code: "some-fatal-code", message: "Not retryable and not content policy" } }) };
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  await assert.rejects(askOpenRouter({ text: "What does Refalco do?", evidence: [evidenceFixture] }), /Not retryable and not content policy/);
+  assert.equal(attempts, 1);
+});

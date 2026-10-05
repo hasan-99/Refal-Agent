@@ -213,3 +213,25 @@ test("declining or deferring a meeting removes appointment-request intent", () =
     assert.ok(!result.intents.includes(INTENTS.APPOINTMENT), text);
   }
 });
+
+test("appointment detection requires a whole word, not a substring of an unrelated word", () => {
+  for (const text of [
+    "I recall we spoke about VAT last year, is that discount still available?",
+    "Do you offer bookkeeping or VAT services?",
+    "What is the best textbook on Cyprus tax law?",
+    "How many visitors does the website get?"
+  ]) {
+    assert.ok(!detectIntent(text).intents.includes(INTENTS.APPOINTMENT), text);
+  }
+});
+
+test("appointment detection still matches real book/call/visit requests", () => {
+  for (const text of [
+    "I would like to book a meeting with you",
+    "I'd like to book an appointment for next week",
+    "Can you call me tomorrow?",
+    "I would like to visit your office"
+  ]) {
+    assert.ok(detectIntent(text).intents.includes(INTENTS.APPOINTMENT), text);
+  }
+});

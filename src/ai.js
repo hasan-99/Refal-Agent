@@ -77,6 +77,17 @@ async function embedText(text, pipelineFactory) {
   return toSupabaseVector(output.data);
 }
 
+// A content-policy rejection (the model answered, but the deterministic
+// checks below rejected the draft) is different from a transport/provider
+// failure: a different configured model may well produce a compliant answer
+// from the same evidence, so these are tagged to let the retry loop below
+// try the next distinct model once, instead of giving up immediately.
+function contentPolicyError(message) {
+  const error = new Error(message);
+  error.contentPolicy = true;
+  return error;
+}
+
 async function askOpenRouter({ text, evidence, onUsage, includeSources = true, conversationSummary = "", conversationTurns = [] }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey || !Array.isArray(evidence) || evidence.length === 0) return null;
@@ -211,33 +222,37 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     if (!answer) {
       const finishReason = String(body?.choices?.[0]?.finish_reason || "unknown").slice(0, 40);
       const refusal = typeof body?.choices?.[0]?.message?.refusal === "string" ? "refusal" : "no_text";
-      throw new Error(`OpenRouter returned no customer-facing answer (finish_reason=${finishReason}, ${refusal}, model=${usage.model}).`);
+      throw contentPolicyError(`OpenRouter returned no customer-facing answer (finish_reason=${finishReason}, ${refusal}, model=${usage.model}).`);
     }
-    if (answer.length > 8 && detectMessageLanguage(answer) !== language) throw new Error("OpenRouter returned an answer in the wrong customer language.");
-      if (containsLegacyBrandHistory(answer) && !customerAskedAboutLegacyBrand(text, conversationTurns)) throw new Error("OpenRouter introduced unrequested legacy brand history.");
-      if (containsProhibitedClaim(answer)) throw new Error("OpenRouter returned restricted legal or financial content.");
-      if (!allowPricing && containsPriceClaim(answer)) throw new Error("OpenRouter returned an unsolicited price or package claim.");
-      if (containsUnsupportedPackageInclusion(answer, promptEvidence)) throw new Error("OpenRouter linked separately described services to the priced package without evidence.");
-    if (/https?:\/\//i.test(answer)) throw new Error("OpenRouter returned an unverified citation.");
+    if (answer.length > 8 && detectMessageLanguage(answer) !== language) throw contentPolicyError("OpenRouter returned an answer in the wrong customer language.");
+      if (containsLegacyBrandHistory(answer) && !customerAskedAboutLegacyBrand(text, conversationTurns)) throw contentPolicyError("OpenRouter introduced unrequested legacy brand history.");
+      if (containsProhibitedClaim(answer)) throw contentPolicyError("OpenRouter returned restricted legal or financial content.");
+      if (!allowPricing && containsPriceClaim(answer)) throw contentPolicyError("OpenRouter returned an unsolicited price or package claim.");
+      if (containsUnsupportedPackageInclusion(answer, promptEvidence)) throw contentPolicyError("OpenRouter linked separately described services to the priced package without evidence.");
+    if (/https?:\/\//i.test(answer)) throw contentPolicyError("OpenRouter returned an unverified citation.");
     const responsePolicy = validateResponse(answer, { minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 500 });
     if (!responsePolicy.valid) {
-      if (responsePolicy.reasons.includes("too_long")) throw new Error("OpenRouter returned an overlong answer.");
-      if (responsePolicy.reasons.includes("too_many_questions")) throw new Error("OpenRouter returned too many questions.");
-      throw new Error(`OpenRouter response policy failed: ${responsePolicy.reasons.join(",")}`);
+      if (responsePolicy.reasons.includes("too_long")) throw contentPolicyError("OpenRouter returned an overlong answer.");
+      if (responsePolicy.reasons.includes("too_many_questions")) throw contentPolicyError("OpenRouter returned too many questions.");
+      throw contentPolicyError(`OpenRouter response policy failed: ${responsePolicy.reasons.join(",")}`);
     }
     const hasTerminalPunctuation = /[.!?؟。！？]["'”»)]*$/u.test(answer) || /\p{Script=Greek};["'”»)]*$/u.test(answer);
-    if (!hasTerminalPunctuation) throw new Error("OpenRouter returned an unfinished sentence.");
+    if (!hasTerminalPunctuation) throw contentPolicyError("OpenRouter returned an unfinished sentence.");
     if (/\b(?:the user (?:is asking|asks|wants)|i need to (?:answer|respond)|let me (?:check|think|review)|my (?:reasoning|analysis)|chain[- ]of[- ]thought|first,? i (?:need|should|will)|we need to answer)\b/i.test(answer)) {
-      throw new Error("OpenRouter returned internal reasoning text.");
+      throw contentPolicyError("OpenRouter returned internal reasoning text.");
     }
     answer = suppressRepeatedSpecialistOffer(answer, { text, conversationTurns });
-    if (answer.length > 500) throw new Error("OpenRouter returned an overlong answer.");
+    if (answer.length > 500) throw contentPolicyError("OpenRouter returned an overlong answer.");
     const sourceLinks = [...new Map(promptEvidence.slice(0, 3).map((item) => [item.source_url, item])).values()]
       .map((item) => `${item.source_name}: ${item.source_url}`);
     return includeSources ? `${answer}\n\nSources: ${sourceLinks.join(" | ")}` : answer;
     } catch (error) {
       lastError = error;
-      if (!isRetryableModelError(error)) break;
+      // A content-policy rejection gets one attempt on the next distinct
+      // configured model (the `models` list is already de-duplicated above);
+      // only a genuine non-retryable transport/provider error gives up
+      // immediately without trying the fallback model.
+      if (!isRetryableModelError(error) && !error.contentPolicy) break;
     } finally {
       clearTimeout(timeout);
     }

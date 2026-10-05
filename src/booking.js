@@ -804,6 +804,9 @@ function calendarAccessFailure(language) {
 
 module.exports = {
   bookingPrompt,
+  bookingConfirmationMessage,
+  createBookingEvent,
+  isAvailable,
   formatBookingTime,
   handleBookingMessage,
   hasCalendarConfig,
