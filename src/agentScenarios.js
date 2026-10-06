@@ -191,7 +191,10 @@ SCENARIOS.push({
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: "Refalco services" } },
       { type: "respond", text: "Refalco provides company formation, accounting, and tax filing services in Cyprus." }
     ],
-    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "..." }] } }
+    // REFAL-AGENT-028: real matching content (not a bare placeholder) — the
+    // new factual-grounding gate in agentLoop.js checks the scripted
+    // "respond" text's claimed services against this evidence.
+    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "Refalco provides company formation, accounting, and tax filing services in Cyprus." }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["proposeHandover", "requestBookingAction"], ragUsed: true, maxQuestions: 0, fallbackUsed: false, languageMismatch: false }
 });

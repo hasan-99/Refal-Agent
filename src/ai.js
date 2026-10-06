@@ -15,6 +15,17 @@ const {
 } = require("./openrouterPrivacy");
 const { redactSensitiveData } = require("./sensitiveData");
 const { fetchOpenRouter } = require("./openrouterTransport");
+// REFAL-AGENT-028: these five were defined inline in this file before this
+// ticket; moved to groundingPolicy.js (unchanged behavior) so the Agent path
+// can share them too, without duplicating logic that could drift apart.
+const {
+  containsPriceClaim,
+  withoutPriceFacts,
+  containsUnsupportedPackageInclusion,
+  containsLegacyBrandHistory,
+  customerAskedAboutLegacyBrand,
+  containsRawUrlClaim
+} = require("./groundingPolicy");
 
 let embeddingPipelinePromise;
 
@@ -231,7 +242,7 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
       if (containsProhibitedClaim(answer)) throw contentPolicyError("OpenRouter returned restricted legal or financial content.");
       if (!allowPricing && containsPriceClaim(answer)) throw contentPolicyError("OpenRouter returned an unsolicited price or package claim.");
       if (containsUnsupportedPackageInclusion(answer, promptEvidence)) throw contentPolicyError("OpenRouter linked separately described services to the priced package without evidence.");
-    if (/https?:\/\//i.test(answer)) throw contentPolicyError("OpenRouter returned an unverified citation.");
+    if (containsRawUrlClaim(answer)) throw contentPolicyError("OpenRouter returned an unverified citation.");
     // REFAL-AGENT-011: single shared threshold preset (responsePolicy.js),
     // and the internal-reasoning detection itself now lives only in
     // responsePolicy.js's INTERNAL_REASONING_PATTERNS (previously duplicated
@@ -279,60 +290,6 @@ function suppressRepeatedSpecialistOffer(answer, { text = "", conversationTurns 
     .filter((sentence) => !SPECIALIST_OFFER_RE.test(sentence.trim()));
   const result = retained.join(" ").trim();
   return result || answer;
-}
-
-function customerAskedAboutLegacyBrand(text, conversationTurns = []) {
-  if (containsLegacyBrandHistory(text)) return true;
-  return Array.isArray(conversationTurns) && conversationTurns.some((turn) =>
-    turn?.role === "user" && containsLegacyBrandHistory(turn.content)
-  );
-}
-
-function containsLegacyBrandHistory(text) {
-  return /\b(?:lamar|legacy|former(?:ly)?|previous(?:ly)?)\b|لامار|(?:السابقة|سابقًا|سابقا)|(?:πρώην|παλαιότερ)/iu.test(String(text || ""));
-}
-
-const PRICE_FACT = /(?:[$€£]\s?[\d٠-٩]|\b[\d٠-٩][\d,.]*\s?(?:eur|euros?|dollars?|pounds?)\b|\b(?:price|fee|package|costs?|charges?)\b.{0,35}\b\d|\b\d.{0,25}\b(?:price|fee|package|costs?|charges?)\b|(?:السعر|رسوم|باقة|تكلفة|يكلف|تكلف).{0,35}[\d٠-٩]|[\d٠-٩].{0,25}(?:يورو|دولار|جنيه)|(?:τιμή|κόστος|πακέτο|κοστίζει).{0,35}\d|\d.{0,25}(?:ευρώ|τιμή|κόστος))/iu;
-
-function containsPriceClaim(text) {
-  return PRICE_FACT.test(String(text || ""));
-}
-
-function containsUnsupportedPackageInclusion(answer, evidence = []) {
-  const sentences = String(answer || "").split(/(?<=[.!?؟;；])\s+/u);
-  const packageLink = /\b(?:package|plan|fee|price)\b[^.!?؟;；]{0,80}\b(?:includes?|covers?|contains?|comes with|provides?)\b|\b(?:includes?|covers?|contains?|comes with)\b[^.!?؟;；]{0,80}\b(?:package|plan)\b|(?:πακέτ|πακέτο)[^.!?؟;；]{0,80}(?:περιλαμβάν|καλύπτ)|(?:περιλαμβάν|καλύπτ)[^.!?؟;；]{0,80}(?:πακέτ|πακέτο)|(?:باقة|الباقة)[^.!?؟;；]{0,80}(?:تشمل|تتضمن|تغطي)|(?:تشمل|تتضمن|تغطي)[^.!?؟;；]{0,80}(?:باقة|الباقة)/iu;
-  const separatelyDescribedServices = [
-    /(?:incorporation )?documents?|document preparation|submission/iu,
-    /(?:listed )?(?:company )?(?:incorporation|formation|setup) support|incorporation assistance|company formation service/iu,
-    /name reservation|reserving (?:a |the )?(?:company )?name/iu,
-    /application follow.?up|remote assistance/iu,
-    /κατάθεση εγγράφ|προετοιμασία εγγράφ|δέσμευση ονόματος|παρακολούθηση της αίτησης/iu,
-    /إعداد المستندات|تقديم المستندات|حجز الاسم|متابعة الطلب/iu,
-    /(?:all|any|government|annual|filing|registration)\s+(?:fees|costs|charges)|bank[- ]account setup|licen[cs]e(?:s| fees)?/iu,
-    /جميع الرسوم|الرسوم الحكومية|الرسوم السنوية|رسوم التسجيل|فتح حساب بنكي|التراخيص/iu,
-    /όλα τα τέλη|κρατικά τέλη|ετήσιες χρεώσεις|τέλη εγγραφής|άνοιγμα τραπεζικού λογαριασμού|άδειες/iu
-  ];
-  const sourceSentences = evidence.flatMap((item) => String(item?.content || "").split(/(?<=[.!?؟;；])\s+/u));
-  return sentences.some((sentence) => {
-    if (/[?؟]/u.test(sentence)) return false;
-    if (!packageLink.test(sentence) || !separatelyDescribedServices.some((pattern) => pattern.test(sentence))) return false;
-    return separatelyDescribedServices.some((servicePattern) => {
-      const match = servicePattern.exec(sentence);
-      if (!match) return false;
-      const nearby = sentence.slice(Math.max(0, match.index - 28), match.index);
-      if (/(?:\b(?:not|no|without|doesn't|does not|isn't|aren't)\b|δεν|χωρίς|μην|لا|ليس|بدون)\s*[^,;]{0,20}$/iu.test(nearby)) return false;
-      return !sourceSentences.some((source) => packageLink.test(source) && servicePattern.test(source));
-    });
-  });
-}
-
-function withoutPriceFacts(evidence) {
-  if (!Array.isArray(evidence)) return [];
-  return evidence.map((item) => {
-    const content = String(item?.content || "");
-    const safeContent = content.split(/(?<=[.!?؟])\s+/u).filter((sentence) => !PRICE_FACT.test(sentence)).join(" ").trim();
-    return { ...item, content: safeContent };
-  }).filter((item) => item.content);
 }
 
 function normalizeOpenRouterUsage(body, requestedModel) {

@@ -47,6 +47,33 @@ test("tool call logs tool name/status but never raw args or result data (test 2)
   assert.doesNotMatch(serialized, /Company formation price/);
 });
 
+test("REFAL-AGENT-027: a tool result's modelObservation (real approved-knowledge evidence content) never reaches telemetry", () => {
+  const resultWithRealEvidence = respondedResult({
+    steps: [{
+      step: 1,
+      tool: "searchApprovedKnowledge",
+      args: { query: "Refalco services" },
+      result: {
+        ok: true,
+        status: "found",
+        userSafeSummary: ["REFALCO Services"],
+        modelObservation: {
+          type: "approved_knowledge",
+          status: "found",
+          evidence: [{ title: "REFALCO Services", section: "Accounting", content: "REFALCO provides Company Formation, Accounting, VAT Registration and Payroll services — SECRET-CHUNK-MARKER.", contentTruncated: false, sourceRef: "chunk-services-1" }],
+          truncated: false
+        }
+      }
+    }]
+  });
+  const summary = summarizeAgentTurn(resultWithRealEvidence);
+  const fields = buildAgentTurnEventFields({ result: resultWithRealEvidence, traceId: "t1", locale: "english", primaryIntentCategory: "information" });
+  assert.deepEqual(summary.toolCalls, [{ tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null }]);
+  assert.equal(JSON.stringify(summary).includes("SECRET-CHUNK-MARKER"), false);
+  assert.equal(JSON.stringify(fields).includes("SECRET-CHUNK-MARKER"), false);
+  assert.equal(JSON.stringify(fields).includes("chunk-services-1"), false);
+});
+
 test("RAG use logs status/count but not chunk contents; a failed search is also categorized safely (test 3)", () => {
   const found = summarizeAgentTurn(respondedResult());
   assert.equal(found.ragUsed, true);

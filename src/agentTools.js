@@ -20,12 +20,81 @@ function isPlainString(value) {
 // --- searchApprovedKnowledge -------------------------------------------------
 // Wraps the existing embed + knowledge-search path (src/ai.js embedText,
 // store.searchKnowledge). Approval/freshness/review-status filtering happens
-// server-side in the Edge Function, unchanged by this tool.
+// server-side in the Edge Function/RPC (rafa_hybrid_search_knowledge /
+// rafa_search_knowledge: `s.enabled and s.approved and d.review_status =
+// 'approved'`, plus freshness), unchanged by this tool — this file never
+// re-implements or loosens that filter, and a model-supplied argument can
+// never select an unapproved/disabled/non-current row (the model never sees
+// a document id to ask for one by).
+
+// REFAL-AGENT-027 — explicit, bounded, model-safe evidence surface. This is
+// the ONE place that decides what approved-knowledge content is safe/useful
+// for the Agent decision model to see; agentDecision.js only ever reads this
+// field (`modelObservation`), never a tool's raw `data`. Reused for every
+// outcome (found/no_evidence/error) so the decision formatter has one
+// uniform shape to look for regardless of status.
+const MAX_RAG_EVIDENCE_ITEMS = 4;
+const MAX_RAG_EVIDENCE_CONTENT_CHARS = 500;
+const MAX_RAG_EVIDENCE_TOTAL_CHARS = 1600;
+const MAX_RAG_EVIDENCE_TITLE_CHARS = 160;
+const MAX_RAG_EVIDENCE_SECTION_CHARS = 160;
+const MAX_RAG_EVIDENCE_SOURCE_REF_CHARS = 80;
+
+function safeField(value, max) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+}
+
+// Builds the explicit "approved_knowledge" model observation from already
+// trust-filtered search rows. Deliberately does NOT run the customer-input
+// style `redactSensitiveData` label-proximity redaction on this content:
+// Ticket 011 already found (and documented) that those patterns flag the
+// mere MENTION of a credential type, which is the correct failure mode for
+// untrusted customer input but would wrongly mangle genuine approved company
+// content (e.g. "bank account details for a wire transfer", "IBAN format
+// guidance") that has already been through human review/approval. The trust
+// boundary here is the existing `review_status = 'approved'` filter, not a
+// second text scrub.
+function buildApprovedKnowledgeObservation(status, rows = []) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const evidence = [];
+  let totalContentChars = 0;
+  let truncated = safeRows.length > MAX_RAG_EVIDENCE_ITEMS;
+
+  for (const row of safeRows) {
+    if (evidence.length >= MAX_RAG_EVIDENCE_ITEMS) {
+      truncated = true;
+      break;
+    }
+    const rawContent = String(row?.content || row?.heading || row?.source_name || "").trim();
+    if (!rawContent) continue;
+    const remainingBudget = MAX_RAG_EVIDENCE_TOTAL_CHARS - totalContentChars;
+    if (remainingBudget <= 0) {
+      truncated = true;
+      break;
+    }
+    const perItemLimit = Math.min(MAX_RAG_EVIDENCE_CONTENT_CHARS, remainingBudget);
+    const content = rawContent.slice(0, perItemLimit);
+    const contentTruncated = rawContent.length > content.length;
+    totalContentChars += content.length;
+    evidence.push({
+      title: safeField(row?.document_title || row?.source_name, MAX_RAG_EVIDENCE_TITLE_CHARS) || "Approved information",
+      section: safeField(row?.heading, MAX_RAG_EVIDENCE_SECTION_CHARS),
+      content,
+      contentTruncated,
+      // Opaque chunk/document identifiers only (never a reviewer name,
+      // approval timestamp, or other workflow metadata) — safe for internal
+      // source traceability, never customer/profile data.
+      sourceRef: safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS)
+    });
+  }
+
+  return { type: "approved_knowledge", status, evidence, truncated };
+}
 
 async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6 } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
-  if (!query) return fail("invalid_input", "QUERY_REQUIRED");
-  if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE");
+  if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
+  if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
 
   let embedding = null;
   try {
@@ -40,16 +109,16 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   try {
     results = await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount);
   } catch (error) {
-    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200) });
+    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
   }
 
   const evidence = Array.isArray(results) ? results : [];
   if (evidence.length === 0) {
-    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question." });
+    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
   }
 
   const userSafeSummary = evidence.slice(0, matchCount).map((item) => String(item?.heading || item?.source_name || "Approved information").slice(0, 120));
-  return ok("found", evidence, { userSafeSummary });
+  return ok("found", evidence, { userSafeSummary, modelObservation: buildApprovedKnowledgeObservation("found", evidence) });
 }
 
 // --- getCustomerContext ------------------------------------------------------
@@ -174,5 +243,9 @@ module.exports = {
   saveCustomerFact,
   proposeHandover,
   getBookingAvailability,
-  requestBookingAction
+  requestBookingAction,
+  buildApprovedKnowledgeObservation,
+  MAX_RAG_EVIDENCE_ITEMS,
+  MAX_RAG_EVIDENCE_CONTENT_CHARS,
+  MAX_RAG_EVIDENCE_TOTAL_CHARS
 };

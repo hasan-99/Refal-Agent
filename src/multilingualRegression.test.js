@@ -101,7 +101,19 @@ test("[014-1] simple information request: RAG used, no booking/handover, <=1 que
     greek: { msg: "Ποιες υπηρεσίες προσφέρει η Refalco;", answer: "Η Refalco προσφέρει υπηρεσίες σύστασης εταιρειών, λογιστικής και φορολογικών δηλώσεων στην Κύπρο." }
   };
   for (const [locale, { msg, answer }] of Object.entries(CASES)) {
-    const tools = { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [{ heading: "Services", content: "..." }] }) } };
+    // REFAL-AGENT-028: the new factual-grounding gate reads ONLY
+    // `modelObservation` (never raw `data`) — the stub's evidence content is
+    // the same text as `answer` so the claimed services are grounded.
+    const tools = {
+      searchApprovedKnowledge: {
+        run: async () => ({
+          ok: true,
+          status: "found",
+          data: [{ heading: "Services", content: answer }],
+          modelObservation: { type: "approved_knowledge", status: "found", evidence: [{ title: "Services", section: null, content: answer, contentTruncated: false, sourceRef: null }], truncated: false }
+        })
+      }
+    };
     const decide = scriptedDecider([
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: msg } },
       { type: "respond", text: answer }
@@ -125,7 +137,18 @@ test("[014-2] price-only question: RAG used, price-focused answer, no forced qua
     greek: { msg: "Πόσο κοστίζει η σύσταση εταιρείας;", answer: "Η σύσταση εταιρείας στην Κύπρο κοστίζει 1500 ευρώ, συμπεριλαμβανομένης της καταχώρισης." }
   };
   for (const [locale, { msg, answer }] of Object.entries(CASES)) {
-    const tools = { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [{ heading: "Pricing", content: "EUR 1500" }] }) } };
+    // REFAL-AGENT-028: modelObservation added (price "1500" must be
+    // present on the evidence the grounding gate actually reads).
+    const tools = {
+      searchApprovedKnowledge: {
+        run: async () => ({
+          ok: true,
+          status: "found",
+          data: [{ heading: "Pricing", content: "EUR 1500" }],
+          modelObservation: { type: "approved_knowledge", status: "found", evidence: [{ title: "Pricing", section: null, content: "EUR 1500", contentTruncated: false, sourceRef: null }], truncated: false }
+        })
+      }
+    };
     const decide = scriptedDecider([
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: msg } },
       { type: "respond", text: answer }

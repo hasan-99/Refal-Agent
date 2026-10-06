@@ -9,6 +9,12 @@
 // the codebase, before it is allowed to leave this function.
 
 const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS } = require("./responsePolicy");
+// REFAL-AGENT-028: deterministic factual-grounding gate, additive to the
+// existing responsePolicy check below — never a replacement for it. Checked
+// only once the ordinary policy check already passed, so every existing
+// rejection reason/path is untouched; this can only add a NEW rejection
+// reason, never remove one.
+const { validateFactualGrounding, collectApprovedKnowledgeEvidence } = require("./groundingPolicy");
 
 const DEFAULT_MAX_STEPS = 4;
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -82,6 +88,26 @@ function policyRejectionObservation(step, decisionType, policy) {
   };
 }
 
+// REFAL-AGENT-028 — runs the existing responsePolicy check first, unchanged;
+// only if that already passes does it additionally run the deterministic
+// factual-grounding check against the evidence this turn's tool calls
+// actually surfaced (Ticket 027's modelObservation channel, never a tool's
+// raw `data`). A grounding failure is folded into the same `{valid, text,
+// reasons}` shape validateResponse already returns, so every downstream
+// consumer (attemptDeterministicCorrection, policyRejectionObservation, the
+// retry/fallback branching below) needs no special-casing: grounding
+// reasons never equal "too_many_questions", so a grounding rejection is
+// never mistaken for one the mechanical correction knows how to fix — it
+// only ever goes through retry-then-fallback, never a silent text edit.
+function checkDraftPolicy(text, thresholds, observations) {
+  const policy = validateResponse(text, thresholds);
+  if (!policy.valid) return policy;
+  const evidenceItems = collectApprovedKnowledgeEvidence(observations);
+  const grounding = validateFactualGrounding(text, { evidenceItems });
+  if (grounding.valid) return policy;
+  return { ...policy, valid: false, reasons: grounding.reasons };
+}
+
 // deps:
 //   decideNextStep({ context, observations, step }) -> a raw, untrusted decision object (model-driven)
 //   tools: { [name]: { run(args, toolContext) } }       -- the deterministic tool registry
@@ -136,7 +162,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
 
     if (validated.type === "respond") {
       const thresholds = MODEL_DRAFT_THRESHOLDS;
-      const policy = validateResponse(validated.text, thresholds);
+      const policy = checkDraftPolicy(validated.text, thresholds, observations);
       if (!policy.valid) {
         const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds);
         if (corrected) {
@@ -162,7 +188,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     // clarify: at most one question, no minimum length requirement — a short
     // single clarifying question is exactly what this path is for.
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
-    const policy = validateResponse(validated.text, clarifyThresholds);
+    const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations);
     if (!policy.valid) {
       const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds);
       if (corrected) {

@@ -39,7 +39,25 @@ test("a tool call is executed, observed, and the loop continues for a second dec
   let searchArgs = null;
   const tools = {
     searchApprovedKnowledge: {
-      run: async (args) => { searchArgs = args; return { ok: true, status: "found", data: [{ heading: "Company formation price", content: "EUR 1500" }] }; }
+      run: async (args) => {
+        searchArgs = args;
+        return {
+          ok: true,
+          status: "found",
+          data: [{ heading: "Company formation price", content: "EUR 1500" }],
+          // REFAL-AGENT-028: the factual-grounding check reads ONLY
+          // `modelObservation` (Ticket 027's bounded, approval-filtered
+          // surface), never raw `data` — this stub must set it too, matching
+          // the real searchApprovedKnowledge tool's shape, for the "EUR
+          // 1500" respond text below to be grounded.
+          modelObservation: {
+            type: "approved_knowledge",
+            status: "found",
+            evidence: [{ title: "Company formation price", section: null, content: "EUR 1500", contentTruncated: false, sourceRef: null }],
+            truncated: false
+          }
+        };
+      }
     }
   };
   const decide = scriptedDecider([
@@ -95,14 +113,19 @@ test("a respond draft with too many questions is mechanically corrected to the f
 
 test("a rejection that can't be mechanically corrected (e.g. too long) gets one retried decision instead of an immediate generic fallback", async () => {
   const overlong = `This is a single overlong sentence without any question mark that just keeps going on and on ${"and on ".repeat(70)}until it exceeds the character limit the deterministic response policy enforces.`;
+  // REFAL-AGENT-028: this second draft is deliberately a claim-free
+  // sentence (no price/numeric/brand claim) — this test has no tool call and
+  // no evidence anywhere, so it is proving retry-after-too-long recovery,
+  // not factual grounding; a price number here would now (correctly) be
+  // rejected as unsupported, which is a different test's job.
   const decide = scriptedDecider([
     { type: "respond", text: overlong },
-    { type: "respond", text: "Company formation is published at EUR 1500." }
+    { type: "respond", text: "I can help you get started with company formation whenever you're ready." }
   ]);
   const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools: {} });
   assert.equal(result.outcome, "responded");
   assert.equal(result.corrected, undefined);
-  assert.equal(result.response, "Company formation is published at EUR 1500.");
+  assert.equal(result.response, "I can help you get started with company formation whenever you're ready.");
   assert.equal(result.stepCount, 2);
   assert.equal(result.steps.length, 1);
   assert.equal(result.steps[0].tool, "responsePolicyCheck");
