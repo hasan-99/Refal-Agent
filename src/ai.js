@@ -176,6 +176,7 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
               languageInstruction(language),
               "If the customer explicitly requests a reply language, use the requested language even when the request sentence itself is written in another language.",
               "Detect Arabic, English, or Greek and reply naturally in the visitor's current language. Be calm, professional, human, concise, and commercially aware; never pushy or robotic.",
+              "Do not use dash punctuation in customer-facing replies. Rewrite with commas, periods, or parentheses instead.",
               "When the customer writes in colloquial Arabic, mirror their dialect with clear, easy Syrian/Levantine phrasing. Prefer short familiar words over formal wording.",
               "Answer first whenever possible, then ask at most one useful next question. Do not ask checklist questions, repeat information already provided, over-qualify a clear major opportunity, or force a meeting or contact capture.",
               "Answer only what the customer asked. Do not volunteer related prices, packages, services, or sales details. When approved evidence confirms an affiliation, answer directly without describing internal confirmation or review.",

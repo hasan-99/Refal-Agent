@@ -180,7 +180,7 @@ export default function Performance({ isAdmin = false }) {
     </section>
 
     <section className="performance-panel performance-leads">
-      <div className="performance-leads-heading"><div><span className="performance-section-label">CONVERSATION SIGNALS</span><h3>Lead qualification</h3><p>RAFA updates temperature from expressed interest and booking activity.</p></div>
+      <div className="performance-leads-heading"><div><span className="performance-section-label">CONVERSATION SIGNALS</span><h3>Lead qualification</h3><p>REFAL updates temperature from expressed interest and booking activity.</p></div>
         <label className="performance-search"><Search size={15} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a lead" aria-label="Search leads" /></label>
       </div>
       <div className="performance-temperature-summary" aria-label="Lead temperature counts">

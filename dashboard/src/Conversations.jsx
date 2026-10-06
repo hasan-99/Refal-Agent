@@ -217,7 +217,7 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
       <div>
         <span className="conversations-eyebrow">INBOX</span>
         <h2 id="conversations-title">Customer inbox</h2>
-        <p>Customer messages and RAFA replies, in one place.</p>
+        <p>Customer messages and REFAL replies, in one place.</p>
       </div>
       <button className="conversations-icon-button" type="button" onClick={() => setRefreshKey((key) => key + 1)} aria-label="Refresh conversations" title="Refresh">
         <RefreshCw size={17} />
@@ -245,12 +245,12 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
         <FilterDropdown id="status" label={view === "leads" ? "Lead temperature" : "Conversation status"} icon={SlidersHorizontal} value={filter} open={openFilter === "status"} onToggle={() => setOpenFilter((current) => current === "status" ? "" : "status")} onChange={setFilter} options={view === "leads" ? [
           { value: "all", label: "All leads", icon: UsersRound }, { value: "hot", label: "Hot", icon: Flame }, { value: "warm", label: "Warm", icon: Sun }, { value: "cold", label: "Cold", icon: Snowflake }, { value: "new", label: "New", icon: CircleDashed }
         ] : [
-          { value: "all", label: "All conversations", icon: MessageCircleMore }, { value: "needs_reply", label: "Waiting for RAFA", icon: CircleAlert }, { value: "has_replies", label: "RAFA replied", icon: BadgeCheck }, { value: "customer_only", label: "Customer only", icon: UsersRound }
+          { value: "all", label: "All conversations", icon: MessageCircleMore }, { value: "needs_reply", label: "Waiting for REFAL", icon: CircleAlert }, { value: "has_replies", label: "REFAL replied", icon: BadgeCheck }, { value: "customer_only", label: "Customer only", icon: UsersRound }
         ]} />
         <FilterDropdown id="activity" label={view === "leads" ? "Booking status" : "Last message from"} icon={view === "leads" ? CalendarCheck2 : ArrowUpDown} value={secondaryFilter} open={openFilter === "activity"} onToggle={() => setOpenFilter((current) => current === "activity" ? "" : "activity")} onChange={setSecondaryFilter} options={view === "leads" ? [
           { value: "all", label: "Any booking status", icon: CalendarDays }, { value: "booked", label: "Booked", icon: CalendarCheck2 }, { value: "not_booked", label: "Not booked", icon: CalendarClock }
         ] : [
-          { value: "all", label: "Any sender", icon: ArrowUpDown }, { value: "customer_last", label: "Customer last", icon: ArrowDownLeft }, { value: "rafa_last", label: "RAFA last", icon: ArrowUpRight }
+          { value: "all", label: "Any sender", icon: ArrowUpDown }, { value: "customer_last", label: "Customer last", icon: ArrowDownLeft }, { value: "rafa_last", label: "REFAL last", icon: ArrowUpRight }
         ]} />
       </div>
       {activeFilters > 0 && <button type="button" className="conversation-clear-filters" onClick={clearFilters} aria-label={`Clear ${activeFilters} active filters`} title="Clear filters"><RotateCcw size={14} /><span>{activeFilters}</span></button>}
@@ -492,14 +492,14 @@ function MessageTurn({ turn, userId, isAdmin, onNavigate, onSaved }) {
     }
   };
 
-  return <article className={`conversation-message ${isAgent ? "from-rafa" : "from-client"}`} aria-label={isAgent ? "RAFA reply" : "Customer message"}>
+  return <article className={`conversation-message ${isAgent ? "from-rafa" : "from-client"}`} aria-label={isAgent ? "REFAL reply" : "Customer message"}>
     <div className="conversation-message-bubble">{editing ? <div className="conversation-edit-form">
-      <textarea aria-label="Edit RAFA reply" value={draft} maxLength={3900} onChange={(event) => setDraft(event.target.value)} rows={Math.min(8, Math.max(3, draft.split("\n").length + 1))} autoFocus />
+      <textarea dir="auto" aria-label="Edit REFAL reply" value={draft} maxLength={3900} onChange={(event) => setDraft(event.target.value)} rows={Math.min(8, Math.max(3, draft.split("\n").length + 1))} autoFocus />
       <div className="conversation-edit-note">{canPlatformEdit ? "WhatsApp edit is available for this message." : canSendCorrection ? "The edit window has passed or the original message key is unavailable. Saving sends a correction; the original remains unchanged." : "WhatsApp delivery is not available from this dashboard process. Saving updates the dashboard transcript only."}</div>
       <div className="conversation-edit-actions"><button type="button" className="conversation-subtle-button" onClick={() => { setEditing(false); setDraft(body); setNotice(null); }} disabled={saving}>Cancel</button>{!canPlatformEdit && !canSendCorrection && <button type="button" className="conversation-subtle-button" onClick={() => onNavigate?.("agent-status")}>Connection status</button>}<button type="button" className="conversation-save-button" onClick={save} disabled={saving || !draft.trim() || draft.trim() === body || (!canPlatformEdit && !canSendCorrection && !canSaveLocally)}>{saving ? <span className="conversation-spinner small" /> : <Send size={14} />}{saving ? "Saving" : canPlatformEdit ? "Save edit" : canSendCorrection ? "Send correction" : "Save in dashboard"}</button></div>
-    </div> : <p className="conversation-message-body">{body || "(Empty message)"}</p>}</div>
+    </div> : <p className="conversation-message-body" dir="auto">{body || "(Empty message)"}</p>}</div>
     <div className="conversation-message-footer"><time dateTime={turn.at || turn.createdAt || undefined}>{formatDate(turn.at || turn.createdAt, true)}</time>
-      {isAgent && isAdmin && !editing && <button type="button" className="conversation-edit-button" onClick={() => { setNotice(null); setEditing(true); }} aria-label="Edit RAFA reply"><Pencil size={12} /> Edit</button>}
+      {isAgent && isAdmin && !editing && <button type="button" className="conversation-edit-button" onClick={() => { setNotice(null); setEditing(true); }} aria-label="Edit REFAL reply"><Pencil size={12} /> Edit</button>}
     </div>
     {notice && <div className={`conversation-delivery-note ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.kind === "success" && <Check size={14} />}{notice.text}</div>}
   </article>;

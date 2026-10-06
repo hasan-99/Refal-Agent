@@ -263,7 +263,7 @@ app.get("/api/knowledge", async (req, res) => {
     const isAdmin = req.dashboardUser.role === "admin";
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,approval_note,last_status,last_error,last_fetched_at,last_success_at,last_content_hash,created_at,updated_at${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&order=updated_at.desc`),
-      supabaseRest(`rafa_knowledge_documents?select=id,source_id,revision,title,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until${isAdmin ? "" : "&review_status=eq.approved"}&order=fetched_at.desc&limit=200`)
+      supabaseRest("rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until&review_status=eq.approved&order=fetched_at.desc&limit=200")
     ]);
     res.json({ sources, documents });
   } catch (error) {
@@ -282,7 +282,7 @@ app.post("/api/knowledge", requireAdmin, async (req, res) => {
     const canonicalUrl = String(req.body?.url || "").trim() ? validateKnowledgeUrl(req.body.url).href : `manual:${crypto.randomUUID()}`;
     const rows = await supabaseRest("rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,last_status", {
       method: "POST", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied" })
+      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied", enabled: true, approved: true, approval_note: "Knowledge entries are active when saved." })
     });
     res.status(201).json({ source: rows[0] });
   } catch (error) {
@@ -297,7 +297,8 @@ app.patch("/api/knowledge/:id", requireAdmin, async (req, res) => {
     for (const key of ["enabled", "approved"]) {
       if (req.body?.[key] !== undefined) {
         if (typeof req.body[key] !== "boolean") return res.status(400).json({ error: `${key} must be boolean.` });
-        patch[key] = req.body[key];
+        if (req.body[key] === false) return res.status(400).json({ error: "Knowledge sources always remain approved and enabled." });
+        patch[key] = true;
       }
     }
     if (req.body?.approvalNote !== undefined) patch.approval_note = String(req.body.approvalNote).slice(0, 1000);
@@ -326,7 +327,8 @@ app.post("/api/knowledge/:id/fetch", requireAdmin, async (req, res) => {
     const page = await fetchKnowledgePage(source.canonical_url);
     const extracted = extractKnowledgeText(page.html, page.url);
     const saved = await storeKnowledgeRevision(id, extracted, "en");
-    res.json({ ...saved, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
+    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
+    res.json({ ...saved, ...indexed, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     const status = error.code || 502;
     try {
@@ -345,9 +347,30 @@ app.post("/api/knowledge/:id/import", requireAdmin, async (req, res) => {
     if (content.length < 40) return res.status(400).json({ error: "Import at least 40 characters of source content." });
     const extracted = { title, content, chunks: chunkKnowledge(content) };
     const saved = await storeKnowledgeRevision(id, extracted, String(req.body?.language || "en").slice(0, 8));
-    res.status(201).json({ ...saved, characterCount: content.length, chunkCount: extracted.chunks.length });
+    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
+    res.status(201).json({ ...saved, ...indexed, characterCount: content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
+  }
+});
+
+app.patch("/api/knowledge/documents/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = requireUuid(req.params.id);
+    const title = String(req.body?.title || "").trim().slice(0, 500);
+    const content = normalizeKnowledgeContent(req.body?.content);
+    assertPasteWithinLimit(content);
+    if (!title) return res.status(400).json({ error: "Enter a title for this knowledge entry." });
+    if (content.length < 40) return res.status(400).json({ error: "Enter at least 40 characters of knowledge text." });
+
+    const documents = await supabaseRest(`rafa_knowledge_documents?id=eq.${id}&select=id,source_id&limit=1`);
+    if (!documents[0]) return res.status(404).json({ error: "Knowledge entry not found." });
+    const chunks = chunkKnowledge(content);
+    const result = await storeKnowledgeRevision(documents[0].source_id, { title, content, chunks }, String(req.body?.language || "en").slice(0, 8));
+    const indexed = result.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(result.document_id);
+    res.json({ ...result, ...indexed, chunkCount: chunks.length });
+  } catch (error) {
+    res.status(error.code || 500).json({ error: error.message || "Could not update this knowledge entry." });
   }
 });
 
@@ -366,9 +389,24 @@ app.post("/api/knowledge/:id/upload", requireAdmin, upload.single("file"), async
       sourceFileType: extracted.sourceFileType,
       sourceFileName: extracted.sourceFileName
     });
-    res.status(201).json({ ...saved, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
+    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
+    res.status(201).json({ ...saved, ...indexed, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
+  }
+});
+
+app.delete("/api/knowledge/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = requireUuid(req.params.id);
+    const deleted = await supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=id,display_name`, {
+      method: "DELETE",
+      headers: { Prefer: "return=representation" }
+    });
+    if (!deleted.length) return res.status(404).json({ error: "Knowledge entry not found." });
+    res.json({ deleted: true, source: deleted[0] });
+  } catch (error) {
+    res.status(error.code || 500).json({ error: error.message || "Could not delete this knowledge entry." });
   }
 });
 
@@ -378,7 +416,7 @@ app.get("/api/knowledge/:id", async (req, res) => {
     const isAdmin = req.dashboardUser.role === "admin";
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=*${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&limit=1`),
-      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until,metadata${isAdmin ? "" : "&review_status=eq.approved"}&order=revision.desc&limit=30`)
+      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}&review_status=eq.approved&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until,metadata&order=revision.desc&limit=1`)
     ]);
     if (!sources[0]) return res.status(404).json({ error: "Knowledge source not found." });
     const chunks = documents.length ? await supabaseRest(`rafa_knowledge_chunks?document_id=in.(${documents.map((doc) => doc.id).join(",")})&select=id,document_id,chunk_index,heading,content,metadata,embedding_model,embedded_at&order=chunk_index.asc`) : [];
@@ -1332,6 +1370,24 @@ async function storeKnowledgeRevision(sourceId, document, languageCode, metadata
   return result;
 }
 
+async function indexKnowledgeDocument(documentId) {
+  try {
+    const chunks = await supabaseRest(`rafa_knowledge_chunks?document_id=eq.${documentId}&select=chunk_index,content&order=chunk_index.asc`);
+    const vectors = await embedTexts(chunks.map((chunk) => chunk.content));
+    const embeddedChunks = await supabaseRest("rpc/rafa_store_knowledge_embeddings", {
+      method: "POST",
+      body: JSON.stringify({
+        p_document_id: documentId,
+        p_model: DEFAULT_EMBEDDING_MODEL,
+        p_embeddings: chunks.map((chunk, index) => ({ chunk_index: chunk.chunk_index, embedding: vectors[index] }))
+      })
+    });
+    return { embeddedChunks, embeddingWarning: "" };
+  } catch (error) {
+    return { embeddedChunks: 0, embeddingWarning: String(error.message || "Embedding failed").slice(0, 240) };
+  }
+}
+
 function loadEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
   for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
@@ -1815,6 +1871,7 @@ async function askDashboardAgent({ text, messages, model: sessionModel, memories
               "Help the operator understand leads, conversations, approved company knowledge, qualification, handover summaries, and next actions.",
               "Apply the REFAL operating order: understand, help, discover, qualify, build trust, capture, convert, book, handover, follow up.",
               "Be concise, practical, calm, and direct. Answer first when possible; ask only one useful next question and do not over-qualify a clear opportunity.",
+              "When drafting customer-facing replies, do not use dash punctuation. Rewrite with commas, periods, or parentheses instead.",
               "When drafting customer replies, mirror the customer's language and dialect; use clear, simple Syrian/Levantine Arabic when they write colloquial Arabic. Help with the question before collecting details. For company setup, explain approved basics first, then ask one short question about the company's purpose/activity if still unknown. Gather other details progressively only when they help the next step. Ask for a proposed company name only when the customer chooses a name-reservation step, not during early information gathering. Do not nudge toward booking, name reservation, or payment just because the customer described an activity; wait until they ask how to proceed or clearly say they are ready.",
               "When asked what a listed package price represents, say it is the published price for that described package, preserve any VAT qualifier from the evidence, and state separately that applicability to the customer's case is not confirmed unless evidence says so. Do not deny an approved package price that is in the supplied evidence.",
               "A published price does not by itself prove that it is fixed, binding, final, or an estimate. Do not label it with any of those terms unless approved evidence does; state only that validity and case-specific applicability are unconfirmed when the source is silent.",

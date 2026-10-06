@@ -255,7 +255,7 @@ function App() {
           <div className="brand">
             <div className="brand-mark"><img className="brand-logo" src={rafaLogo} alt="" /></div>
             <div className="brand-copy">
-              <strong>RAFA</strong>
+              <strong>REFAL</strong>
               <span>Agent control</span>
             </div>
           </div>
@@ -378,7 +378,7 @@ function Login({ authState, mode, setMode, onAuthenticated, onResetComplete }) {
         </section>
         <form className="auth-form" onSubmit={submit}>
           <div className="auth-form-heading">
-            <span>{view === "bootstrap" ? "WORKSPACE SETUP" : "RAFA CONTROL"}</span>
+            <span>{view === "bootstrap" ? "WORKSPACE SETUP" : "REFAL CONTROL"}</span>
             <h2>{view === "login" ? "Welcome back" : view === "forgot" ? "Reset your password" : view === "reset" ? "Choose a new password" : "Set up the first admin"}</h2>
             <p>{view === "login" ? "Sign in with your team account to continue." : view === "forgot" ? "We will send a secure reset link if this account is registered." : view === "reset" ? "Use at least 12 characters with uppercase, lowercase, and a number." : "This verified account can claim the one-time administrator role."}</p>
           </div>
@@ -403,7 +403,7 @@ function Login({ authState, mode, setMode, onAuthenticated, onResetComplete }) {
           {view === "login" && <button className="auth-link" type="button" onClick={() => { setError(""); setMessage(""); setMode("forgot"); }}>Forgot password?</button>}
           {view === "forgot" && <button className="auth-link" type="button" onClick={() => { setError(""); setMessage(""); setMode("login"); }}>Back to sign in</button>}
           {view === "reset" && <button className="auth-link" type="button" onClick={() => { setMode("login"); setError("The reset link is no longer active. Request a new one."); }}>Cancel password reset</button>}
-          {view === "login" && <p className="auth-footnote">Accounts are created by a RAFA administrator.</p>}
+          {view === "login" && <p className="auth-footnote">Accounts are created by a REFAL administrator.</p>}
         </form>
       </div>
     </ScreenShell>
@@ -473,7 +473,7 @@ function Team() {
   }
 
   return <div className="page-stack team-page">
-    <section className="team-intro"><div><span className="eyebrow">ACCESS CONTROL</span><h2>People in your RAFA workspace</h2><p>Invited accounts start with member access. Admins can manage knowledge, team access, and workspace settings.</p></div><div className="team-count"><strong>{data.users?.length || 0}</strong><span>accounts</span></div></section>
+    <section className="team-intro"><div><span className="eyebrow">ACCESS CONTROL</span><h2>People in your REFAL workspace</h2><p>Invited accounts start with member access. Admins can manage knowledge, team access, and workspace settings.</p></div><div className="team-count"><strong>{data.users?.length || 0}</strong><span>accounts</span></div></section>
     <section className="panel team-invite"><div><h2>Invite a teammate</h2><p>They will receive an email to set their password.</p></div><form onSubmit={invite}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" aria-label="Teammate email" required /><button className="primary" disabled={busy === "invite"}><Plus size={16} />{busy === "invite" ? "Sending" : "Send invitation"}</button></form></section>
     {notice && <p className="notice" role="status">{notice}</p>}{error && <p className="error" role="alert">{error}</p>}
     <section className="panel team-table"><div className="team-table-heading"><div><h2>Workspace access</h2><p>Changes apply on the next request and revoke access immediately.</p></div><button className="ghost icon-button" onClick={reload} aria-label="Refresh team" title="Refresh"><RefreshCcw size={16} /></button></div>
@@ -655,7 +655,7 @@ function AgentSidebar({ role }) {
             setState((current) => ({ ...current, ...data }));
             completed = true;
           } else if (eventData.type === "error") {
-            throw new Error(eventData.error || "RAFA could not complete the response.");
+            throw new Error(eventData.error || "REFAL could not complete the response.");
           }
       };
       for await (const data of readSseData(response.body)) {
@@ -663,14 +663,14 @@ function AgentSidebar({ role }) {
         try { eventData = JSON.parse(data); } catch { continue; }
         handleEvent(eventData);
       }
-      if (!completed) throw new Error("RAFA's response stream ended unexpectedly.");
+      if (!completed) throw new Error("REFAL's response stream ended unexpectedly.");
     } catch (err) {
       if (err.name !== "AbortError") {
         flushStreamedTokens();
         setError(err.message);
         setState((current) => ({
           ...current,
-          messages: current.messages.map((item) => item.id === assistantId ? { ...item, content: item.content || "RAFA could not complete this response. Please try again.", metadata: { pending: false, error: true } } : item)
+          messages: current.messages.map((item) => item.id === assistantId ? { ...item, content: item.content || "REFAL could not complete this response. Please try again.", metadata: { pending: false, error: true } } : item)
         }));
         if (err.message.startsWith("Request failed:")) setInput(message);
       }
@@ -742,18 +742,18 @@ function AgentSidebar({ role }) {
 
   return (
     <>
-    {!collapsed && <button className="agent-backdrop" onClick={() => setCollapsed(true)} aria-label="Close RAFA chat" />}
-    <aside className={collapsed ? "agent-rail collapsed" : "agent-rail"} role="dialog" aria-modal={!collapsed} aria-label="RAFA chat and tools">
+    {!collapsed && <button className="agent-backdrop" onClick={() => setCollapsed(true)} aria-label="Close REFAL chat" />}
+    <aside className={collapsed ? "agent-rail collapsed" : "agent-rail"} role="dialog" aria-modal={!collapsed} aria-label="REFAL chat and tools">
       <div className="agent-rail-head">
-        <div className="agent-identity"><span className="agent-avatar"><img src={rafaLogo} alt="" /></span><span><strong>RAFA</strong><small>Refalco agent</small></span></div>
+        <div className="agent-identity"><span className="agent-avatar"><img src={rafaLogo} alt="" /></span><span><strong>REFAL</strong><small>Refalco agent</small></span></div>
         <div className="agent-head-actions">
-          <button className="icon-button rail-toggle" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Open RAFA chat" : "Close RAFA chat"} title={collapsed ? "Open chat" : "Close chat"}>
+          <button className="icon-button rail-toggle" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Open REFAL chat" : "Close REFAL chat"} title={collapsed ? "Open chat" : "Close chat"}>
             {collapsed ? <MessageCircle size={23} strokeWidth={2} /> : <X size={18} />}
           </button>
         </div>
       </div>
 
-      <nav className="agent-nav" aria-label="RAFA tools">
+      <nav className="agent-nav" aria-label="REFAL tools">
         {[
           ["chat", MessageSquareText, "Chat"],
           ["history", Clock3, "History"],
@@ -772,7 +772,7 @@ function AgentSidebar({ role }) {
           <span>Chat history</span>
           <button className="ghost mini-button" onClick={loadAgentState} aria-label="Refresh chat history" title="Refresh"><RefreshCcw size={14} /></button>
         </div>
-        {loading ? <Loading label="Loading RAFA" /> : (
+        {loading ? <Loading label="Loading REFAL" /> : (
           <div className="session-list">
             {state.sessions.length ? state.sessions.map((session) => (
               <button
@@ -805,8 +805,8 @@ function AgentSidebar({ role }) {
           if (list) followStreamRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 90;
         }} aria-live="polite" aria-busy={sending}>
           {(state.messages || []).length ? state.messages.map((message) => (
-            <div key={message.id} className={message.role === "assistant" ? `agent-message assistant${message.metadata?.pending && message.content ? " agent-message-streaming" : ""}` : "agent-message user"} aria-label={message.role === "assistant" ? "RAFA response" : "Your message"}>
-              <p>{message.content || (sending && message.metadata?.pending ? <span className="agent-thinking">Thinking<span>...</span></span> : "")}</p>
+            <div key={message.id} className={message.role === "assistant" ? `agent-message assistant${message.metadata?.pending && message.content ? " agent-message-streaming" : ""}` : "agent-message user"} aria-label={message.role === "assistant" ? "REFAL response" : "Your message"}>
+              <p dir="auto">{message.content || (sending && message.metadata?.pending ? <span className="agent-thinking">Thinking<span>...</span></span> : "")}</p>
             </div>
           )) : (
             <div className="agent-empty">
@@ -819,6 +819,7 @@ function AgentSidebar({ role }) {
         </div>
         <form className="agent-composer" onSubmit={sendMessage}>
           <textarea
+            dir="auto"
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
@@ -827,7 +828,7 @@ function AgentSidebar({ role }) {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="Message RAFA..."
+            placeholder="Message REFAL..."
             rows={3}
           />
           <button className="primary icon-button" type="submit" disabled={sending || !input.trim()} aria-label="Send message">
@@ -841,7 +842,7 @@ function AgentSidebar({ role }) {
           <span><BrainCircuit size={15} /> Memory</span>
         </div>
         <form className="memory-form" onSubmit={saveMemory}>
-          <input value={memoryText} onChange={(event) => setMemoryText(event.target.value)} placeholder="Save a memory for RAFA" />
+          <input value={memoryText} onChange={(event) => setMemoryText(event.target.value)} placeholder="Save a memory for REFAL" />
           <button className="ghost icon-button" type="submit" disabled={!memoryText.trim()} aria-label="Save memory"><Plus size={16} /></button>
         </form>
         <div className="memory-list">
@@ -871,27 +872,31 @@ function AgentSidebar({ role }) {
 }
 
 function Knowledge({ isAdmin }) {
-  const { data, loading, reload } = useApi("/api/knowledge");
+  const { data, setData, loading, reload } = useApi("/api/knowledge");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [sourceName, setSourceName] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
   const [importTitle, setImportTitle] = useState("");
   const [importContent, setImportContent] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
+  const [knowledgeMode, setKnowledgeMode] = useState("text");
+  const [knowledgeView, setKnowledgeView] = useState("content");
+  const [editorMode, setEditorMode] = useState("update");
+  const [editingDocument, setEditingDocument] = useState(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
-    if (!selectedId && data.sources?.length) setSelectedId(data.sources[0].id);
-  }, [data.sources, selectedId]);
+    if (!selectedId && data.documents?.length) setSelectedId(data.documents[0].source_id);
+  }, [data.documents, selectedId]);
 
   useEffect(() => {
     if (!selectedId) { setDetail(null); return; }
+    setKnowledgeView("content");
     let active = true;
     api(`/api/knowledge/${encodeURIComponent(selectedId)}`)
       .then((value) => { if (active) setDetail(value); })
@@ -903,20 +908,30 @@ function Knowledge({ isAdmin }) {
   const documents = data.documents || [];
   const selected = detail?.source || sources.find((source) => source.id === selectedId);
 
+  function openKnowledgeEditor(document = null) {
+    setKnowledgeMode("text");
+    setEditingDocument(document);
+    setEditorMode(document ? "update" : "new");
+    setImportTitle(document?.title || "");
+    setImportContent(document?.canonical_content || "");
+    setUploadFile(null);
+    setKnowledgeView("edit");
+  }
+
+  function startNewKnowledgeEntry() {
+    setEditorMode("new");
+    setEditingDocument(null);
+    setImportTitle("");
+    setImportContent("");
+    setUploadFile(null);
+    setKnowledgeMode("text");
+  }
+
   async function run(action, fn) {
     setBusy(action); setError(""); setNotice("");
     try { const value = await fn(); setNotice(value?.message || "Saved."); reload(); }
     catch (value) { setError(value.message || "Request failed."); }
     finally { setBusy(""); }
-  }
-
-  async function createSource(event) {
-    event.preventDefault();
-    await run("create", async () => {
-      const value = await api("/api/knowledge", { method: "POST", body: JSON.stringify({ url: sourceUrl, displayName: sourceName }) });
-      setSourceName(""); setSourceUrl(""); setSelectedId(value.source.id);
-      return { message: "Source added. Fetch or import content for review." };
-    });
   }
 
   async function fetchSource() {
@@ -930,25 +945,59 @@ function Knowledge({ isAdmin }) {
   async function importText(event) {
     event.preventDefault();
     await run("import", async () => {
-      const value = await api(`/api/knowledge/${selectedId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent }) });
-      setImportTitle(""); setImportContent(""); setDetail(await api(`/api/knowledge/${selectedId}`));
-      return { message: value.deduplicated ? "This content is already stored." : "Manual revision saved for review." };
+      let targetSourceId = selectedId;
+      let saved;
+      if (editorMode === "update" && editingDocument?.id) {
+        saved = await api(`/api/knowledge/documents/${editingDocument.id}`, { method: "PATCH", body: JSON.stringify({ title: importTitle, content: importContent }) });
+      } else {
+        const created = await api("/api/knowledge", { method: "POST", body: JSON.stringify({ displayName: importTitle }) });
+        targetSourceId = created.source.id;
+        const value = await api(`/api/knowledge/${targetSourceId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent }) });
+        saved = value;
+        setSelectedId(targetSourceId);
+      }
+      setImportTitle(""); setImportContent(""); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
+      if (saved.embeddingWarning) return { message: `Saved to the database. Text search is ready, but semantic indexing failed: ${saved.embeddingWarning}` };
+      return { message: saved.unchanged ? "No changes detected. The database entry was left as it was." : editorMode === "update" ? "Changes saved to the database and REFAL search index." : `Added to the database and indexed in ${saved.embeddedChunks} searchable sections.` };
     });
   }
 
   async function uploadDocument(event) {
     event.preventDefault();
     await run("upload", async () => {
+      let targetSourceId = selectedId;
+      if (editorMode === "new") {
+        const displayName = uploadFile.name.replace(/\.[^.]+$/, "").trim() || uploadFile.name;
+        const created = await api("/api/knowledge", { method: "POST", body: JSON.stringify({ displayName }) });
+        targetSourceId = created.source.id;
+        setSelectedId(targetSourceId);
+      }
       const formData = new FormData();
       formData.append("file", uploadFile);
       // Not the shared api() helper: it always forces Content-Type:
       // application/json, which would break the browser's own multipart
       // boundary for this file upload.
-      const response = await fetch(`/api/knowledge/${selectedId}/upload`, { method: "POST", credentials: "include", body: formData });
+      const response = await fetch(`/api/knowledge/${targetSourceId}/upload`, { method: "POST", credentials: "include", body: formData });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.error || `Upload failed: ${response.status}`);
-      setUploadFile(null); setDetail(await api(`/api/knowledge/${selectedId}`));
-      return { message: value.deduplicated ? "This content is already stored." : `Uploaded and saved a revision with ${value.chunkCount} chunks.` };
+      setUploadFile(null); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
+      return { message: value.embeddingWarning ? `Saved to the database. Text search is ready, but semantic indexing failed: ${value.embeddingWarning}` : value.unchanged ? "No changes detected. The database entry was left as it was." : `File added and indexed in ${value.embeddedChunks} searchable sections.` };
+    });
+  }
+
+  async function deleteKnowledgeDocument(document) {
+    await run(`delete-${document.id}`, async () => {
+      await api(`/api/knowledge/${document.source_id}`, { method: "DELETE" });
+      const refreshed = await api("/api/knowledge");
+      setData(refreshed);
+      const nextSourceId = refreshed.documents?.[0]?.source_id || "";
+      setSelectedId(nextSourceId);
+      setDetail(null);
+      setDeleteTarget(null);
+      if (editingDocument?.id === document.id) {
+        setKnowledgeView("content"); setEditingDocument(null); setImportTitle(""); setImportContent("");
+      }
+      return { message: "Knowledge entry and searchable chunks deleted." };
     });
   }
 
@@ -962,68 +1011,92 @@ function Knowledge({ isAdmin }) {
   if (loading) return <Loading />;
   return (
     <div className="page-stack overview-page">
+      <section className="knowledge-hero">
+        <div>
+          <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> REFAL KNOWLEDGE BASE</span>
+          <h2>Give REFAL better context</h2>
+          <p>Add or update company information. Saving replaces the database entry and refreshes REFAL’s searchable knowledge.</p>
+        </div>
+        <div className="knowledge-hero-note"><span className="knowledge-live-dot" /><span><strong>Active when saved</strong><small>Edits replace the current entry.</small></span></div>
+      </section>
       <section className="knowledge-summary">
-        <div><span>Company knowledge</span><strong>{sources.length}</strong><small>sources</small></div>
-        <div><span>Stored revisions</span><strong>{documents.length}</strong><small>{documents.filter((doc) => doc.review_status === "approved").length} approved</small></div>
+        <div><span>Company knowledge</span><strong>{documents.length}</strong><small>saved entries</small></div>
+        <div><span>Saved knowledge entries</span><strong>{documents.length}</strong><small>active in REFAL</small></div>
         <form className="knowledge-search" onSubmit={searchKnowledge}>
           <label htmlFor="knowledge-query">Search approved knowledge</label>
-          <div><input id="knowledge-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try a company, project, or contact question" /><button className="primary" disabled={searching || !query.trim()}><Search size={16} /> {searching ? "Searching" : "Search"}</button></div>
+          <div><input id="knowledge-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try a company, project, or contact question" /><button className="primary" disabled={searching || !query.trim()}><Search size={16} /> {searching ? "Searching" : "Search"}</button>{isAdmin && <button type="button" className="primary knowledge-search-add" onClick={() => openKnowledgeEditor()}><Plus size={16} /> Add knowledge</button>}</div>
         </form>
       </section>
       {error && <p className="error knowledge-message">{error}</p>}
       {notice && <p className="notice knowledge-message">{notice}</p>}
-      {results.length > 0 && <section className="panel knowledge-results"><PanelTitle icon={Search} title={`Search results (${results.length})`} /><div className="knowledge-result-list">{results.map((result) => <article key={`${result.document_id}-${result.heading}`}><strong>{result.document_title}{result.heading ? ` · ${result.heading}` : ""}</strong><p>{result.content}</p><a href={result.source_url} target="_blank" rel="noreferrer">{result.source_name} <ChevronRight size={14} /></a></article>)}</div></section>}
+      {results.length > 0 && <section className="panel knowledge-results"><PanelTitle icon={Search} title={`Search results (${results.length})`} /><div className="knowledge-result-list">{results.map((result, index) => <article key={result.chunk_id || `${result.document_id}-${result.heading}-${index}`}><strong>{result.document_title}{result.heading ? ` · ${result.heading}` : ""}</strong><p>{result.content}</p><a href={result.source_url} target="_blank" rel="noreferrer">{result.source_name} <ChevronRight size={14} /></a></article>)}</div></section>}
       <div className="knowledge-layout">
         <section className="panel knowledge-sources">
-          <PanelTitle icon={BookOpenCheck} title="Sources" />
-          {isAdmin && <form className="knowledge-add" onSubmit={createSource}>
-            <input aria-label="Source name" value={sourceName} onChange={(event) => setSourceName(event.target.value)} placeholder="Source name" required />
-            <input aria-label="HTTPS source URL" type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://..." required />
-            <button className="primary" disabled={busy === "create"}><Plus size={16} /> Add source</button>
-          </form>}
+          <PanelTitle icon={BookOpenCheck} title="Agent knowledge" />
           <div className="knowledge-source-list">
-            {sources.map((source) => {
-              const count = documents.filter((doc) => doc.source_id === source.id).length;
-              return <button key={source.id} className={`knowledge-source${selectedId === source.id ? " selected" : ""}`} onClick={() => setSelectedId(source.id)}>
-                <span className="knowledge-source-top"><strong>{source.display_name}</strong><span className={`badge ${source.last_status === "ready" ? "online" : source.last_status === "failed" || source.last_status === "blocked" ? "hot" : "cold"}`}>{source.last_status}</span></span>
-                <small>{count} revisions · {source.approved && source.enabled ? "published" : source.approved ? "approved, disabled" : "awaiting source approval"}</small>
+            {documents.map((doc) => {
+              const source = sources.find((item) => item.id === doc.source_id);
+              const snippet = String(doc.canonical_content || "").replace(/\s+/g, " ").trim();
+              return <button key={doc.id} className={`knowledge-source${selectedId === doc.source_id ? " selected" : ""}`} onClick={() => setSelectedId(doc.source_id)}>
+                <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className="badge online">Active</span></span>
+                <small>{source?.display_name || "Knowledge entry"}</small>
+                <span className="knowledge-source-preview">{snippet.slice(0, 150)}{snippet.length > 150 ? "…" : ""}</span>
               </button>;
             })}
-            {!sources.length && <p className="empty">No sources yet.</p>}
+            {!documents.length && <p className="empty">Nothing active in REFAL’s knowledge database yet.</p>}
           </div>
         </section>
         <section className="panel knowledge-detail">
-          {!selected ? <p className="empty">Select a source to inspect or import content.</p> : <>
-            <PanelTitle icon={Building2} title={selected.display_name} action={isAdmin && <button className="ghost" onClick={fetchSource} disabled={Boolean(busy)}><RefreshCcw size={15} /> {busy === "fetch" ? "Fetching" : "Fetch"}</button>} />
-            <a className="knowledge-url" href={selected.canonical_url} target="_blank" rel="noreferrer">{selected.canonical_url}</a>
+          {!selected ? <p className="empty">Select a knowledge entry to inspect its saved content.</p> : <>
+            <PanelTitle icon={Building2} title={detail?.documents?.[0]?.title || selected.display_name} action={isAdmin && !String(selected.canonical_url || "").startsWith("manual:") && <button className="ghost" onClick={fetchSource} disabled={Boolean(busy)}><RefreshCcw size={15} /> {busy === "fetch" ? "Fetching" : "Fetch"}</button>} />
             {selected.last_error && <p className="knowledge-error">{selected.last_error}</p>}
-            {isAdmin && <div className="knowledge-controls">
-              <label><input type="checkbox" checked={Boolean(selected.approved)} onChange={(event) => run("source", async () => { await api(`/api/knowledge/${selected.id}`, { method: "PATCH", body: JSON.stringify({ approved: event.target.checked, approvalNote: event.target.checked ? "Operator approved in dashboard" : "" }) }); setDetail(await api(`/api/knowledge/${selected.id}`)); return { message: "Source approval updated." }; })} /> Approve source</label>
-              <label><input type="checkbox" checked={Boolean(selected.enabled)} onChange={(event) => run("source", async () => { await api(`/api/knowledge/${selected.id}`, { method: "PATCH", body: JSON.stringify({ enabled: event.target.checked }) }); setDetail(await api(`/api/knowledge/${selected.id}`)); return { message: "Source availability updated." }; })} /> Enable retrieval</label>
-            </div>}
-            {isAdmin && <form className="knowledge-import" onSubmit={importText}>
-              <strong>Manual import</strong>
-              <input value={importTitle} onChange={(event) => setImportTitle(event.target.value)} placeholder="Content title" />
-              <textarea value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste approved company or social content for review" rows={4} />
-              <button disabled={Boolean(busy) || importContent.trim().length < 40}><Plus size={15} /> {busy === "import" ? "Importing" : "Save revision"}</button>
-            </form>}
-            {isAdmin && <form className="knowledge-upload" onSubmit={uploadDocument}>
-              <strong>Upload file</strong>
-              <input type="file" accept=".txt,.pdf,.docx" aria-label="Upload a TXT, PDF, or DOCX file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
-              <button disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Uploading" : "Upload"}</button>
-            </form>}
-            <div className="knowledge-revisions">
-              <h3>Revisions</h3>
+            {knowledgeView === "content" && isAdmin && <div className="knowledge-entry-toolbar"><span>Saved content</span></div>}
+            {isAdmin && knowledgeView === "edit" && <section className="knowledge-add-panel" aria-labelledby="knowledge-add-title">
+              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "Save replaces this database entry and refreshes REFAL search. Unchanged text is left alone." : "Add clear information for REFAL. Save activates it and updates the search index."}</p></div><button type="button" className="ghost" onClick={() => setKnowledgeView("content")}>Back to content</button></div>
+              <div className="knowledge-editor-actions">
+                <span>{editorMode === "update" ? `Editing revision v${editingDocument?.revision}` : "New entry"}</span>
+                {editorMode === "update" && <button type="button" className="ghost" onClick={startNewKnowledgeEntry}>Start a new entry</button>}
+              </div>
+              <div className="knowledge-mode-switch" role="group" aria-label="Choose knowledge input type">
+                <button type="button" className={knowledgeMode === "text" ? "selected" : ""} aria-pressed={knowledgeMode === "text"} onClick={() => setKnowledgeMode("text")}>Paste text</button>
+                <button type="button" className={knowledgeMode === "file" ? "selected" : ""} aria-pressed={knowledgeMode === "file"} onClick={() => setKnowledgeMode("file")}>Upload a file</button>
+              </div>
+              {knowledgeMode === "text" ? <form className="knowledge-import" onSubmit={importText}>
+                <label htmlFor="knowledge-title">Title</label>
+                <input id="knowledge-title" required value={importTitle} onChange={(event) => setImportTitle(event.target.value)} placeholder="For example, Company setup FAQs" />
+                <label htmlFor="knowledge-content">Knowledge text</label>
+                <textarea id="knowledge-content" dir="auto" value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste company facts, service details, policies, or FAQs…" rows={7} />
+                <div className="knowledge-submit-row"><small>At least 40 characters. Arabic and English text are both supported.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving and activating…" : editorMode === "update" ? "Save changes to database" : "Add to database"}</button></div>
+              </form> : <form className="knowledge-upload" onSubmit={uploadDocument}>
+                <label htmlFor="knowledge-file">Choose a text, PDF, or Word file</label>
+                <input id="knowledge-file" type="file" accept=".txt,.pdf,.docx" aria-label="Choose a TXT, PDF, or DOCX knowledge file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
+                <div className="knowledge-file-note"><BookOpenCheck size={18} /><span><strong>{uploadFile?.name || "Your file will become searchable knowledge"}</strong><small>REFAL will use its text in future answers after saving.</small></span></div>
+                <div className="knowledge-submit-row"><small>Supported formats: TXT, PDF, DOCX.</small><button className="primary" disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Saving and activating…" : "Add file to database"}</button></div>
+              </form>}
+            </section>}
+            {knowledgeView === "content" && <div className="knowledge-revisions">
               {(detail?.documents || []).map((doc) => <article className="knowledge-revision" key={doc.id}>
-                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>v{doc.revision} · {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks · {doc.chunks.filter((chunk) => chunk.embedding_model).length} semantic{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "hot" : "cold"}`}>{doc.review_status}</span></div>
-                <p>{doc.canonical_content.slice(0, 260)}{doc.canonical_content.length > 260 ? "…" : ""}</p>
-                {isAdmin && doc.review_status === "pending" && <div className="knowledge-review-actions"><button onClick={() => run("review", async () => { const reviewed = await api(`/api/knowledge/documents/${doc.id}/review`, { method: "PATCH", body: JSON.stringify({ status: "approved" }) }); setDetail(await api(`/api/knowledge/${selected.id}`)); return { message: reviewed.embeddingWarning ? "Approved; semantic indexing unavailable, lexical search remains active." : `Approved and embedded ${reviewed.embeddedChunks} chunks.` }; })}>Approve revision</button><button className="ghost" onClick={() => run("review", async () => { await api(`/api/knowledge/documents/${doc.id}/review`, { method: "PATCH", body: JSON.stringify({ status: "rejected" }) }); setDetail(await api(`/api/knowledge/${selected.id}`)); return { message: "Revision rejected." }; })}>Reject</button></div>}
+                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Updated {formatDate(doc.fetched_at)} · {doc.chunks.length} searchable sections{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small></div><span className="badge online">Active</span></div>
+                <div className="knowledge-revision-content" dir="auto">{doc.canonical_content}</div>
+                {isAdmin && <div className="knowledge-entry-actions"><button className="ghost" onClick={() => openKnowledgeEditor(doc)}><Save size={14} /> Edit</button><button className="knowledge-delete-button" onClick={() => setDeleteTarget(doc)} disabled={Boolean(busy)}><Trash2 size={14} /> Delete</button></div>}
               </article>)}
-              {!detail?.documents?.length && <p className="empty">No content stored. Fetch the page or add reviewed text.</p>}
-            </div>
+              {!detail?.documents?.length && <p className="empty">No knowledge saved yet. Select Add knowledge to paste text or upload a file.</p>}
+            </div>}
           </>}
         </section>
       </div>
+      {deleteTarget && <div className="knowledge-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDeleteTarget(null); }}>
+        <section className="knowledge-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-delete-title" aria-describedby="knowledge-delete-description">
+          <span className="knowledge-delete-dialog-icon"><Trash2 size={19} /></span>
+          <h2 id="knowledge-delete-title">Delete this knowledge?</h2>
+          <p className="knowledge-delete-dialog-entry">{deleteTarget.title || "Saved knowledge"}</p>
+          <p id="knowledge-delete-description">This permanently removes the entry, its source, and all searchable content from Supabase. REFAL will no longer use it in future answers.</p>
+          <div className="knowledge-delete-dialog-actions">
+            <button type="button" onClick={() => setDeleteTarget(null)} disabled={Boolean(busy)}>Cancel</button>
+            <button type="button" className="knowledge-delete-confirm-button" onClick={() => deleteKnowledgeDocument(deleteTarget)} disabled={Boolean(busy)}>{busy === `delete-${deleteTarget.id}` ? <><span className="knowledge-delete-spinner" /> Deleting…</> : <><Trash2 size={14} /> Delete knowledge</>}</button>
+          </div>
+        </section>
+      </div>}
     </div>
   );
 }
@@ -1067,7 +1140,7 @@ function Overview({ onNavigate, isAdmin }) {
         <div className="overview-intro-copy">
           <div className="eyebrow"><Activity size={15} /> WORKSPACE OVERVIEW</div>
           <h2>The customer pulse</h2>
-          <p>See who is engaging with RAFA and move straight from activity to action.</p>
+          <p>See who is engaging with REFAL and move straight from activity to action.</p>
           <div className="overview-actions">
             <button className="ghost" onClick={() => onNavigate("leads")}><UsersRound size={16} /> Review leads <ArrowUpRight size={14} /></button>
           </div>
@@ -1137,7 +1210,7 @@ function AgentStatus({ isAdmin }) {
 
   return <div className="page-stack agent-status-page">
     <section className="agent-status-intro">
-      <div><span className="eyebrow"><Activity size={14} /> RAFA HEALTH</span><h2>Agent status</h2><p>WhatsApp connection and AI usage.</p></div>
+      <div><span className="eyebrow"><Activity size={14} /> REFAL HEALTH</span><h2>Agent status</h2><p>WhatsApp connection and AI usage.</p></div>
       <button className="ghost" onClick={refreshAll} aria-label="Refresh agent status"><RefreshCcw size={15} /> Refresh</button>
     </section>
 
@@ -1201,9 +1274,9 @@ function WhatsAppControl({ refreshKey = 0, onStatusChange = null }) {
     previousState.current = control?.state || null;
     if (!control || !previous || previous === control.state) return;
     if (control.state === "pairing") showToast(control.pairingMethod === "qr" ? "WhatsApp QR code ready to scan." : "Pairing code ready. Enter it on your primary phone.", "success");
-    else if (control.state === "connected") showToast("RAFA is connected to WhatsApp.", "success");
+    else if (control.state === "connected") showToast("REFAL is connected to WhatsApp.", "success");
     else if (control.state === "error") showToast(control.error || "WhatsApp connection failed.", "error");
-    else if (control.state === "disconnected" && ["connected", "pairing", "stopping"].includes(previous)) showToast("RAFA disconnected from WhatsApp.", "info");
+    else if (control.state === "disconnected" && ["connected", "pairing", "stopping"].includes(previous)) showToast("REFAL disconnected from WhatsApp.", "info");
   }, [control?.state, control?.error]);
 
   useEffect(() => {
@@ -1254,7 +1327,7 @@ function WhatsAppControl({ refreshKey = 0, onStatusChange = null }) {
       if (!response.ok) throw new Error(data.error || "Could not disconnect WhatsApp.");
       setControl(data);
       onStatusChange?.();
-      showToast("Disconnecting RAFA…", "info");
+      showToast("Disconnecting REFAL…", "info");
     } catch (cause) { showToast(cause.message, "error"); }
     finally { setBusy(false); }
   }
@@ -1264,10 +1337,10 @@ function WhatsAppControl({ refreshKey = 0, onStatusChange = null }) {
     try {
       const response = await fetch("/api/whatsapp/stop-local-worker", { method: "POST", credentials: "include", cache: "no-store" });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not stop local RAFA.");
+      if (!response.ok) throw new Error(data.error || "Could not stop local REFAL.");
       setControl(data);
       onStatusChange?.();
-      showToast(data.stoppedExternal ? "Local RAFA worker stopped." : "No local RAFA worker was running.", "info");
+      showToast(data.stoppedExternal ? "Local REFAL worker stopped." : "No local REFAL worker was running.", "info");
     } catch (cause) { showToast(cause.message, "error"); }
     finally { setBusy(false); }
   }
@@ -1278,10 +1351,10 @@ function WhatsAppControl({ refreshKey = 0, onStatusChange = null }) {
   return <div className="whatsapp-control" aria-live="polite">
     <div className="whatsapp-control-heading">
       <span className={`whatsapp-control-dot ${connected ? "online" : ""}`} />
-      <strong>{connected ? "RAFA is connected" : control?.state === "pairing" ? "Waiting for device link" : control?.state === "connecting" ? "Starting WhatsApp" : control?.state === "stopping" ? "Disconnecting" : control?.state === "error" ? "Connection needs attention" : "WhatsApp is disconnected"}</strong>
+      <strong>{connected ? "REFAL is connected" : control?.state === "pairing" ? "Waiting for device link" : control?.state === "connecting" ? "Starting WhatsApp" : control?.state === "stopping" ? "Disconnecting" : control?.state === "error" ? "Connection needs attention" : "WhatsApp is disconnected"}</strong>
     </div>
     {control?.phoneNumber && <span className="whatsapp-control-number">{control.phoneNumber}</span>}
-    {externallyConnected && <small className="whatsapp-control-note">RAFA is running from the saved WhatsApp session.</small>}
+    {externallyConnected && <small className="whatsapp-control-note">REFAL is running from the saved WhatsApp session.</small>}
     {control?.state === "pairing" && control.pairingMethod === "qr" && control.pairingQr && <div className="whatsapp-pairing-qr">
       <span>Scan with the primary WhatsApp phone</span>
       {pairingQrImage ? <img src={pairingQrImage} alt="Temporary WhatsApp device-link QR code" /> : <span className="qr-loading">Preparing QR…</span>}
@@ -1300,8 +1373,8 @@ function WhatsAppControl({ refreshKey = 0, onStatusChange = null }) {
       <div><input id="rafa-whatsapp-number" type="tel" inputMode="tel" autoComplete="tel" placeholder="+35799123456" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} required pattern="\\+[0-9 ()-]{8,24}" title="Use a valid full international WhatsApp number beginning with + and including country code." /><button className="primary" type="submit" disabled={busy}>{busy ? "Starting" : <><Link2 size={15} /> {pairingMethod === "qr" ? "Connect with QR" : "Get phone code"}</>}</button></div>
       <small>Enter the exact international number for the WhatsApp account on your primary phone.</small>
     </form>}
-    {active && !externallyConnected && <button className="whatsapp-disconnect" type="button" onClick={disconnect} disabled={busy || control.state === "stopping"}><Unlink size={14} /> Disconnect RAFA</button>}
-    {externallyConnected && <button className="whatsapp-disconnect" type="button" onClick={stopLocalWorker} disabled={busy}><Unlink size={14} /> Stop local RAFA</button>}
+    {active && !externallyConnected && <button className="whatsapp-disconnect" type="button" onClick={disconnect} disabled={busy || control.state === "stopping"}><Unlink size={14} /> Disconnect REFAL</button>}
+    {externallyConnected && <button className="whatsapp-disconnect" type="button" onClick={stopLocalWorker} disabled={busy}><Unlink size={14} /> Stop local REFAL</button>}
     {toast && <div className={`app-toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}>
       <span>{toast.message}</span>
       <button type="button" aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={16} /></button>
@@ -1472,8 +1545,8 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
           {(data.history || []).map((item, index) => (
             <div className="turn" key={`${item.at}-${index}`}>
               <time>{formatDate(item.at)}</time>
-              <div className="bubble user" aria-label="Customer message">{item.message}</div>
-              <div className="bubble agent" aria-label="RAFA response">{item.response}</div>
+              <div className="bubble user" dir="auto" aria-label="Customer message">{item.message}</div>
+              <div className="bubble agent" dir="auto" aria-label="REFAL response">{item.response}</div>
             </div>
           ))}
         </div>
@@ -1602,7 +1675,7 @@ function Bookings({ isAdmin }) {
     setCalendarTestBusy(true); setCalendarTestMessage(""); setCalendarTestError(false);
     try {
       const result = await api("/api/bookings/test-calendar", { method: "POST" });
-      setCalendarTestMessage(`RAFA can access ${result.access.calendarId}. Verified ${formatDate(result.access.checkedAt)}.`);
+      setCalendarTestMessage(`REFAL can access ${result.access.calendarId}. Verified ${formatDate(result.access.checkedAt)}.`);
       reloadReadiness();
     } catch (cause) {
       setCalendarTestMessage(cause.message || "Could not verify Google Calendar access.");
@@ -1672,9 +1745,9 @@ function Bookings({ isAdmin }) {
         <div className="booking-readiness-icon"><ShieldCheck size={19} /></div>
         <div className="booking-readiness-copy">
           <strong>Calendar booking is not enabled</strong>
-          <span>Appointments are paused until RAFA's calendar access and booking rules are ready.</span>
+          <span>Appointments are paused until REFAL's calendar access and booking rules are ready.</span>
           <div className="booking-readiness-tags">
-            <span className={readiness.calendarCredentials ? "ready" : "missing"}>{readiness.calendarCredentials ? "Worker credentials configured" : "RAFA worker authorization missing"}</span>
+            <span className={readiness.calendarCredentials ? "ready" : "missing"}>{readiness.calendarCredentials ? "Worker credentials configured" : "REFAL worker authorization missing"}</span>
             <span className={readiness.calendarAccessVerified ? "ready" : "missing"}>{readiness.calendarAccessVerified ? `Calendar access verified ${formatDate(readiness.calendarAccessCheckedAt)}` : "Calendar access not verified"}</span>
             <span className={readiness.policy?.durationOwnerConfirmed && readiness.policy.durationMinutes ? "ready" : "missing"}>{readiness.policy?.durationOwnerConfirmed ? `Duration ${readiness.policy.durationMinutes} min` : "Confirmed duration required"}</span>
             <span className={readiness.policy?.minimumNoticeHours != null ? "ready" : "missing"}>{readiness.policy?.minimumNoticeHours != null ? "Booking notice set" : "Minimum notice not set"}</span>
@@ -1719,7 +1792,7 @@ function Bookings({ isAdmin }) {
           const safeMeetUrl = getSafeMeetUrl(booking.meetUrl);
           return <li key={booking.id || `${booking.userId || booking.phone}-${booking.start}-${index}`}>
           <span className="booking-upcoming-icon"><Clock3 size={15} /></span>
-          <span className="booking-upcoming-contact"><strong>{booking.name || booking.phone || booking.userId || "RAFA contact"}</strong><small>{booking.purpose || "Appointment"}</small></span>
+          <span className="booking-upcoming-contact"><strong>{booking.name || booking.phone || booking.userId || "REFAL contact"}</strong><small>{booking.purpose || "Appointment"}</small></span>
           <span className="booking-upcoming-meta"><time dateTime={booking.start}>{formatAppointmentTime(booking.start, booking.timezone)}</time>{safeMeetUrl && <a href={safeMeetUrl} target="_blank" rel="noopener noreferrer">Meet</a>}</span>
         </li>;})}</ul>
       </section>}
@@ -1730,8 +1803,8 @@ function Bookings({ isAdmin }) {
             <span className={readiness?.active ? "booking-state ready" : "booking-state paused"}>{readiness?.active ? "READY FOR BOOKINGS" : "BOOKING SETUP INCOMPLETE"}</span>
             <h2>No appointments yet</h2>
             <p>{readiness?.active
-              ? "New appointments will appear here after a customer confirms a time with RAFA."
-              : "RAFA will accept appointment requests once calendar access and the required booking rules are configured."}</p>
+              ? "New appointments will appear here after a customer confirms a time with REFAL."
+              : "REFAL will accept appointment requests once calendar access and the required booking rules are configured."}</p>
           </div>
           <button className="booking-empty-action" type="button" onClick={() => document.getElementById("booking-policy")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
             Review setup <ArrowUpRight size={15} />

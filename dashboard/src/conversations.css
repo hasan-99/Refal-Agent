@@ -327,13 +327,13 @@
 .conversation-message.from-rafa { align-self: flex-end; }
 .conversation-message-bubble { width: fit-content; min-width: 88px; max-width: 100%; padding: 10px 14px; border: 1px solid #dce7ec; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgb(31 64 82 / 4%); }
 .conversation-message.from-rafa .conversation-message-bubble { border-color: #c8e0eb; background: #eaf5fa; }
-.conversation-message-body { margin: 0; color: #294454; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.conversation-message-body { margin: 0; color: #294454; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; text-align: start; unicode-bidi: plaintext; }
 .conversation-message-footer { min-height: 18px; padding: 0 3px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .conversation-message-footer time { color: #7c909a; font-size: 9px; line-height: 1; white-space: nowrap; }
 .conversation-edit-button { min-height: 22px; margin: 0; padding: 2px 5px; display: inline-flex; align-items: center; gap: 4px; border-color: transparent; color: #397b98; background: transparent; font-size: 9px; }
 .conversation-edit-button:hover { border-color: #bdd9e6; background: #f7fbfd; }
 .conversation-edit-form { margin-top: 9px; }
-.conversation-edit-form textarea { width: 100%; min-height: 76px; resize: vertical; padding: 9px; border: 1px solid #b8d5e2; border-radius: 5px; color: #294454; background: #fff; font-size: 12px; line-height: 1.55; }
+.conversation-edit-form textarea { width: 100%; min-height: 76px; resize: vertical; padding: 9px; border: 1px solid #b8d5e2; border-radius: 5px; color: #294454; background: #fff; font-size: 12px; line-height: 1.55; text-align: start; unicode-bidi: plaintext; }
 .conversation-edit-note { margin-top: 7px; color: #6c808a; font-size: 10px; line-height: 1.5; }
 .conversation-edit-actions { margin-top: 8px; display: flex; justify-content: flex-end; gap: 7px; }
 .conversation-edit-actions button { min-height: 31px; padding: 5px 9px; font-size: 10px; }
