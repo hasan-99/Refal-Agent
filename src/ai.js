@@ -5,7 +5,7 @@ const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const EMBEDDING_BATCH_SIZE = 8;
 const { detectMessageLanguage, languageInstruction } = require("./language");
 const { containsProhibitedClaim } = require("./refalcoAnswer");
-const { validateResponse } = require("./responsePolicy");
+const { validateResponse, MODEL_DRAFT_THRESHOLDS } = require("./responsePolicy");
 const { detectIntent, INTENTS } = require("./intent");
 const {
   DEFAULT_OPENROUTER_FALLBACK_MODEL,
@@ -14,6 +14,7 @@ const {
   withOpenRouterPrivacyPolicy
 } = require("./openrouterPrivacy");
 const { redactSensitiveData } = require("./sensitiveData");
+const { fetchOpenRouter } = require("./openrouterTransport");
 
 let embeddingPipelinePromise;
 
@@ -138,9 +139,10 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-    const response = await fetch(OPENROUTER_URL, {
+    const response = await fetchOpenRouter(OPENROUTER_URL, {
       method: "POST",
       signal: controller.signal,
+      timeoutMs: 20000,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
@@ -230,17 +232,21 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
       if (!allowPricing && containsPriceClaim(answer)) throw contentPolicyError("OpenRouter returned an unsolicited price or package claim.");
       if (containsUnsupportedPackageInclusion(answer, promptEvidence)) throw contentPolicyError("OpenRouter linked separately described services to the priced package without evidence.");
     if (/https?:\/\//i.test(answer)) throw contentPolicyError("OpenRouter returned an unverified citation.");
-    const responsePolicy = validateResponse(answer, { minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 500 });
+    // REFAL-AGENT-011: single shared threshold preset (responsePolicy.js),
+    // and the internal-reasoning detection itself now lives only in
+    // responsePolicy.js's INTERNAL_REASONING_PATTERNS (previously duplicated
+    // here with a narrower, English-only regex of its own) — this call
+    // already runs that check unconditionally, regardless of which preset is
+    // passed, so no separate check is needed below.
+    const responsePolicy = validateResponse(answer, MODEL_DRAFT_THRESHOLDS);
     if (!responsePolicy.valid) {
       if (responsePolicy.reasons.includes("too_long")) throw contentPolicyError("OpenRouter returned an overlong answer.");
       if (responsePolicy.reasons.includes("too_many_questions")) throw contentPolicyError("OpenRouter returned too many questions.");
+      if (responsePolicy.reasons.includes("internal_reasoning")) throw contentPolicyError("OpenRouter returned internal reasoning text.");
       throw contentPolicyError(`OpenRouter response policy failed: ${responsePolicy.reasons.join(",")}`);
     }
     const hasTerminalPunctuation = /[.!?؟。！？]["'”»)]*$/u.test(answer) || /\p{Script=Greek};["'”»)]*$/u.test(answer);
     if (!hasTerminalPunctuation) throw contentPolicyError("OpenRouter returned an unfinished sentence.");
-    if (/\b(?:the user (?:is asking|asks|wants)|i need to (?:answer|respond)|let me (?:check|think|review)|my (?:reasoning|analysis)|chain[- ]of[- ]thought|first,? i (?:need|should|will)|we need to answer)\b/i.test(answer)) {
-      throw contentPolicyError("OpenRouter returned internal reasoning text.");
-    }
     answer = suppressRepeatedSpecialistOffer(answer, { text, conversationTurns });
     if (answer.length > 500) throw contentPolicyError("OpenRouter returned an overlong answer.");
     const sourceLinks = [...new Map(promptEvidence.slice(0, 3).map((item) => [item.source_url, item])).values()]

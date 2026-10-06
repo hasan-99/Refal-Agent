@@ -8,7 +8,7 @@
 // deterministic `responsePolicy.validateResponse` already used elsewhere in
 // the codebase, before it is allowed to leave this function.
 
-const { validateResponse, safeFallbackData } = require("./responsePolicy");
+const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS } = require("./responsePolicy");
 
 const DEFAULT_MAX_STEPS = 4;
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -135,7 +135,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     }
 
     if (validated.type === "respond") {
-      const thresholds = { minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 500 };
+      const thresholds = MODEL_DRAFT_THRESHOLDS;
       const policy = validateResponse(validated.text, thresholds);
       if (!policy.valid) {
         const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds);
@@ -161,7 +161,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
 
     // clarify: at most one question, no minimum length requirement — a short
     // single clarifying question is exactly what this path is for.
-    const clarifyThresholds = { minSentences: 0, maxSentences: 2, maxQuestions: 1, maxChars: 300 };
+    const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
     const policy = validateResponse(validated.text, clarifyThresholds);
     if (!policy.valid) {
       const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds);

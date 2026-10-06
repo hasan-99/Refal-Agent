@@ -1,13 +1,58 @@
 const DEFAULT_MAX_CHARS = 500;
-const DEFAULT_MIN_SENTENCES = 2;
+// REFAL-AGENT-011: lowered from 2. No production caller ever relied on this
+// default — ai.js, messageRouter.js, and agentLoop.js have always passed an
+// explicit minSentences (1 or 0), so a "require 2 sentences" default was
+// unreachable, misleading dead weight rather than an actual product
+// requirement. A concise, correct one-sentence answer (e.g. "No, we don't
+// currently offer that.") must remain valid for any future caller that omits
+// the option too.
+const DEFAULT_MIN_SENTENCES = 0;
 const DEFAULT_MAX_SENTENCES = 5;
 const DEFAULT_MAX_QUESTIONS = 1;
 const { containsProhibitedClaim } = require("./refalcoAnswer");
+const { containsRawSecretValue } = require("./sensitiveData");
+
+// REFAL-AGENT-011: named, reusable threshold presets — the single place all
+// three callers (ai.js's model-direct path, agentLoop.js's Agent respond
+// step, and agentLoop.js's Agent clarify step) get their length/question
+// knobs from, instead of each hand-duplicating the same literal. The safety
+// checks below (internal reasoning, prohibited claim, contact/handover/
+// booking-action claims, sensitive-value echo) are NOT configurable by any
+// of these presets — they always run, which is what makes the legacy and
+// Agent paths enforce identical safety behavior even though they differ in
+// how long or how terse a reply may be.
+const MODEL_DRAFT_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 500 });
+const AGENT_CLARIFY_THRESHOLDS = Object.freeze({ minSentences: 0, maxSentences: 2, maxQuestions: 1, maxChars: 300 });
+// Legacy deterministic replies (messageRouter.js) are allowed more room: many
+// are multi-part (e.g. an existing-client notice plus a follow-up question)
+// and are composed by code, not a model, so the stricter model-draft length
+// budget does not apply.
+const LEGACY_RESPONSE_THRESHOLDS = Object.freeze({ minSentences: 0, maxSentences: 8, maxQuestions: 1, maxChars: 1000 });
+
+// REFAL-AGENT-011: the tool registry's own names, duplicated here as a short
+// literal list rather than imported from agentTools.js, because importing it
+// would be circular (agentTools.js -> agentBookingTools.js -> booking.js ->
+// messageRouter.js -> responsePolicy.js). Keep in sync with agentTools.js's
+// TOOL_REGISTRY keys if a tool is ever renamed or added.
+const TOOL_NAME_LEAK_PATTERN = /\b(?:searchApprovedKnowledge|getCustomerContext|saveCustomerFact|proposeHandover|getBookingAvailability|requestBookingAction)\b/;
 
 const INTERNAL_REASONING_PATTERNS = Object.freeze([
   /\b(chain of thought|chain-of-thought|reasoning|internal notes?|system prompt|developer message|hidden prompt)\b/i,
   /\b(i (?:think|believe|infer) (?:the )?(?:customer|user) (?:is|wants|needs))\b/i,
-  /\b(?:confidence|classification|lead score|qualification score)\s*[:=]/i
+  // REFAL-AGENT-011: merged in from ai.js's own separate, narrower internal-
+  // reasoning regex (now removed there) — self-narrated planning phrases a
+  // model sometimes leaks ("the user is asking...", "let me check...").
+  /\b(?:the user (?:is asking|asks|wants)|i need to (?:answer|respond)|let me (?:check|think|review)|my (?:reasoning|analysis)|first,? i (?:need|should|will)|we need to answer)\b/i,
+  /\b(?:confidence|classification|lead score|qualification score|priority label|routing decision|internal (?:id|review|source id))\s*[:=]/i,
+  // Arabic equivalents of the same concepts (hidden/internal instructions,
+  // chain-of-thought, internal scoring/labels) — internal-reasoning leakage
+  // is not an English-only failure mode.
+  /(?:تعليمات\s*(?:داخلية|النظام)|موجه\s*النظام|سلسلة\s*التفكير|التفكير\s*الداخلي|ملاحظات\s*داخلية)/iu,
+  /(?:درجة\s*(?:التأهيل|الأولوية)|تصنيف\s*(?:العميل|الأولوية)|معرف\s*داخلي)\s*[:=]?/iu,
+  // Greek equivalents.
+  /(?:εσωτερικ(?:ές|ή)\s*(?:οδηγίες|σημειώσεις)|οδηγίες\s*συστήματος|αλυσίδα\s*σκέψης|εσωτερική\s*σκέψη)/iu,
+  /(?:βαθμολογία\s*(?:προτεραιότητας|αξιολόγησης)|ταξινόμηση\s*(?:πελάτη|προτεραιότητας)|εσωτερικό\s*αναγνωριστικό)\s*[:=]?/iu,
+  TOOL_NAME_LEAK_PATTERN
 ]);
 
 const PROHIBITED_CLAIM_PATTERNS = Object.freeze([
@@ -69,6 +114,7 @@ function validateResponse(response, options = {}) {
   const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
   const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);
+  const sensitiveValueEcho = containsRawSecretValue(text);
   const reasons = [];
   if (!text) reasons.push("empty");
   if (text.length > maxChars) reasons.push("too_long");
@@ -80,6 +126,7 @@ function validateResponse(response, options = {}) {
   if (unconsentedContactCommitment) reasons.push("unconsented_contact_commitment");
   if (unverifiedHandoverAction) reasons.push("unverified_handover_action");
   if (unverifiedBookingAction) reasons.push("unverified_booking_action");
+  if (sensitiveValueEcho) reasons.push("sensitive_value_echo");
   return {
     valid: reasons.length === 0,
     text,
@@ -91,8 +138,36 @@ function validateResponse(response, options = {}) {
     prohibitedClaim: Boolean(prohibitedClaim),
     unconsentedContactCommitment,
     unverifiedHandoverAction,
-    unverifiedBookingAction
+    unverifiedBookingAction,
+    sensitiveValueEcho
   };
+}
+
+// REFAL-AGENT-011: moved here from messageRouter.js (and joined by the new
+// hasVerifiedBookingClaim) so every caller reads "is this verified claim
+// allowed" from the same policy surface that enforces it. Both only ever
+// read deterministic, already-persisted metadata set by code that observed
+// a real outcome (a consent-bound handover record, a booking tool's/
+// booking.js's confirmed status) — never anything the model wrote.
+function hasVerifiedHandoverClaim(metadata = {}) {
+  const purposeBoundConsent = metadata.specialistFollowUp?.consented === true && metadata.specialistFollowUp?.purpose === "specialist_follow_up";
+  const persistedHandover = Boolean(metadata.handover?.routing && metadata.handover?.summary) || metadata.handoverAlreadyRecorded === true;
+  return purposeBoundConsent && persistedHandover;
+}
+
+// REFAL-AGENT-011: the booking equivalent — was entirely missing from the
+// legacy path. messageRouter.js's recordHistory validated every response
+// against BOOKING_ACTION_CLAIM but never had a way to mark one verified, so
+// a real, deterministic booking-confirmation message from booking.js's
+// bookingConfirmationMessage() always failed this gate and the conversation
+// history stored a generic fallback instead of what was actually sent to the
+// customer (the customer-facing WhatsApp message was unaffected — bot.js
+// sends the original `response`, never the history's swapped-in fallback —
+// but the stored record silently misrepresented it). `metadata.
+// verifiedBookingConfirmed` is set by bot.js only from `booking.appointment?.
+// status === "confirmed"`, a real store-reported status, never model text.
+function hasVerifiedBookingClaim(metadata = {}) {
+  return metadata.verifiedBookingConfirmed === true;
 }
 
 function safeFallbackData({ language = "en", category = "uncertainty" } = {}) {
@@ -107,13 +182,19 @@ function safeFallbackData({ language = "en", category = "uncertainty" } = {}) {
       default: "I can help clarify the approved information. What part would you like to understand first?"
     },
     ar: {
+      price: "أتفهم إنو موضوع التكلفة مهم. فينا أول شي نوضّح احتياجاتك وبعدين نراجع الخيارات المناسبة. شو الميزانية التقريبية يلي بدنا ناخدها بعين الاعتبار؟",
+      trust: "من المنطقي إنك تحب توضح المعلومات قبل ما تتابع. فينا نراجع معك التفاصيل المتعلقة ونجاوب على أسئلتك. شو أول نقطة بدك نوضحها؟",
       timing: "تمام، خذ وقتك. فيني ساعدك بأي سؤال لما تكون جاهز.",
       not_ready: "أكيد، خذ وقتك بالمقارنة وما في داعي تستعجل. فيني وضّحلك أي تفصيل وقت ما بدك.",
+      uncertainty: "من المنطقي إنك تدرس التفاصيل قبل ما تقرر. فينا نساعدك توضح الخيارات وأي معلومة لسا ناقصة. شو أكتر شي بيشغل بالك؟",
       default: "أكيد، فيني وضّحلك المعلومات المتاحة. شو النقطة اللي بدك تعرف عنها أكتر؟"
     },
     el: {
+      price: "Καταλαβαίνω ότι το κόστος έχει σημασία. Μπορούμε πρώτα να διευκρινίσουμε τις ανάγκες σας και μετά να δούμε τις κατάλληλες επιλογές. Ποιο εύρος προϋπολογισμού να έχουμε υπόψη;",
+      trust: "Είναι λογικό να θέλετε σαφείς πληροφορίες πριν προχωρήσετε. Μπορούμε να δούμε μαζί τις σχετικές λεπτομέρειες και να απαντήσουμε στις ερωτήσεις σας. Τι θα θέλατε να διευκρινίσουμε πρώτα;",
       timing: "Κατανοητό. Πάρτε τον χρόνο σας· μπορώ να βοηθήσω με ερωτήσεις όποτε θέλετε.",
       not_ready: "Κατανοητό. Συγκρίνετε τις επιλογές σας με τον δικό σας ρυθμό. Μπορώ να διευκρινίσω κάτι όταν το θελήσετε.",
+      uncertainty: "Είναι λογικό να αξιολογήσετε τις λεπτομέρειες πριν αποφασίσετε. Μπορούμε να βοηθήσουμε να διευκρινιστούν οι επιλογές και όποια πληροφορία λείπει ακόμα. Ποιο είναι το κύριο μέλημά σας;",
       default: "Μπορώ να σας εξηγήσω τις διαθέσιμες πληροφορίες. Ποιο σημείο θα θέλατε να διευκρινίσουμε;"
     }
   };
@@ -133,6 +214,9 @@ module.exports = {
   DEFAULT_MIN_SENTENCES,
   DEFAULT_MAX_SENTENCES,
   DEFAULT_MAX_QUESTIONS,
+  MODEL_DRAFT_THRESHOLDS,
+  AGENT_CLARIFY_THRESHOLDS,
+  LEGACY_RESPONSE_THRESHOLDS,
   INTERNAL_REASONING_PATTERNS,
   PROHIBITED_CLAIM_PATTERNS,
   UNCONSENTED_CONTACT_COMMITMENT,
@@ -144,5 +228,7 @@ module.exports = {
   validateResponse,
   validateGeneratedResponse: validateResponse,
   safeFallbackData,
-  buildSafeFallback: safeFallbackData
+  buildSafeFallback: safeFallbackData,
+  hasVerifiedHandoverClaim,
+  hasVerifiedBookingClaim
 };

@@ -31,6 +31,16 @@
 //      logging raw message/response bodies, and on top of
 //      operationalTelemetry.js's own key-based redaction.
 //
+// REFAL-AGENT-013 renamed this module's per-turn events into the shared
+// Agent-observability family (so Tickets 015/016 query one event family
+// regardless of whether a turn ran in shadow mode or, later, live):
+// `agent_shadow_turn` -> `agent_turn_completed` (shadowMode: true),
+// `agent_shadow_turn_error` -> `agent_turn_failed` (shadowMode: true).
+// `agent_shadow_turn_skipped` (the Ticket 010 concurrency-cap event) is
+// deliberately UNCHANGED — this ticket does not touch shadow gating. A new
+// `agent_shadow_comparison` event (recordShadowComparison, below) joins a
+// resolved shadow turn with a safe summary of what the legacy path did.
+//
 // Expected load when enabled: each inbound message adds up to one extra
 // OpenRouter decision call per agent step (max 4 steps) plus, if
 // searchApprovedKnowledge is chosen, one extra local-embedding + Supabase
@@ -51,10 +61,12 @@
 const { randomUUID } = require("node:crypto");
 const { runAgentTurnForContact } = require("./agentRuntime");
 const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
+const { DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { wasNameRequested } = require("./messageRouter");
+const { buildAgentTurnEventFields, buildShadowComparisonFields } = require("./agentObservability");
 
 const DEFAULT_MAX_CONCURRENCY = 3;
 
@@ -122,26 +134,38 @@ function deriveOpenQuestion(lastTurn) {
   return String(lastTurn.response || "").slice(0, 300) || null;
 }
 
-// Deliberately NEVER includes the agent's drafted response text, the
-// customer's message, or raw tool args — only shape/outcome metadata, so a
-// legacy-vs-agent comparison pass can be done on outcome/step/tool-usage/
-// timing without a new place in the codebase that logs free-text
-// conversational content (every other src/bot.js logEvent call site already
-// avoids this). responseLength (not the response itself) is enough to spot
-// e.g. a shadow run producing suspiciously short/long answers relative to
-// the legacy path's recorded turn, joinable by traceId.
-function emitTurnEvent(emit, shadowTraceId, result, durationMs) {
+// REFAL-AGENT-013: the fields below (via agentObservability.js's
+// buildAgentTurnEventFields/summarizeAgentTurn) are deliberately NEVER the
+// agent's drafted response text, the customer's message, or raw tool args —
+// only shape/outcome metadata (ids/enums/booleans/counts/lengths/durations/
+// reason codes), so a legacy-vs-agent comparison pass can be done on
+// outcome/step/tool-usage/timing without a new place in the codebase that
+// logs free-text conversational content (every other src/bot.js logEvent
+// call site already avoids this). responseLength (not the response itself)
+// is enough to spot e.g. a shadow run producing suspiciously short/long
+// answers relative to the legacy path's recorded turn, joinable by traceId.
+// A throwing/rejecting logger must never discard an otherwise-successful
+// Agent turn result, and must never itself become the reason
+// runShadowAgentTurn rejects — telemetry failure is never a turn failure.
+function emitTurnEvent(emit, shadowTraceId, result, { durationMs, locale, primaryIntentCategory, secondaryGoalCount, maxSteps }) {
   if (!emit) return;
-  emit("agent_shadow_turn", {
-    traceId: shadowTraceId,
-    outcome: result.outcome,
-    stepCount: result.stepCount,
-    toolsUsed: result.toolsUsed,
-    responseLength: typeof result.response === "string" ? result.response.length : 0,
-    corrected: Boolean(result.corrected),
-    reason: result.reason,
-    durationMs
-  });
+  try {
+    const fields = buildAgentTurnEventFields({
+      result,
+      traceId: shadowTraceId,
+      locale,
+      primaryIntentCategory,
+      secondaryGoalCount,
+      maxSteps,
+      shadowMode: true,
+      durationMs
+    });
+    const outcome = emit("agent_turn_completed", fields);
+    if (outcome && typeof outcome.catch === "function") outcome.catch(() => {});
+  } catch {
+    // Swallow: a broken logger must not turn a successful Agent turn into a
+    // thrown/rejected runShadowAgentTurn call.
+  }
 }
 
 async function runShadowAgentTurn({
@@ -158,6 +182,7 @@ async function runShadowAgentTurn({
 } = {}, {
   tools = TOOL_REGISTRY,
   decideNextStep = defaultDecideNextStep,
+  maxSteps = DEFAULT_MAX_STEPS,
   env = process.env
 } = {}) {
   if (!isShadowEnabled(env)) return null;
@@ -171,6 +196,15 @@ async function runShadowAgentTurn({
     return null;
   }
 
+  const locale = classification?.language || user?.profile?.language || "unknown";
+  // REFAL-AGENT-013: intent.js's bounded classification (the SAME signal
+  // the legacy deterministic router already uses) — not something the Agent
+  // model produces. See agentObservability.js's doc comment on
+  // buildShadowComparisonFields for why this makes sameIntentCategory
+  // trivially true today.
+  const primaryIntentCategory = classification?.primary || null;
+  const secondaryGoalCount = Array.isArray(classification?.intents) ? Math.max(0, classification.intents.length - 1) : 0;
+
   const startedAt = performance.now();
   activeShadowTurns += 1;
   try {
@@ -182,7 +216,7 @@ async function runShadowAgentTurn({
     const result = await runAgentTurnForContact(
       {
         currentMessage: text,
-        locale: classification?.language || user?.profile?.language || "unknown",
+        locale,
         contact: { id: userId, name: user?.profile?.name || null },
         recentConversation: buildRecentConversation(history),
         conversationState,
@@ -199,22 +233,56 @@ async function runShadowAgentTurn({
         embeddingModel,
         matchCount
       },
-      { tools: buildShadowToolRegistry(tools), decideNextStep }
+      { tools: buildShadowToolRegistry(tools), decideNextStep, maxSteps }
     );
 
     const durationMs = Math.round(performance.now() - startedAt);
-    emitTurnEvent(emit, shadowTraceId, result, durationMs);
+    emitTurnEvent(emit, shadowTraceId, result, { durationMs, locale, primaryIntentCategory, secondaryGoalCount, maxSteps });
     return { ...result, durationMs, traceId: shadowTraceId };
   } catch (error) {
     if (emit) {
-      emit("agent_shadow_turn_error", {
-        traceId: shadowTraceId,
-        message: String(error?.message || error).slice(0, 200)
-      });
+      try {
+        const outcome = emit("agent_turn_failed", {
+          traceId: shadowTraceId,
+          shadowMode: true,
+          message: String(error?.message || error).slice(0, 200)
+        });
+        if (outcome && typeof outcome.catch === "function") outcome.catch(() => {});
+      } catch {
+        // A broken logger must not mask the original turn error by throwing
+        // a second, different exception out of this catch block.
+      }
     }
     return null;
   } finally {
     activeShadowTurns -= 1;
+  }
+}
+
+// REFAL-AGENT-013: joins the (already-resolved) shadow Agent result with a
+// safe summary of what the legacy deterministic path actually did this
+// turn, and emits ONE comparison event. Pure wiring — comparison math lives
+// in agentObservability.js's buildShadowComparisonFields so it can be unit
+// tested without a logger. Never throws: a logging failure here must never
+// become a turn failure (src/bot.js calls this fire-and-forget, after the
+// customer has already been replied to). `shadowTurnPromise` is the exact
+// promise src/bot.js already captured from runShadowAgentTurn — this
+// function does not start a new Agent turn, it only waits for the one that
+// was already running (or already finished) and was never allowed to
+// affect `response`/`routed` there.
+async function recordShadowComparison({ shadowTurnPromise, legacySummary, traceId, logEvent } = {}) {
+  if (!legacySummary || typeof logEvent !== "function") return;
+  try {
+    const agentResult = await shadowTurnPromise;
+    if (!agentResult) return;
+    const fields = buildShadowComparisonFields({ agentResult, legacySummary });
+    if (!fields) return;
+    // Awaited (not fire-and-forget here) so a rejected logEvent promise is
+    // caught by this try/catch instead of becoming an unhandled rejection —
+    // this whole function is already fire-and-forget from src/bot.js's side.
+    await logEvent("agent_shadow_comparison", { traceId, ...fields });
+  } catch {
+    // Best-effort comparison telemetry only — never surfaces to the caller.
   }
 }
 
@@ -228,6 +296,7 @@ function __resetShadowConcurrency() {
 
 module.exports = {
   runShadowAgentTurn,
+  recordShadowComparison,
   isShadowEnabled,
   buildShadowToolRegistry,
   maxConcurrency,

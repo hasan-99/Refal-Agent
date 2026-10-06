@@ -13,7 +13,7 @@ const {
 } = require("./existingClientWorkflow");
 const { createHandover } = require("./handover");
 const { detectObjection, objectionResponse } = require("./objectionWorkflow");
-const { safeFallbackData, validateResponse } = require("./responsePolicy");
+const { safeFallbackData, validateResponse, hasVerifiedHandoverClaim, hasVerifiedBookingClaim, LEGACY_RESPONSE_THRESHOLDS } = require("./responsePolicy");
 const { createCorrectionEvent } = require("./correctionWorkflow");
 const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./opportunityIntake");
 const { assessRedFlags } = require("./redFlagRules");
@@ -30,12 +30,6 @@ const HELP = [
   "Ask a Refalco question or request a meeting."
 ].join("\n");
 
-function hasVerifiedHandoverClaim(metadata = {}) {
-  const purposeBoundConsent = metadata.specialistFollowUp?.consented === true && metadata.specialistFollowUp?.purpose === "specialist_follow_up";
-  const persistedHandover = Boolean(metadata.handover?.routing && metadata.handover?.summary) || metadata.handoverAlreadyRecorded === true;
-  return purposeBoundConsent && persistedHandover;
-}
-
 async function recordHistory(store, userId, message, response, extra) {
   const metadata = { ...(extra?.metadata || {}) };
   delete metadata.privacySafeQuestion;
@@ -44,7 +38,7 @@ async function recordHistory(store, userId, message, response, extra) {
   }
   const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
   const consentGranted = metadata.specialistFollowUp?.consented === true && metadata.specialistFollowUp?.purpose === "specialist_follow_up";
-  const responsePolicy = validateResponse(response, { minSentences: 0, maxSentences: 8, maxQuestions: 1, maxChars: 1000, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata) });
+  const responsePolicy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata) });
   const safeResponse = responsePolicy.valid ? response : safeFallbackData({ language, category: "uncertainty" }).text;
   const privacyTurn = metadata.safety?.risks?.includes("privacy");
   const storedMessage = privacyTurn ? "[message omitted: potentially sensitive credentials]" : message;
@@ -349,7 +343,7 @@ function pendingIntakeAnswer({ user, lastTurn, incoming, classification, existin
 
 function resultWithHistory({ response, user, metadata, handover, history }) {
   const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
-  const policy = validateResponse(response, { minSentences: 0, maxSentences: 8, maxQuestions: 1, maxChars: 1000, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata) });
+  const policy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata) });
   const safeResponse = policy.valid ? response : safeFallbackData({ language, category: "uncertainty" }).text;
   return { response: safeResponse, shouldUseAi: false, user, metadata: { ...metadata, responsePolicy: policy }, handover, ...history };
 }

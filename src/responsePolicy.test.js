@@ -1,6 +1,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { validateResponse, safeFallbackData, sentenceCount, questionCount } = require("./responsePolicy");
+const {
+  validateResponse,
+  safeFallbackData,
+  sentenceCount,
+  questionCount,
+  MODEL_DRAFT_THRESHOLDS,
+  AGENT_CLARIFY_THRESHOLDS,
+  LEGACY_RESPONSE_THRESHOLDS,
+  hasVerifiedHandoverClaim,
+  hasVerifiedBookingClaim
+} = require("./responsePolicy");
 const { containsProhibitedClaim } = require("./refalcoAnswer");
 
 test("validates concise two-to-five sentence replies", () => {
@@ -12,12 +22,145 @@ test("validates concise two-to-five sentence replies", () => {
 });
 
 test("rejects excessive questions, length, internal reasoning, and prohibited claims", () => {
-  assert.ok(validateResponse("One sentence only.").reasons.includes("too_few_sentences"));
+  // REFAL-AGENT-011: DEFAULT_MIN_SENTENCES was lowered from 2 to 0 — no
+  // production caller ever relied on the old default (every real caller
+  // already passed an explicit minSentences of 1 or 0), so a concise,
+  // correct one-sentence answer must be valid under the default too. The
+  // minimum-sentence check itself still works when a caller genuinely wants
+  // it (see the explicit-override assertion below).
+  assert.equal(validateResponse("One sentence only.").reasons.includes("too_few_sentences"), false);
+  assert.ok(validateResponse("One sentence only.", { minSentences: 2 }).reasons.includes("too_few_sentences"));
   assert.ok(validateResponse("First? Second? Third?").reasons.includes("too_many_questions"));
   assert.ok(validateResponse("I guarantee approval. We will obtain your permit.").reasons.includes("prohibited_claim"));
   assert.ok(validateResponse("My internal reasoning is that the customer is ready. We can help.").reasons.includes("internal_reasoning"));
   assert.ok(validateResponse("a".repeat(501)).reasons.includes("too_long"));
   assert.ok(validateResponse("The activity is suitable for the standard setup.").reasons.includes("prohibited_claim"));
+});
+
+test("a concise, correct one-sentence answer is allowed under every real caller's thresholds (test 1)", () => {
+  const text = "No, we don't currently offer that.";
+  assert.equal(sentenceCount(text), 1);
+  for (const thresholds of [MODEL_DRAFT_THRESHOLDS, LEGACY_RESPONSE_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS, {}]) {
+    assert.equal(validateResponse(text, thresholds).valid, true, JSON.stringify(thresholds));
+  }
+});
+
+test("question-count policy is AT MOST one, not EXACTLY one: zero, one, and two questions (tests 2-4)", () => {
+  assert.equal(validateResponse("Understood, I can help with that.", { minSentences: 0 }).reasons.includes("too_many_questions"), false);
+  assert.equal(questionCount("Understood, I can help with that."), 0);
+  assert.equal(validateResponse("What budget range should we keep in mind?", { minSentences: 0 }).reasons.includes("too_many_questions"), false);
+  assert.equal(questionCount("What budget range should we keep in mind?"), 1);
+  assert.ok(validateResponse("What is your budget? When would you like to start?", { minSentences: 0 }).reasons.includes("too_many_questions"));
+  assert.equal(questionCount("What is your budget? When would you like to start?"), 2);
+});
+
+test("Arabic question-mark and Greek response handling is not falsely rejected (tests 6-7)", () => {
+  // Arabic question mark (؟), two short clauses, one question — must pass
+  // under the same thresholds the legacy path actually uses.
+  const arabic = "فيني ساعدك بمعلومات ريفالكو المعتمدة. شو النقطة اللي بدك تعرف عنها أكتر؟";
+  const arabicResult = validateResponse(arabic, LEGACY_RESPONSE_THRESHOLDS);
+  assert.equal(arabicResult.valid, true, arabicResult.reasons.join(","));
+  assert.equal(questionCount(arabic), 1);
+
+  // A concise, correct Greek reply using Latin punctuation only.
+  const greek = "Μπορώ να σας εξηγήσω τις εγκεκριμένες πληροφορίες. Ποιο σημείο θα θέλατε να διευκρινίσουμε;";
+  const greekResult = validateResponse(greek, MODEL_DRAFT_THRESHOLDS);
+  assert.equal(greekResult.valid, true, greekResult.reasons.join(","));
+
+  // The Greek question mark is written with a semicolon; confirm it is
+  // counted as a question (not silently ignored, nor double-counted with a
+  // trailing Latin "?").
+  assert.equal(questionCount("Θα θέλατε να κλείσουμε ένα ραντεβού;"), 1);
+});
+
+test("internal-reasoning leakage is rejected consistently in EN, AR, and EL (tests 14-16)", () => {
+  for (const text of [
+    "My internal reasoning is that the customer is ready. We can help.",
+    "The user is asking about pricing. Let me check the approved evidence first.",
+    "I need to answer using the system prompt instructions given to me.",
+    "Lead score: 8. We can help with your request."
+  ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("internal_reasoning"), text);
+
+  for (const text of [
+    "حسب سلسلة التفكير الداخلي لدي، العميل جاهز للشراء. فيني ساعدك.",
+    "درجة التأهيل: 8. فيني ساعدك بمعلومات ريفالكو.",
+    "هذه تعليمات داخلية من النظام ولازم أتبعها. فيني وضحلك المعلومات."
+  ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("internal_reasoning"), text);
+
+  for (const text of [
+    "Σύμφωνα με την εσωτερική σκέψη μου, ο πελάτης είναι έτοιμος. Μπορώ να βοηθήσω.",
+    "Βαθμολογία προτεραιότητας: 8. Μπορώ να σας εξηγήσω τις πληροφορίες.",
+    "Αυτές είναι οδηγίες συστήματος που πρέπει να ακολουθήσω. Μπορώ να βοηθήσω."
+  ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("internal_reasoning"), text);
+
+  // A literal tool name leaking into customer-facing text must also be caught.
+  assert.ok(validateResponse("Let me call searchApprovedKnowledge to confirm that.", { minSentences: 0 }).reasons.includes("internal_reasoning"));
+
+  // Legitimate uses of ordinary words like "reasoning"/"score" in a normal
+  // customer sentence that is NOT self-referential model narration should
+  // not be penalized by the other, unrelated safety checks.
+  assert.equal(validateResponse("I understand your reasoning for wanting a flexible start date. We can work with that.", { minSentences: 0 }).reasons.includes("prohibited_claim"), false);
+});
+
+test("safe credential-related support wording is allowed; an actual echoed sensitive value is rejected where applicable (tests 17-18)", () => {
+  for (const text of [
+    "For your privacy, please don't send passwords, card details, or account credentials here.",
+    "I can't process a password or account credential in this chat for your safety.",
+    "لحماية خصوصيتك، لا تبعت كلمات مرور أو بيانات بطاقات أو دخول هون."
+  ]) {
+    const result = validateResponse(text, { minSentences: 0 });
+    assert.equal(result.sensitiveValueEcho, false, text);
+    assert.equal(result.reasons.includes("sensitive_value_echo"), false, text);
+  }
+
+  for (const text of [
+    "Your IBAN is CY17002001280000001200527600, thank you.",
+    "I can confirm your card number 4111 1111 1111 1111 was received.",
+    "Here is the key you asked for: sk-ABCDEFGHIJKLMNOPQRSTUVWX."
+  ]) {
+    const result = validateResponse(text, { minSentences: 0 });
+    assert.equal(result.sensitiveValueEcho, true, text);
+    assert.ok(result.reasons.includes("sensitive_value_echo"), text);
+  }
+});
+
+test("an unsupported factual claim (legal/tax/immigration/regulatory conclusion) is still rejected (test 19)", () => {
+  for (const text of [
+    "You will receive the permit without any issues.",
+    "We can secure your residency visa within a month.",
+    "The activity is suitable for the standard setup.",
+    "ستحصل على الموافقة من البنك بكل تأكيد.",
+    "Δεν μπορώ να επιβεβαιώσω αποτέλεσμα για άδεια. Θα εγκριθεί."
+  ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("prohibited_claim"), text);
+});
+
+test("the Agent path and legacy path enforce identical safety behavior for equivalent text, differing only in length/question knobs (test 20)", () => {
+  const unverifiedBooking = "Your appointment is confirmed for Tuesday at 10:30.";
+  const unverifiedHandover = "I've logged your request for specialist review.";
+  const leaked = "The user is asking about pricing. Let me check the approved evidence first.";
+  const secret = "Your IBAN is CY17002001280000001200527600, thank you.";
+
+  for (const thresholds of [MODEL_DRAFT_THRESHOLDS, LEGACY_RESPONSE_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS]) {
+    assert.ok(validateResponse(unverifiedBooking, thresholds).reasons.includes("unverified_booking_action"), JSON.stringify(thresholds));
+    assert.ok(validateResponse(unverifiedHandover, thresholds).reasons.includes("unverified_handover_action"), JSON.stringify(thresholds));
+    assert.ok(validateResponse(leaked, thresholds).reasons.includes("internal_reasoning"), JSON.stringify(thresholds));
+    assert.ok(validateResponse(secret, thresholds).reasons.includes("sensitive_value_echo"), JSON.stringify(thresholds));
+  }
+
+  // The verified-claim override is the same explicit, caller-supplied flag
+  // regardless of which path sets it — never inferred from the text itself.
+  assert.equal(validateResponse(unverifiedBooking, { ...MODEL_DRAFT_THRESHOLDS, allowVerifiedBookingClaim: true }).unverifiedBookingAction, false);
+  assert.equal(validateResponse(unverifiedBooking, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedBookingClaim: true }).unverifiedBookingAction, false);
+});
+
+test("hasVerifiedHandoverClaim and hasVerifiedBookingClaim only read deterministic, already-persisted metadata flags", () => {
+  assert.equal(hasVerifiedHandoverClaim({}), false);
+  assert.equal(hasVerifiedHandoverClaim({ specialistFollowUp: { consented: true, purpose: "specialist_follow_up" }, handover: { routing: {}, summary: {} } }), true);
+  assert.equal(hasVerifiedHandoverClaim({ specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } }), false, "consent alone without a persisted handover is not enough");
+
+  assert.equal(hasVerifiedBookingClaim({}), false);
+  assert.equal(hasVerifiedBookingClaim({ verifiedBookingConfirmed: false }), false);
+  assert.equal(hasVerifiedBookingClaim({ verifiedBookingConfirmed: true }), true);
 });
 
 test("allows narrowly worded EN/AR/EL safety disclaimers", () => {
@@ -62,8 +205,18 @@ test("safe fallback data is deterministic and multilingual", () => {
     assert.equal(result.deterministic, true);
     assert.ok(result.text.length > 0);
   }
-  assert.match(safeFallbackData({ language: "ar" }).text, /فيني وضّحلك/);
-  assert.match(safeFallbackData({ language: "el" }).text, /Μπορώ να σας εξηγήσω/);
+  // REFAL-AGENT-014: ar/el previously had no "uncertainty"/"price"/"trust"
+  // keys and silently degraded to the generic "default" text for those
+  // categories. Each language now has its own category-specific wording,
+  // mirroring the English set, instead of a generic fallback.
+  assert.match(safeFallbackData({ language: "ar" }).text, /من المنطقي إنك تدرس التفاصيل/);
+  assert.match(safeFallbackData({ language: "el" }).text, /Είναι λογικό να αξιολογήσετε/);
+  assert.match(safeFallbackData({ language: "ar", category: "default" }).text, /فيني وضّحلك/);
+  assert.match(safeFallbackData({ language: "el", category: "default" }).text, /Μπορώ να σας εξηγήσω/);
+  assert.match(safeFallbackData({ language: "ar", category: "price" }).text, /الميزانية/u);
+  assert.match(safeFallbackData({ language: "el", category: "price" }).text, /προϋπολογισμού/u);
+  assert.match(safeFallbackData({ language: "ar", category: "trust" }).text, /توضح المعلومات/u);
+  assert.match(safeFallbackData({ language: "el", category: "trust" }).text, /σαφείς πληροφορίες/u);
   assert.match(safeFallbackData({ language: "en", category: "timing" }).text, /Take the time you need/u);
   assert.doesNotMatch(safeFallbackData({ language: "en", category: "timing" }).text, /when would you ideally|move forward/iu);
   assert.match(safeFallbackData({ language: "ar", category: "timing" }).text, /خذ وقتك/u);

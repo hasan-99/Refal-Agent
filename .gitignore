@@ -20,3 +20,6 @@ refal-rules-audit.html
 supabase/.temp/
 .playwright-mcp/
 .runtime-logs/
+
+# REFAL-AGENT-016 benchmark output (machine-readable, may include model text)
+artifacts/

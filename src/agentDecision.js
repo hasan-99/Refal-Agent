@@ -14,6 +14,7 @@
 const { TOOL_REGISTRY } = require("./agentTools");
 const { redactPersonalData } = require("./ai");
 const { resolveOpenRouterModel, withOpenRouterPrivacyPolicy, DEFAULT_OPENROUTER_MODEL } = require("./openrouterPrivacy");
+const { fetchOpenRouter } = require("./openrouterTransport");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -95,8 +96,9 @@ async function defaultCallModel(messages) {
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured.");
   const model = resolveOpenRouterModel(process.env.OPENROUTER_MODEL, DEFAULT_OPENROUTER_MODEL);
 
-  const response = await fetch(OPENROUTER_URL, {
+  const response = await fetchOpenRouter(OPENROUTER_URL, {
     method: "POST",
+    timeoutMs: 20000,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",

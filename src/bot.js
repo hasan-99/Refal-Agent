@@ -32,7 +32,7 @@ const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = 
 const { buildConversationContext, refreshCustomerTopicSummary } = require("./conversationMemory");
 const { buildLocalConversationRecap } = require("./conversationRecap");
 const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTelemetry");
-const { runShadowAgentTurn } = require("./agentShadow");
+const { runShadowAgentTurn, recordShadowComparison } = require("./agentShadow");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -267,6 +267,16 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
   stage("typing_start", stageStartedAt);
   let response;
   let routed;
+  // REFAL-AGENT-013: captured (not discarded) so the comparison below can
+  // join it with the legacy outcome once both are known; still never
+  // awaited by the live reply path — see the `finally` block.
+  let shadowTurnPromise = Promise.resolve(null);
+  // REFAL-AGENT-013: a safe, bounded-shape summary of what the LEGACY path
+  // did this turn (never the response text itself beyond its length), set
+  // once per branch right before that branch's own response becomes final.
+  // Read only in the `finally` block below, after this function's single
+  // customer-visible response has already been decided.
+  let legacySummary = null;
 
   try {
   stageStartedAt = performance.now();
@@ -278,7 +288,7 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
   // REFAL-AGENT-010 — shadow-only: off by default (REFAL_AGENT_SHADOW_ENABLED),
   // fire-and-forget, never awaited by the live reply path, and never allowed
   // to change `response`/`routed` below. See src/agentShadow.js.
-  void runShadowAgentTurn({ userId, text, user, store, classification: prepared.classification, traceId, logEvent }).catch(() => {});
+  shadowTurnPromise = runShadowAgentTurn({ userId, text, user, store, classification: prepared.classification, traceId, logEvent }).catch(() => null);
   const bookingStartedAt = performance.now();
   // Regulated and privacy-risk messages must reach the safety router first;
   // the booking parser can otherwise persist raw sensitive details.
@@ -287,7 +297,12 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
   if (booking) {
     response = booking.response;
     stageStartedAt = performance.now();
-    const turn = (await recordHistory(store, userId, text, response, { metadata: prepared.metadata })).turn;
+    // REFAL-AGENT-011: verifiedBookingConfirmed is read by responsePolicy.js's
+    // hasVerifiedBookingClaim from a real store-reported appointment status —
+    // never from `response`/model text — so recordHistory's policy gate can
+    // tell booking.js's own deterministic confirmation message apart from an
+    // unverified claim and stop storing a generic fallback in its place.
+    const turn = (await recordHistory(store, userId, text, response, { metadata: { ...prepared.metadata, verifiedBookingConfirmed: booking.appointment?.status === "confirmed" } })).turn;
     stage("turn_and_workflow_persistence", stageStartedAt, { route: "booking" });
     stageStartedAt = performance.now();
     try {
@@ -339,6 +354,7 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
     await sendStoredTextReply(socket, chatId, response, userId, turn);
     stage("whatsapp_delivery", stageStartedAt);
     stage("request_total", requestStartedAt);
+    legacySummary = { primaryIntentCategory: prepared.classification.primary, usedBookingPath: true, usedHandoverPath: false, responseLength: response.length };
     return;
   }
 
@@ -391,6 +407,7 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
       stage("whatsapp_delivery", stageStartedAt);
       stage("request_total", requestStartedAt);
       logEvent("rate_limited_ai_daily", {});
+      legacySummary = { primaryIntentCategory: prepared.classification.primary, usedBookingPath: false, usedHandoverPath: Boolean(routed.handover), responseLength: AI_LIMIT_MESSAGE.length };
       return;
     }
 
@@ -475,10 +492,18 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
     stage("topic_summary", stageStartedAt);
   }
 
+  legacySummary = { primaryIntentCategory: prepared.classification.primary, usedBookingPath: false, usedHandoverPath: Boolean(routed.handover), responseLength: typeof response === "string" ? response.length : 0 };
+
   } finally {
     stageStartedAt = performance.now();
     await setTyping(socket, chatId, false);
     stage("typing_stop", stageStartedAt);
+    // REFAL-AGENT-013: fire-and-forget, after the customer has already been
+    // replied to on every path above — never awaited, never allowed to
+    // affect `response`/`routed`. No-ops entirely when shadow mode is
+    // disabled (`shadowTurnPromise` resolves to null) or legacySummary was
+    // never set (an exception before any branch completed).
+    void recordShadowComparison({ shadowTurnPromise, legacySummary, traceId, logEvent }).catch(() => {});
   }
 
   stageStartedAt = performance.now();

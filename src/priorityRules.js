@@ -7,7 +7,7 @@
 const TRIGGERS = Object.freeze({
   urgent: [
     ["safety_or_threat", /\b(threat|unsafe|danger|injury|police|fraud|scam|stolen|data breach|immediately)\b|تهديد|خطر|احتيال|سرقة|شرطة|عاجل/iu],
-    ["severe_complaint", /\b(lawsuit|lawyer|regulator|formal complaint)\b|\b(?:media|press)\s+enquiry\b|\bjournalist(?:s)?\b|محامي|شكوى رسمية|إعلام|صحافة/iu]
+    ["severe_complaint", /\b(lawsuit|lawyer|regulator|formal complaint)\b|\b(?:media|press)\s+enquiry\b|\bjournalist(?:s)?\b|محامي|شكوى رسمية|إعلام|صحافة|δικηγόρο|ρυθμιστική αρχή|επίσημο παράπονο|δημοσιογράφο|μέσα ενημέρωσης/iu]
   ],
   high: [
     ["complaint", /\b(complaint|complain|unhappy|dissatisfied|bad service|problem with your service)\b|شكوى|غير راض|مشكلة بالخدمة|παράπονο|δυσαρεστη/iu],

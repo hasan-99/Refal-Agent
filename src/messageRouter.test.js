@@ -700,6 +700,26 @@ test("recordHistory runs independent post-turn workflow writes concurrently", as
   assert.equal(peak, 4, "all independent writes should overlap after turn creation");
 });
 
+test("REFAL-AGENT-011: recordHistory stores a real deterministic booking confirmation as-is only when metadata.verifiedBookingConfirmed is true", async () => {
+  // Before this ticket, recordHistory had no way to mark a booking claim
+  // verified at all (unlike handover, which already had
+  // allowVerifiedHandoverClaim): booking.js's own deterministic confirmation
+  // text matches BOOKING_ACTION_CLAIM, so it was always swapped out for a
+  // generic fallback in the stored history — even though the customer had
+  // already received the real confirmation over WhatsApp. This proves the
+  // fix (hasVerifiedBookingClaim) and locks in the un-fixed case too, so a
+  // future change can't silently widen what counts as "verified".
+  const confirmation = "Confirmed. Your meeting is booked for 6 Oct 2026, 10:30. Google Meet: https://meet.google.com/abc-defg-hij";
+
+  const unverifiedUser = { id: "booking-unverified", profile: {}, history: [] };
+  await recordHistory(integrationStore(unverifiedUser), unverifiedUser.id, "book me a meeting", confirmation, { metadata: {} });
+  assert.notEqual(unverifiedUser.history[0].response, confirmation, "without the verified flag the claim must still be rejected");
+
+  const verifiedUser = { id: "booking-verified", profile: {}, history: [] };
+  await recordHistory(integrationStore(verifiedUser), verifiedUser.id, "book me a meeting", confirmation, { metadata: { verifiedBookingConfirmed: true } });
+  assert.equal(verifiedUser.history[0].response, confirmation, "a real, store-confirmed booking must be stored as the customer actually saw it");
+});
+
 test("recordHistory strips an unconsented handover before persisting the turn", async () => {
   const user = { id: "handover-needs-consent", profile: {}, history: [] };
   const store = integrationStore(user);

@@ -223,6 +223,16 @@ function separateCustomerAndInternalMessages({ customerMessage = "", internalMes
   };
 }
 
+// REFAL-AGENT-014: the previous default was English-only, so a caller that
+// omits customerMessage (e.g. agentTools.js's proposeHandover) produced raw
+// English text for an Arabic/Greek customer. Localized using the same
+// `language` value already threaded through to buildRefalLeadSummary.
+function defaultHandoverCustomerMessage(language) {
+  if (language === "arabic") return "شكرًا لك. شاركت هذا مع فريق ريفالكو المختص، وسيتابعون معك.";
+  if (language === "greek") return "Ευχαριστώ. Το μοιράστηκα με την αρμόδια ομάδα της Refalco, και θα επικοινωνήσουν μαζί σας.";
+  return "Thank you. I’ve shared this with the appropriate Refalco team, and they will follow up with you.";
+}
+
 function createHandover({ input, customerMessage, customer, conversation, intent, intents, need, timing, value, authority, contact, language, notes, sharingScope } = {}) {
   const routing = routeIntentToDepartment({ intent, intents });
   const summary = buildRefalLeadSummary({ customer, conversation, intent: routing.matchedIntents, need, timing, value, authority, contact, language, notes, sharingScope });
@@ -231,7 +241,7 @@ function createHandover({ input, customerMessage, customer, conversation, intent
     routing: { ...routing, priority: priority.level, handoverRequired: priority.handoverRequired },
     summary,
     messages: separateCustomerAndInternalMessages({
-      customerMessage: customerMessage || "Thank you. I’ve shared this with the appropriate Refalco team, and they will follow up with you.",
+      customerMessage: customerMessage || defaultHandoverCustomerMessage(language),
       internalMessage: formatRefalLeadSummary(summary)
     })
   };

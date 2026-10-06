@@ -33,6 +33,26 @@ function passesLuhn(value) {
   return sum % 10 === 0;
 }
 
+// Output-side check (REFAL-AGENT-011): unlike redactSensitiveData (tuned for
+// INPUT, where over-redacting a mere mention is the safe failure mode), a
+// customer-facing response must not be rejected just for naming a credential
+// type ("please don't send your password here" must stay allowed). This only
+// tests the three structurally-unambiguous VALUE patterns already defined
+// above — a real IBAN shape, a real provider-token prefix, or a digit string
+// that actually passes Luhn — never the label-proximity patterns, which are
+// the part of redactSensitiveData that conflates "mentions a type" with
+// "contains a value". Reuses the same regexes, no duplicated detection logic.
+// Uses String.prototype.match (not .test) because these regexes carry the
+// `g` flag: a global regex's .test() mutates lastIndex across calls and
+// silently alternates true/false on repeated calls with the same input.
+function containsRawSecretValue(text) {
+  const value = String(text || "");
+  if (value.match(TOKEN_SECRET)) return true;
+  if (value.match(IBAN_LIKE)) return true;
+  const cardCandidates = value.match(CARD_LIKE) || [];
+  return cardCandidates.some((candidate) => passesLuhn(candidate));
+}
+
 function redactSensitiveData(value) {
   let text = String(value || "");
   text = text.replace(FINANCIAL_ID_LABEL, (match, label, offset, input) => isNonDisclosureMention(input, offset, offset + label.length) ? match : `${label}: ${REDACTED}`);
@@ -45,4 +65,4 @@ function redactSensitiveData(value) {
   return text;
 }
 
-module.exports = { REDACTED, redactSensitiveData, passesLuhn };
+module.exports = { REDACTED, redactSensitiveData, passesLuhn, containsRawSecretValue };

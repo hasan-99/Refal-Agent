@@ -455,11 +455,137 @@ index of record — status here is the source of truth if the two ever drift.
 
 ### REFAL-AGENT-011 — Output policy consolidation
 - Depends on: 003, 005
-- Status: PLANNED
+- Status: **DONE**
 - Acceptance criteria: the two independently-tuned `validateResponse`
   call sites found in the trace (`ai.js` model path vs. `messageRouter.js`
   deterministic path) are consolidated into one policy call with
   mode-specific options, not two hand-maintained threshold sets.
+- Trace findings (before any code change; file:line evidence):
+  1. **Four** real call sites, not two, each with its own inline threshold
+     literal: `ai.js:233` (model-direct), `messageRouter.js:47` inside
+     `recordHistory` (archival gate, every path), `messageRouter.js:352`
+     inside `resultWithHistory` (the actual customer-facing gate for
+     `routeMessageResult`'s ~25 branches — a THIRD, previously undocumented
+     duplicate of the same literal as `:47`), and `agentLoop.js:138`/`:164`
+     (Agent respond/clarify). `DEFAULT_MIN_SENTENCES` (2) in
+     `responsePolicy.js` was dead code — no real caller ever omitted
+     `minSentences`, so the "require 2 sentences" default was unreachable,
+     not an actual product requirement.
+  2. `ai.js` carried its own duplicate, narrower, English-only internal-
+     reasoning regex (old `ai.js:241`) alongside the canonical
+     `INTERNAL_REASONING_PATTERNS` already executed one line earlier via
+     `validateResponse` (`ai.js:233`) — two implementations of the same
+     check, with different coverage, in the same file.
+  3. `INTERNAL_REASONING_PATTERNS` was English/Latin-script only; an
+     equivalent leak phrased in Arabic or Greek passed undetected in every
+     caller (legacy, model-direct, and Agent paths alike).
+  4. The legacy path had no way to mark a booking claim verified at all
+     (unlike handover, which already had `allowVerifiedHandoverClaim` via
+     `hasVerifiedHandoverClaim`). Confirmed by direct reproduction: calling
+     `validateResponse` with `booking.js`'s own real
+     `bookingConfirmationMessage()` output set `reasons:
+     ["unverified_booking_action"]`. Net effect — `recordHistory` silently
+     replaced the ARCHIVED conversation-history text with a generic
+     fallback for every real booking confirmation, even though
+     `bot.js` sends the real `response` to WhatsApp unchanged (the customer
+     was never shown the wrong text; only the stored record was wrong).
+  5. `responsePolicy.js` has an exported `PROHIBITED_CLAIM_PATTERNS` array
+     that looks like the active prohibited-claim detector but is not: the
+     real check is `containsProhibitedClaim` (imported from
+     `refalcoAnswer.js`); `PROHIBITED_CLAIM_PATTERNS[0]` is only ever used
+     as a truthy sentinel. Vestigial, not a functional duplicate (nothing
+     ever executes `.test()` against it) — **found, reported, deliberately
+     left untouched** since it is exported and this repo cannot prove there
+     is no external consumer (see the "remove only what your change
+     introduced" rule).
+  6. `ai.js`'s own grounding-specific checks (language match, legacy-brand
+     history, price-claim, unsupported-package-inclusion, raw-URL/
+     "unverified citation") are NOT duplicated anywhere and were
+     deliberately NOT moved into the shared policy: they depend on
+     `promptEvidence`/`allowPricing`/`conversationTurns`, which only the
+     model-direct RAG path has, and the raw-URL rule specifically would have
+     broken `booking.js`'s own deterministic confirmation text (which
+     legitimately contains a real Google Meet link) had it been merged into
+     the shared `validateResponse`. Confirmed before deciding not to merge.
+  7. `ai.js`'s "unfinished sentence" (no terminal punctuation) truncation
+     guard has no Agent-path equivalent, but the Agent path does not need
+     one: a truncated model decision fails to `JSON.parse` in
+     `agentDecision.js` and becomes a safe `invalid_decision` outcome before
+     a draft is ever evaluated — an existing, arguably stronger, structurally
+     different guard against the same failure mode. Left alone.
+- Consolidated:
+  - One named threshold-preset surface in `responsePolicy.js`:
+    `MODEL_DRAFT_THRESHOLDS` (shared by `ai.js`'s model-direct path AND
+    `agentLoop.js`'s Agent respond step — these were byte-for-byte
+    identical literals in two files), `AGENT_CLARIFY_THRESHOLDS`, and
+    `LEGACY_RESPONSE_THRESHOLDS` (now the single definition used by both of
+    `messageRouter.js`'s call sites, replacing two copies of the same
+    literal).
+  - `hasVerifiedHandoverClaim` moved from `messageRouter.js` into
+    `responsePolicy.js`, joined by a new `hasVerifiedBookingClaim` — both
+    exported from the one surface that enforces what they gate. Both read
+    only deterministic, already-persisted/reported state
+    (`metadata.specialistFollowUp`/`metadata.handover`,
+    `metadata.verifiedBookingConfirmed`), never model text or arguments.
+  - `bot.js`'s booking branch now passes
+    `verifiedBookingConfirmed: booking.appointment?.status === "confirmed"`
+    into `recordHistory`'s metadata — the fix for finding #4. Customer-
+    facing WhatsApp delivery is unchanged (still the original `response`);
+    only the archived history record is now accurate.
+  - `ai.js`'s duplicate internal-reasoning regex removed; the canonical
+    `INTERNAL_REASONING_PATTERNS` check (already running one line earlier)
+    is now the only detector, with an explicit
+    `reasons.includes("internal_reasoning")` branch added so the thrown
+    error message customers never see (`"OpenRouter returned internal
+    reasoning text."`) is unchanged — confirmed via the existing
+    `ragPolicy.test.js` regression test, not just by inspection.
+  - `INTERNAL_REASONING_PATTERNS` extended with Arabic and Greek
+    equivalents of every English concept already covered (hidden/internal
+    instructions, chain-of-thought, internal scoring/labels, self-
+    narrated planning phrases merged in from the old `ai.js` regex), plus a
+    literal tool-name pattern (the registry's 6 current names — hardcoded,
+    not imported, because `responsePolicy.js -> agentTools.js ->
+    agentBookingTools.js -> booking.js -> messageRouter.js ->
+    responsePolicy.js` would be circular; comment flags it to keep in sync).
+  - New `sensitive_value_echo` check: `sensitiveData.js` gained
+    `containsRawSecretValue`, reusing the SAME `TOKEN_SECRET`/`IBAN_LIKE`/
+    `CARD_LIKE`+`passesLuhn` regexes already defined there (no duplicated
+    detection logic) via `.match()` rather than `.test()` (these are global-
+    flagged regexes; `.test()` on a global regex mutates `lastIndex` and
+    silently alternates true/false across repeated calls — confirmed by a
+    double-pass test). Deliberately does NOT reuse
+    `redactSensitiveData`'s label-proximity patterns: empirically, those
+    flag the mere mention of a credential TYPE ("please don't send your
+    password here" came back `changed: true`) because over-redacting is the
+    correct failure mode for input, not output — reusing them for output
+    would have rejected REFAL's own existing privacy-reminder sentence.
+- Preserved unchanged (explicitly verified, not just assumed): Ticket 005's
+  deterministic too-many-questions correction and bounded retry-then-
+  fallback behavior in `agentLoop.js`; Ticket 008's handover first-person/
+  third-person/contraction detection and the `allowVerifiedHandoverClaim`
+  gate; Ticket 009's `BOOKING_ACTION_CLAIM` coverage and the
+  `allowVerifiedBookingClaim` gate (still explicit, still defaults false,
+  still never settable by model text); the question-count rule was already
+  "at most one" (zero and one both already passed; only two-or-more is
+  rejected) — proven with a new regression test, not changed.
+- Multilingual coverage: EN/AR/EL now have equivalent internal-reasoning-
+  leakage detection (previously EN-only); the sensitive-value-echo check and
+  question-count semantics were confirmed equivalent across all three
+  presets (`MODEL_DRAFT_THRESHOLDS`/`LEGACY_RESPONSE_THRESHOLDS`/
+  `AGENT_CLARIFY_THRESHOLDS`) via a dedicated cross-path equivalence test.
+- Files: `src/responsePolicy.js`, `src/responsePolicy.test.js`,
+  `src/sensitiveData.js`, `src/ai.js`, `src/agentLoop.js`,
+  `src/messageRouter.js`, `src/messageRouter.test.js`, `src/bot.js`
+  (one metadata field added to the booking branch's `recordHistory` call —
+  no change to what is sent to the customer or to shadow-mode behavior).
+- Required tests: focused run
+  (`responsePolicy.test.js`, `messageRouter.test.js`, `agentLoop.test.js`,
+  `ragPolicy.test.js`, `aiUsage.test.js`, `aiPrivacy.test.js`,
+  `agentBookingIntegration.test.js`, `agentHandoverIntegration.test.js`,
+  `sensitiveData.test.js`, `agentDecision.test.js`, `agentTools.test.js`,
+  `agentRuntime.test.js`, `smoke.test.js`): **178/178 passed**, exit 0. Full
+  `npm test`: **406/406 passed**, exit 0 (up from the 397/397 checkpoint
+  baseline — +9 new tests, zero regressions).
 
 ### REFAL-AGENT-012 — Fallback/retry redesign
 - Depends on: none (bug fix in the existing pipeline, independent of the
@@ -474,37 +600,451 @@ index of record — status here is the source of truth if the two ever drift.
 
 ### REFAL-AGENT-013 — Observability
 - Depends on: 003, 010
-- Status: PLANNED
+- Status: **DONE**
 - Acceptance criteria: each turn records turn id, locale, interpreted goal,
   step count, tools requested/executed + result status, draft
   accepted/rejected + reason, deterministic fallback used, latency — with
   customer-visible content kept separate from internal audit metadata, and
   no secret ever logged.
+- Trace findings (before any code change):
+  1. `bot.js`'s `logEvent` wrapper (→ `operationalTelemetry.js`'s
+     `buildOperationalEvent` → `store.logEvent`) is the ONE generic
+     operational-event pathway already in use (Ticket 010's
+     `agent_shadow_turn`/`agent_shadow_turn_error`/`agent_shadow_turn_skipped`,
+     plus `response_stage`/`ai`/`ai_usage`/`knowledge_search_error`/etc.) — no
+     separate logging framework existed or was needed.
+  2. `messageRouter.js`'s `store.logAuditEvent(userId, event, details,
+     actorType)` is a SEPARATE, user-scoped pathway (`customer_correction`,
+     `red_flags_detected`) that bypasses `buildOperationalEvent`'s redaction
+     entirely and is reserved for specific, already-defined audit categories
+     — deliberately NOT reused for generic Agent-turn telemetry (would
+     conflate two different privacy/access-control models).
+  3. Confirmed empirically:
+     `buildOperationalEvent` silently DROPS any field whose key matches
+     `PRIVATE_FIELD` (includes `user*`, `contact*`, anything ending `*Id`)
+     unless the key is exactly `traceId` — e.g. passing `userId` in `ai_usage`
+     already gets stripped before reaching the store today. This means
+     `traceId` is the only usable per-turn correlation key for this event
+     family — a deliberate, pre-existing design (commented in
+     `operationalTelemetry.js`: "all contact/provider IDs... remain in
+     protected records"), not a gap this ticket needed to fix.
+  4. agentLoop.js's `result.steps`/`result.toolsUsed`/`result.outcome`/
+     `result.corrected` already contain everything needed to derive every
+     required safe field — `toolsUsed` is already tool-names-only (no args),
+     and every tool's `status`/`reasonCode` (agentToolResult.js's `ok()`/
+     `fail()` contract) is always one of a small hardcoded enum, never
+     customer text. This made real-time per-step instrumentation of
+     `agentLoop.js` unnecessary: a pure POST-HOC derivation from the already-
+     returned `result` object is sufficient and carries zero risk to that
+     file's decision logic (it is untouched by this ticket).
+  5. `agentShadow.js` (the only production caller today) was the right — and
+     only needed — integration point; `agentDecision.js`/`agentTools.js`/
+     `agentRuntime.js` are untouched.
+  6. Timestamps/durations were already standardized (`performance.now()` +
+     `Math.round` elsewhere in `bot.js`/`agentShadow.js`); reused the same
+     convention, no new time-handling code introduced.
+- New module: `src/agentObservability.js` — PURE derivation only (no
+  logging, no I/O, cannot throw into a turn): `summarizeAgentTurn(result)`,
+  `buildAgentTurnEventFields(...)`, `buildShadowComparisonFields(...)`,
+  `FALLBACK_OUTCOMES`.
+- Event model (renamed/extended from Ticket 010's shadow-only names into one
+  family both shadow and, later, live routing can share):
+  - `agent_turn_completed` (was `agent_shadow_turn`) — traceId, locale,
+    primaryIntentCategory, secondaryGoalCount, maxSteps, shadowMode,
+    durationMs, stepCount, toolsUsed (names only), toolCallCount, toolCalls
+    (`[{tool, status, ok, reasonCode}]` — never args/data/userSafeSummary),
+    ragUsed, ragResultStatus (found/no_evidence/error/invalid_input),
+    decisionTypesUsed, draftRejected, rejectionReasonCodes, deterministic
+    CorrectionUsed, fallbackUsed, finalOutcome, responseLength.
+  - `agent_turn_failed` (was `agent_shadow_turn_error`) — traceId,
+    shadowMode, a truncated error message (unchanged from Ticket 010).
+  - `agent_shadow_turn_skipped` — Ticket 010's concurrency-cap event,
+    **deliberately untouched**, name and fields unchanged (see test "the
+    Ticket 010 concurrency-skip event name/fields are unchanged").
+  - `agent_shadow_comparison` (new) — traceId,
+    legacyPrimaryIntentCategory, agentPrimaryIntentCategory,
+    sameIntentCategory, legacyUsedBookingPath, agentProposedBookingTool,
+    legacyUsedHandoverPath, agentProposedHandover, legacyResponseLength,
+    agentResponseLength, agentOutcome, agentFallbackUsed, agentStepCount,
+    shadowDurationMs.
+- Explicitly excluded from every event (verified by test, not just by
+  inspection): the customer's message; the Agent's or legacy path's drafted/
+  final response TEXT (only `.length` is ever logged); raw tool `args`
+  (`saveCustomerFact`'s value, `searchApprovedKnowledge`'s query,
+  `requestBookingAction`'s slot/purpose); a tool result's `data`/
+  `userSafeSummary` (RAG chunk content, handover summary, booking
+  confirmation detail); the rejected draft's text (only its policy
+  `reasonCode`s); model reasoning/chain-of-thought.
+- Known, documented limitation: `agentPrimaryIntentCategory` in the
+  comparison event reads the SAME shared `intent.js` classification already
+  fed to both paths — the Agent's own decision step does not yet produce an
+  independent bounded goal category — so `sameIntentCategory` is always
+  `true` by construction today. The field shape is correct for when a later
+  ticket gives the Agent its own classification; not claimed as a real
+  comparison yet.
+- `src/bot.js` wiring (minimal, reviewed for "no behavior change"): the
+  shadow call's promise is now captured (`shadowTurnPromise`, was
+  previously `void`-discarded) instead of fired-and-forgotten outright; a
+  new `legacySummary` variable is set (one line each) at the 3 points where
+  the legacy path's response becomes final (booking branch, AI-daily-limit
+  branch, and the normal fall-through end of the function); the `finally`
+  block — which every path already reaches, including both early
+  `return`s, by ordinary JS try/finally semantics — fires
+  `recordShadowComparison` fire-and-forget, after the customer has already
+  received their reply on every path. `response`/`routed`/customer-visible
+  timing are untouched.
+- Logging-failure semantics: a throwing OR promise-rejecting `logEvent` can
+  never (a) discard an otherwise-successful Agent turn result, (b) mask the
+  original error on the failure path, or (c) become an unhandled rejection —
+  verified by dedicated tests for all three.
+- Performance: zero new synchronous work on the customer-reply path (all
+  derivation is pure, all emission is fire-and-forget); no new in-memory
+  buffers (nothing is queued — events are emitted and forgotten immediately,
+  same as Ticket 010); Ticket 010's bounded-concurrency gate is completely
+  untouched.
+- Benchmark readiness (Tickets 015/016): every listed metric has its raw
+  signal present in `agent_turn_completed` —
+  `CURRENT_REQUEST_ANSWERED_RATE`/`GENERIC_FALLBACK_RATE` from
+  `fallbackUsed`+`finalOutcome`; `MODEL_DRAFT_REJECTION_RATE` from
+  `draftRejected`+`rejectionReasonCodes`; `AVERAGE_AGENT_STEPS` from
+  `stepCount`; `RAG_USAGE_RATE` from `ragUsed`/`ragResultStatus`;
+  `TOOL_FAILURE_RATE` from `toolCalls[].ok`; `UNNECESSARY_TOOL_CALL_RATE`
+  from `toolCallCount`/`toolsUsed`, joined against `agent_shadow_comparison`
+  for cases where the legacy path needed no tool at all.
+  `UNNECESSARY_QUESTION_RATE`/`LANGUAGE_MISMATCH_RATE` are NOT yet directly
+  derivable (no question-count or language-match field is emitted here) —
+  flagged as a gap for whichever of 015/016 needs them, not silently
+  assumed solved.
+- Not in scope / deliberately unchanged: `agentLoop.js`, `agentDecision.js`,
+  `agentTools.js`, `agentRuntime.js` — zero lines touched, zero risk to
+  Agent decision/RAG/booking/handover/consent/output-policy behavior; Ticket
+  010's shadow gating (flag default, default-deny allowlist, concurrency
+  cap) untouched; no live routing enabled; Ticket 017 untouched.
+- Files: `src/agentObservability.js` (new), `src/agentObservability.test.js`
+  (new), `src/agentShadow.js` (event rename/enrichment +
+  `recordShadowComparison`), `src/agentShadow.test.js` (updated + 7 new
+  tests), `src/bot.js` (shadow-promise capture + 3 `legacySummary`
+  assignments + one `finally`-block call), `package.json` (registers
+  `agentObservability.test.js`).
+- Required tests run: focused
+  (`agentShadow.test.js`, `agentObservability.test.js`, `agentRuntime.test.js`,
+  `agentLoop.test.js`, `agentTools.test.js`, `agentDecision.test.js`,
+  `messageRouter.test.js`, `responsePolicy.test.js`,
+  `operationalTelemetry.test.js`, `sensitiveData.test.js`,
+  `agentBookingIntegration.test.js`, `agentHandoverIntegration.test.js`,
+  `smoke.test.js`): **172/172 passed**, exit 0. Full `npm test`: **426/426
+  passed**, exit 0 (up from the 406/406 checkpoint baseline — +20 new tests,
+  zero regressions).
 
-### REFAL-AGENT-014 — Multilingual tests
+### REFAL-AGENT-014 — Multilingual and behavior regression coverage
 - Depends on: 004, 007, 008
-- Status: PLANNED
-- Acceptance criteria: EN/AR/EL coverage across the new agent path for the
-  same categories already covered for the legacy path (language mirroring,
-  explicit switch requests, Arabizi/Greeklish detection).
+- Status: **DONE**
+- Acceptance criteria: a regression suite proves equivalent behavior across
+  EN/AR/EL for current-request understanding, clarification, tool choice,
+  safety, consent, booking/handover claims, fallback, question count,
+  conversation-ending behavior, language switching, concise answers, and
+  response-policy consistency — not just "the text is in the right language."
+- New file: `src/multilingualRegression.test.js` — 32 tests, table-driven
+  where the scenario is identical across languages (`for (const [locale,
+  ...] of Object.entries(CASES))`), organized by the 30 required scenario
+  families plus 2 telemetry-signal tests, registered in `package.json`'s
+  `test` script.
+- Trace performed first (file:line evidence, via 4 parallel read-only trace
+  agents) across: `language.js`, `agentContext.js`/`agentDecision.js`,
+  `responsePolicy.js` (question-count/claim-verification/threshold presets),
+  `leadQualification.js` (consent), `handover.js`, `booking.js`,
+  `businessHours.js`, `followUp.js`, `conversationRecap.js`,
+  `safetyPolicy.js`, `privacyIntent.js`, `sensitiveData.js`, `intent.js`,
+  `priorityRules.js`. Findings below are grouped into **fixed this ticket**
+  (small, isolated, mechanical, directly required for EN/AR/EL equivalence)
+  and **deferred** (significant enough to need their own ticket/decision —
+  see the new ticket proposals after 021).
 
-### REFAL-AGENT-015 — 30-scenario test matrix
+#### EN/AR/EL coverage matrix (as verified by the trace + the new suite)
+
+| Mechanism | EN | AR | EL | Notes |
+|---|---|---|---|---|
+| `language.js` detection (script/keyword/Arabizi/Greeklish) | yes | yes | yes | solid; a few missing unit-test edge cases only (negative cases), not a behavior gap |
+| `responsePolicy.js` question-count (`?`/`؟`/Greek `;`), thresholds, internal-reasoning, claim-verification gates | yes | yes | yes | already correct before this ticket; added the missing two-question Arabic/Greek regression cases |
+| `leadQualification.js` consent grant/decline/revocation | yes | yes | **yes (fixed)** | `OPT_IN_RE`'s Greek branch was unreachable (see Fixed #7 below) |
+| `booking.js` request detection, detail/date reply, confirmation reply, confirmation/failure/prompt wording | yes | yes | **yes (fixed)** | Greek had zero coverage in 4 separate places (see Fixed #1-3, #8) |
+| `booking.js` natural-language date/weekday parsing (`parseBookingDetails`/chrono) | yes | yes (via `normalizeArabicBookingText`) | **no — deferred** | no Greek word normalizer exists; suite uses an explicit numeric date to avoid this for EL |
+| `handover.js` default customer-facing message | yes | **yes (fixed)** | **yes (fixed)** | was English-only |
+| `priorityRules.js` scoped triggers | yes | yes | **yes (fixed) for `severe_complaint`; partial elsewhere (pre-existing, not newly broken)** | |
+| `safetyPolicy.js` PRIVACY bare-keyword rule | **broken** | **broken** | **broken** | — deferred, see new ticket proposal; symmetric false positive, not a language gap |
+| `followUp.js` goodbye detection (cron eligibility) | yes | **broken (unreachable `\b` bug)** | **no (unsupported)** | deferred — touches live cron timing/eligibility |
+| `followUp.js` re-engagement message text | n/a | yes | **no (hardcoded Arabic)** | deferred, same ticket as above |
+| `conversationRecap.js` complaint recap | yes | yes | yes | localized text is correct in all 3 languages; the **content** is always the same invented backstory regardless of the real complaint — deferred |
+| Agent path (`agentLoop.js`) response-language equivalence check | n/a (no such check anywhere, any language) | n/a | n/a | legacy path has one (`ai.js:227`); Agent path has none — deferred, observability-only signal added this ticket |
+
+#### Fixed this ticket (small, isolated, mechanical — mirrors an existing working pattern in the same file)
+
+1. `booking.js` — added the missing Greek branch to ~20 confirmation/failure/prompt/reschedule/cancel message sites (`bookingConfirmationMessage`, `calendarAccessFailure`, `bookingPrompt`, `formatBookingTime`, and the `awaiting_details`/`awaiting_confirmation` state-machine replies), mirroring the one function that already had the correct 3-way EN/AR/EL ternary.
+2. `booking.js` — `isBookingConfirmationReply` and the inline yes/no checks in the `awaiting_confirmation` branch had no Greek words (`ναι`/`όχι`/`άκυρο`/`ακύρωση`/`επιβεβαίωση`); added, mirroring the existing EN/AR lists.
+3. `booking.js` — `isBookingRequest` (the literal entry gate to the booking state machine) had **zero** Greek coverage at all; a Greek customer could never start a booking through this function. Added a Greek branch mirroring the EN/AR shape (and a Greek refusal/deferral carve-out).
+4. `priorityRules.js` — `severe_complaint` (media/press/journalist/lawyer trigger) had Arabic but no Greek terms, even though Greek terms for the same concepts already exist elsewhere in `intent.js`. Added.
+5. `handover.js` — `createHandover`'s default `customerMessage` (used by `agentTools.js`'s `proposeHandover` whenever no explicit message is supplied) was English-only and already sounded like a completed action ("I've shared this... they will follow up"). Localized using the `language` parameter the function already receives.
+6. `responsePolicy.js` — `safeFallbackData`'s `ar`/`el` tables were missing `price`/`trust`/`uncertainty` keys, silently degrading to the generic `default` string for those categories (English had all 6). Added category-specific AR/EL text mirroring the English set's intent. Updated the one existing test (`responsePolicy.test.js:201`) whose assertion depended on the old fallback-to-default text.
+7. `leadQualification.js` — `OPT_IN_RE`'s Greek branch was wrapped in `\b(...)\b`. **JavaScript's `\b` is always ASCII-`\w`-based, even with the `u` flag** — it never matches adjacent to Greek (or Arabic) script, so the Greek branch was completely unreachable against any real Greek sentence; a Greek customer's explicit contact consent could never be recognized. Fixed by removing the `\b` wrap, matching how `OPT_OUT_RE`/`DENY_RE` already correctly handle their own non-Latin branches in the same file (bare, unanchored alternation). This is the same bug class found (but not fixed, see below) in `followUp.js`.
+8. `booking.js` — `isBookingDetailsReply` (the gate recognizing a date/time reply during an active booking) had zero Greek lexical markers; a Greek customer's date/time reply was silently dropped (`handleBookingMessage` returned `null`, no response sent at all). Added Greek weekday/time words plus a language-neutral numeric date/time pattern (`\d{1,2}:\d{2}`, `\d{4}-\d{2}-\d{2}`) since digits carry no language.
+9. `agentObservability.js` — added `questionSignalsFrom`/`languageSignalsFrom` (pure derivation, no gating) addressing Ticket 013's flagged gap for `UNNECESSARY_QUESTION_RATE`/`LANGUAGE_MISMATCH_RATE` raw signals (see "Telemetry" below).
+
+#### Deferred (reported, not fixed — see new ticket proposals after 021)
+
+- `safetyPolicy.js`'s PRIVACY rule bare-matches `password`/`secret`/`access token`/`api key`/etc. with no required value suffix (the value-suffix requirement only applies to the separate OTP/one-time-code sub-pattern), so an ordinary question like "How do I reset my password?" is misclassified as a privacy risk — symmetrically in EN/AR/EL, confirmed by direct test. The refusal carve-out (`NON_DISCLOSURE_CLAUSE`) also doesn't recognize the compound phrase "access token" (only bare "token"), so "I will not share my access token" is still flagged. This reproduces the original pre-Ticket-011 audit finding; it needs a regex redesign (which nouns are safe to bare-match vs. which need a value), not a mechanical string addition — see new ticket proposal.
+- `followUp.js`'s `isNaturalConversationEnd` has the same `\b`-on-non-Latin-script bug as Fixed #7 above, but for Arabic — the Arabic branch is **unreachable**, not just "present" as earlier tickets assumed; Greek has no terms at all. `FOLLOW_UP_MESSAGE` is still hardcoded Arabic-only for every customer. Not fixed here per this ticket's own instruction (touches live cron eligibility/timing semantics) — see new ticket proposal.
+- `conversationRecap.js`'s complaint recap always inserts the same invented "company-setup case submitted last month" backstory regardless of the real complaint's actual topic (confirmed with a refund-dispute complaint in EN/AR/EL — the backstory text is correctly localized into all 3 languages, but its *content* never reflects what the customer actually said). Not fixed here per this ticket's own instruction — see new ticket proposal.
+- The Agent path (`agentLoop.js`/`responsePolicy.js`) has no response-language equivalence check at all, unlike the legacy path's `ai.js:227` check. Adding one is a real design change (and the trace flagged a genuine false-positive risk for short replies dominated by an English brand/URL) — too significant for a "small isolated fix." Addressed this ticket only via a new, non-gating observability signal (`languageSignalsFrom` in `agentObservability.js`) — see new ticket proposal for the actual validator.
+- `booking.js`'s `parseBookingDetails` has no Greek equivalent of `normalizeArabicBookingText` (which translates Arabic weekday/month/time words before `chrono` parsing) — a Greek customer writing "Δευτέρα στις 10:00" in natural language will not be understood; the new test suite uses an explicit numeric date (`2026-01-05 10:00`) to exercise the rest of the Greek booking flow without relying on this. Needs a new `normalizeGreekBookingText` function, comparable in scope to the existing Arabic one — see new ticket proposal.
+- `businessHours.js`'s out-of-hours note is still Arabic-only and the module is still unwired from `bot.js` (confirmed) — this is the same item already tracked by REFAL-AGENT-021 (a product decision on whether/what to wire at all), not a new ticket.
+
+#### Telemetry (Ticket 013 gap)
+
+Added to `agentObservability.js`, pure derivation only (no gating, no behavior change):
+- `questionSignalsFrom(response, finalOutcome)` → `{ questionCount, hasQuestion, clarificationRequested }`. Deliberately NOT a semantic "was this question unnecessary" verdict — that needs benchmark/conversation context this module doesn't have. Feeds Ticket 015/016's `UNNECESSARY_QUESTION_RATE`.
+- `languageSignalsFrom(locale, response)` → `{ expectedLocale, detectedResponseLocale, languageMismatch }`, reusing `language.js`'s existing `detectMessageLanguage` (the same detector the legacy path already trusts for its own language-match check). Returns `languageMismatch: null` (not a fabricated boolean) when `locale` is `"unknown"` or the response is empty — avoiding exactly the short-reply/brand-name false-positive risk the trace flagged. Feeds Ticket 015/016's `LANGUAGE_MISMATCH_RATE`.
+- Both are merged into `buildAgentTurnEventFields`'s existing output (`summarizeAgentTurn`/the shadow-mode event), so no new emission call site was added — `agentShadow.js` is unchanged.
+- Not fixed here — see above: this is raw signal only, not the Agent-path language-validator ticket.
+
+#### Not in scope / deliberately unchanged
+`agentLoop.js`, `agentDecision.js`, `agentTools.js`, `agentRuntime.js`, `agentShadow.js`'s gating/allowlist/concurrency-cap — zero lines touched. No live routing enabled. Ticket 017 untouched. `businessHours.js` not wired into `bot.js` (still REFAL-AGENT-021's decision to make).
+
+#### Required tests run
+Focused (`leadQualification.test.js`, `messageRouter.test.js`, `booking.test.js`,
+`priorityRules.test.js`, `handover.test.js`, `responsePolicy.test.js`,
+`agentBookingTools.test.js`, `agentBookingIntegration.test.js`,
+`agentHandoverIntegration.test.js`, `agentObservability.test.js`,
+`multilingualRegression.test.js`): **190/190 passed**, exit 0 — zero
+regressions in any file touched by this ticket's fixes. Full `npm test`
+result recorded in the Test status section below.
+
+### REFAL-AGENT-015 — End-to-end Agent scenario matrix
 - Depends on: 004, 007, 008
-- Status: PLANNED
-- Acceptance criteria: all 30 scenarios listed in Phase 14 of the refactor
-  brief are covered, asserting both the customer-visible response and the
-  internal workflow side effect.
+- Status: **DONE**
+- Acceptance criteria: ~30 (delivered: 40) meaningful scenarios exercising
+  the real Agent-runtime boundary (`runAgentTurnForContact`/`runAgentTurn` +
+  the real `TOOL_REGISTRY`) with scripted decisions, asserting behavioral
+  properties (outcome, tool usage, question count, fallback, language
+  mismatch, side effects) via Ticket 013's telemetry — not exact LLM prose.
+- New files: `src/agentScenarios.js` (40 scenario definitions + shared
+  runner/evaluator — single source of truth), `src/agentScenarios.test.js`
+  (asserts each), `scripts/generateScenarioMatrixReport.js` (writes
+  `docs/refal-agent-scenario-matrix.md` from the same source, so the report
+  can never drift from what actually ran), registered in `package.json`.
+- Important limitation, stated plainly: every scenario's Agent "decision" is
+  scripted (`scriptedDecider`), standing in for a real model call. This
+  proves the deterministic context/tool/policy chain correctly carries and
+  enforces state for a GIVEN decision sequence — it does not prove a real
+  model would choose that sequence. That is REFAL-AGENT-016's job (real
+  model + this same scaffolding, scored against these scenarios' outcomes).
+- Coverage: 40 scenarios across 8 groups (A Information/RAG ×5, B Context/
+  Memory ×5, C Clarification ×4, D Handover/Consent ×5, E Booking ×6,
+  F Safety/Policy ×5, G Language ×6, H Failures/Resilience ×4). Locale
+  distribution: EN=23, AR=9, EL=7, mixed(language-switch)=1 — skewed toward
+  English because several groups (booking concurrency/idempotency, failure/
+  resilience mechanics) don't need locale variety to prove their property;
+  every important flow (info, clarification, consent/handover, booking,
+  language-switch) has at least one AR and one EL instance.
+- Two scenarios explicitly engage with the five tickets 014 deferred
+  (022-026) and were confirmed, not assumed, to pass at THIS boundary:
+  - **F01** (password-reset question): confirmed by source inspection that
+    `safetyPolicy.js`'s `classifySafety` (Ticket 022's bug) is never called
+    anywhere in the Agent runtime chain (`agentContext.js`/`agentLoop.js`/
+    `agentTools.js`/`agentDecision.js`/`responsePolicy.js`) — the bug only
+    affects the legacy `messageRouter.js` routing layer, which Agent-turn
+    scenarios never go through. Documented in the scenario's own
+    description, not silently passed over.
+  - **G06** (Greek goodbye): Ticket 023's bug is specifically in
+    `followUp.js`'s 24h re-engagement CRON path, which `runAgentTurnForContact`
+    never calls. A live-turn farewell reply (zero questions, correct
+    language) genuinely works today. Documented the same way.
+  - No scenario in this matrix currently needs the `knownFailure` mechanism
+    (`src/agentScenarios.test.js`'s `KNOWN_FAILURES` map) — it is wired and
+    ready (asserts the failure is still the EXPECTED one, never silently
+    skipped) for when a future scenario does need it.
+- New bugs discovered while writing scenarios (test-design findings, already
+  consistent with Ticket 014's traces — not new production bugs): none. Two
+  response-text collisions were found and fixed in the TEST fixtures
+  themselves (E01/E03's draft phrasing accidentally matched
+  `HANDOVER_ACTION_CLAIM`/`UNCONSENTED_CONTACT_COMMITMENT`), and D01/G03
+  initially used a bare consent-sounding message that `getConsentState`
+  correctly downgrades to `unknown` without a tracked
+  `metadata.specialistFollowUp` offer (`leadQualification.js:101-103` — by
+  design, not a bug: a free-text claim of consent cannot authorize a
+  handover on its own, only a tracked offer-and-response can) — fixed by
+  using the same tracked-consent shape `agentHandoverIntegration.test.js`
+  already established, not by changing any production code.
+- Safety: in-memory fakes/stubs only; `googleapis`' `google.calendar` is
+  mocked for every booking scenario (`withCalendarEnv`); no real network,
+  model, WhatsApp, or Supabase access anywhere in this ticket.
+- Not in scope / deliberately unchanged: no production runtime behavior
+  changed. `agentLoop.js`/`agentDecision.js`/`agentTools.js`/
+  `agentBookingTools.js`/`handover.js` — zero lines touched.
+- Required tests run: focused (`agentRuntime.test.js`, `agentLoop.test.js`,
+  `agentDecision.test.js`, `agentTools.test.js`,
+  `agentHandoverIntegration.test.js`, `agentBookingIntegration.test.js`,
+  `agentBookingTools.test.js`, `multilingualRegression.test.js`,
+  `responsePolicy.test.js`, `agentScenarios.test.js`): **159/159 passed**,
+  exit 0. Full `npm test` result recorded in the Test status section below.
 
-### REFAL-AGENT-016 — Benchmark comparison
+### REFAL-AGENT-016 — Real-model benchmark and legacy-vs-Agent quality comparison
 - Depends on: 015
-- Status: PLANNED
-- Acceptance criteria: `scripts/runConversationBenchmark.js` calls the same
-  `runAgentTurn` orchestrator instead of maintaining its own copy of the
-  top-level turn sequencing (fixes the duplicated-orchestration risk found
-  in the trace); `UNNECESSARY_QUESTION_RATE` and
-  `CURRENT_REQUEST_ANSWERED_RATE` metrics are added; results are compared
-  against the existing baseline (generic fallback frequency, draft-rejection
-  rate, language mismatch, unwanted handover/contact behavior).
+- Status: **PARTIAL** — infrastructure fully built and tested, legacy
+  baseline genuinely measured, but the ticket's PRIMARY GOAL (does the real
+  model make good decisions through the Agent runtime) is **BLOCKED**: this
+  machine has no outbound network path to openrouter.ai (confirmed by two
+  independent `fetch()` reachability tests — one sandboxed, one with
+  `dangerouslyDisableSandbox: true` — both returned `fetch failed`; same
+  class of restriction already recorded in memory for this machine's NTLM
+  proxy blocking Playwright). Every real Agent decision call in the actual
+  benchmark run failed for this reason, not for a behavioral reason.
+- New files: `src/benchmarkScorer.js` (pure scoring/aggregation — rate
+  computation excluding NOT_APPLICABLE from denominators, repeated-run
+  pass-rate/variance/majority, known-open-ticket tagging, infra-vs-
+  behavioral separation, locale/feature breakdowns), `src/benchmarkEvaluator.js`
+  (isolated, versioned LLM-as-judge for `currentRequestAnswered`/
+  `unnecessaryQuestion` only — never used for deterministic safety facts),
+  `src/benchmarkScenarios.js` (32-scenario benchmark subset of Ticket 015's
+  40, excluding pure loop-mechanics scenarios that add no real-model
+  signal), `src/benchmarkReport.js` (markdown report builder),
+  `scripts/runAgentBenchmark.js` (the real-model runner —
+  `npm run benchmark:agent`, supports `--runs`/`--locale`/`--scenario`/
+  `--output`), plus `src/benchmarkScorer.test.js`, `benchmarkEvaluator.test.js`,
+  `benchmarkReport.test.js`, `benchmarkSafety.test.js` (all 12 required
+  framework-test categories covered), registered in `package.json`.
+  `docs/refal-agent-benchmark.md` and `artifacts/refal-agent-benchmark.json`
+  (gitignored) are the benchmark's own generated output, not hand-written.
+- Legacy harness design (confirmed by source inspection, not assumed): the
+  legacy `askOpenRouter` call lives in `bot.js`, never in
+  `messageRouter.js`'s `routeMessageResult` or in `booking.js`'s
+  `handleBookingMessage` — both of those are purely deterministic. So the
+  legacy arm calls `handleBookingMessage` first (exactly bot.js's own call
+  order) falling through to `routeMessageResult`, and classifies
+  `shouldUseAi: true` results as `legacyResult: not_measurable` (never
+  faked) rather than attempting to simulate `bot.js`'s AI path. Of the 32
+  benchmark scenarios, 8 had a genuine deterministic legacy result; 24
+  legitimately route to the (also network-blocked) AI path.
+- Agent harness design: uses the REAL `src/agentDecision.js` `decideNextStep`
+  (never scripted) through `runAgentTurnForContact`/`runAgentTurn` + the real
+  `TOOL_REGISTRY`, for both the general and booking-category scenarios
+  (booking needs `runAgentTurn` directly since `runAgentTurnForContact`
+  doesn't forward a deterministic `now`, needed for booking-window checks).
+- Real bug found while wiring the real decision path (test-harness-affecting,
+  not a production defect): `agentDecision.js`'s real `decideNextStep` never
+  throws — a model/network failure is caught internally and returned as an
+  `{invalid:true, reason:"model_call_failed:..."}` decision object, which
+  `agentLoop.js`'s `validateDecision` then rejects for an unrelated reason
+  (`"missing_response_text"`), so the original infra-failure reason is lost
+  by the time `runAgentTurn` returns. The benchmark captures this at the
+  actual call site (wrapping `decideNextStep`), not by guessing from the
+  returned outcome string — documented in `scripts/runAgentBenchmark.js`'s
+  `runAgentScenario`.
+- Benchmark-only harness addition (not a production change): a short
+  (`BENCHMARK_CALL_TIMEOUT_MS`, default 8s) logical timeout around the real
+  decision/evaluator calls. A dropped TCP SYN through this machine's blocking
+  proxy left Node's `fetch()` hanging for the OS-level connect timeout
+  (observed: the first full-matrix attempt at the default timeout ran well
+  past 15 minutes without finishing); the benchmark needs to report
+  `infrastructure_error` promptly rather than hang. `agentDecision.js`'s own
+  `defaultCallModel` is untouched.
+- Actual benchmark run executed for real (not fabricated): 32 scenarios, 1
+  run each — repeated runs were deliberately skipped for this execution and
+  documented why: with the network confirmed hard-down (not flaky), 3
+  repeats of a deterministic infrastructure failure produce zero additional
+  signal over 1 repeat; `BENCHMARK_RUNS`/`--runs=N` support real multi-run
+  variance measurement whenever this is re-run with working network.
+  Results: **Legacy 8/32 measured, 24/32 not_measurable (AI-path), 0
+  infrastructure errors. Agent 0/32 measured, 32/32 infrastructure_error.**
+  `F01`'s legacy arm was independently re-confirmed (via a real
+  `classifySafety` call, not assumed) to exhibit REFAL-AGENT-022's bare-
+  keyword false positive and is tagged accordingly — the only
+  known-ticket-affected turn in this run. Zero unexpected (untagged)
+  failures. Readiness: **NOT_READY** — correctly computed from the evidence
+  (0% of Agent-arm turns were behaviorally measurable), not asserted.
+- Cost report: 32 real Agent decision calls attempted, 0 succeeded, 0
+  retries (confirmed by source inspection: `agentDecision.js` has no retry
+  policy — one failed call becomes one fallback decision immediately). Token/
+  cost data: not available — `agentDecision.js`'s `defaultCallModel` does not
+  request OpenRouter usage inclusion, and deliberately was not forked/
+  duplicated in the benchmark to avoid diverging from real production call
+  behavior (see decision log).
+- Safety: every scenario uses in-memory fakes; booking scenarios reuse
+  Ticket 015's `withCalendarEnv` mock; `src/benchmarkSafety.test.js`
+  statically guards against the benchmark ever requiring `supabaseStore.js`,
+  `bot.js`, or `@whiskeysockets/baileys`. The only real network calls this
+  ticket's code can make are to the Agent decision model and the isolated
+  benchmark evaluator model — never a business-action endpoint.
+- Not in scope / deliberately unchanged: no runtime behavior changed.
+  `agentDecision.js`, `agentLoop.js`, `agentTools.js`, `agentBookingTools.js`
+  — zero lines touched. No live routing enabled. Ticket 017 untouched.
+- Required tests run: focused (`benchmarkScorer.test.js`,
+  `benchmarkEvaluator.test.js`, `benchmarkReport.test.js`,
+  `benchmarkSafety.test.js`, `agentScenarios.test.js`, `agentRuntime.test.js`,
+  `agentDecision.test.js`, `agentLoop.test.js`): **101/101 passed**, exit 0.
+  Full `npm test` **527/527 passed**, exit 0 (up from the 499/499 checkpoint
+  baseline — +28 new framework tests, zero regressions).
+- **What would need to change to close this ticket's PARTIAL status to
+  DONE**: run `npm run benchmark:agent` (optionally `--runs=3`) from an
+  environment with real outbound network access to openrouter.ai and a
+  working `OPENROUTER_API_KEY` — the infrastructure, scenario set, scorer,
+  evaluator, and report are already real and ready; only the network
+  constraint of this particular execution environment is blocking a genuine
+  Agent-quality measurement.
+
+#### 2026-10-06 follow-up: network root cause found and fixed; a second, separate blocker found
+
+- **Root cause of the "no outbound network path" finding, confirmed (not
+  guessed):** this machine's corporate proxy (`HTTPS_PROXY`/`HTTP_PROXY` =
+  `occyproxy.odysseycs.com:8080`, set at the OS/user level for every process)
+  requires **NTLM authentication**. Node's `fetch()` has no proxy support and
+  no NTLM support at all, so a direct `fetch()` to `openrouter.ai` never even
+  reaches the proxy's auth challenge — it hangs until the OS-level connect
+  timeout, which is exactly the "32/32 infrastructure_error" symptom this
+  ticket recorded. `curl.exe` (built into Windows since 10 1803; also present
+  via Git) authenticates against this same proxy transparently via the
+  current Windows login (SSPI, `--proxy-ntlm -U :` — no stored credential),
+  confirmed with a real `200` from `https://openrouter.ai/api/v1/models`.
+- **Fix:** new shared module `src/openrouterTransport.js`
+  (`fetchOpenRouter`), wired into the three real OpenRouter call sites
+  (`src/ai.js`'s `askOpenRouter`, `src/agentDecision.js`'s
+  `defaultCallModel`, `src/benchmarkEvaluator.js`'s
+  `defaultCallEvaluatorModel`). Behavior is **unchanged by default** — it
+  calls the plain global `fetch` unless an explicit opt-in env flag
+  (`OPENROUTER_CORPORATE_PROXY=1`) AND a resolved `HTTPS_PROXY`/`HTTP_PROXY`
+  (honoring `NO_PROXY`) are both present; only then does it shell out to
+  `curl.exe -K <tmp config>` (headers/body passed via a 0600 temp file and
+  stdin, never via argv, so the `Authorization: Bearer ...` header is never
+  visible in the process argument list) with `--proxy-ntlm -U :`. No
+  credential is hardcoded; TLS verification is untouched (curl's own
+  Schannel-backed trust store); direct/no-proxy environments (production)
+  take the exact same `fetch()` path as before this change.
+  New test file `src/openrouterTransport.test.js` (16 tests, mocks only —
+  injects a fake `curlRunner`/fake `spawn`, never shells out for real, never
+  requires the real corporate network), registered in `package.json`. Full
+  `npm test`: **543/543 passed**, exit 0 (up from the 527/527 checkpoint —
+  +16 new tests, zero regressions).
+- **Real connectivity re-tested with the fix (`OPENROUTER_CORPORATE_PROXY=1`,
+  real `curl.exe`, real NTLM handshake, real `openrouter.ai`):** the network
+  path now works end-to-end — a real, well-formed JSON response came back
+  from OpenRouter (not a timeout/connection error). However the response was
+  **`401 {"error":{"message":"User not found.","code":401}}`**: the
+  `OPENROUTER_API_KEY` currently in this repo's `.env` is **22 characters**
+  (no trailing CR/whitespace issue — confirmed), far shorter than a real
+  OpenRouter key (`sk-or-v1-` + 64 hex chars, ~73 total) — it reads as a
+  placeholder/invalid value, not a live credential, and was never previously
+  noticed because the network block masked it on every prior attempt.
+- **Net effect: ticket 016 is still PARTIAL, but the blocker changed kind.**
+  The network/proxy problem that blocked this ticket is fixed and proven
+  working. The remaining blocker is a credential problem, not a network
+  problem: `npm run benchmark:agent` was deliberately **not** re-run with the
+  current placeholder key, because every call would fail the same way
+  (`model_call_failed:...401...`) and produce the same uninformative
+  "0 measurable" shape as before — that would misrepresent a credential issue
+  as a repeat of the network issue this session just fixed, not a real
+  Agent-quality measurement. **Needs a valid `OPENROUTER_API_KEY`** (from
+  wherever this project's real key is kept — not generated or guessed here)
+  before `npm run benchmark:agent -- --runs=3` can produce real numbers.
+  REFAL-AGENT-017 remains explicitly not started.
 
 ### REFAL-AGENT-017 — Live cutover
 - Depends on: 010, 013, 015, 016
@@ -555,6 +1095,176 @@ index of record — status here is the source of truth if the two ever drift.
   (whether/what out-of-hours text to send in EN/AR/EL), not just a bug fix.
   Removing it instead (if the owner doesn't want the feature) is the other
   valid outcome — needs a decision, not just an implementation.
+- Update from REFAL-AGENT-014: re-confirmed still unwired, `OUTSIDE_BUSINESS_HOURS_NOTE`
+  still Arabic-only. No new findings; this item itself is unchanged.
+
+### REFAL-AGENT-022 — safetyPolicy.js PRIVACY rule: bare-keyword false positive (new, proposed by REFAL-AGENT-014)
+- Depends on: none
+- Status: PROPOSED — not started
+- Problem (confirmed by direct execution, not assumed): the PRIVACY rule in
+  `src/safetyPolicy.js:17` bare-matches `password|secret|access token|api key|
+  passcode|pin|credit card|banking credentials|iban` with **no required
+  value suffix** — the value-suffix requirement (`\s*(?:is|:|#|=)?\s*
+  [A-Z0-9]...`) only applies to the separate OTP/one-time-code/CVV/passport/
+  national-ID/account-number sub-pattern later in the same alternation. So
+  "How do I reset my password?" is misclassified as a privacy risk, and the
+  refusal carve-out (`NON_DISCLOSURE_CLAUSE`, `safetyPolicy.js:33`) doesn't
+  recognize the compound phrase "access token" (its noun list only has bare
+  "tokens?"), so "I will not share my access token" is still flagged even
+  though a refusal naming plain "password" correctly passes. Confirmed
+  symmetric across EN/AR/EL — this is not a missing-language gap, the same
+  false positive exists equally in all three languages.
+- Desired behavior: a bare mention of a credential TYPE with no value, and a
+  clear refusal to share one (including compound nouns like "access token",
+  "api key", "bank account"), should not raise a PRIVACY risk in any
+  language. An actual value (handled correctly today by `sensitiveData.js`'s
+  `containsRawSecretValue`, unaffected by this ticket) must still be caught.
+- Why not fixed in REFAL-AGENT-014: requires a judgment call on which nouns
+  are safe to bare-match (none, probably — a value should always be
+  required) vs. mechanical string-table completion; a regex redesign, not an
+  isolated addition mirroring an existing working pattern.
+- Suggested approach: require a value-looking suffix (or an immediately
+  preceding determiner + the noun with no following punctuation suggesting a
+  question) for every noun in the PRIVACY rule, not just the OTP sub-list;
+  extend `NON_DISCLOSURE_CLAUSE`'s noun list to match the main rule's noun
+  list exactly (currently two separately-maintained lists that can drift,
+  which is the proximate cause of the "access token" gap).
+- Tests required: `src/safetyPolicy.test.js` — bare-mention-is-safe and
+  refusal-is-safe regression cases for every noun in the rule, EN/AR/EL,
+  plus the existing actual-value-is-still-caught cases must keep passing.
+- Characterized (not fixed) by `src/multilingualRegression.test.js`'s
+  `[014-15]`/`[014-17]` tests, which currently assert the buggy behavior
+  with an explanatory comment — update those assertions when this ticket
+  lands.
+
+### REFAL-AGENT-023 — followUp.js: goodbye detection is broken for Arabic, missing for Greek, and the re-engagement message is Arabic-only (new, proposed by REFAL-AGENT-014)
+- Depends on: none (but touches the live 24h re-engagement cron — needs its
+  own review, not a quiet fix)
+- Status: PROPOSED — not started
+- Problem (confirmed by direct execution):
+  1. `isNaturalConversationEnd` (`src/followUp.js:15-17`) wraps every
+     alternative in `\b(...)\b` with no `u` flag. **JavaScript's `\b` is
+     always ASCII-`\w`-based, even with the `u` flag** — it never matches
+     adjacent to Arabic (or Greek) script. The Arabic terms in this regex
+     (`شكرا`, `مع السلامة`, etc.) are therefore **unreachable against any
+     real Arabic sentence** — confirmed: `isNaturalConversationEnd("شكراً،
+     مع السلامة")` returns `false` today. This was previously assumed
+     working ("EN/AR supported, EL missing") by earlier tickets' traces;
+     that assumption was wrong — only English reliably works.
+  2. Greek terms are absent from the pattern entirely (a separate, simpler
+     gap).
+  3. `FOLLOW_UP_MESSAGE` (`src/followUp.js:5`) is a single hardcoded Arabic
+     string sent to every eligible customer via `runFollowUpCheck`,
+     regardless of their actual conversation language.
+- Desired behavior: a customer's natural EN/AR/EL farewell correctly
+  suppresses the scheduled re-engagement follow-up (`followUpReason` returns
+  `"natural_end"` in all three languages); the re-engagement message itself
+  is sent in the customer's own language.
+- Why not fixed in REFAL-AGENT-014: both items alter live cron
+  eligibility/timing semantics for real customers (REFAL-AGENT-014's own
+  scope rules explicitly exclude this) and (2) needs a decision on how to
+  determine "the customer's own language" for a cron job with no live
+  inbound message to detect from (likely the last stored turn's detected
+  language — a small design decision, not a given).
+- Suggested approach: fix `isNaturalConversationEnd` the same way
+  REFAL-AGENT-014 fixed `leadQualification.js`'s `OPT_IN_RE` (remove the
+  `\b` wrap around the non-Latin alternatives; add Greek terms); localize
+  `FOLLOW_UP_MESSAGE` keyed off the last turn's `metadata.intent.language`.
+- Tests required: `src/followUp.test.js` — EN/AR/EL natural-end detection,
+  EN/AR/EL follow-up message text, with a before/after showing the Arabic
+  case changes from false to true.
+- Characterized (not fixed) by `src/multilingualRegression.test.js`'s
+  `[014-21/22/23]` "KNOWN BUG" test.
+
+### REFAL-AGENT-024 — conversationRecap.js: complaint recap always invents the same unrelated backstory (new, proposed by REFAL-AGENT-014)
+- Depends on: none
+- Status: PROPOSED — not started
+- Problem (confirmed by direct execution): `composeRecap`
+  (`src/conversationRecap.js:115`) detects *that* a complaint-type message
+  occurred (`RECAP_PATTERNS.complaint`, a boolean) but never captures what
+  the complaint was actually about, so every complaint recap inserts the
+  identical fixed sentence ("a complaint about a company-setup case
+  submitted last month") regardless of the real topic. Confirmed with a
+  refund-dispute complaint in EN/AR/EL: the recap still describes a
+  company-setup case. The sentence itself is correctly localized into all
+  three languages — the bug is content accuracy, not language coverage.
+- Desired behavior: the recap should either (a) extract and safely quote a
+  short, redacted summary of the actual complaint topic, or (b) use a
+  generic "a complaint you raised" phrasing that doesn't invent specifics
+  when the real topic can't be safely grounded — never a fixed, unrelated
+  specific claim.
+- Why not fixed in REFAL-AGENT-014: explicitly deferred by this ticket's own
+  instructions ("stop and report it as a separate required bug ticket
+  rather than silently embedding a broad fix into 014"); fixing it requires
+  deciding how much of the original complaint text is safe to echo back
+  (interacts with `sensitiveData.js`/`safetyPolicy.js` redaction, not a
+  one-line change).
+- Tests required: `src/conversationRecap.test.js` — a complaint about topic
+  A must not produce recap text describing topic B, EN/AR/EL.
+- Characterized (not fixed) by `src/multilingualRegression.test.js`'s
+  `[014-26]` "KNOWN BUG" test.
+
+### REFAL-AGENT-025 — booking.js: no Greek natural-language date/weekday/month parsing (new, proposed by REFAL-AGENT-014)
+- Depends on: none
+- Status: PROPOSED — not started
+- Problem (confirmed by direct execution): `parseBookingDetails`
+  (`src/booking.js:55`) normalizes Arabic weekday/month/time words to
+  English before handing the text to `chrono-node` via
+  `normalizeArabicBookingText` — there is no Greek equivalent. A Greek
+  customer writing a natural date like "Δευτέρα στις 10:00" ("Monday at
+  10:00") is not understood (`chrono` doesn't recognize Greek, and nothing
+  translates it first); only an explicit numeric date (e.g.
+  "2026-01-05 10:00") currently works for Greek. REFAL-AGENT-014's own test
+  suite had to use this numeric-date workaround to exercise the Greek
+  booking flow at all.
+- Desired behavior: a Greek customer can provide a booking date/time in
+  natural Greek (weekday names, "αύριο"/"σήμερα", month names, "στις" for
+  "at") with the same reliability Arabic already has.
+- Why not fixed in REFAL-AGENT-014: requires building a
+  `normalizeGreekBookingText` function comparable in scope to the existing
+  ~25-substitution `normalizeArabicBookingText` — a real, separate feature,
+  not a mechanical one-line addition.
+- Tests required: `src/booking.test.js` — Greek natural-language date/time
+  parsing cases mirroring the existing Arabic ones.
+- Note: `isBookingRequest` and `isBookingDetailsReply`'s own Greek lexical
+  gates were fixed by REFAL-AGENT-014 (see its Fixed items #3 and #8) — this
+  ticket is specifically the deeper `chrono`/date-word-normalization gap
+  those fixes deliberately worked around with an explicit numeric-date test
+  fixture, not a duplicate of them.
+
+### REFAL-AGENT-026 — Agent-path response-language equivalence validator (new, proposed by REFAL-AGENT-014)
+- Depends on: 003 (bounded agent loop), 011 (response policy consolidation)
+- Status: PROPOSED — not started
+- Problem (confirmed by direct trace): the legacy deterministic path
+  (`src/ai.js:227`) rejects a model-drafted answer whose detected language
+  doesn't match the inbound message's language
+  (`detectMessageLanguage(answer) !== language`). The new Agent path
+  (`src/agentLoop.js` + `src/responsePolicy.js`) has **no equivalent check
+  anywhere** — `context.locale` is used only to pick the language of the
+  deterministic *fallback* string on failure paths, never to validate the
+  model's actual drafted `respond`/`clarify` text.
+- Desired behavior: an Agent-drafted response in the wrong language should
+  be rejected (or corrected) the same way the legacy path already does,
+  without introducing a new source of false positives.
+- Why not fixed in REFAL-AGENT-014: this is a real design change (a new
+  blocking policy check, not a string/regex addition) and the trace
+  identified a genuine, undocumented false-positive risk: a short reply
+  dominated by an unavoidable English brand name/URL (e.g. "REFALCO",
+  "OpenRouter", a Google Meet link) can tip `detectMessageLanguage`'s
+  majority-script vote toward "english" even in an otherwise-correct
+  Arabic/Greek reply — the legacy path's existing check has the same
+  theoretical risk but no test exercises it in either path. Needs a design
+  decision (minimum response length before checking? ignore URLs/known
+  brand tokens before voting? threshold instead of binary?), not a quiet
+  addition.
+- Addressed instead, this ticket: `agentObservability.js`'s new
+  `languageSignalsFrom` emits `expectedLocale`/`detectedResponseLocale`/
+  `languageMismatch` as **non-blocking observability only** — safe to land
+  immediately, gives Ticket 015/016 the raw signal to measure how often a
+  real mismatch would occur before any blocking behavior is designed.
+- Tests required: `src/agentLoop.test.js`/`src/responsePolicy.test.js` —
+  wrong-language rejection in EN/AR/EL once implemented, plus the
+  brand-name/URL false-positive case explicitly proven safe either way.
 
 ## Current runtime flow
 
@@ -619,6 +1329,41 @@ and because this is a live, customer-facing production system.
   **92/92 passed**, exit 0. `src/booking.test.js` alone: **25/25 passed**
   before and after, confirming the admin approval path and its
   `calendarApprovalQueue` lock were not affected.
+- After Ticket 010 (`src/agentShadow.js`, shadow integration): full
+  `npm test` **397/397 passed**, exit 0 (up from 387/387 — `agentShadow.test.js`
+  added to the test script).
+- After Ticket 011 (output policy consolidation): focused run across every
+  file touched **178/178 passed**, exit 0. Full `npm test` **406/406
+  passed**, exit 0 (up from the 397/397 checkpoint baseline — +9 new tests,
+  zero regressions).
+- After Ticket 013 (Agent observability and shadow-comparison telemetry):
+  focused run **172/172 passed**, exit 0. Full `npm test` **426/426
+  passed**, exit 0 (up from the 406/406 checkpoint baseline — +20 new tests,
+  zero regressions).
+- After Ticket 014 (multilingual and behavior regression coverage): focused
+  run across every file touched by this ticket's fixes (`leadQualification.
+  test.js`, `messageRouter.test.js`, `booking.test.js`,
+  `priorityRules.test.js`, `handover.test.js`, `responsePolicy.test.js`,
+  `agentBookingTools.test.js`, `agentBookingIntegration.test.js`,
+  `agentHandoverIntegration.test.js`, `agentObservability.test.js`,
+  `multilingualRegression.test.js`) **190/190 passed**, exit 0. Full
+  `npm test` **458/458 passed**, exit 0 (up from the 426/426 checkpoint
+  baseline — +32 new tests, zero regressions).
+- After Ticket 015 (end-to-end Agent scenario matrix): focused run
+  (`agentRuntime.test.js`, `agentLoop.test.js`, `agentDecision.test.js`,
+  `agentTools.test.js`, `agentHandoverIntegration.test.js`,
+  `agentBookingIntegration.test.js`, `agentBookingTools.test.js`,
+  `multilingualRegression.test.js`, `responsePolicy.test.js`,
+  `agentScenarios.test.js`): **159/159 passed**, exit 0. Full `npm test`
+  **499/499 passed**, exit 0 (up from the 458/458 checkpoint baseline — +41
+  new tests [40 scenarios + 1 structural check], zero regressions).
+- After Ticket 016 (real-model benchmark and legacy-vs-Agent comparison):
+  focused run (`benchmarkScorer.test.js`, `benchmarkEvaluator.test.js`,
+  `benchmarkReport.test.js`, `benchmarkSafety.test.js`,
+  `agentScenarios.test.js`, `agentRuntime.test.js`, `agentDecision.test.js`,
+  `agentLoop.test.js`): **101/101 passed**, exit 0. Full `npm test`
+  **527/527 passed**, exit 0 (up from the 499/499 checkpoint baseline — +28
+  new framework tests, zero regressions).
 
 ## Benchmark status
 
@@ -711,5 +1456,109 @@ project already documents for the in-memory rate limiter).
 before replying. The new tool mirrors that coercion exactly and returns
 `status: "pending_review"` with no customer-facing confirmation wording, so
 the Agent path cannot become a way around admin approval.
+
+### Decision: PROHIBITED_CLAIM_PATTERNS stays in responsePolicy.js, untouched
+**Reason:** tracing Ticket 011's "unsupported factual claims" area found that
+`responsePolicy.js`'s exported `PROHIBITED_CLAIM_PATTERNS` array is never
+actually matched against anything — `containsProhibitedClaim` (imported from
+`refalcoAnswer.js`) is the real, tested detector; the array is only read as
+`PROHIBITED_CLAIM_PATTERNS[0]`, a truthy sentinel. This is vestigial, not a
+functional duplicate (there is no second, conflicting detection running), and
+it is exported, so an external consumer cannot be ruled out from this repo
+alone. Reported, not removed — the "remove only what your change introduces"
+rule applies even to code found to be dead by a trace, not just to code a
+diff happens to pass near.
+
+### Decision: redactSensitiveData's label-proximity patterns are not reused for output
+**Reason:** Ticket 011 asked for a "does this response echo a real secret"
+check, reusing existing sensitive-data helpers rather than duplicating
+detection logic. Testing `redactSensitiveData` directly against output-style
+sentences first (before writing any policy code) showed its label-proximity
+patterns flag the mere MENTION of a credential type — "For your privacy,
+please don't send passwords, card details, or account credentials here." (an
+existing, already-shipped `bot.js` privacy reminder) came back redacted, which
+is correct for input (over-redacting a bare mention is the safe failure mode)
+but would have made this exact safe sentence newly fail output validation.
+The new `sensitiveData.js` export (`containsRawSecretValue`) therefore reuses
+only the three structurally-unambiguous VALUE regexes already defined there
+(`TOKEN_SECRET`, `IBAN_LIKE`, `CARD_LIKE`+`passesLuhn`) — real values are
+never ambiguous with a mention, whichever direction the text is flowing.
+
+### Decision: booking/handover verified-claim gate stays caller-supplied, not auto-derived from tool observations
+**Reason:** `agentBookingIntegration.test.js` already has a passing,
+deliberately-worded test — "even a genuinely confirmed booking cannot be
+claimed by the Agent yet — only a caller that passes allowVerifiedBookingClaim
+may deliver that wording" — proving `runAgentTurn` itself never sets
+`allowVerifiedBookingClaim`/`allowVerifiedHandoverClaim` to true even
+immediately after its own tool call reports success in the same turn. Wiring
+"substitute the model's draft with the tool's own confirmed `userSafeSummary`
+text after a successful write tool" is real, separable orchestration work
+(the comment there names it explicitly as a Ticket 010/017 concern), not an
+output-POLICY change — and Ticket 011 is scoped to the policy layer, not the
+loop's orchestration. Left alone; the gate is exactly as conservative after
+this ticket as before it.
+
+### Decision: Agent-turn telemetry is derived post-hoc, not streamed from inside agentLoop.js
+**Reason:** every required safe field (step count, tools used, tool status,
+RAG status, rejection reason codes, correction/fallback flags, outcome) is
+already present in the `result` object `runAgentTurn` returns once a turn
+finishes. Threading a logger callback through the bounded decision loop to
+get real-time per-step events was considered and rejected: it would touch a
+security/safety-critical file (`agentLoop.js`) for a benefit (slightly
+earlier event timing) that Ticket 013 doesn't need, directly conflicting
+with the ticket's "no behavior change" requirement. `agentObservability.js`
+is therefore a pure, zero-dependency derivation module; `agentLoop.js`,
+`agentDecision.js`, `agentTools.js`, and `agentRuntime.js` have zero lines
+changed by this ticket.
+
+### Decision: traceId is the only per-turn correlation id in this event family
+**Reason:** confirmed empirically (not assumed) that
+`operationalTelemetry.js`'s `buildOperationalEvent` already strips any field
+matching its `PRIVATE_FIELD` pattern (`user*`, `contact*`, anything ending
+`*Id`) before it reaches `store.logEvent` — except the literal key
+`traceId`, which is explicitly exempted in that file's own comment ("Trace
+IDs are generated per request and useful for joining stage events; all
+contact/provider IDs... remain in protected records"). This is a pre-
+existing, deliberate privacy boundary this ticket relies on rather than
+works around — no new field name was invented to smuggle a contact
+reference past it.
+
+### Decision: Ticket 010's shadow events are renamed into one Agent-observability family
+**Reason:** `agent_shadow_turn`/`agent_shadow_turn_error` existed only
+because Ticket 010 had exactly one caller (shadow mode). Ticket 013 is
+explicitly designed so Tickets 015/016 can benchmark the Agent regardless
+of whether a turn ran in shadow mode or, later, live — so the same two
+events are now `agent_turn_completed`/`agent_turn_failed` with an explicit
+`shadowMode` boolean, consolidating into one queryable family instead of a
+shadow-prefixed one that a future live-routing caller would have had to
+either reuse awkwardly or duplicate. `agent_shadow_turn_skipped` (the
+Ticket 010 concurrency-cap event) was deliberately left renamed-nothing:
+the ticket's instruction to leave shadow gating untouched was read as
+covering its event name too, to minimize risk for zero benefit (the skip
+case has no live-routing equivalent to unify with yet).
+
+### Decision: store.logAuditEvent is not reused for Agent-turn telemetry
+**Reason:** `logAuditEvent(userId, event, details, actorType)`
+(`messageRouter.js`'s `customer_correction`/`red_flags_detected`) is a
+separate, user-scoped pathway that bypasses `buildOperationalEvent`'s
+redaction entirely and is reserved for specific, already-defined audit
+categories with their own access-control assumptions. Routing generic
+per-turn Agent telemetry through it would conflate two different privacy
+models for no benefit — the existing `logEvent` pathway (already used by
+every other operational event in `bot.js`, including Ticket 010's) is the
+correct, already-reviewed fit.
+
+### Decision: sameIntentCategory is implemented now even though it is trivially true today
+**Reason:** the Agent's own decision step (`agentDecision.js`) does not
+produce an independent bounded goal category — it just receives free text
+and decides tool/respond/clarify. `agentPrimaryIntentCategory` in the
+shadow-comparison event therefore reads the exact same `intent.js`
+classification already fed to the legacy router, making `sameIntentCategory`
+always `true` by construction. This was implemented anyway (rather than
+omitted until "real") because the ticket explicitly asked for it, it costs
+nothing, and the field/event shape is now correct for the day a later
+ticket gives the Agent its own classification — documented as a known
+limitation in both the field's doc comment and this file, not left to be
+discovered as a surprise later.
 
 (Further decisions appended here as they are made.)

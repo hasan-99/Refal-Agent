@@ -86,6 +86,23 @@ Fetched or imported material is not customer-visible merely because it exists. S
 
 The WhatsApp worker runs as a Node process and maintains its linked-device session. Supabase stores conversations and workflow data. The dashboard is a separate application process; building its static bundle does not start or restart its server.
 
+### Agentic orchestration refactor (in progress)
+
+Branch `feature/agentic-orchestration` is migrating the single-shot deterministic
+pipeline above toward a bounded, tool-using conversational agent (explicit tool
+registry, a capped decision loop, shadow-mode comparison against live traffic)
+while keeping every safety/privacy/consent/authorization/knowledge-approval/audit
+boundary deterministic and outside model control. The running design record,
+ticket-by-ticket status, and benchmark results are in:
+
+- [`docs/refal-agent-refactor-progress.md`](docs/refal-agent-refactor-progress.md) — architecture trace, ticket log, decisions (long; read targeted sections).
+- [`docs/refal-agent-benchmark.md`](docs/refal-agent-benchmark.md) — legacy-vs-agent quality comparison.
+- [`docs/refal-agent-scenario-matrix.md`](docs/refal-agent-scenario-matrix.md) — scripted scenario coverage.
+- [`docs/refal-agent-NEXT-SESSION.md`](docs/refal-agent-NEXT-SESSION.md) — session handoff / current state pointer.
+
+None of this is live yet: the agent runs only in shadow mode behind an
+env flag (default off) and does not change what any customer sees.
+
 ## 🧰 Requirements
 
 - Node.js (use a currently supported LTS release) and npm.
@@ -227,6 +244,7 @@ Selected operational commands:
 npm run eval:conversation
 npm run benchmark:conversations
 npm run benchmark:deep
+npm run benchmark:agent
 ```
 
 Conversation benchmarks are **synthetic roleplays**, not actual customer conversations. Their validity depends on provider availability and the runner's completion/degradation report. A partial or provider-degraded run must not be represented as a complete adaptive benchmark. See `reports/` and the benchmark scripts for run-specific manifests and limitations.
