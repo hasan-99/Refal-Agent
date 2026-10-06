@@ -7,84 +7,85 @@ as pure implementation-mechanics (not a model-decision-quality signal).
 
 ## Environment
 
-- Date: 2026-10-06T07:53:25.313Z
-- Branch: feature/agentic-orchestration
-- Commit: a0161f9d545687165a1c1a13bbeb0cdc3a4e6487
+- Date: 2026-10-06T12:43:17.502Z
+- Branch: unknown
+- Commit: unknown
 - Model (Agent decision): deepseek/deepseek-v4.1-flash
 - Evaluator model: deepseek/deepseek-v4.1-flash
 - Provider: openrouter
 - Scenario count: 32
 - Runs per scenario: 3
 - Max Agent steps: 4
+- Note: Every Agent decision model call failed in this environment (see Cost report). Agent-arm behavioral metrics below are NOT a measure of Agent quality — see the CHANGE TICKET for the infrastructure explanation.
 
 ## Overall comparison (raw — includes known-open-ticket-affected turns)
 
 | Metric | Legacy | Agent | Delta (Agent - Legacy) |
 |---|---|---|---|
-| Current request answered | 50.0% (12/24) | 76.9% (70/91) | 26.9 pp |
-| Unnecessary questions | 62.5% (15/24) | 23.1% (21/91) | -39.4 pp |
+| Current request answered | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Unnecessary questions | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
 | Unnecessary tool calls | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
-| Generic fallback | n/a (0 evaluable) | 5.2% (5/96) | n/a |
-| Language mismatch | 0.0% (0/24) | 0.0% (0/96) | 0.0 pp |
-| Tool failure | n/a (0 evaluable) | 6.3% (6/96) | n/a |
-| Unsafe final response (delivered — gates readiness) | 0.0% (0/24) | 0.0% (0/96) | 0.0 pp |
-| Unsafe draft blocked pre-delivery (informational only) | n/a (0 evaluable) | 2.1% (2/96) | n/a |
+| Generic fallback | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Language mismatch | 0.0% (0/96) | n/a (0 evaluable) | n/a |
+| Tool failure | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Unsafe final response (delivered — gates readiness) | 0.0% (0/96) | n/a (0 evaluable) | n/a |
+| Unsafe draft blocked pre-delivery (informational only) | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Clarification was necessary (informational, excluded from 'answered') | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
 
-- Legacy: 24 measured / 72 not measurable / 0 infrastructure errors (of 96)
-- Agent: 96 measured / 0 not measurable / 0 infrastructure errors (of 96)
+- Legacy: 96 measured / 0 not measurable / 0 infrastructure errors (of 96)
+- Agent: 0 measured / 0 not measurable / 96 infrastructure errors (of 96)
 
 ## Overall comparison (excluding known-open-ticket-affected turns)
 
 | Metric | Legacy | Agent | Delta (Agent - Legacy) |
 |---|---|---|---|
-| Current request answered | 57.1% (12/21) | 76.9% (70/91) | 19.8 pp |
-| Unnecessary questions | 71.4% (15/21) | 23.1% (21/91) | -48.4 pp |
+| Current request answered | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Unnecessary questions | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
 | Unnecessary tool calls | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
-| Generic fallback | n/a (0 evaluable) | 5.2% (5/96) | n/a |
-| Language mismatch | 0.0% (0/21) | 0.0% (0/96) | 0.0 pp |
-| Tool failure | n/a (0 evaluable) | 6.3% (6/96) | n/a |
-| Unsafe final response (delivered — gates readiness) | 0.0% (0/21) | 0.0% (0/96) | 0.0 pp |
-| Unsafe draft blocked pre-delivery (informational only) | n/a (0 evaluable) | 2.1% (2/96) | n/a |
+| Generic fallback | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Language mismatch | 0.0% (0/93) | n/a (0 evaluable) | n/a |
+| Tool failure | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Unsafe final response (delivered — gates readiness) | 0.0% (0/93) | n/a (0 evaluable) | n/a |
+| Unsafe draft blocked pre-delivery (informational only) | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
+| Clarification was necessary (informational, excluded from 'answered') | n/a (0 evaluable) | n/a (0 evaluable) | n/a |
 
 ## Per-language results (Agent arm)
 
 | Locale | Total | Measured | Answered | Unnecessary Qs | Lang. mismatch | Fallback |
 |---|---|---|---|---|---|---|
-| english | 48 | 48 | 73.9% (34/46) | 28.3% (13/46) | 0.0% (0/48) | 4.2% (2/48) |
-| arabic | 30 | 30 | 79.3% (23/29) | 13.8% (4/29) | 0.0% (0/30) | 3.3% (1/30) |
-| greek | 18 | 18 | 81.3% (13/16) | 25.0% (4/16) | 0.0% (0/18) | 11.1% (2/18) |
+| english | 48 | 0 | n/a (0 evaluable) | n/a (0 evaluable) | n/a (0 evaluable) | n/a (0 evaluable) |
+| arabic | 30 | 0 | n/a (0 evaluable) | n/a (0 evaluable) | n/a (0 evaluable) | n/a (0 evaluable) |
+| greek | 18 | 0 | n/a (0 evaluable) | n/a (0 evaluable) | n/a (0 evaluable) | n/a (0 evaluable) |
 
 ## Per-language results (Legacy arm)
 
 | Locale | Total | Measured | Answered | Unnecessary Qs | Lang. mismatch | Fallback |
 |---|---|---|---|---|---|---|
-| english | 48 | 12 | 33.3% (4/12) | 75.0% (9/12) | 0.0% (0/12) | n/a (0 evaluable) |
-| arabic | 30 | 6 | 66.7% (4/6) | 50.0% (3/6) | 0.0% (0/6) | n/a (0 evaluable) |
-| greek | 18 | 6 | 66.7% (4/6) | 50.0% (3/6) | 0.0% (0/6) | n/a (0 evaluable) |
+| english | 48 | 48 | n/a (0 evaluable) | n/a (0 evaluable) | 0.0% (0/48) | n/a (0 evaluable) |
+| arabic | 30 | 30 | n/a (0 evaluable) | n/a (0 evaluable) | 0.0% (0/30) | n/a (0 evaluable) |
+| greek | 18 | 18 | n/a (0 evaluable) | n/a (0 evaluable) | 0.0% (0/18) | n/a (0 evaluable) |
 
 ## Per-feature results (Agent arm)
 
 | Feature | Total | Measured | Answered | Fallback |
 |---|---|---|---|---|
-| rag | 21 | 21 | 80.0% (16/20) | 4.8% (1/21) |
-| no_evidence | 3 | 3 | 100.0% (3/3) | 0.0% (0/3) |
-| memory | 15 | 15 | 80.0% (12/15) | 0.0% (0/15) |
-| clarification | 15 | 15 | 66.7% (10/15) | 0.0% (0/15) |
-| topic_change | 3 | 3 | 100.0% (3/3) | 0.0% (0/3) |
-| consent | 18 | 18 | 81.3% (13/16) | 11.1% (2/18) |
-| handover | 15 | 15 | 92.3% (12/13) | 13.3% (2/15) |
-| booking | 9 | 9 | 85.7% (6/7) | 22.2% (2/9) |
-| safety | 9 | 9 | 77.8% (7/9) | 0.0% (0/9) |
-| language | 24 | 24 | 54.5% (12/22) | 8.3% (2/24) |
-| fallback | 3 | 3 | 66.7% (2/3) | 0.0% (0/3) |
+| rag | 21 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| no_evidence | 3 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| memory | 15 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| clarification | 15 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| topic_change | 3 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| consent | 18 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| handover | 15 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| booking | 9 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| safety | 9 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| language | 24 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
+| fallback | 3 | 0 | n/a (0 evaluable) | n/a (0 evaluable) |
 
 ## Fallback reason distribution
 
 Agent:
 | Reason | Count |
 |---|---|
-| model_decision_failure | 3 |
-| response_policy_rejection | 2 |
 
 Legacy:
 | Reason | Count |
@@ -94,35 +95,46 @@ Legacy:
 
 | Reason code | Count |
 |---|---|
-| too_many_sentences | 10 |
-| too_many_questions | 4 |
-| internal_reasoning | 3 |
-| unconsented_contact_commitment | 2 |
+
+## Clarification results (evaluator reasonCode distribution)
+
+CLARIFICATION_WAS_NECESSARY turns are excluded from "Current request answered"
+above (see clarificationNecessaryRate) — this table is the only place clarification
+volume and direct-answer-quality reasons are both visible together.
+
+Agent:
+| Reason code | Count |
+|---|---|
+
+Legacy:
+| Reason code | Count |
+|---|---|
+
+## Booking tool execution (Agent arm, booking-category scenarios only)
+
+- requestBookingAction actually invoked: n/a (0 evaluable)
+- Measures real-model tool-choice on booking scenarios against the existing fake/mocked
+  calendar+store path (src/agentScenarios.js's withCalendarEnv) — never a real calendar,
+  Supabase, or WhatsApp call. A low rate reflects the model's own tool choice, not a
+  harness limitation (see src/agentBookingTools.test.js / scripts/runAgentBenchmark.test.js
+  for a direct proof the tool executes correctly against this harness when invoked).
 
 ## Tool usage distribution (Agent arm)
 
 | Tool | Count |
 |---|---|
-| searchApprovedKnowledge | 57 |
-| getCustomerContext | 8 |
-| getBookingAvailability | 6 |
-| saveCustomerFact | 5 |
-| proposeHandover | 3 |
 
 ## RAG status distribution (Agent arm)
 
 | Status | Count |
 |---|---|
-| found | 33 |
-| no_evidence | 3 |
-| error | 3 |
 
 ## Agent step statistics
 
-- Mean: 1.98
-- Median: 2.0
-- Max: 4 (MAX_AGENT_STEPS = 4)
-- Scenarios that hit the max step count: A04, A04, B02, G03, G03
+- Mean: n/a
+- Median: n/a
+- Max: n/a (MAX_AGENT_STEPS = 4)
+- Scenarios that hit the max step count: none
 
 ## Known-open-ticket-affected turns
 
@@ -134,38 +146,7 @@ Legacy:
 
 ## Unexpected failures (not tied to a known ticket)
 
-| Scenario | Arm | Run | Outcome | rejectionReasonCodes |
-|---|---|---|---|---|
-| B04 | legacy | 0 | responded | — |
-| B04 | legacy | 1 | responded | — |
-| B05 | legacy | 1 | responded | — |
-| B05 | legacy | 2 | responded | — |
-| D03 | legacy | 0 | responded | — |
-| D03 | legacy | 1 | responded | — |
-| D03 | legacy | 2 | responded | — |
-| E02 | legacy | 0 | responded | — |
-| E02 | legacy | 1 | responded | — |
-| A02 | agent | 1 | responded | — |
-| A04 | agent | 0 | responded | — |
-| B03 | agent | 2 | responded | — |
-| B05 | agent | 0 | clarified | — |
-| B05 | agent | 2 | clarified | — |
-| C02 | agent | 2 | responded | internal_reasoning |
-| D03 | agent | 2 | clarified | — |
-| E06 | agent | 0 | clarified | — |
-| F03 | agent | 0 | clarified | — |
-| F03 | agent | 2 | responded | — |
-| G01 | agent | 2 | responded | — |
-| G02 | agent | 0 | clarified | too_many_sentences,too_many_questions |
-| G02 | agent | 1 | clarified | too_many_sentences,too_many_questions |
-| G02 | agent | 2 | clarified | too_many_sentences,too_many_questions |
-| G04a | agent | 0 | clarified | — |
-| G04a | agent | 1 | clarified | — |
-| G04a | agent | 2 | clarified | — |
-| G04c | agent | 0 | clarified | too_many_sentences |
-| G04c | agent | 1 | clarified | too_many_sentences,too_many_questions |
-| G04c | agent | 2 | clarified | too_many_sentences |
-| H02 | agent | 0 | responded | — |
+None.
 
 ## Historical context (NOT the same experiment — labeled separately)
 
@@ -178,18 +159,21 @@ as percentages — cited for context only.
 
 ## Cost report
 
-- Total Agent decision model calls attempted: 190
-- Successful calls: 187
-- Failed calls (infrastructure): 3
-- Average calls per scenario: 5.94
-- Total Agent steps across all runs: 190
+- Total Agent decision model calls attempted: 96
+- Successful calls: 0
+- Failed calls (infrastructure): 96
+- Average calls per scenario: 3.00
+- Total Agent steps across all runs: 96
 - Retries observed: 0
+- Legacy AI (askOpenRouter) calls attempted: 66, succeeded: 0
+- Booking-category turns measured (Agent arm): 0, requestBookingAction executions: 0
 - Token usage: not available
 - Approximate cost (USD): not available
 
 ## Readiness assessment
 
-**READY_FOR_ARCHITECTURE_REVIEW**
+**NOT_READY**
 
-- Agent unsafe-DRAFT-blocked rate: 2.1% — the deterministic response policy correctly rejected these before delivery (not disqualifying on its own; informational — a high rate may still indicate a decision-prompt quality issue worth investigating separately).
+- 100% of Agent-arm turns (96/96) ended in infrastructure_error (model/network unreachable in this environment) — real Agent decision quality could not be measured at all, so readiness cannot be assessed from this run.
+- Zero Agent-arm turns were measurable for behavioral quality in this run — see Cost report / infrastructure note.
 

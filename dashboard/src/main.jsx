@@ -881,6 +881,7 @@ function Knowledge({ isAdmin }) {
   const [sourceUrl, setSourceUrl] = useState("");
   const [importTitle, setImportTitle] = useState("");
   const [importContent, setImportContent] = useState("");
+  const [uploadFile, setUploadFile] = useState(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -932,6 +933,22 @@ function Knowledge({ isAdmin }) {
       const value = await api(`/api/knowledge/${selectedId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent }) });
       setImportTitle(""); setImportContent(""); setDetail(await api(`/api/knowledge/${selectedId}`));
       return { message: value.deduplicated ? "This content is already stored." : "Manual revision saved for review." };
+    });
+  }
+
+  async function uploadDocument(event) {
+    event.preventDefault();
+    await run("upload", async () => {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      // Not the shared api() helper: it always forces Content-Type:
+      // application/json, which would break the browser's own multipart
+      // boundary for this file upload.
+      const response = await fetch(`/api/knowledge/${selectedId}/upload`, { method: "POST", credentials: "include", body: formData });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(value.error || `Upload failed: ${response.status}`);
+      setUploadFile(null); setDetail(await api(`/api/knowledge/${selectedId}`));
+      return { message: value.deduplicated ? "This content is already stored." : `Uploaded and saved a revision with ${value.chunkCount} chunks.` };
     });
   }
 
@@ -990,10 +1007,15 @@ function Knowledge({ isAdmin }) {
               <textarea value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste approved company or social content for review" rows={4} />
               <button disabled={Boolean(busy) || importContent.trim().length < 40}><Plus size={15} /> {busy === "import" ? "Importing" : "Save revision"}</button>
             </form>}
+            {isAdmin && <form className="knowledge-upload" onSubmit={uploadDocument}>
+              <strong>Upload file</strong>
+              <input type="file" accept=".txt,.pdf,.docx" aria-label="Upload a TXT, PDF, or DOCX file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
+              <button disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Uploading" : "Upload"}</button>
+            </form>}
             <div className="knowledge-revisions">
               <h3>Revisions</h3>
               {(detail?.documents || []).map((doc) => <article className="knowledge-revision" key={doc.id}>
-                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>v{doc.revision} · {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks · {doc.chunks.filter((chunk) => chunk.embedding_model).length} semantic</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "hot" : "cold"}`}>{doc.review_status}</span></div>
+                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>v{doc.revision} · {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks · {doc.chunks.filter((chunk) => chunk.embedding_model).length} semantic{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "hot" : "cold"}`}>{doc.review_status}</span></div>
                 <p>{doc.canonical_content.slice(0, 260)}{doc.canonical_content.length > 260 ? "…" : ""}</p>
                 {isAdmin && doc.review_status === "pending" && <div className="knowledge-review-actions"><button onClick={() => run("review", async () => { const reviewed = await api(`/api/knowledge/documents/${doc.id}/review`, { method: "PATCH", body: JSON.stringify({ status: "approved" }) }); setDetail(await api(`/api/knowledge/${selected.id}`)); return { message: reviewed.embeddingWarning ? "Approved; semantic indexing unavailable, lexical search remains active." : `Approved and embedded ${reviewed.embeddedChunks} chunks.` }; })}>Approve revision</button><button className="ghost" onClick={() => run("review", async () => { await api(`/api/knowledge/documents/${doc.id}/review`, { method: "PATCH", body: JSON.stringify({ status: "rejected" }) }); setDetail(await api(`/api/knowledge/${selected.id}`)); return { message: "Revision rejected." }; })}>Reject</button></div>}
               </article>)}

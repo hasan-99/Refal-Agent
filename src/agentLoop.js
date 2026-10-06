@@ -15,6 +15,16 @@ const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIF
 // rejection reason/path is untouched; this can only add a NEW rejection
 // reason, never remove one.
 const { validateFactualGrounding, collectApprovedKnowledgeEvidence } = require("./groundingPolicy");
+// REFAL-AGENT-026: ports the legacy ai.js wrong-language check (`answer.length
+// > 8 && detectMessageLanguage(answer) !== language`) into the Agent path.
+// Reuses agentObservability.js's existing languageSignalsFrom — the SAME
+// detector legacy already trusts (src/language.js) compared against
+// `context.locale`, the Agent's own trusted per-turn expected-language field
+// (set by the caller before the decision loop ever runs — never something
+// the model itself reports). languageSignalsFrom is otherwise a read-only
+// telemetry helper; reusing it here does not change its own behavior or
+// make it a gate on its own — only this file's use of its return value gates.
+const { languageSignalsFrom } = require("./agentObservability");
 
 const DEFAULT_MAX_STEPS = 4;
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -88,24 +98,44 @@ function policyRejectionObservation(step, decisionType, policy) {
   };
 }
 
-// REFAL-AGENT-028 — runs the existing responsePolicy check first, unchanged;
-// only if that already passes does it additionally run the deterministic
-// factual-grounding check against the evidence this turn's tool calls
-// actually surfaced (Ticket 027's modelObservation channel, never a tool's
-// raw `data`). A grounding failure is folded into the same `{valid, text,
-// reasons}` shape validateResponse already returns, so every downstream
-// consumer (attemptDeterministicCorrection, policyRejectionObservation, the
-// retry/fallback branching below) needs no special-casing: grounding
-// reasons never equal "too_many_questions", so a grounding rejection is
-// never mistaken for one the mechanical correction knows how to fix — it
-// only ever goes through retry-then-fallback, never a silent text edit.
-function checkDraftPolicy(text, thresholds, observations) {
+// REFAL-AGENT-026 — mirrors legacy ai.js's own short-text exemption
+// (`answer.length > 8`): a very short draft (e.g. a one-word acknowledgement)
+// is too little text for script-based language detection to be reliable, so
+// it is never rejected on language grounds alone, matching legacy exactly.
+// `locale` is always `context.locale` — trusted, caller-supplied, never
+// something the model's own decision JSON can set.
+function checkLanguageEquivalence(text, locale) {
+  const trimmed = String(text || "").trim();
+  if (trimmed.length <= 8) return { valid: true, reasons: [] };
+  const signal = languageSignalsFrom(locale, trimmed);
+  // languageMismatch is null (not computed) when locale is "unknown" or the
+  // text is empty — nothing meaningful to compare, never treated as a
+  // rejection. Only an explicit `true` gates.
+  if (signal.languageMismatch !== true) return { valid: true, reasons: [] };
+  return { valid: false, reasons: ["language_mismatch"] };
+}
+
+// REFAL-AGENT-028/026 — runs the existing responsePolicy check first,
+// unchanged; only if that already passes does it additionally run the
+// deterministic factual-grounding check against the evidence this turn's
+// tool calls actually surfaced (Ticket 027's modelObservation channel, never
+// a tool's raw `data`), then the language-equivalence check (Ticket 026).
+// Each failure is folded into the same `{valid, text, reasons}` shape
+// validateResponse already returns, so every downstream consumer
+// (attemptDeterministicCorrection, policyRejectionObservation, the
+// retry/fallback branching below) needs no special-casing: neither a
+// grounding nor a language-mismatch reason ever equals "too_many_questions",
+// so neither is ever mistaken for one the mechanical correction knows how to
+// fix — both only ever go through retry-then-fallback, never a silent text edit.
+function checkDraftPolicy(text, thresholds, observations, locale) {
   const policy = validateResponse(text, thresholds);
   if (!policy.valid) return policy;
   const evidenceItems = collectApprovedKnowledgeEvidence(observations);
   const grounding = validateFactualGrounding(text, { evidenceItems });
-  if (grounding.valid) return policy;
-  return { ...policy, valid: false, reasons: grounding.reasons };
+  if (!grounding.valid) return { ...policy, valid: false, reasons: grounding.reasons };
+  const language = checkLanguageEquivalence(text, locale);
+  if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };
+  return policy;
 }
 
 // deps:
@@ -162,7 +192,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
 
     if (validated.type === "respond") {
       const thresholds = MODEL_DRAFT_THRESHOLDS;
-      const policy = checkDraftPolicy(validated.text, thresholds, observations);
+      const policy = checkDraftPolicy(validated.text, thresholds, observations, context?.locale);
       if (!policy.valid) {
         const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds);
         if (corrected) {
@@ -188,7 +218,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     // clarify: at most one question, no minimum length requirement — a short
     // single clarifying question is exactly what this path is for.
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
-    const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations);
+    const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale);
     if (!policy.valid) {
       const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds);
       if (corrected) {

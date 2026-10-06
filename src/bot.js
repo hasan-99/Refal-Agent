@@ -14,7 +14,7 @@ const qrcode = require("qrcode-terminal");
 const { loadProjectEnv } = require("./env");
 const { askOpenRouter, embedText, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
 const { createStore } = require("./supabaseStore");
-const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage } = require("./messageRouter");
+const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
 const { generateAndEmailReport } = require("./report");
 const { startMonthlyReportSchedule } = require("./reportScheduler");
@@ -32,7 +32,13 @@ const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = 
 const { buildConversationContext, refreshCustomerTopicSummary } = require("./conversationMemory");
 const { buildLocalConversationRecap } = require("./conversationRecap");
 const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTelemetry");
-const { runShadowAgentTurn, recordShadowComparison } = require("./agentShadow");
+const { runShadowAgentTurn, recordShadowComparison, buildRecentConversation } = require("./agentShadow");
+const { runRoutedTurn } = require("./turnRouting");
+const { runAgentTurnForContact } = require("./agentRuntime");
+const { TOOL_REGISTRY } = require("./agentTools");
+const { getConversationState } = require("./conversationState");
+const { getConsentState } = require("./leadQualification");
+const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -253,7 +259,15 @@ function extractText(message) {
   ).trim();
 }
 
-async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
+// REFAL-AGENT-030 — the full, unchanged legacy turn. Every booking/handover/
+// RAG/output-policy behavior below is exactly what it was before this
+// ticket; this function was only renamed (from `answerMessage`) so the new
+// routing decision point below can call it as one of two interchangeable
+// turn implementations. Always the one invoked when the Agent live flag is
+// off (the default), and also the one invoked as the pre-side-effect
+// fallback when the Agent path is selected but fails during turn setup
+// (before any Agent tool call could have run) — see src/turnRouting.js.
+async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = {}) {
   const requestStartedAt = requestTrace.startedAt || performance.now();
   const traceId = requestTrace.traceId || randomUUID();
   const stage = (name, startedAt, fields = {}) => logEvent("response_stage", {
@@ -510,6 +524,94 @@ async function answerMessage(socket, chatId, userId, text, requestTrace = {}) {
   await sendStoredTextReply(socket, chatId, response, userId, routed.turn);
   stage("whatsapp_delivery", stageStartedAt);
   stage("request_total", requestStartedAt);
+}
+
+// REFAL-AGENT-030 — the Agent live turn. Only ever invoked when
+// REFAL_AGENT_LIVE_ENABLED is explicitly "true" (default off; not enabled by
+// this ticket — see src/turnRouting.js). Deliberately minimal: it proves the
+// routing/fallback/rollback contract this ticket requires, not full
+// production parity with the legacy turn (richer classification-aware
+// context and response-history persistence parity are REFAL-AGENT-017's
+// job). Everything that can throw here (store/user load, Agent context
+// build) happens BEFORE any customer-visible send, so a thrown error always
+// leaves this turn pre-side-effect-safe for turnRouting.js's legacy
+// fallback — runAgentTurn itself never throws for an ordinary bad
+// decision/tool/policy outcome (see agentLoop.js), it only ever resolves
+// with a safe response text, which is sent exactly once below.
+async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
+  await setTyping(socket, chatId, true);
+  const user = await store.ensureUser(userId);
+  const history = Array.isArray(user?.history) ? user.history : [];
+  const lastTurn = history[history.length - 1] || null;
+  const conversationState = getConversationState(user || {});
+  const consentState = getConsentState({ user: user || {}, history }) || "unknown";
+  const locale = user?.profile?.language || "unknown";
+
+  // REFAL-AGENT-031: every real side-effecting tool call this turn makes
+  // runs through this wrapped registry instead of the raw TOOL_REGISTRY, so
+  // `commitState` can only ever be set from a tool's own resolved, successful
+  // result — never from the model's decision JSON or draft text.
+  const commitState = createCommitState();
+  const result = await runAgentTurnForContact({
+    currentMessage: text,
+    locale,
+    contact: { id: userId, name: user?.profile?.name || null },
+    recentConversation: buildRecentConversation(history),
+    conversationState,
+    knownCustomerFacts: conversationState.agentFacts,
+    currentOpenQuestion: wasNameRequested(lastTurn) ? (String(lastTurn.response || "").slice(0, 300) || null) : null,
+    consentState,
+    allowedCapabilities: [],
+    store,
+    user,
+    userId,
+    intents: [],
+    language: user?.profile?.language,
+    // REFAL-AGENT-030: the real inbound WhatsApp provider message id, so
+    // agentBookingTools.js's requestBookingAction derives the same
+    // idempotency key for a duplicate-delivered message as it would for any
+    // other booking write — see agentRuntime.js's buildToolContext.
+    inboundMessageId: providerMessageId || null
+  }, {
+    tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState)
+  });
+
+  // REFAL-AGENT-031: the one place that decides what happens with a Agent
+  // turn that did NOT cleanly resolve (respond/clarify). See
+  // agentCommitTracking.js's decideAgentTurnOutcome: if a real write already
+  // landed this turn, it is answered from that write's own deterministic
+  // result and NEVER retried via legacy; if nothing was committed yet, this
+  // throws so turnRouting.js's runRoutedTurn can safely fall back to legacy
+  // — no customer-visible send has happened yet at this point either way.
+  const decision = decideAgentTurnOutcome({ result, commitState, locale });
+  if (!decision.send) {
+    await setTyping(socket, chatId, false);
+    throw new Error(decision.reason);
+  }
+
+  await setTyping(socket, chatId, false);
+  await sendStoredTextReply(socket, chatId, decision.responseText, userId, null);
+  return {
+    outcome: result.outcome,
+    responseLength: decision.responseText ? decision.responseText.length : 0,
+    sideEffectCommitted: commitState.sideEffectCommitted
+  };
+}
+
+// REFAL-AGENT-030 — the one live decision point: legacy vs. Agent, exactly
+// once per inbound turn. Thin by design — all the actual turn behavior lives
+// in runLegacyAnswerTurn/runAgentLiveAnswerTurn above; this function only
+// ever decides which of them owns this turn and sends for it (never both —
+// see src/turnRouting.js's runRoutedTurn and its dedicated tests, which
+// cover this decision point without needing a live Baileys socket).
+async function answerMessage(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
+  return runRoutedTurn(
+    { socket, chatId, userId, text, requestTrace, providerMessageId },
+    {
+      runLegacyTurn: () => runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace),
+      runAgentTurn: () => runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace, providerMessageId)
+    }
+  );
 }
 
 async function refreshLeadTemperature(userId) {
@@ -777,7 +879,7 @@ async function handleMessage(socket, message, upsertType) {
     }
 
     stage("inbound_preprocess", inboundStartedAt, { messageType: messageType(message) });
-    await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt });
+    await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt }, providerMessageId);
     receiptShouldComplete = true;
     logEvent("replied", { mode: "customer" });
   } catch (error) {

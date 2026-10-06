@@ -300,5 +300,6 @@ module.exports = {
   isShadowEnabled,
   buildShadowToolRegistry,
   maxConcurrency,
+  buildRecentConversation,
   __resetShadowConcurrency
 };

@@ -29,7 +29,8 @@ function metricRows(legacyAgg, agentAgg) {
     ["languageMismatchRate", "Language mismatch"],
     ["toolFailureRate", "Tool failure"],
     ["unsafeFinalResponseRate", "Unsafe final response (delivered — gates readiness)"],
-    ["unsafeDraftBlockedRate", "Unsafe draft blocked pre-delivery (informational only)"]
+    ["unsafeDraftBlockedRate", "Unsafe draft blocked pre-delivery (informational only)"],
+    ["clarificationNecessaryRate", "Clarification was necessary (informational, excluded from 'answered')"]
   ];
   return keys.map(([key, label]) => {
     const l = legacyAgg?.metrics?.[key];
@@ -121,6 +122,29 @@ function buildReportMarkdown({ environment, legacy, agent, legacyExcluding, agen
   lines.push(table(["Reason code", "Count"], distributionRows(agent.rejectionReasonDistribution)));
   lines.push("");
 
+  lines.push("## Clarification results (evaluator reasonCode distribution)");
+  lines.push("");
+  lines.push("CLARIFICATION_WAS_NECESSARY turns are excluded from \"Current request answered\"");
+  lines.push("above (see clarificationNecessaryRate) — this table is the only place clarification");
+  lines.push("volume and direct-answer-quality reasons are both visible together.");
+  lines.push("");
+  lines.push("Agent:");
+  lines.push(table(["Reason code", "Count"], distributionRows(agent.evaluatorReasonCodeDistribution)));
+  lines.push("");
+  lines.push("Legacy:");
+  lines.push(table(["Reason code", "Count"], distributionRows(legacy.evaluatorReasonCodeDistribution)));
+  lines.push("");
+
+  lines.push("## Booking tool execution (Agent arm, booking-category scenarios only)");
+  lines.push("");
+  lines.push(`- requestBookingAction actually invoked: ${fmtRate(agent.metrics.bookingToolInvokedRate)}`);
+  lines.push("- Measures real-model tool-choice on booking scenarios against the existing fake/mocked");
+  lines.push("  calendar+store path (src/agentScenarios.js's withCalendarEnv) — never a real calendar,");
+  lines.push("  Supabase, or WhatsApp call. A low rate reflects the model's own tool choice, not a");
+  lines.push("  harness limitation (see src/agentBookingTools.test.js / scripts/runAgentBenchmark.test.js");
+  lines.push("  for a direct proof the tool executes correctly against this harness when invoked).");
+  lines.push("");
+
   lines.push("## Tool usage distribution (Agent arm)");
   lines.push("");
   lines.push(table(["Tool", "Count"], distributionRows(agent.toolUsageDistribution)));
@@ -154,7 +178,7 @@ function buildReportMarkdown({ environment, legacy, agent, legacyExcluding, agen
   if (unexpected.length === 0) {
     lines.push("None.");
   } else {
-    lines.push(table(["Scenario", "Arm", "Run", "Outcome", "rejectionReasonCodes"], unexpected.map((u) => [u.scenarioId, u.arm, u.runIndex, u.outcome, (u.metrics?.rejectionReasonCodes || []).join(",") || "—"])));
+    lines.push(table(["Scenario", "Arm", "Run", "Outcome", "rejectionReasonCodes", "Response preview (redacted)"], unexpected.map((u) => [u.scenarioId, u.arm, u.runIndex, u.outcome, (u.metrics?.rejectionReasonCodes || []).join(",") || "—", (u.responsePreview || "—").slice(0, 160).replace(/\|/g, "/")])));
   }
   lines.push("");
 
@@ -178,6 +202,8 @@ function buildReportMarkdown({ environment, legacy, agent, legacyExcluding, agen
   lines.push(`- Average calls per scenario: ${fmtNum(cost.avgCallsPerScenario, 2)}`);
   lines.push(`- Total Agent steps across all runs: ${cost.totalSteps}`);
   lines.push(`- Retries observed: ${cost.retries}`);
+  lines.push(`- Legacy AI (askOpenRouter) calls attempted: ${cost.legacyAiCallsAttempted ?? "n/a"}, succeeded: ${cost.legacyAiCallsSucceeded ?? "n/a"}`);
+  lines.push(`- Booking-category turns measured (Agent arm): ${cost.bookingScenarioTurnsMeasured ?? "n/a"}, requestBookingAction executions: ${cost.bookingToolExecutions ?? "n/a"}`);
   lines.push(`- Token usage: ${cost.tokenUsageAvailable ? `${cost.promptTokens} prompt / ${cost.completionTokens} completion` : "not available"}`);
   lines.push(`- Approximate cost (USD): ${cost.costAvailable ? `$${cost.costUsd.toFixed(4)}` : "not available"}`);
   lines.push("");

@@ -171,3 +171,125 @@ test("a decision call that throws (e.g. provider outage) ends the turn safely in
   assert.equal(result.outcome, "decision_failed");
   assert.equal(typeof result.response, "string");
 });
+
+// --- REFAL-AGENT-026: language-equivalence gate on respond/clarify drafts ---
+// Ports legacy ai.js's `answer.length > 8 && detectMessageLanguage(answer) !==
+// language` check into the Agent path, gated by `context.locale` (trusted,
+// caller-supplied — never the model's own output).
+
+// Deliberately price/package/claim-free — these test ONLY the language gate,
+// never the pre-existing groundingPolicy.js checks (028) or raw-URL-claim
+// check, which fire independently of language and are covered by their own
+// tests (groundingPolicy.test.js, agentFactualGrounding.test.js).
+const EN_TEXT = "Thanks for reaching out about company formation in Cyprus. I can help you with the next steps whenever you are ready.";
+const AR_TEXT = "شكراً لتواصلك بخصوص تأسيس الشركة في قبرص. يسعدني مساعدتك بالخطوات التالية متى ما كنت جاهزاً.";
+const EL_TEXT = "Ευχαριστούμε που επικοινωνήσατε για τη σύσταση εταιρείας στην Κύπρο. Χαίρομαι να σας βοηθήσω με τα επόμενα βήματα όποτε είστε έτοιμοι.";
+
+const EN_CONTEXT = buildAgentContext({ currentMessage: "I want to form a company", locale: "english" });
+const AR_CONTEXT = buildAgentContext({ currentMessage: "بدي أسس شركة", locale: "arabic" });
+const EL_CONTEXT = buildAgentContext({ currentMessage: "Θέλω να ιδρύσω εταιρεία", locale: "greek" });
+
+test("EN expected + EN response: allowed", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: EN_TEXT }]);
+  const result = await runAgentTurn(EN_CONTEXT, { decideNextStep: decide, tools: {} });
+  assert.equal(result.outcome, "responded");
+});
+
+test("AR expected + AR response: allowed", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: AR_TEXT }]);
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {} });
+  assert.equal(result.outcome, "responded");
+});
+
+test("EL expected + EL response: allowed", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: EL_TEXT }]);
+  const result = await runAgentTurn(EL_CONTEXT, { decideNextStep: decide, tools: {} });
+  assert.equal(result.outcome, "responded");
+});
+
+test("EN expected + AR response: rejected (never delivered to a customer expecting English)", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: AR_TEXT }]);
+  const result = await runAgentTurn(EN_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1 });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /language_mismatch/);
+});
+
+test("AR expected + EN response: rejected", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: EN_TEXT }]);
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1 });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /language_mismatch/);
+});
+
+test("EL expected + EN response: rejected", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: EN_TEXT }]);
+  const result = await runAgentTurn(EL_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1 });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /language_mismatch/);
+});
+
+test("a clarify draft in the wrong language is rejected the same way a respond draft is", async () => {
+  const decide = scriptedDecider([{ type: "clarify", text: "Which city would you like the company registered in?" }]);
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1 });
+  assert.equal(result.outcome, "clarify_rejected");
+  assert.match(result.reason, /language_mismatch/);
+});
+
+test("Latin brand/product names (REFALCO, OpenRouter) inside an Arabic reply never false-positive the language gate", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: "إحنا ريفالكو (REFALCO)، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية. يسعدني ساعدك بأي سؤال." }]);
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {} });
+  assert.equal(result.outcome, "responded", "an Arabic-dominant reply must not be rejected just for containing a Latin brand/product name");
+});
+
+test("a realistic URL (e.g. a booking link) embedded in an Arabic reply never flips the underlying language detector to English (src/language.js)", () => {
+  // Isolated at the detector level (agentObservability.js's languageSignalsFrom,
+  // reused — not duplicated — by the new gate) rather than through
+  // runAgentTurn, so this proves the language signal itself regardless of
+  // the separate, pre-existing raw-URL-claim policy (028) that would
+  // otherwise reject any raw URL for an unrelated reason. A realistic
+  // random-token URL (matching the project's own calendar-link shape) is
+  // used rather than a long, word-filled URL path dominating a bare-minimum
+  // Arabic prefix — the same shared risk (any URL has SOME Latin
+  // characters) applies identically to legacy's own `detectMessageLanguage`
+  // call in ai.js, not something new introduced here.
+  const { languageSignalsFrom } = require("./agentObservability");
+  const signal = languageSignalsFrom("arabic", "المزيد من التفاصيل متوفرة هون، فيك تزور الرابط: https://calendar.app.google/Ny3HQG1iwmF3T5s58");
+  assert.equal(signal.languageMismatch, false);
+});
+
+test("a very short draft (<=8 chars, legacy's own exemption) is never rejected on language grounds alone", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: "Yes." }]);
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {} });
+  assert.notEqual(result.outcome, "response_rejected");
+});
+
+test("an unknown/missing locale never gates on language — nothing trustworthy to compare against", async () => {
+  const unknownContext = buildAgentContext({ currentMessage: "hello" });
+  const decide = scriptedDecider([{ type: "respond", text: "مرحباً، كيف فيني ساعدك اليوم بخصوص خدمات ريفالكو؟" }]);
+  const result = await runAgentTurn(unknownContext, { decideNextStep: decide, tools: {} });
+  assert.equal(result.outcome, "responded");
+});
+
+test("a wrong-language draft recovers on retry via the existing re-decision mechanism, never a silent edit", async () => {
+  const decide = scriptedDecider([
+    { type: "respond", text: EN_TEXT }, // wrong language for AR_CONTEXT — rejected
+    { type: "respond", text: AR_TEXT } // correct language — accepted
+  ]);
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 4 });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 2);
+  assert.equal(result.response, AR_TEXT);
+  // The rejected first draft must be fed back as an observation (the
+  // existing retry/re-decision mechanism), never silently discarded.
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.steps[0].tool, "responsePolicyCheck");
+  assert.match(result.steps[0].result.reasonCode, /language_mismatch/);
+});
+
+test("a wrong-language draft that never corrects exhausts the step budget and falls back safely", async () => {
+  const decide = async () => ({ type: "respond", text: EN_TEXT });
+  const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 2 });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /language_mismatch/);
+  assert.equal(result.stepCount, 2);
+});

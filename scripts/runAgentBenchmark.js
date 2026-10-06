@@ -23,9 +23,13 @@ loadProjectEnv(ROOT);
 
 const { runAgentTurn } = require("../src/agentLoop");
 const { runAgentTurnForContact } = require("../src/agentRuntime");
+const { buildAgentContext } = require("../src/agentContext");
 const { decideNextStep: realDecideNextStep } = require("../src/agentDecision");
 const { TOOL_REGISTRY } = require("../src/agentTools");
 const { summarizeAgentTurn, languageSignalsFrom } = require("../src/agentObservability");
+const { buildRecentConversation } = require("../src/agentShadow");
+const { getConversationState } = require("../src/conversationState");
+const { getConsentState } = require("../src/leadQualification");
 const { routeMessageResult } = require("../src/messageRouter");
 const { handleBookingMessage } = require("../src/booking");
 const { classifySafety, SAFETY_CATEGORIES } = require("../src/safetyPolicy");
@@ -37,6 +41,15 @@ const { BENCHMARK_SCENARIOS } = require("../src/benchmarkScenarios");
 const { withCalendarEnv, BOOKING_POLICY, BOOKING_NOW, SLOT } = require("../src/agentScenarios");
 const { resolveOpenRouterModel, DEFAULT_OPENROUTER_MODEL } = require("../src/openrouterPrivacy");
 const { DEFAULT_MAX_STEPS } = require("../src/agentLoop");
+// REFAL-AGENT-029 — the legacy arm's real AI-routed path, mirroring exactly
+// what src/bot.js does today (askOpenRouter + the deterministic
+// grounded/localRecap/noApprovedEvidenceReply selection chain), so a legacy
+// scenario that routes to AI is actually measured instead of excluded.
+const { askOpenRouter, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("../src/ai");
+const { answerFromEvidence, noApprovedEvidenceReply } = require("../src/refalcoAnswer");
+const { buildLocalConversationRecap } = require("../src/conversationRecap");
+const { buildConversationContext } = require("../src/conversationMemory");
+const { detectMessageLanguage } = require("../src/language");
 
 const UNSAFE_CLAIM_REASONS = new Set(["unverified_handover_action", "unverified_booking_action", "unconsented_contact_commitment"]);
 
@@ -67,6 +80,75 @@ function finalResponseIsUnsafe(responseText) {
   if (typeof responseText !== "string" || !responseText.trim()) return false;
   const check = validateResponse(responseText, {});
   return Boolean(check.unconsentedContactCommitment || check.unverifiedHandoverAction || check.unverifiedBookingAction);
+}
+
+// REFAL-AGENT-029 — a judge verdict of CLARIFICATION_WAS_NECESSARY means the
+// reply correctly asked instead of guessing; `currentRequestAnswered` is
+// forced to null (NOT_APPLICABLE) for exactly these turns so
+// benchmarkScorer.js's currentRequestAnsweredRate/unexpectedFailures never
+// count a legitimate clarifying question as a "request not answered"
+// failure. `clarificationNecessary` carries the signal on its own so
+// clarification quality stays visible and reportable, never silently
+// dropped. Pure/exported so the derivation is unit-testable without a real
+// evaluator model call.
+function deriveAnswerMetrics(evaluator) {
+  if (!evaluator || evaluator.evaluatorUnavailable) {
+    return { currentRequestAnswered: null, unnecessaryQuestion: null, clarificationNecessary: null, evaluatorReasonCode: null };
+  }
+  const clarificationNecessary = evaluator.reasonCode === "CLARIFICATION_WAS_NECESSARY";
+  return {
+    currentRequestAnswered: clarificationNecessary ? null : evaluator.currentRequestAnswered,
+    unnecessaryQuestion: evaluator.unnecessaryQuestion,
+    clarificationNecessary,
+    evaluatorReasonCode: evaluator.reasonCode
+  };
+}
+
+// REFAL-AGENT-029 — "did this booking-category scenario actually exercise
+// requestBookingAction" (not merely getBookingAvailability). Only meaningful
+// for booking scenarios; every other category reports null (NOT_APPLICABLE),
+// never a fabricated false, so the rate denominator only ever counts
+// scenarios where this was actually a relevant question.
+function bookingToolInvokedMetric(category, toolsUsed) {
+  if (category !== "booking") return null;
+  return Array.isArray(toolsUsed) && toolsUsed.includes("requestBookingAction");
+}
+
+// REFAL-AGENT-029 — a safe/redacted preview of the final customer-visible
+// text, stored on the artifact so a human can audit what each arm actually
+// produced without re-running anything. Never the drafted-but-rejected text,
+// never a prompt, never raw tool args, never reasoning — only the same
+// `result.response`/legacy `response` text already scored above, redacted
+// with the same personal-data/credential scrubbing `ai.js` already applies
+// everywhere else, and bounded in length.
+function safeResponsePreview(text) {
+  if (typeof text !== "string" || !text.trim()) return null;
+  return redactPersonalData(text).slice(0, 500);
+}
+
+// REFAL-AGENT-029 — the exact production context-building chain
+// (src/agentShadow.js's runShadowAgentTurn), applied to the benchmark's own
+// fake `user` object instead of a live store load. Previously the benchmark
+// never passed recentConversation/conversationState/consentState at all, so
+// memory/clarification/consent/topic-change scenarios ran the real decision
+// model with NO conversational history whatsoever — this is the fix. Pure
+// and exported so the wiring is directly unit-testable without a real model
+// call.
+function buildAgentScenarioContext(scenario, user) {
+  const history = Array.isArray(user?.history) ? user.history : [];
+  const conversationState = getConversationState(user);
+  const consentState = getConsentState({ user, history }) || "unknown";
+  return {
+    recentConversation: buildRecentConversation(history),
+    conversationState,
+    knownCustomerFacts: conversationState.agentFacts,
+    consentState,
+    // Scenario-authored, not re-derived via agentShadow.js's narrower
+    // name-request-only deriveOpenQuestion heuristic: these scenarios assert
+    // "the Agent is given this exact open question," the same pattern
+    // src/agentScenarios.js's own B04 scenario already uses directly.
+    currentOpenQuestion: scenario.lastTurnResponse || null
+  };
 }
 
 // Benchmark-only safety net: this environment's network path to OpenRouter
@@ -138,8 +220,22 @@ function bookingStoreFor(user) {
 }
 
 function buildUser(scenario, idPrefix) {
-  const user = { id: `${idPrefix}-${scenario.id}`, profile: {}, history: (scenario.history || []).map((h) => ({ ...h })) };
-  if (scenario.lastTurnResponse) user.history.push({ message: "(prior turn)", response: scenario.lastTurnResponse });
+  // REFAL-AGENT-029: a plausible customer name (same placeholder
+  // src/agentScenarios.js's own makeBookingUser() already uses), so
+  // requestBookingAction's normalizeAppointmentDetails never fails closed on
+  // MISSING_APPOINTMENT_DETAILS (name) for every booking scenario regardless
+  // of what the real model decides — a missing fixture field must never look
+  // like "the booking tool doesn't work" or "the model chose wrong". No other
+  // tool reads profile.name (confirmed by source inspection), so this is
+  // inert everywhere except the booking write path.
+  const user = { id: `${idPrefix}-${scenario.id}`, profile: { name: "Test" }, history: (scenario.history || []).map((h) => ({ ...h })) };
+  // REFAL-AGENT-029: no synthetic customer-side filler message — a bare
+  // `response` entry with no `message` contributes only the real prior
+  // ASSISTANT turn to recentConversation (src/agentShadow.js's
+  // buildRecentConversation skips a turn's user/assistant half whenever that
+  // half's text is empty), instead of putting a literal "(prior turn)" string
+  // into the real model's conversation history as if the customer had said it.
+  if (scenario.lastTurnResponse) user.history.push({ message: "", response: scenario.lastTurnResponse });
   if (scenario.seedFacts) {
     user.profile.agentFacts = Object.fromEntries(Object.entries(scenario.seedFacts).map(([k, v]) => [k, { value: v, provenance: "customer_message", savedAt: new Date().toISOString() }]));
   }
@@ -160,7 +256,7 @@ function classifyFallbackReason(outcome) {
 }
 
 function emptyMetrics() {
-  return { currentRequestAnswered: null, unnecessaryQuestion: null, unnecessaryToolCall: null, fallbackUsed: null, fallbackReason: null, rejectionReasonCodes: [], languageMismatch: null, stepCount: null, maxSteps: null, toolsUsed: [], ragStatus: null, toolFailure: null, unsafeDraftBlocked: null, unsafeFinalResponse: null };
+  return { currentRequestAnswered: null, unnecessaryQuestion: null, unnecessaryToolCall: null, fallbackUsed: null, fallbackReason: null, rejectionReasonCodes: [], languageMismatch: null, stepCount: null, maxSteps: null, toolsUsed: [], ragStatus: null, toolFailure: null, unsafeDraftBlocked: null, unsafeFinalResponse: null, clarificationNecessary: null, evaluatorReasonCode: null, bookingToolInvoked: null };
 }
 
 // --- Agent arm -------------------------------------------------------------------
@@ -181,16 +277,23 @@ async function runAgentScenario(scenario, runIndex, callStats) {
     return d;
   }); };
   const user = buildUser(scenario, "bench-agent");
+  // REFAL-AGENT-029: real recentConversation/conversationState/consentState,
+  // built the same way production's shadow path builds them (see
+  // src/agentShadow.js's runShadowAgentTurn) — previously omitted entirely,
+  // so memory/clarification/consent/topic-change scenarios ran the real
+  // decision model with no conversational history at all.
+  const scenarioContext = buildAgentScenarioContext(scenario, user);
 
   let result;
   if (scenario.category === "booking") {
     const toolContext = { store: bookingStoreFor(user), user, userId: user.id, policy: BOOKING_POLICY, now: BOOKING_NOW, inboundMessageId: `bench-agent-${scenario.id}-${runIndex}`, language: scenario.locale };
+    const context = buildAgentContext({ currentMessage: scenario.message, locale: scenario.locale, ...scenarioContext });
     result = await withCalendarEnv({ busy: scenario.bookingBusy ? [SLOT] : [] }, () =>
-      runAgentTurn({ currentMessage: scenario.message, locale: scenario.locale }, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext, maxSteps: DEFAULT_MAX_STEPS })
+      runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext, maxSteps: DEFAULT_MAX_STEPS })
     );
   } else {
     result = await runAgentTurnForContact(
-      { currentMessage: scenario.message, locale: scenario.locale, user, userId: user.id, store: ragFixtureStore(scenario), embedText: async () => null, currentOpenQuestion: scenario.lastTurnResponse || null },
+      { currentMessage: scenario.message, locale: scenario.locale, user, userId: user.id, store: ragFixtureStore(scenario), embedText: async () => null, ...scenarioContext },
       { decideNextStep: decide, maxSteps: DEFAULT_MAX_STEPS }
     );
   }
@@ -199,7 +302,7 @@ async function runAgentScenario(scenario, runIndex, callStats) {
   const languageSignal = languageSignalsFrom(scenario.locale, result.response);
 
   if (turnInfra.anyInfraFailure) {
-    return { scenarioId: scenario.id, arm: "agent", runIndex, locale: scenario.locale, category: scenario.category, featureTags: scenario.featureTags, status: "infrastructure_error", infrastructureErrorKind: "network_or_provider", infrastructureErrorDetail: turnInfra.reasons[0], knownTicket: null, outcome: result.outcome, metrics: { ...emptyMetrics(), stepCount: telemetry.stepCount, maxSteps: DEFAULT_MAX_STEPS, toolsUsed: telemetry.toolsUsed } };
+    return { scenarioId: scenario.id, arm: "agent", runIndex, locale: scenario.locale, category: scenario.category, featureTags: scenario.featureTags, status: "infrastructure_error", infrastructureErrorKind: "network_or_provider", infrastructureErrorDetail: turnInfra.reasons[0], knownTicket: null, outcome: result.outcome, responsePreview: null, metrics: { ...emptyMetrics(), stepCount: telemetry.stepCount, maxSteps: DEFAULT_MAX_STEPS, toolsUsed: telemetry.toolsUsed } };
   }
 
   let evaluator = { evaluatorUnavailable: true, reason: "not_attempted" };
@@ -209,13 +312,15 @@ async function runAgentScenario(scenario, runIndex, callStats) {
 
   const unsafeDraftBlocked = unsafeDraftWasBlocked(result.outcome, telemetry.rejectionReasonCodes);
   const unsafeFinalResponse = finalResponseIsUnsafe(result.response);
+  const answerMetrics = deriveAnswerMetrics(evaluator);
 
   return {
     scenarioId: scenario.id, arm: "agent", runIndex, locale: scenario.locale, category: scenario.category, featureTags: scenario.featureTags,
     status: "measured", infrastructureErrorKind: null, knownTicket: null, outcome: result.outcome,
+    responsePreview: safeResponsePreview(result.response),
     metrics: {
-      currentRequestAnswered: evaluator.evaluatorUnavailable ? null : evaluator.currentRequestAnswered,
-      unnecessaryQuestion: evaluator.evaluatorUnavailable ? null : evaluator.unnecessaryQuestion,
+      currentRequestAnswered: answerMetrics.currentRequestAnswered,
+      unnecessaryQuestion: answerMetrics.unnecessaryQuestion,
       unnecessaryToolCall: null, // no reliable deterministic signal for "was this tool call necessary" without ground truth per scenario — left NOT_APPLICABLE rather than guessed
       fallbackUsed: telemetry.fallbackUsed,
       fallbackReason: telemetry.fallbackUsed ? classifyFallbackReason(result.outcome) : null,
@@ -226,7 +331,10 @@ async function runAgentScenario(scenario, runIndex, callStats) {
       ragStatus: telemetry.ragResultStatus,
       toolFailure: telemetry.toolCalls.some((c) => !c.ok),
       unsafeDraftBlocked,
-      unsafeFinalResponse
+      unsafeFinalResponse,
+      clarificationNecessary: answerMetrics.clarificationNecessary,
+      evaluatorReasonCode: answerMetrics.evaluatorReasonCode,
+      bookingToolInvoked: bookingToolInvokedMetric(scenario.category, telemetry.toolsUsed)
     },
     evaluatorMeta: evaluator.evaluatorUnavailable ? { unavailable: true, reason: evaluator.reason } : { unavailable: false, promptVersion: evaluator.promptVersion, reasonCode: evaluator.reasonCode }
   };
@@ -234,7 +342,82 @@ async function runAgentScenario(scenario, runIndex, callStats) {
 
 // --- Legacy arm ------------------------------------------------------------------
 
-async function runLegacyScenario(scenario, runIndex) {
+// Pure copy of src/bot.js's own `removeCustomerCitations` (that file cannot
+// be required here — benchmarkSafety.test.js forbids it, since requiring
+// bot.js would transitively pull in the real WhatsApp/Supabase transport).
+// This is a tiny, side-effect-free string transform; duplicating it is safe,
+// requiring the module it lives in is not.
+function stripSourceCitations(text) {
+  return String(text || "")
+    .replace(/\n\s*(?:sources?|المصادر)\s*:\s*[\s\S]*$/iu, "")
+    .replace(/https?:\/\/\S+/giu, "")
+    .trim();
+}
+
+const PRIVACY_REMINDER_BY_LANGUAGE = Object.freeze({
+  arabic: "ولحماية خصوصيتك، لا تبعت كلمات مرور أو بيانات بطاقات أو دخول هون.",
+  greek: "Για την προστασία του απορρήτου σας, μην στέλνετε κωδικούς πρόσβασης, στοιχεία κάρτας ή τραπεζικά στοιχεία εδώ.",
+  english: "For your privacy, please don’t send passwords, card details, or account credentials here."
+});
+
+// REFAL-AGENT-029 — the legacy AI-routed path, matching src/bot.js's real
+// behavior (evidence retrieval -> grounded/localRecap/no-evidence selection
+// -> real askOpenRouter call -> citation stripping -> privacy reminder)
+// exactly, so a scenario legacy routes to AI is actually measured instead of
+// excluded. `callOpenRouter` is injectable so tests can verify this chain
+// without a real network call; production always uses the real askOpenRouter.
+async function runLegacyAiResponse(scenario, routed, { callOpenRouter = askOpenRouter } = {}) {
+  const customerText = routed.metadata?.privacySafeQuestion || String(scenario.message || "").trim();
+  let evidence = [];
+  try {
+    evidence = await ragFixtureStore(scenario).searchKnowledge(redactPersonalData(customerText), null, DEFAULT_EMBEDDING_MODEL, 6);
+  } catch {
+    evidence = []; // mirrors bot.js's own catch-and-continue on a knowledge-search failure
+  }
+
+  const allowPricing = routed.metadata?.intent?.intents?.includes("pricing") === true;
+  const language = detectMessageLanguage(customerText);
+  const grounded = answerFromEvidence(evidence, { allowPricing, customerQuestion: redactPersonalData(customerText) });
+  const localRecap = buildLocalConversationRecap({
+    history: routed.user?.history || [],
+    evidence,
+    currentMessage: customerText,
+    language,
+    workflowState: { handover: routed.user?.profile?.handover, specialistFollowUp: routed.user?.profile?.specialistFollowUp }
+  });
+  let response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(language, { pricing: allowPricing });
+
+  let aiModelAttempted = false;
+  let aiModelUsed = false;
+  // Same guard bot.js uses: give the model the evidence bundle even when no
+  // deterministic excerpt is safe to send; relevance only controls the local
+  // fallback, never whether the model gets a chance to help.
+  if (!localRecap && evidence.length) {
+    aiModelAttempted = true;
+    try {
+      const conversation = buildConversationContext(routed.user, { currentMessage: customerText });
+      const aiResponse = await withTimeout(
+        callOpenRouter({ text: customerText, evidence, includeSources: false, conversationSummary: conversation.summary, conversationTurns: conversation.turns }),
+        BENCHMARK_CALL_TIMEOUT_MS,
+        null
+      );
+      if (aiResponse) { response = aiResponse; aiModelUsed = true; }
+    } catch {
+      // Mirrors bot.js's own silent fallback: keep the deterministic answer
+      // already selected above (grounded/localRecap/no-evidence reply) — a
+      // real customer is never shown an error, and neither is this harness.
+    }
+  }
+
+  response = stripSourceCitations(response);
+  if (routed.metadata?.privacySafeQuestion) {
+    const reminder = PRIVACY_REMINDER_BY_LANGUAGE[language] || PRIVACY_REMINDER_BY_LANGUAGE.english;
+    response = `${response} ${reminder}`.trim();
+  }
+  return { response, aiModelAttempted, aiModelUsed };
+}
+
+async function runLegacyScenario(scenario, runIndex, { callOpenRouter = askOpenRouter } = {}) {
   const user = buildUser(scenario, "bench-legacy");
 
   if (scenario.category === "booking") {
@@ -247,12 +430,18 @@ async function runLegacyScenario(scenario, runIndex) {
 
   const routed = await routeMessageResult({ userId: user.id, text: scenario.message, store: integrationStore(user), existingUser: user });
   if (routed.shouldUseAi) {
-    return { scenarioId: scenario.id, arm: "legacy", runIndex, locale: scenario.locale, category: scenario.category, featureTags: scenario.featureTags, status: "not_measurable", notMeasurableReason: "legacy routes this to the AI/RAG path (bot.js calling askOpenRouter), which requires live model/network access outside this safe harness — not faked, per the ticket's explicit instruction", knownTicket: null, outcome: "routes_to_ai", metrics: emptyMetrics() };
+    // REFAL-AGENT-029: previously this entire branch returned status
+    // "not_measurable" for EVERY AI-routed scenario, regardless of whether a
+    // real model call was actually possible — silently excluding a biased
+    // subset (every information/RAG scenario) from the legacy baseline. Now
+    // measured for real, the same way the Agent arm already is.
+    const { response, aiModelAttempted, aiModelUsed } = await runLegacyAiResponse(scenario, routed, { callOpenRouter });
+    return scoreLegacyResponse(scenario, runIndex, response, routed.metadata, { aiModelAttempted, aiModelUsed });
   }
   return scoreLegacyResponse(scenario, runIndex, routed.response, routed.metadata);
 }
 
-async function scoreLegacyResponse(scenario, runIndex, response, metadata) {
+async function scoreLegacyResponse(scenario, runIndex, response, metadata, aiMeta = {}) {
   const languageSignal = languageSignalsFrom(scenario.locale, response);
   let evaluator = { evaluatorUnavailable: true, reason: "not_attempted" };
   if (typeof response === "string" && response.trim()) {
@@ -268,12 +457,19 @@ async function scoreLegacyResponse(scenario, runIndex, response, metadata) {
     const risk = classifySafety(scenario.message).risks.includes(SAFETY_CATEGORIES.PRIVACY);
     if (risk) knownTicket = scenario.knownTicketCandidate.ticket;
   }
+  const answerMetrics = deriveAnswerMetrics(evaluator);
   return {
     scenarioId: scenario.id, arm: "legacy", runIndex, locale: scenario.locale, category: scenario.category, featureTags: scenario.featureTags,
     status: "measured", infrastructureErrorKind: null, knownTicket, outcome: "responded",
+    responsePreview: safeResponsePreview(response),
+    // null (NOT_APPLICABLE) for every scenario that never reaches the AI
+    // branch at all (deterministic router / booking) — never a fabricated
+    // false. See runLegacyAiResponse for how these are actually measured.
+    aiModelAttempted: aiMeta.aiModelAttempted ?? null,
+    aiModelUsed: aiMeta.aiModelUsed ?? null,
     metrics: {
-      currentRequestAnswered: evaluator.evaluatorUnavailable ? null : evaluator.currentRequestAnswered,
-      unnecessaryQuestion: evaluator.evaluatorUnavailable ? null : evaluator.unnecessaryQuestion,
+      currentRequestAnswered: answerMetrics.currentRequestAnswered,
+      unnecessaryQuestion: answerMetrics.unnecessaryQuestion,
       unnecessaryToolCall: null,
       fallbackUsed: null, // the legacy deterministic router has no single "fallbackUsed" telemetry flag analogous to agentLoop.js's FALLBACK_OUTCOMES
       fallbackReason: null,
@@ -284,7 +480,10 @@ async function scoreLegacyResponse(scenario, runIndex, response, metadata) {
       ragStatus: null,
       toolFailure: null,
       unsafeDraftBlocked: null, // the legacy benchmark harness has no draft/rejection telemetry to measure separately (it only ever sees the final routed response)
-      unsafeFinalResponse: finalResponseIsUnsafe(response) // measured directly against the actual response text this harness returns, not inferred from the fact that recordHistory's own gate exists upstream in production
+      unsafeFinalResponse: finalResponseIsUnsafe(response), // measured directly against the actual response text this harness returns, not inferred from the fact that recordHistory's own gate exists upstream in production
+      clarificationNecessary: answerMetrics.clarificationNecessary,
+      evaluatorReasonCode: answerMetrics.evaluatorReasonCode,
+      bookingToolInvoked: null // legacy never calls the Agent tool registry
     }
   };
 }
@@ -369,13 +568,26 @@ async function main() {
       : null
   };
 
+  // REFAL-AGENT-029: the legacy arm now makes real OpenRouter calls too (see
+  // runLegacyAiResponse) — tracked per-turn via aiModelAttempted/aiModelUsed
+  // rather than a shared mutable counter, since runLegacyScenario calls are
+  // independent (no decision-loop retry state to thread through).
+  const legacyAiAttempted = legacyTurns.filter((t) => t.aiModelAttempted === true);
+  const legacyAiSucceeded = legacyAiAttempted.filter((t) => t.aiModelUsed === true);
+  const bookingAgentTurns = agentTurns.filter((t) => t.category === "booking" && t.status === "measured");
+  const bookingToolExecutions = bookingAgentTurns.filter((t) => t.metrics.bookingToolInvoked === true);
+
   const cost = {
     totalCalls: callStats.total, successfulCalls: callStats.success, failedCalls: callStats.failed,
     avgCallsPerScenario: scenarios.length ? callStats.total / scenarios.length : 0,
     totalSteps: agentTurns.reduce((sum, t) => sum + (t.metrics.stepCount || 0), 0),
     retries: 0, // agentDecision.js's decideNextStep has no retry policy today — a failed call becomes a fallback decision immediately (confirmed by source inspection)
     tokenUsageAvailable: false, promptTokens: 0, completionTokens: 0,
-    costAvailable: false, costUsd: 0
+    costAvailable: false, costUsd: 0,
+    legacyAiCallsAttempted: legacyAiAttempted.length,
+    legacyAiCallsSucceeded: legacyAiSucceeded.length,
+    bookingScenarioTurnsMeasured: bookingAgentTurns.length,
+    bookingToolExecutions: bookingToolExecutions.length
   };
 
   const readiness = readinessFrom(legacyAgg, agentAgg);
@@ -395,10 +607,16 @@ async function main() {
   console.log(`Wrote ${reportPath}`);
   console.log(`Scenarios: ${scenarios.length}, runs/scenario: ${config.runs}`);
   console.log(`Agent decision calls: ${callStats.total} (success=${callStats.success}, failed=${callStats.failed})`);
+  console.log(`Legacy AI calls: ${legacyAiAttempted.length} attempted, ${legacyAiSucceeded.length} succeeded`);
+  console.log(`Booking tool executions: ${bookingToolExecutions.length}/${bookingAgentTurns.length} measured booking turns`);
   console.log(`Readiness: ${readiness.category}`);
 }
 
-module.exports = { resolveConfig, integrationStore, bookingStoreFor, runAgentScenario, runLegacyScenario, readinessFrom, gitInfo, unsafeDraftWasBlocked, finalResponseIsUnsafe };
+module.exports = {
+  resolveConfig, integrationStore, bookingStoreFor, buildUser, runAgentScenario, runLegacyScenario, runLegacyAiResponse,
+  readinessFrom, gitInfo, unsafeDraftWasBlocked, finalResponseIsUnsafe, deriveAnswerMetrics, bookingToolInvokedMetric,
+  safeResponsePreview, buildAgentScenarioContext, stripSourceCitations
+};
 
 if (require.main === module) {
   // withTimeout above logically moves on without cancelling the underlying

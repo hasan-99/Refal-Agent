@@ -6,8 +6,9 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import multer from "multer";
 import { canAccessDashboardSession, clearAuthCookies, createRequestAuthClient, isSameOriginRequest, roleAllows, validPassword } from "./auth.js";
-import { chunkKnowledge, extractKnowledgeText, fetchKnowledgePage, normalizeKnowledgeContent, validateKnowledgeUrl } from "./knowledge.js";
+import { assertPasteWithinLimit, chunkKnowledge, extractKnowledgeText, extractUploadedDocument, fetchKnowledgePage, MAX_UPLOAD_BYTES, normalizeKnowledgeContent, UPLOAD_MIME_TYPES, validateKnowledgeUrl } from "./knowledge.js";
 import { contactActivityStats, operatorSignals, recentConversations } from "./activity.js";
 import { createWhatsAppController } from "./whatsappController.js";
 import { aggregateModelUsage, normalizeQualificationStatus } from "./performance.js";
@@ -19,6 +20,10 @@ import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// REFAL-ADMIN-KB — admin-uploaded PDF/DOCX/TXT knowledge. Memory storage is
+// safe here: MAX_UPLOAD_BYTES bounds the buffer size, and multer rejects
+// anything larger before this process ever holds it.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
 const require = createRequire(import.meta.url);
 const { generateConversationReport } = require("../src/report.js");
 const { createStore } = require("../src/supabaseStore.js");
@@ -268,12 +273,16 @@ app.get("/api/knowledge", async (req, res) => {
 
 app.post("/api/knowledge", requireAdmin, async (req, res) => {
   try {
-    const url = validateKnowledgeUrl(req.body?.url);
     const displayName = String(req.body?.displayName || "").trim().slice(0, 160);
     if (!displayName) return res.status(400).json({ error: "A source name is required." });
+    // REFAL-ADMIN-KB — a source backed by an uploaded file or pasted text has
+    // no real fetchable URL. canonical_url stays NOT NULL/unique, so a
+    // synthetic, never-fetched placeholder stands in for it; nothing ever
+    // calls fetchKnowledgePage/validateKnowledgeUrl against a "manual:" value.
+    const canonicalUrl = String(req.body?.url || "").trim() ? validateKnowledgeUrl(req.body.url).href : `manual:${crypto.randomUUID()}`;
     const rows = await supabaseRest("rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,last_status", {
       method: "POST", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ canonical_url: url.href, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied" })
+      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied" })
     });
     res.status(201).json({ source: rows[0] });
   } catch (error) {
@@ -332,10 +341,32 @@ app.post("/api/knowledge/:id/import", requireAdmin, async (req, res) => {
     const id = requireUuid(req.params.id);
     const title = String(req.body?.title || "Operator-provided content").trim().slice(0, 500);
     const content = normalizeKnowledgeContent(req.body?.content);
+    assertPasteWithinLimit(content);
     if (content.length < 40) return res.status(400).json({ error: "Import at least 40 characters of source content." });
     const extracted = { title, content, chunks: chunkKnowledge(content) };
     const saved = await storeKnowledgeRevision(id, extracted, String(req.body?.language || "en").slice(0, 8));
     res.status(201).json({ ...saved, characterCount: content.length, chunkCount: extracted.chunks.length });
+  } catch (error) {
+    res.status(error.code || 500).json({ error: error.message });
+  }
+});
+
+app.post("/api/knowledge/:id/upload", requireAdmin, upload.single("file"), async (req, res) => {
+  try {
+    const id = requireUuid(req.params.id);
+    if (!req.file) return res.status(400).json({ error: "Attach a file to upload." });
+    const extracted = await extractUploadedDocument({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      filename: req.file.originalname,
+      title: req.body?.title,
+      language: req.body?.language
+    });
+    const saved = await storeKnowledgeRevision(id, extracted, extracted.language, {
+      sourceFileType: extracted.sourceFileType,
+      sourceFileName: extracted.sourceFileName
+    });
+    res.status(201).json({ ...saved, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -1283,7 +1314,7 @@ function httpError(code, message) {
   return error;
 }
 
-async function storeKnowledgeRevision(sourceId, document, languageCode) {
+async function storeKnowledgeRevision(sourceId, document, languageCode, metadata = {}) {
   const content = normalizeKnowledgeContent(document.content).slice(0, 250_000);
   const contentSha256 = crypto.createHash("sha256").update(content).digest("hex");
   const result = await supabaseRest("rpc/rafa_store_knowledge_revision", {
@@ -1294,7 +1325,8 @@ async function storeKnowledgeRevision(sourceId, document, languageCode) {
       p_content: content,
       p_content_sha256: contentSha256,
       p_language_code: languageCode,
-      p_chunks: document.chunks
+      p_chunks: document.chunks,
+      p_metadata: metadata
     })
   });
   return result;

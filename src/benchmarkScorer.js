@@ -22,7 +22,8 @@ const OPEN_TICKETS = Object.freeze({
 //     currentRequestAnswered, unnecessaryQuestion, unnecessaryToolCall,
 //     fallbackUsed, fallbackReason, rejectionReasonCodes, languageMismatch,
 //     stepCount, toolsUsed, ragStatus, toolFailure, unsafeDraftBlocked,
-//     unsafeFinalResponse
+//     unsafeFinalResponse, clarificationNecessary, evaluatorReasonCode,
+//     bookingToolInvoked
 //   }
 // }
 //
@@ -34,6 +35,15 @@ const OPEN_TICKETS = Object.freeze({
 // unsafeFinalResponse = the actual text that would reach the customer
 // contains an unverified claim (a real failure — this is what gates
 // readiness).
+//
+// currentRequestAnswered vs clarificationNecessary (REFAL-AGENT-029): when
+// the evaluator's reasonCode is CLARIFICATION_WAS_NECESSARY, the producer
+// (scripts/runAgentBenchmark.js's deriveAnswerMetrics) sets
+// currentRequestAnswered to null (NOT_APPLICABLE) for that turn instead of
+// false — a legitimate clarifying question must never score as "request not
+// answered". clarificationNecessary carries that signal on its own so
+// clarification quality can be reported separately from direct-answer
+// quality, never blended back into one failure count.
 
 function isBool(value) {
   return typeof value === "boolean";
@@ -107,13 +117,26 @@ function aggregateScenarios(allTurns) {
     languageMismatchRate: rate(measured, "languageMismatch"),
     toolFailureRate: rate(measured, "toolFailure"),
     unsafeDraftBlockedRate: rate(measured, "unsafeDraftBlocked"),
-    unsafeFinalResponseRate: rate(measured, "unsafeFinalResponse")
+    unsafeFinalResponseRate: rate(measured, "unsafeFinalResponse"),
+    // REFAL-AGENT-029: a turn the evaluator tagged CLARIFICATION_WAS_NECESSARY
+    // is scored separately from currentRequestAnsweredRate (the turn's
+    // currentRequestAnswered is set to null for exactly these turns — see
+    // scripts/runAgentBenchmark.js's deriveAnswerMetrics). This rate answers
+    // "how often did the Agent/legacy correctly ask instead of guess", never
+    // folded back into "request not answered".
+    clarificationNecessaryRate: rate(measured, "clarificationNecessary"),
+    bookingToolInvokedRate: rate(measured.filter((t) => t.category === "booking"), "bookingToolInvoked")
   };
 
   const fallbackReasonDistribution = countBy(measured.filter((t) => t.metrics.fallbackUsed === true), (t) => t.metrics.fallbackReason || "unspecified");
   const rejectionReasonDistribution = countBy(measured, (t) => t.metrics.rejectionReasonCodes || []);
   const toolUsageDistribution = countBy(measured, (t) => t.metrics.toolsUsed || []);
   const ragStatusDistribution = countBy(measured, (t) => t.metrics.ragStatus || null);
+  // Evaluator reasonCode distribution (e.g. DIRECTLY_ANSWERED vs
+  // CLARIFICATION_WAS_NECESSARY vs IGNORED_REQUEST) — separate from the
+  // deterministic responsePolicy rejectionReasonDistribution above; this one
+  // is the LLM-judge's own classification of answer/clarification quality.
+  const evaluatorReasonCodeDistribution = countBy(measured, (t) => t.metrics.evaluatorReasonCode || null);
   const stepStats = numericStats(measured.map((t) => t.metrics.stepCount));
   const scenariosAtMaxSteps = measured.filter((t) => typeof t.metrics.stepCount === "number" && typeof t.metrics.maxSteps === "number" && t.metrics.stepCount >= t.metrics.maxSteps).map((t) => t.scenarioId);
 
@@ -135,12 +158,13 @@ function aggregateScenarios(allTurns) {
     metrics,
     fallbackReasonDistribution,
     rejectionReasonDistribution,
+    evaluatorReasonCodeDistribution,
     toolUsageDistribution,
     ragStatusDistribution,
     stepStats,
     scenariosAtMaxSteps,
     knownTicketAffected: knownTicketAffected.map((t) => ({ scenarioId: t.scenarioId, arm: t.arm, runIndex: t.runIndex, ticket: t.knownTicket, reason: OPEN_TICKETS[t.knownTicket] })),
-    unexpectedFailures: unexpectedFailures.map((t) => ({ scenarioId: t.scenarioId, arm: t.arm, runIndex: t.runIndex, outcome: t.outcome, metrics: t.metrics })),
+    unexpectedFailures: unexpectedFailures.map((t) => ({ scenarioId: t.scenarioId, arm: t.arm, runIndex: t.runIndex, outcome: t.outcome, metrics: t.metrics, responsePreview: t.responsePreview || null })),
     localeBreakdown,
     featureBreakdown
   };

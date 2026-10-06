@@ -1,4 +1,104 @@
 import { load as loadHtml } from "cheerio";
+import mammoth from "mammoth";
+
+// REFAL-ADMIN-KB — admin-uploaded/pasted company knowledge (PDF/DOCX/TXT or
+// large pasted text), as opposed to the URL-scraper path above. Reuses
+// normalizeKnowledgeContent/chunkKnowledge so both ingestion paths produce
+// the identical bounded, ordered chunk shape storeKnowledgeRevision expects.
+export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // enforced again here as a second check behind multer's own limit
+export const MAX_PASTE_CHARS = 250_000; // matches the page-import content cap already applied in server.js's storeKnowledgeRevision
+const MIN_EXTRACTED_CHARS = 40; // matches the existing manual paste-import floor in server.js
+
+export const UPLOAD_MIME_TYPES = Object.freeze({
+  "text/plain": "txt",
+  "application/pdf": "pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx"
+});
+
+function titleFromFilename(filename) {
+  const base = String(filename || "").replace(/\.[^./\\]+$/, "").trim();
+  return base ? base.slice(0, 500) : "Uploaded document";
+}
+
+function standardFontDataUrl() {
+  return new URL("./node_modules/pdfjs-dist/standard_fonts/", import.meta.url).href;
+}
+
+async function extractPdfText(buffer) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  let doc;
+  try {
+    doc = await pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      standardFontDataUrl: standardFontDataUrl(),
+      disableFontFace: true,
+      isEvalSupported: false,
+      useSystemFonts: false
+    }).promise;
+  } catch (error) {
+    throw httpError(422, `The PDF could not be read (${error.message || "corrupt file"}).`);
+  }
+  try {
+    let text = "";
+    for (let page = 1; page <= doc.numPages; page += 1) {
+      const current = await doc.getPage(page);
+      const content = await current.getTextContent();
+      text += content.items.map((item) => item.str || "").join(" ") + "\n";
+    }
+    return text;
+  } finally {
+    await doc.destroy().catch(() => {});
+  }
+}
+
+async function extractDocxText(buffer) {
+  try {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  } catch (error) {
+    throw httpError(422, `The DOCX file could not be read (${error.message || "corrupt file"}).`);
+  }
+}
+
+function extractTxtText(buffer) {
+  if (buffer.includes(0)) throw httpError(422, "The file does not look like readable text.");
+  return buffer.toString("utf8");
+}
+
+// The one entry point server.js calls for an uploaded file. `buffer` is
+// already size-bounded by multer's own `limits.fileSize` (see server.js);
+// `MAX_UPLOAD_BYTES` here is a second, independent check so this function is
+// safe even if it is ever called from somewhere that skipped multer.
+export async function extractUploadedDocument({ buffer, mimeType, filename, title, language } = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) throw httpError(400, "The uploaded file is empty.");
+  if (buffer.length > MAX_UPLOAD_BYTES) throw httpError(413, "The uploaded file exceeds the upload size limit.");
+  const kind = UPLOAD_MIME_TYPES[mimeType];
+  if (!kind) throw httpError(415, "Only TXT, PDF, and DOCX files are supported.");
+
+  const rawText = kind === "pdf" ? await extractPdfText(buffer)
+    : kind === "docx" ? await extractDocxText(buffer)
+    : extractTxtText(buffer);
+
+  const content = normalizeKnowledgeContent(rawText).slice(0, MAX_PASTE_CHARS);
+  if (content.length < MIN_EXTRACTED_CHARS) throw httpError(422, "The file did not contain enough readable text to import.");
+
+  return {
+    title: String(title || "").trim().slice(0, 500) || titleFromFilename(filename),
+    content,
+    chunks: chunkKnowledge(content),
+    sourceFileType: kind,
+    sourceFileName: String(filename || "").slice(0, 300),
+    language: String(language || "en").slice(0, 8)
+  };
+}
+
+// Shared bound for the paste-text import path (server.js's /:id/import),
+// kept here next to MAX_UPLOAD_BYTES so both limits live in one place.
+export function assertPasteWithinLimit(content) {
+  if (String(content || "").length > MAX_PASTE_CHARS) {
+    throw httpError(413, `Pasted content exceeds the ${MAX_PASTE_CHARS.toLocaleString("en-US")} character limit.`);
+  }
+}
 
 const knowledgeHosts = new Set([
   "refalco.com", "www.refalco.com", "northdata.com", "www.northdata.com",
