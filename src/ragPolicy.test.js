@@ -13,6 +13,7 @@ const {
   resolveOpenRouterModel
 } = require("./openrouterPrivacy");
 const { routeMessageResult } = require("./messageRouter");
+const { buildKnowledgeSearchQuery, buildServiceSupplementQuery, isCanonicalServiceQuery, prioritizeCanonicalServiceEvidence } = require("./knowledgeQuery");
 
 const evidenceFixture = {
   source_name: "Refalco Contact",
@@ -190,7 +191,7 @@ test("deterministic company-setup fallback strips search-query noise and withhol
   assert.equal(markers?.answer, "REMOTE COMPANY SETUP is listed.");
 });
 
-test("pricing evidence is removed unless the customer asks directly or makes a narrow price follow-up", async (t) => {
+test("pricing evidence is included for broad service details and removed after an unrelated topic change", async (t) => {
   const originalFetch = global.fetch;
   const originalApiKey = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "test-key";
@@ -210,7 +211,7 @@ test("pricing evidence is removed unless the customer asks directly or makes a n
   });
   await askOpenRouter({ text: "Can you explain the company setup service?", evidence: [serviceEvidence], includeSources: false });
   assert.match(request.messages[0].content, /REFALCO helps set up companies remotely/);
-  assert.doesNotMatch(request.messages[0].content, /€999|four months of secretary/i);
+  assert.match(request.messages[0].content, /€999|four months of secretary/i);
 
   await askOpenRouter({ text: "How much does company setup cost?", evidence: [serviceEvidence], includeSources: false });
   assert.match(request.messages[0].content, /€999/);
@@ -257,6 +258,82 @@ test("pricing evidence is removed unless the customer asks directly or makes a n
     await askOpenRouter({ text, evidence: [serviceEvidence], includeSources: false, conversationTurns });
     assert.ok(/€999|four months of secretary/i.test(request.messages[0].content), `contextual evidence missing for: ${text}`);
   }
+});
+
+test("a detailed company-formation follow-up inherits the topic and receives the full approved package evidence", async (t) => {
+  const originalFetch = global.fetch;
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "test-key";
+  const validUntil = new Date(Date.now() + 86400000).toISOString();
+  const formationEvidence = {
+    ...evidenceFixture,
+    source_name: "REFALCO Complete Services Catalog",
+    heading: "العربية، خدمة تأسيس شركة في قبرص والسعر المؤكد",
+    content: "تساعد ريفالكو في تأسيس شركة قبرصية عن بُعد، وتشمل الخدمة حجز الاسم وتجهيز وتقديم مستندات التأسيس وإصدار شهادة التأسيس ومتابعة الطلب. الوثائق الأساسية هي جواز سفر وإثبات عنوان واسم مقترح وبيانات الشركاء إن وجدوا وطبيعة النشاط. السعر المنشور للباقة هو 999 يورو + VAT، وتشمل أربعة أشهر من سكرتارية الشركة وأربعة أشهر من العنوان المسجّل. المدة المتوقعة حوالي أسبوعين بعد اكتمال المستندات، وهي تقديرية وليست مضمونة، كما تبقى قرارات الجهات الخارجية خاضعة لمراجعتها.",
+    valid_until: validUntil,
+    review_status: "approved"
+  };
+  let request;
+  global.fetch = async (_url, options) => {
+    request = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "أكيد 😄 الخدمة تشمل حجز الاسم وتجهيز وتقديم مستندات التأسيس وإصدار الشهادة ومتابعة الطلب عن بُعد. السعر المنشور 999 يورو + VAT، ومعه 4 أشهر سكرتارية و4 أشهر عنوان مسجّل، والمدة المتوقعة حوالي أسبوعين بعد اكتمال الأوراق وليست موعداً مضموناً. شو النشاط اللي ناوي تسجّل الشركة عشانه؟" } }] })
+    };
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
+  });
+
+  const answer = await askOpenRouter({
+    text: "بدي تفاصيل اكتر",
+    evidence: [formationEvidence],
+    includeSources: false,
+    conversationTurns: [
+      { role: "user", content: "تسجيل شركات" },
+      { role: "assistant", content: "أكيد، فينا نساعدك بتأسيس شركة بقبرص. شو النشاط؟" }
+    ]
+  });
+
+  const systemPrompt = request.messages[0].content;
+  assert.match(systemPrompt, /999 يورو \+ VAT/u);
+  assert.match(systemPrompt, /جواز سفر وإثبات عنوان/u);
+  assert.match(systemPrompt, /حوالي أسبوعين بعد اكتمال المستندات/u);
+  assert.match(systemPrompt, /give a clear, structured, useful overview from all relevant approved evidence/i);
+  assert.match(systemPrompt, /Turn-specific completeness requirement: this is a broad or detailed services answer backed by the canonical catalog/);
+  assert.match(answer, /999 يورو \+ VAT/u);
+  assert.match(answer, /شو النشاط/u);
+});
+
+test("knowledge retrieval expands broad services and contextual formation details toward the canonical catalog", () => {
+  const broad = buildKnowledgeSearchQuery("ما هي خدمات ريفالكو؟", { history: [] }, ["services"]);
+  assert.match(broad, /دليل خدمات ريفالكو الكامل/u);
+  assert.match(broad, /خدمات ريفالكو/u);
+  assert.doesNotMatch(broad, /Υπηρεσίες REFALCO/u);
+  assert.match(buildServiceSupplementQuery(broad, "arabic"), /تفاصيل خدمة تسجيل وتأسيس الشركات/u);
+
+  const contextual = buildKnowledgeSearchQuery("بدي تفاصيل اكتر", {
+    history: [{ message: "تسجيل شركات", response: "أكيد، فينا نساعدك بتأسيس شركة بقبرص عن بُعد." }]
+  });
+  assert.match(contextual, /^دليل خدمات ريفالكو/u);
+  assert.match(contextual, /الوثائق المطلوبة عن بعد السعر الباقة/u);
+  assert.doesNotMatch(contextual, /أكيد، فينا نساعدك/u);
+
+  const unrelated = buildKnowledgeSearchQuery("بدي تفاصيل اكتر", {
+    history: [{ message: "وين مكتبكم؟", response: "الموقع غير مؤكد حالياً." }]
+  });
+  assert.doesNotMatch(unrelated, /company registration and formation service/iu);
+
+  assert.equal(isCanonicalServiceQuery(contextual), true);
+  const ranked = prioritizeCanonicalServiceEvidence([
+    { source_name: "refal", heading: "تعليمات داخلية", content: "تفاصيل محادثة" },
+    { source_name: "REFALCO Complete Services Catalog", heading: "English price", content: "Published price" },
+    { source_name: "REFALCO Complete Services Catalog", heading: "العربية، السعر", content: "السعر والباقة" },
+    { source_name: "REFALCO Complete Services Catalog", heading: "العربية، الخدمة", content: "تفاصيل تأسيس الشركة" }
+  ], "arabic");
+  assert.deepEqual(ranked.slice(0, 2).map((item) => item.heading), ["العربية، السعر", "العربية، الخدمة"]);
 });
 
 test("price answers cannot attach nearby company services to the paid package without explicit evidence", () => {
@@ -307,7 +384,7 @@ test("model price drafts and activity-suitability claims are rejected", async (t
     global.fetch = originalFetch;
     for (const [key, value] of Object.entries(env)) value === undefined ? delete process.env[key] : process.env[key] = value;
   });
-  await assert.rejects(askOpenRouter({ text: "I want to open a company in Cyprus. Can you explain the service?", evidence: [evidenceFixture], includeSources: false }), /unsolicited price/);
+  await assert.rejects(askOpenRouter({ text: "I want to open a company in Cyprus. Can you explain the service?", evidence: [evidenceFixture], includeSources: false }), /unsolicited or unsupported price/);
   draft = "An online shop is a straightforward activity, so the standard setup should fit.";
   await assert.rejects(askOpenRouter({ text: "My company will run an online shop.", evidence: [evidenceFixture], includeSources: false }), /restricted legal or financial content/);
 });
@@ -396,6 +473,9 @@ test("model prompt treats adversarial evidence as data and limits answers to app
   assert.match(systemPrompt, /Keep internal source names, owner confirmations, review status, and verification steps private/);
   assert.match(systemPrompt, /If approved sources conflict, state that they differ/);
   assert.match(systemPrompt, /Answer approved service\/package\/fee questions only when asked, using evidence/);
+  assert.match(systemPrompt, /For a broad or detailed service request, give a clear, structured, useful overview from all relevant approved evidence/);
+  assert.match(systemPrompt, /In a broad services overview, include the current verified customer-facing offer's price, VAT, main inclusions, and timing/);
+  assert.match(systemPrompt, /Never reply with only a generic no-approved-information message when approved related context answers all or part of the request/);
   assert.match(systemPrompt, /investment company, clarify after the approved setup basics whether it will invest its own funds or provide investment services to clients/);
   assert.match(systemPrompt, /A priority label is internal only; create a customer handover or follow-up only after the customer gives clear consent by affirming a tracked offer or directly asking for specialist contact/);
   assert.deepEqual(request.reasoning, { enabled: false, exclude: true });
@@ -403,6 +483,17 @@ test("model prompt treats adversarial evidence as data and limits answers to app
   assert.equal(request.messages[1].content, "How can I contact Refalco?");
   assert.deepEqual(request.provider, OPENROUTER_PRIVACY_POLICY);
   assert.equal(answer.endsWith(`Sources: ${evidenceFixture.source_name}: ${evidenceFixture.source_url}`), true);
+});
+
+test("canonical and runtime rules share the broad service-answer contract", () => {
+  const root = path.resolve(__dirname, "..");
+  for (const file of ["src/ai.js", "config/refal-agent-rules.md"]) {
+    const content = fs.readFileSync(path.join(root, file), "utf8");
+    assert.match(content, /For a broad or detailed service request, give a clear, structured, useful overview from all relevant approved evidence/, file);
+    assert.match(content, /proactively include the verified package price, VAT qualifier, inclusions, timing, and material limitations/, file);
+    assert.match(content, /Never reply with only a generic .?no[- ]approved[- ]information.? message when approved related context answers all or part of the request/i, file);
+    assert.match(content, /ask at most one natural qualification or next-step question/, file);
+  }
 });
 
 test("WhatsApp, dashboard, Edge, and canonical rules share the consent and investment-company contract", () => {

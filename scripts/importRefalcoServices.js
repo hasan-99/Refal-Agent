@@ -1,12 +1,16 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { loadProjectEnv } = require("../src/env");
 const { embedTexts, DEFAULT_EMBEDDING_MODEL } = require("../src/ai");
 
 loadProjectEnv(path.resolve(__dirname, ".."));
 
-const sourceUrl = "https://refalco.com/services/";
-const sourceName = "REFALCO GROUP Services";
+const rootDir = path.resolve(__dirname, "..");
+const catalogPath = path.join(rootDir, "data", "refalco-services-catalog.md");
+const canonicalUrl = "manual://canonical/refalco-services-catalog";
+const sourceName = "REFALCO Complete Services Catalog";
+const documentTitle = "REFALCO Complete Services Catalog | دليل خدمات ريفالكو | Κατάλογος Υπηρεσιών REFALCO";
 const baseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
 const dashboardSecret = process.env.RAFA_DASHBOARD_SUPABASE_SECRET;
@@ -29,6 +33,83 @@ async function rest(resource, options = {}) {
   return body;
 }
 
+async function approvedDocumentForSource(source) {
+  const sources = await rest(`rafa_knowledge_sources?canonical_url=eq.${encodeURIComponent(source)}&approved=eq.true&enabled=eq.true&select=id,display_name,canonical_url&limit=1`);
+  if (!sources[0]) throw new Error(`Required approved source is unavailable: ${source}`);
+  const documents = await rest(`rafa_knowledge_documents?source_id=eq.${sources[0].id}&review_status=eq.approved&select=id,title,canonical_content,valid_until&order=revision.desc&limit=1`);
+  if (!documents[0]) throw new Error(`Required approved document is unavailable: ${source}`);
+  return { source: sources[0], document: documents[0] };
+}
+
+async function approvedOperatorDocument(displayName) {
+  const sources = await rest(`rafa_knowledge_sources?display_name=eq.${encodeURIComponent(displayName)}&approved=eq.true&enabled=eq.true&select=id,display_name,canonical_url&limit=1`);
+  if (!sources[0]) throw new Error(`Required approved operator source is unavailable: ${displayName}`);
+  const documents = await rest(`rafa_knowledge_documents?source_id=eq.${sources[0].id}&review_status=eq.approved&select=id,title,canonical_content,valid_until&order=revision.desc&limit=1`);
+  if (!documents[0]) throw new Error(`Required approved operator document is unavailable: ${displayName}`);
+  return { source: sources[0], document: documents[0] };
+}
+
+function validateCatalog(catalog, approvedCorpus) {
+  const requiredCatalogFacts = [
+    /Development[\s\S]*Infrastructure & Execution[\s\S]*Operations[\s\S]*Technology Systems[\s\S]*Strategic Assets/u,
+    /التطوير[\s\S]*البنية التحتية والتنفيذ[\s\S]*العمليات والتشغيل[\s\S]*أنظمة التكنولوجيا[\s\S]*الأصول الاستراتيجية/u,
+    /Ανάπτυξη[\s\S]*Υποδομές & Εκτέλεση[\s\S]*Λειτουργίες[\s\S]*Τεχνολογικά Συστήματα[\s\S]*Στρατηγικά Περιουσιακά Στοιχεία/u,
+    /€999 \+ VAT/u,
+    /999 يورو \+ ضريبة القيمة المضافة/u,
+    /€999 \+ ΦΠΑ/u,
+    /four months of company-secretary service/u,
+    /أربعة أشهر من خدمة سكرتارية الشركة/u,
+    /τέσσερις μήνες υπηρεσίας γραμματέα εταιρείας/u,
+    /approximately two weeks after all required documents are complete/u
+  ];
+  for (const pattern of requiredCatalogFacts) {
+    if (!pattern.test(catalog)) throw new Error(`Canonical catalog is missing required verified content: ${pattern}`);
+  }
+  if (/\[(?:required|todo|tbc|missing)\]|<placeholder>|insert price/iu.test(catalog)) {
+    throw new Error("Canonical catalog contains an unresolved placeholder.");
+  }
+
+  const requiredEvidenceFacts = [
+    /€999/u,
+    /VAT/u,
+    /4 أشهر Company Secretary|4 أشهر سكرتارية/u,
+    /4 أشهر Registered Address|4 أشهر عنوان مسجل/u,
+    /حوالي أسبوعين/u,
+    /Development/u,
+    /Infrastructure & Execution/u,
+    /Technology Systems/u,
+    /Strategic Assets/u
+  ];
+  for (const pattern of requiredEvidenceFacts) {
+    if (!pattern.test(approvedCorpus)) throw new Error(`Approved source corpus no longer supports a catalog fact: ${pattern}`);
+  }
+}
+
+function annotateChunks(chunks) {
+  return chunks.map((chunk) => {
+    const content = String(chunk.content || "");
+    const language = /[\u0600-\u06ff]/u.test(content) ? "ar" : /[\u0370-\u03ff]/u.test(content) ? "el" : "en";
+    const topic = /€999|999 يورو|ΦΠΑ|VAT/u.test(content)
+      ? "company_formation_pricing"
+      : /company formation|تأسيس شركة|σύσταση εταιρείας/iu.test(content)
+        ? "company_formation"
+        : /business areas|مجالات عمل|επιχειρηματικοί τομείς/iu.test(content)
+          ? "group_business_areas"
+          : "service_boundaries";
+    return { ...chunk, metadata: { language, topic, canonical: true } };
+  });
+}
+
+function catalogSections(content) {
+  const headings = [...String(content).matchAll(/^##\s+(.+)$/gmu)];
+  if (headings.length < 12) throw new Error("Canonical catalog must contain all English, Arabic, and Greek service sections.");
+  return headings.map((match, index) => {
+    const start = match.index + match[0].length;
+    const end = headings[index + 1]?.index ?? content.length;
+    return { heading: match[1].trim(), content: content.slice(start, end).trim() };
+  }).filter((section) => section.content);
+}
+
 async function indexApprovedDocument(documentId) {
   const chunks = await rest(`rafa_knowledge_chunks?document_id=eq.${encodeURIComponent(documentId)}&select=chunk_index,content&order=chunk_index.asc`);
   if (!chunks.length) return 0;
@@ -44,141 +125,110 @@ async function indexApprovedDocument(documentId) {
 }
 
 async function main() {
-  const { fetchKnowledgePage, extractKnowledgeText } = await import("../dashboard/knowledge.js");
-  const page = await fetchKnowledgePage(sourceUrl);
-  const extracted = extractKnowledgeText(page.html, page.url);
-  const htmlLanguage = page.html.match(/<html\b[^>]*\blang=["']([^"']+)/i)?.[1];
-  const language = String(htmlLanguage || "ar").slice(0, 8);
+  const { chunkKnowledge, normalizeKnowledgeContent } = await import("../dashboard/knowledge.js");
+  const [servicesPage, groupPage, operatorGuide] = await Promise.all([
+    approvedDocumentForSource("https://refalco.com/services/"),
+    approvedDocumentForSource("https://refalco.com/"),
+    approvedOperatorDocument("refal")
+  ]);
+  const approvedInputs = [servicesPage, groupPage, operatorGuide];
+  const approvedCorpus = approvedInputs.map((item) => item.document.canonical_content).join("\n\n");
+  const content = normalizeKnowledgeContent(fs.readFileSync(catalogPath, "utf8"));
+  validateCatalog(content, approvedCorpus);
+  // Keep language and service topics in separate retrieval units. The generic
+  // paragraph chunker may otherwise join the end of one language to the next,
+  // causing an Arabic or Greek query to retrieve a mixed-language boundary.
+  const chunks = annotateChunks(chunkKnowledge(content, catalogSections(content)));
+  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+  const priceValidity = approvedInputs
+    .filter((item) => /€999/u.test(item.document.canonical_content) && item.document.valid_until)
+    .map((item) => item.document.valid_until)
+    .sort()[0];
+  if (!priceValidity || Date.parse(priceValidity) <= Date.now()) throw new Error("The approved €999 price evidence is missing or expired.");
 
-  const sources = await rest(`rafa_knowledge_sources?canonical_url=eq.${encodeURIComponent(sourceUrl)}&select=id&limit=1`);
-  let source = sources[0];
+  const existingSources = await rest(`rafa_knowledge_sources?canonical_url=eq.${encodeURIComponent(canonicalUrl)}&select=id&limit=1`);
+  let source = existingSources[0];
   if (!source) {
     const created = await rest("rafa_knowledge_sources?select=id", {
       method: "POST",
       headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ canonical_url: sourceUrl, display_name: sourceName, source_kind: "first_party_website", trust_tier: "first_party", enabled: false, approved: false, approval_note: "Fetched content requires operator review before approval and retrieval." })
+      body: JSON.stringify({
+        canonical_url: canonicalUrl,
+        display_name: sourceName,
+        source_kind: "manual",
+        trust_tier: "operator_supplied",
+        enabled: false,
+        approved: false,
+        approval_note: "Canonical multilingual service catalog assembled only from active approved REFALCO knowledge."
+      })
     });
     source = created[0];
   }
-  if (!source?.id) throw new Error("Could not create or locate the REFALCO services source.");
+  if (!source?.id) throw new Error("Could not create or locate the canonical services source.");
 
-  const content = extracted.content.slice(0, 250_000);
-  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
   const stored = await rest("rpc/rafa_store_knowledge_revision", {
     method: "POST",
     body: JSON.stringify({
       p_source_id: source.id,
-      p_title: extracted.title,
+      p_title: documentTitle,
       p_content: content,
       p_content_sha256: contentHash,
-      p_language_code: language,
-      p_chunks: extracted.chunks
-    })
-  });
-
-  // Keep the raw page pending review. Approve only these narrowly scoped facts,
-  // which are sufficient to answer basic company-formation questions safely.
-  const serviceEnglish = "REFALCO's services page describes remote assistance with setting up a company in Cyprus. Listed support includes preparing and submitting incorporation documents, reserving a company name, and following up on the application. The page lists a €999 package that includes four months of company secretary and registered address services.";
-  const serviceArabic = "صفحة خدمات ريفالكو بتشرح خدمة تأسيس شركة بقبرص عن بُعد. وبتشمل المساعدة بتجهيز وتقديم أوراق التأسيس، حجز اسم للشركة، ومتابعة الطلب. الصفحة بتذكر باقة بسعر 999 يورو، تشمل أربعة أشهر من خدمات سكرتارية الشركة والعنوان المسجّل.";
-  const serviceContent = `${serviceEnglish}\n${serviceArabic}`;
-  const serviceHash = crypto.createHash("sha256").update(serviceContent).digest("hex");
-  const serviceRevision = await rest("rpc/rafa_store_knowledge_revision", {
-    method: "POST",
-    body: JSON.stringify({
-      p_source_id: source.id,
-      p_title: "Company setup in Cyprus",
-      p_content: serviceContent,
-      p_content_sha256: serviceHash,
       p_language_code: "mul",
-      p_chunks: [
-        { chunk_index: 0, heading: "Company setup in Cyprus", content: serviceEnglish, metadata: { language: "en" } },
-        { chunk_index: 1, heading: "تأسيس شركة في قبرص", content: serviceArabic, metadata: { language: "ar" } }
-      ]
+      p_chunks: chunks,
+      p_metadata: {
+        catalogKind: "canonical_services",
+        sourceFileName: path.basename(catalogPath),
+        sourceFileType: "md",
+        assembledFromDocumentIds: approvedInputs.map((item) => item.document.id),
+        priceEvidenceValidUntil: priceValidity
+      }
     })
   });
-  const previouslyApprovedServiceDocs = await rest(`rafa_knowledge_documents?source_id=eq.${encodeURIComponent(source.id)}&review_status=eq.approved&select=id&limit=100`);
-  for (const document of previouslyApprovedServiceDocs) {
-    if (document.id !== serviceRevision.document_id) {
-      await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(document.id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ review_status: "superseded", approved_at: null, approved_by: null })
-      });
-    }
-  }
-  await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(serviceRevision.document_id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ title: "Company setup in Cyprus", review_status: "approved", approved_at: new Date().toISOString(), approved_by: "group-owner" })
-  });
-  const serviceEmbeddingsStored = await indexApprovedDocument(serviceRevision.document_id);
-  await rest(`rafa_knowledge_sources?id=eq.${encodeURIComponent(source.id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ enabled: true, approved: true, approval_note: "Only the approved bilingual company-formation summary is retrievable; the fetched page revision remains pending review." })
-  });
 
-  const oldSources = await rest("rafa_knowledge_sources?select=id,canonical_url,display_name&limit=500");
-  const lamarSources = oldSources.filter((row) => /lamar/i.test(`${row.canonical_url} ${row.display_name}`));
-  for (const oldSource of lamarSources) {
-    await rest(`rafa_knowledge_sources?id=eq.${encodeURIComponent(oldSource.id)}`, { method: "DELETE" });
-  }
-
-  const internalSourceUrl = "manual://owner-confirmed/refalco-group-structure";
-  const internalSourceRows = await rest(`rafa_knowledge_sources?canonical_url=eq.${encodeURIComponent(internalSourceUrl)}&select=id&limit=1`);
-  let internalSource = internalSourceRows[0];
-  if (!internalSource) {
-    const created = await rest("rafa_knowledge_sources?select=id", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ canonical_url: internalSourceUrl, display_name: "Owner-confirmed REFALCO services transition", source_kind: "manual", trust_tier: "operator_supplied", enabled: false, approved: false, approval_note: "Owner-confirmed service transition; keep verification provenance internal." })
+  const documentId = stored.document_id;
+  const previouslyApproved = await rest(`rafa_knowledge_documents?source_id=eq.${source.id}&review_status=eq.approved&select=id&limit=100`);
+  for (const document of previouslyApproved) {
+    if (document.id === documentId) continue;
+    await rest(`rafa_knowledge_documents?id=eq.${document.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ review_status: "superseded", approved_at: null, approved_by: null })
     });
-    internalSource = created[0];
   }
-  const internalEnglish = "LAMAR's former Cyprus company-formation services are now provided under REFALCO services.";
-  const internalArabic = "خدمات لامار السابقة لتأسيس الشركات في قبرص أصبحت تُقدَّم الآن ضمن خدمات ريفالكو.";
-  const internalContent = `${internalEnglish}\n${internalArabic}`;
-  const internalHash = crypto.createHash("sha256").update(internalContent).digest("hex");
-  const existingInternalDocs = await rest(`rafa_knowledge_documents?source_id=eq.${encodeURIComponent(internalSource.id)}&select=id,content_sha256,review_status,approved_at&limit=100`);
-  for (const document of existingInternalDocs) {
-    if (document.content_sha256 !== internalHash && document.review_status === "approved") {
-      await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(document.id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ review_status: "superseded", approved_at: null, approved_by: null })
-      });
-    }
-  }
-  const internalRevision = await rest("rpc/rafa_store_knowledge_revision", {
-    method: "POST",
+  await rest(`rafa_knowledge_documents?id=eq.${documentId}`, {
+    method: "PATCH",
     body: JSON.stringify({
-      p_source_id: internalSource.id,
-      p_title: "Former LAMAR services now under REFALCO",
-      p_content: internalContent,
-      p_content_sha256: internalHash,
-      p_language_code: "mul",
-      p_chunks: [
-        { chunk_index: 0, heading: "Former services now under REFALCO", content: internalEnglish, metadata: { language: "en" } },
-        { chunk_index: 1, heading: "الخدمات السابقة أصبحت ضمن خدمات ريفالكو", content: internalArabic, metadata: { language: "ar" } }
-      ]
+      title: documentTitle,
+      valid_until: priceValidity,
+      review_status: "approved",
+      approved_at: new Date().toISOString(),
+      approved_by: "group-owner"
     })
   });
-  await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(internalRevision.document_id)}`, {
+  await rest(`rafa_knowledge_sources?id=eq.${source.id}`, {
     method: "PATCH",
-    body: JSON.stringify({ title: "Former LAMAR services now under REFALCO", review_status: "approved", approved_at: new Date().toISOString(), approved_by: "group-owner" })
+    body: JSON.stringify({
+      display_name: sourceName,
+      enabled: true,
+      approved: true,
+      approval_note: "Authoritative multilingual service catalog assembled from active approved REFALCO sources; price-bearing revision expires with its source evidence.",
+      metadata: { catalogKind: "canonical_services", sourceFileName: path.basename(catalogPath) }
+    })
   });
-  const transitionEmbeddingsStored = await indexApprovedDocument(internalRevision.document_id);
-  await rest(`rafa_knowledge_sources?id=eq.${encodeURIComponent(internalSource.id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ display_name: "Owner-confirmed REFALCO services transition", enabled: true, approved: true, approval_note: "Owner-confirmed service transition; keep verification provenance internal." })
-  });
+  const embeddingsStored = await indexApprovedDocument(documentId);
 
-  const remaining = await rest("rafa_knowledge_sources?select=id,canonical_url,display_name,enabled,approved&canonical_url=eq." + encodeURIComponent(sourceUrl));
-  const verification = await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(stored.document_id)}&select=id,source_id,revision,title,language_code,review_status&limit=1`);
-  const serviceVerification = await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(serviceRevision.document_id)}&select=id,source_id,revision,title,language_code,review_status&limit=1`);
-  const affiliation = await rest(`rafa_knowledge_documents?id=eq.${encodeURIComponent(internalRevision.document_id)}&select=id,title,review_status,language_code&limit=1`);
-  const affiliationHistory = await rest(`rafa_knowledge_documents?source_id=eq.${encodeURIComponent(internalSource.id)}&select=title,review_status,language_code&order=revision.asc&limit=20`);
-  const stillLamar = (await rest("rafa_knowledge_sources?select=id,canonical_url,display_name&limit=500")).some((row) => /lamar/i.test(`${row.canonical_url} ${row.display_name}`));
-  console.log(JSON.stringify({ source: sourceName, url: page.url, title: extracted.title, language, characters: content.length, chunks: extracted.chunks.length, fetchedDocument: verification[0] || null, approvedServiceDocument: serviceVerification[0] || null, approvedServiceEmbeddingsStored: serviceEmbeddingsStored, source: remaining[0] || null, affiliationFact: affiliation[0] || null, affiliationEmbeddingsStored: transitionEmbeddingsStored, affiliationHistory, lamarSourceRowsRemaining: stillLamar, lamarSourcesRemoved: lamarSources.length }));
+  const verification = await rest(`rafa_knowledge_documents?id=eq.${documentId}&select=id,source_id,revision,title,language_code,review_status,valid_until,metadata&limit=1`);
+  const verifiedChunks = await rest(`rafa_knowledge_chunks?document_id=eq.${documentId}&select=id,chunk_index,heading,metadata,embedding_model,embedded_at&order=chunk_index.asc`);
+  console.log(JSON.stringify({
+    sourceId: source.id,
+    document: verification[0] || null,
+    chunkCount: verifiedChunks.length,
+    embeddedChunkCount: verifiedChunks.filter((chunk) => chunk.embedded_at).length,
+    embeddingsStored,
+    inputDocumentIds: approvedInputs.map((item) => item.document.id)
+  }, null, 2));
 }
 
 main().catch((error) => {
-  console.error(`REFALCO services import failed: ${String(error.message || error).slice(0, 300)}`);
+  console.error(`REFALCO service-catalog sync failed: ${String(error.message || error).slice(0, 500)}`);
   process.exitCode = 1;
 });
