@@ -13,14 +13,14 @@ function buildOwnerReviewEmail(job) {
   const dashboardUrl = safeText(payload.dashboardUrl, 500);
   const validDashboardUrl = (() => { try { const url = new URL(dashboardUrl); return ["https:", "http:"].includes(url.protocol) ? url.href : ""; } catch { return ""; } })();
   return [
-    "A customer-approved Refalco appointment request is waiting for admin review. It is not confirmed.",
+    "A customer-approved the business appointment request is waiting for admin review. It is not confirmed.",
     "",
     `Time: ${when} (${timezone})`,
     `Customer: ${safeText(payload.name, 100) || "Not provided"}`,
     `WhatsApp: ${safeText(payload.phone, 40) || "Not provided"}`,
     `Purpose: ${safeText(payload.purpose, 500) || "Not provided"}`,
     "",
-    validDashboardUrl ? `Review in dashboard: ${validDashboardUrl}` : "Open the Refalco dashboard and choose Bookings."
+    validDashboardUrl ? `Review in dashboard: ${validDashboardUrl}` : "Open the business dashboard and choose Bookings."
   ].join("\n");
 }
 
@@ -44,7 +44,7 @@ function buildHandoverReviewEmail(job) {
 
 function buildAdminFollowUpEmail(job) {
   const payload = job?.payload || {};
-  const subject = safeText(payload.subject, 180) || "A follow-up from REFALCO";
+  const subject = safeText(payload.subject, 180) || "A follow-up from the business";
   const text = safeText(payload.text, 4000);
   return { subject, text };
 }

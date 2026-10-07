@@ -52,15 +52,15 @@ test("REFAL-AGENT-027: a tool result's modelObservation (real approved-knowledge
     steps: [{
       step: 1,
       tool: "searchApprovedKnowledge",
-      args: { query: "Refalco services" },
+      args: { query: "the business services" },
       result: {
         ok: true,
         status: "found",
-        userSafeSummary: ["REFALCO Services"],
+        userSafeSummary: ["the business Services"],
         modelObservation: {
           type: "approved_knowledge",
           status: "found",
-          evidence: [{ title: "REFALCO Services", section: "Accounting", content: "REFALCO provides Company Formation, Accounting, VAT Registration and Payroll services — SECRET-CHUNK-MARKER.", contentTruncated: false, sourceRef: "chunk-services-1" }],
+          evidence: [{ title: "the business Services", section: "Accounting", content: "the business provides Company Formation, Accounting, VAT Registration and Payroll services — SECRET-CHUNK-MARKER.", contentTruncated: false, sourceRef: "chunk-services-1" }],
           truncated: false
         }
       }

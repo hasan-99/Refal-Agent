@@ -26,7 +26,7 @@
     <div class="foot"><span class="live"><i class="dot"></i> Local worker + dashboard</span><p>Architecture guide · Updated 04 Oct 2026</p></div>
   </aside>
   <main class="main">
-    <div class="topline"><span>REFALCO GROUP · OPERATIONS ENGINEERING</span><span class="tag">Architecture / customer journey / data</span></div>
+    <div class="topline"><span>the business · OPERATIONS ENGINEERING</span><span class="tag">Architecture / customer journey / data</span></div>
     <header class="hero">
       <div class="hero-copy">
         <div class="eyebrow">How the agent works · from message to useful answer</div>
@@ -77,9 +77,9 @@
       <div class="section-head"><div><div class="kicker">02 / Sales conversation</div><h2>Help first. Discover one thing at a time.</h2></div><p>The agent should sound like a capable business assistant, not a form. It reflects what the customer already said, answers what evidence supports, then leaves room for the customer to steer.</p></div>
       <div class="conversation">
         <article class="card chat" dir="rtl" lang="ar">
-          <h3>Example · easy Syrian Arabic</h3><p class="sub">Illustrative response using the approved REFALCO services facts. Price is omitted because the customer did not ask.</p>
+          <h3>Example · easy Syrian Arabic</h3><p class="sub">Illustrative response using the approved the business services facts. Price is omitted because the customer did not ask.</p>
           <div class="bubble user"><small>Customer</small>بدي اسجل شركة استثمار بقبرص، بدي معلومات أول شي</div>
-          <div class="bubble agent"><small>REFAL</small>أكيد. صفحة خدمات ريفالكو بتشرح تأسيس شركة بقبرص عن بُعد، وبتذكر تجهيز أوراق التأسيس وحجز اسم الشركة ومتابعة الطلب. قصدك شركة بتستثمر أموالها، ولا شركة بتقدّم خدمات استثمار للزبائن؟</div>
+          <div class="bubble agent"><small>REFAL</small>أكيد. صفحة خدمات الشركة بتشرح تأسيس شركة بقبرص عن بُعد، وبتذكر تجهيز أوراق التأسيس وحجز اسم الشركة ومتابعة الطلب. قصدك شركة بتستثمر أموالها، ولا شركة بتقدّم خدمات استثمار للزبائن؟</div>
           <div class="bubble user"><small>Customer</small>بدي استثمر مصرياتي بعقارات</div>
           <div class="bubble agent"><small>REFAL</small>فهمت، قصدك شركة تستثمر أموالها بالعقارات. شو الاسم المقترح للشركة إذا كنت حابب تذكره؟</div>
         </article>
@@ -95,13 +95,13 @@
     </section>
 
     <section class="section" id="rag">
-      <div class="section-head"><div><div class="kicker">03 / Knowledge · RAG</div><h2>Where facts come from—and where they stop</h2></div><p>Retrieval-Augmented Generation gives the model relevant approved company facts for the current question. The model is a writer over evidence, not a source of REFALCO facts.</p></div>
+      <div class="section-head"><div><div class="kicker">03 / Knowledge · RAG</div><h2>Where facts come from—and where they stop</h2></div><p>Retrieval-Augmented Generation gives the model relevant approved company facts for the current question. The model is a writer over evidence, not a source of the business facts.</p></div>
       <figure class="card diagram">
         <svg viewBox="0 0 1180 510" role="img" aria-labelledby="rag-title rag-desc">
           <title id="rag-title">REFAL knowledge approval and RAG retrieval</title><desc id="rag-desc">An operator fetches or adds a source. Raw revisions and chunks are pending until approval. Retrieval filters enabled approved sources and approved non-expired documents, combines lexical and vector matches, then supplies retrieved chunks as untrusted factual data to generation.</desc>
           <defs><marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#8aa096"/></marker><style>.t2{font:700 14px Inter,system-ui;fill:#172a23}.s2{font:12px Inter,system-ui;fill:#62716c}.cap2{font:800 10px Inter,system-ui;letter-spacing:1px;fill:#62716c}.e2{stroke:#8aa096;stroke-width:2;fill:none;marker-end:url(#arrow2)}.b2{stroke-width:1.4;rx:16}</style></defs>
           <text x="28" y="28" class="cap2">KNOWLEDGE MANAGEMENT · HUMAN APPROVAL GATES</text>
-          <rect class="b2" x="28" y="55" width="200" height="90" fill="#f4f6f3" stroke="#dce4df"/><text x="48" y="88" class="t2">REFALCO Services page</text><text x="48" y="113" class="s2">Fetched + normalized</text><text x="48" y="132" class="s2">No customer access yet</text>
+          <rect class="b2" x="28" y="55" width="200" height="90" fill="#f4f6f3" stroke="#dce4df"/><text x="48" y="88" class="t2">the business Services page</text><text x="48" y="113" class="s2">Fetched + normalized</text><text x="48" y="132" class="s2">No customer access yet</text>
           <path class="e2" d="M228 100h40"/>
           <rect class="b2" x="276" y="55" width="205" height="90" fill="#fff2dc" stroke="#ead39f"/><text x="296" y="88" class="t2">Raw revision</text><text x="296" y="113" class="s2">Pending review</text><text x="296" y="132" class="s2">Chunks + content hash</text>
           <path class="e2" d="M481 100h40"/>
@@ -124,14 +124,14 @@
           <rect class="b2" x="467" y="373" width="310" height="94" fill="#f8e9e6" stroke="#e8b7af"/><text x="487" y="406" class="t2">Restricted or unsafe request?</text><text x="487" y="431" class="s2">Deterministic refusal in the customer’s language.</text><text x="487" y="450" class="s2">No model can override the safety decision.</text>
           <rect class="b2" x="819" y="373" width="333" height="94" fill="#f0ebf8" stroke="#d3c7e7"/><text x="839" y="406" class="t2">Grounded answer?</text><text x="839" y="431" class="s2">Model gets bounded approved chunks + recent context;</text><text x="839" y="450" class="s2">customer never sees internal source/review labels.</text>
         </svg>
-        <figcaption>RAG = retrieval-augmented generation. Approval applies to both the source record and a specific document revision; unreviewed fetched text stays out of customer retrieval. Current ingestion source: <a href="https://refalco.com/services/" target="_blank" rel="noopener">refalco.com/services</a>, managed by <code>scripts/importRefalcoServices.js</code>.</figcaption>
+        <figcaption>RAG = retrieval-augmented generation. Approval applies to both the source record and a specific document revision; unreviewed fetched text stays out of customer retrieval. Current ingestion source: <a href="https://example.invalid/services/" target="_blank" rel="noopener">business.com/services</a>, managed by <code>scripts/importRefalcoServices.js</code>.</figcaption>
       </figure>
       <div class="grid cols-3" style="margin-top:14px">
-        <article class="card info"><div class="icon">A</div><h3>Approved facts</h3><p>Service descriptions and prices come from current approved REFALCO material. The bot answers a price only when the customer asks.</p></article>
-        <article class="card info"><div class="icon">B</div><h3>Customer context</h3><p>Conversation history can resolve “that” or “the company”, but it is never evidence about REFALCO and cannot override system rules.</p></article>
+        <article class="card info"><div class="icon">A</div><h3>Approved facts</h3><p>Service descriptions and prices come from current approved the business material. The bot answers a price only when the customer asks.</p></article>
+        <article class="card info"><div class="icon">B</div><h3>Customer context</h3><p>Conversation history can resolve “that” or “the company”, but it is never evidence about the business and cannot override system rules.</p></article>
         <article class="card info"><div class="icon">C</div><h3>Missing facts</h3><p>“I can’t confirm that yet” is a factual boundary, not a reason to force a handoff. Ask a useful clarifier or leave the next step to the customer.</p></article>
       </div>
-      <details class="card details" style="margin-top:14px"><summary>RAG path, step by step</summary><ol><li><strong>Fetch:</strong> the import job reads the REFALCO Services page and records its URL and fetched revision in the knowledge source/document records.</li><li><strong>Normalize and split:</strong> content is cleaned, hashed, divided into searchable chunks, and linked back to the source document. Embeddings are optional; lexical search remains available.</li><li><strong>Review:</strong> source enabled/approval and individual document approval/freshness are separate gates. Pending or stale material is excluded from search.</li><li><strong>Retrieve:</strong> the runtime builds a query from the current request, applies privacy redaction where needed, then calls the protected hybrid search RPC. Search filters eligible source/document rows and ranks lexical and semantic matches.</li><li><strong>Answer:</strong> the model receives bounded retrieved excerpts and recent conversation context. Retrieved text is untrusted data, not instructions. It may support company facts but cannot override system rules.</li><li><strong>Validate and record:</strong> deterministic policy checks claims, language, question count, privacy, and contact promises. Evidence identifiers stay in internal turn metadata; the customer sees a concise answer, not approval labels or internal notes.</li></ol></details>
+      <details class="card details" style="margin-top:14px"><summary>RAG path, step by step</summary><ol><li><strong>Fetch:</strong> the import job reads the business Services page and records its URL and fetched revision in the knowledge source/document records.</li><li><strong>Normalize and split:</strong> content is cleaned, hashed, divided into searchable chunks, and linked back to the source document. Embeddings are optional; lexical search remains available.</li><li><strong>Review:</strong> source enabled/approval and individual document approval/freshness are separate gates. Pending or stale material is excluded from search.</li><li><strong>Retrieve:</strong> the runtime builds a query from the current request, applies privacy redaction where needed, then calls the protected hybrid search RPC. Search filters eligible source/document rows and ranks lexical and semantic matches.</li><li><strong>Answer:</strong> the model receives bounded retrieved excerpts and recent conversation context. Retrieved text is untrusted data, not instructions. It may support company facts but cannot override system rules.</li><li><strong>Validate and record:</strong> deterministic policy checks claims, language, question count, privacy, and contact promises. Evidence identifiers stay in internal turn metadata; the customer sees a concise answer, not approval labels or internal notes.</li></ol></details>
     </section>
 
     <section class="section" id="data">
@@ -192,7 +192,7 @@
           <path class="df-e" d="M571 74h26"/><rect class="df-b" x="603" y="42" width="190" height="64" fill="#f4f6f3" stroke="#dce4df"/><text x="620" y="69" class="df-t">Conversation turn</text><text x="620" y="91" class="df-s">rafa_conversation_turns</text>
           <path class="df-e" d="M793 74h26"/><rect class="df-b" x="825" y="42" width="305" height="64" fill="#f0ebf8" stroke="#d3c7e7"/><text x="842" y="69" class="df-t">Derived workflow records</text><text x="842" y="91" class="df-s">intake · intent · consent · handover · audit</text>
           <text x="22" y="151" class="df-t">KNOWLEDGE READ PATH</text>
-          <rect class="df-b" x="22" y="169" width="200" height="64" fill="#f4f6f3" stroke="#dce4df"/><text x="39" y="196" class="df-t">REFALCO page import</text><text x="39" y="218" class="df-s">source URL + content revision</text>
+          <rect class="df-b" x="22" y="169" width="200" height="64" fill="#f4f6f3" stroke="#dce4df"/><text x="39" y="196" class="df-t">the business page import</text><text x="39" y="218" class="df-s">source URL + content revision</text>
           <path class="df-e" d="M222 201h28"/><rect class="df-b" x="256" y="169" width="200" height="64" fill="#fff2dc" stroke="#ead39f"/><text x="273" y="196" class="df-t">Approval + freshness</text><text x="273" y="218" class="df-s">source + document gates</text>
           <path class="df-e" d="M456 201h28"/><rect class="df-b" x="490" y="169" width="200" height="64" fill="#dcf0e6" stroke="#a7d1b6"/><text x="507" y="196" class="df-t">Searchable chunks</text><text x="507" y="218" class="df-s">lexical + optional vector</text>
           <path class="df-e" d="M690 201h28"/><rect class="df-b" x="724" y="169" width="190" height="64" fill="#e8f2f7" stroke="#bad2df"/><text x="741" y="196" class="df-t">Protected search RPC</text><text x="741" y="218" class="df-s">eligible chunks only</text>
@@ -239,7 +239,7 @@
     </section>
 
     <section class="section" id="verification">
-      <div class="section-head"><div><div class="kicker">07 / Verification &amp; operations</div><h2>Separate answers, internal review and customer contact</h2></div><p>The synthetic benchmark checks behavior across English, Arabic and Greek. Internal alerts help REFALCO staff review risk; only an explicit, purpose-bound customer request can authorize outbound follow-up.</p></div>
+      <div class="section-head"><div><div class="kicker">07 / Verification &amp; operations</div><h2>Separate answers, internal review and customer contact</h2></div><p>The synthetic benchmark checks behavior across English, Arabic and Greek. Internal alerts help the business staff review risk; only an explicit, purpose-bound customer request can authorize outbound follow-up.</p></div>
       <figure class="card diagram">
         <svg viewBox="0 0 1160 380" role="img" aria-labelledby="ops-title ops-desc">
           <title id="ops-title">REFAL answer and escalation lanes</title><desc id="ops-desc">The customer message is classified and either handled by deterministic safety or booking, or sent through approved current RAG evidence and guarded generation. The system stores the turn. A separate internal review alert may be created without contacting the customer. Customer follow-up requires clear consent linked to a specific offer turn and is checked again before sending.</desc>
@@ -317,7 +317,7 @@
     </section>
 
     <section class="section" id="research">
-      <div class="section-head"><div><div class="kicker">08 / Design evidence</div><h2>Conversation rules grounded in sources</h2></div><p>These sources informed the conversation pattern. They are linked for transparency; the agent still answers company facts only from its separately approved REFALCO knowledge base.</p></div>
+      <div class="section-head"><div><div class="kicker">08 / Design evidence</div><h2>Conversation rules grounded in sources</h2></div><p>These sources informed the conversation pattern. They are linked for transparency; the agent still answers company facts only from its separately approved the business knowledge base.</p></div>
       <div class="grid cols-2">
         <article class="card info refs"><div><div class="icon">G</div><h3>Conversation design</h3><p>Short turns, one question at a time, clear turn-taking, and narrow clarification when a request is ambiguous.</p><a href="https://developers.google.com/assistant/conversation-design/questions" target="_blank" rel="noopener">Google · Questions and turn-taking ↗</a></div></article>
         <article class="card info refs"><div><div class="icon">S</div><h3>Consultative discovery</h3><p>Start from the customer’s goals and needs, listen and reflect before suggesting a service, and avoid treating discovery as a fixed qualification checklist.</p><a href="https://www.salesforce.com/blog/sales/what-is-a-discovery-call/" target="_blank" rel="noopener">Salesforce · Discovery calls and active listening ↗</a></div></article>

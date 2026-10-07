@@ -27,7 +27,7 @@ const HELP = [
   "Commands:",
   "profile - show your saved details",
   "reset - clear your saved details",
-  "Ask a Refalco question or request a meeting."
+  "Ask a the business question or request a meeting."
 ].join("\n");
 
 async function recordHistory(store, userId, message, response, extra) {
@@ -200,12 +200,12 @@ function helpText(language) {
   if (language === "arabic") return [
     "يرد رفا عبر واتساب من رقم الشركة المرتبط.", "الأوامر:",
     "profile - عرض بياناتك المحفوظة", "reset - حذف بياناتك المحفوظة",
-    "يمكنك طرح سؤال عن ريفالكو أو طلب اجتماع."
+    "يمكنك طرح سؤال عن الشركة أو طلب اجتماع."
   ].join("\n");
   if (language === "greek") return [
     "Η RAFA απαντά στο WhatsApp από τον συνδεδεμένο εταιρικό αριθμό.", "Εντολές:",
     "profile - εμφάνιση των αποθηκευμένων στοιχείων σας", "reset - διαγραφή των αποθηκευμένων στοιχείων σας",
-    "Ρωτήστε για τη Refalco ή ζητήστε μια συνάντηση."
+    "Ρωτήστε για τη the business ή ζητήστε μια συνάντηση."
   ].join("\n");
   return HELP;
 }
@@ -351,12 +351,12 @@ function resultWithHistory({ response, user, metadata, handover, history }) {
 function existingClientReply(language, state) {
   if (language === "greek") {
     if (state.state === "authenticated") return "Η ταυτότητά σας επαληθεύτηκε. Μπορώ πλέον να βοηθήσω με πληροφορίες που αφορούν τον λογαριασμό σας.";
-    if (state.state === "locked") return "Δεν ήταν δυνατή η επαλήθευση. Για την ασφάλειά σας, επικοινωνήστε με την ομάδα της Refalco μέσω εγκεκριμένου καναλιού.";
+    if (state.state === "locked") return "Δεν ήταν δυνατή η επαλήθευση. Για την ασφάλειά σας, επικοινωνήστε με την ομάδα της the business μέσω εγκεκριμένου καναλιού.";
     return "Για την προστασία του απορρήτου σας, παρακαλώ δώστε το εγκεκριμένο αναγνωριστικό ή στοιχείο επαλήθευσης του λογαριασμού σας. Δεν μπορώ να αποκαλύψω στοιχεία πριν από την επαλήθευση.";
   }
   if (language === "arabic") {
     if (state.state === "authenticated") return "تم التحقق من هويتك. فيني ساعدك هلأ بمعلومات تخص حسابك.";
-    if (state.state === "locked") return "ما قدرت أتحقق من البيانات بعد عدة محاولات. لحماية خصوصيتك، تواصل مع ريفالكو عبر وسيلة رسمية.";
+    if (state.state === "locked") return "ما قدرت أتحقق من البيانات بعد عدة محاولات. لحماية خصوصيتك، تواصل مع الشركة عبر وسيلة رسمية.";
     return "لحماية خصوصيتك، أرسل فقط رقم الملف أو معلومة التحقق المعتمدة. ما فيني أعرض تفاصيل الحساب قبل التحقق.";
   }
   return existingClientCustomerMessage(state);
@@ -368,9 +368,9 @@ function isSafeProfileUpdateChannelQuestion(text) {
 
 function safeProfileUpdateChannelReply(language) {
   return localized(language, {
-    english: "I can’t confirm a specific secure update channel from here. Use REFALCO’s official published contact route and ask for a written profile update; please don’t send sensitive details in this chat.",
-    arabic: "ما عندي معلومة مؤكدة عن قناة آمنة محددة لتحديث ملفك. استخدم وسيلة التواصل الرسمية المنشورة لدى ريفالكو واطلب التحديث كتابةً، ولا تبعت بيانات حساسة هون.",
-    greek: "Δεν μπορώ να επιβεβαιώσω συγκεκριμένο ασφαλές κανάλι ενημέρωσης από εδώ. Χρησιμοποιήστε τα επίσημα δημοσιευμένα στοιχεία επικοινωνίας της REFALCO και ζητήστε γραπτή ενημέρωση· μην στείλετε ευαίσθητα στοιχεία σε αυτή τη συνομιλία."
+    english: "I can’t confirm a specific secure update channel from here. Use the business’s official published contact route and ask for a written profile update; please don’t send sensitive details in this chat.",
+    arabic: "ما عندي معلومة مؤكدة عن قناة آمنة محددة لتحديث ملفك. استخدم وسيلة التواصل الرسمية المنشورة لدى الشركة واطلب التحديث كتابةً، ولا تبعت بيانات حساسة هون.",
+    greek: "Δεν μπορώ να επιβεβαιώσω συγκεκριμένο ασφαλές κανάλι ενημέρωσης από εδώ. Χρησιμοποιήστε τα επίσημα δημοσιευμένα στοιχεία επικοινωνίας της the business και ζητήστε γραπτή ενημέρωση· μην στείλετε ευαίσθητα στοιχεία σε αυτή τη συνομιλία."
   });
 }
 
@@ -609,9 +609,9 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
 
   if (classification.intents.includes(INTENTS.GREETING) || classification.intents.includes(INTENTS.AGENT_IDENTITY)) {
     response = localized(language, {
-      english: "Hello, I’m REFAL, REFALCO GROUP’s digital business agent. I can help with information about the group and its business areas, using approved sources.",
-      arabic: "مرحبًا، أنا رِفال، الوكيل الرقمي للأعمال في مجموعة ريفالكو. أساعدك بمعلومات معتمدة عن المجموعة ومجالات عملها.",
-      greek: "Γεια σας, είμαι η REFAL, ο ψηφιακός επιχειρηματικός εκπρόσωπος του REFALCO GROUP. Μπορώ να βοηθήσω με εγκεκριμένες πληροφορίες για τον όμιλο και τους τομείς δραστηριότητάς του."
+      english: "Hello! I’m your digital assistant. How can I help you?",
+      arabic: "أهلاً! أنا مساعدك الرقمي. كيف فيني ساعدك؟",
+      greek: "Γεια σας! Είμαι ο ψηφιακός σας βοηθός. Πώς μπορώ να σας βοηθήσω;"
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
@@ -619,9 +619,9 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
 
   if (classification.intents.includes(INTENTS.PROJECT_ENQUIRY)) {
     response = localized(language, {
-      english: "I can help you explore whether the project may fit Refalco’s areas of work, though suitability needs a specialist review. What kind of project are you considering?",
-      arabic: "أستطيع مساعدتك في استكشاف مدى ارتباط الفكرة بمجالات عمل ريفالكو، أما ملاءمتها فتحتاج إلى مراجعة مختص. ما نوع المشروع الذي تفكر فيه؟",
-      greek: "Μπορώ να βοηθήσω να εξετάσουμε αν το έργο σχετίζεται με τους τομείς δραστηριότητας της Refalco· η καταλληλότητα χρειάζεται αξιολόγηση ειδικού. Τι είδους έργο σκέφτεστε;"
+      english: "I can help you explore whether the project may fit the business’s areas of work, though suitability needs a specialist review. What kind of project are you considering?",
+      arabic: "أستطيع مساعدتك في استكشاف مدى ارتباط الفكرة بمجالات عمل الشركة، أما ملاءمتها فتحتاج إلى مراجعة مختص. ما نوع المشروع الذي تفكر فيه؟",
+      greek: "Μπορώ να βοηθήσω να εξετάσουμε αν το έργο σχετίζεται με τους τομείς δραστηριότητας της the business· η καταλληλότητα χρειάζεται αξιολόγηση ειδικού. Τι είδους έργο σκέφτεστε;"
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
@@ -812,9 +812,9 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const followUpDeclined = storedConsentState === "denied" || storedConsentState === "revoked";
   if (priority.handoverRequired && !followUpDeclined && !user.profile?.conversationPreferences?.noProactiveBookingOrContact && !classification.intents.includes(INTENTS.COMPANY_FORMATION)) {
     response = localized(language, {
-      english: "This sounds like a substantial business matter. I can help with the basics here, or—with your permission—ask a REFALCO specialist to follow up. Which would you prefer?",
-      arabic: "واضح إن الموضوع مهم. فيني ساعدك بالمعلومات الأساسية هون، أو إذا بتحب أطلب من مختصّ من ريفالكو يتابع معك. شو بتفضّل؟",
-      greek: "Ακούγεται σημαντικό επιχειρηματικό θέμα. Μπορώ να σας δώσω βασικές πληροφορίες εδώ ή, αν θέλετε, να ζητήσω επικοινωνία από ειδικό της REFALCO. Τι προτιμάτε;"
+      english: "This sounds like a substantial business matter. I can help with the basics here, or—with your permission—ask a the business specialist to follow up. Which would you prefer?",
+      arabic: "واضح إن الموضوع مهم. فيني ساعدك بالمعلومات الأساسية هون، أو إذا بتحب أطلب من مختصّ من الشركة يتابع معك. شو بتفضّل؟",
+      greek: "Ακούγεται σημαντικό επιχειρηματικό θέμα. Μπορώ να σας δώσω βασικές πληροφορίες εδώ ή, αν θέλετε, να ζητήσω επικοινωνία από ειδικό της the business. Τι προτιμάτε;"
     });
     const metadata = { ...prepared.metadata, specialistOffer: { offered: true, consentRequired: true, offeredAt: new Date().toISOString() } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
@@ -863,7 +863,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
   }
 
-  return { response: localized(language, { english: "I’m checking the approved Refalco information for you.", arabic: "أتحقق لك من معلومات ريفالكو المعتمدة.", greek: "Ελέγχω τις εγκεκριμένες πληροφορίες της Refalco για εσάς." }), shouldUseAi: true, user, metadata: prepared.metadata };
+  return { response: localized(language, { english: "I’m checking the approved the business information for you.", arabic: "أتحقق لك من معلومات الشركة المعتمدة.", greek: "Ελέγχω τις εγκεκριμένες πληροφορίες της the business για εσάς." }), shouldUseAi: true, user, metadata: prepared.metadata };
 }
 
 async function routeMessage({ userId, text, store }) {

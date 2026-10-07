@@ -51,9 +51,9 @@ test("booking intent recognizes natural English and Arabic requests without trea
   ]) assert.equal(isBookingRequest(message), true, message);
 
   for (const message of [
-    "How does Refalco schedule meetings?",
+    "How does the business schedule meetings?",
     "Does RAFA book appointments?",
-    "Can you tell me about Refalco's meetings?",
+    "Can you tell me about the business's meetings?",
     "بدي أعرف بشكل عام شو خدماتكم، وما بدي احجز موعد حالياً.",
     "I want to know your services, but I don't want to book a meeting yet."
   ]) assert.equal(isBookingRequest(message), false, message);
@@ -111,7 +111,7 @@ test("booking fails closed before changing customer state when live calendar acc
 
   const result = await handleBookingMessage({ userId: "test-user", text: "Could we book a meeting next Thursday?", store });
 
-  assert.match(result.response, /cannot currently access Refalco's calendar/i);
+  assert.match(result.response, /cannot currently access the business's calendar/i);
   assert.equal(store.calls.updates, 0);
   assert.equal(store.calls.appointments, 0);
 });
@@ -134,7 +134,7 @@ test("ordinary chat does not make a booking-policy network request", async () =>
   const store = makeStore(null);
   store.getBookingPolicy = async () => { policyReads += 1; throw new Error("Booking settings API unavailable"); };
 
-  const result = await handleBookingMessage({ userId: "test-user", text: "What does Refalco do?", store });
+  const result = await handleBookingMessage({ userId: "test-user", text: "What does the business do?", store });
 
   assert.equal(result, null);
   assert.equal(policyReads, 0);
@@ -160,7 +160,7 @@ test("a new company question is handled as normal chat during an unfinished book
     profile: { name: "Sam" },
     booking: { status: "awaiting_confirmation", startedAt: new Date().toISOString(), start: "2026-10-06T08:00:00.000Z", end: "2026-10-06T08:30:00.000Z" }
   });
-  const result = await handleBookingMessage({ userId: "test-user", text: "What services does Refalco offer?", store });
+  const result = await handleBookingMessage({ userId: "test-user", text: "What services does the business offer?", store });
   assert.equal(result, null);
   assert.equal(store.calls.updates, 0);
   assert.equal(store.calls.appointments, 0);
@@ -188,7 +188,7 @@ test("an unfinished booking never captures a greeting or question as a name", as
     profile: { name: "Saved Customer" },
     booking: { status: "awaiting_details", startedAt: new Date().toISOString() }
   });
-  assert.equal(await handleBookingMessage({ userId: "existing-customer", text: "What is Refalco company?", store }), null);
+  assert.equal(await handleBookingMessage({ userId: "existing-customer", text: "What is the business company?", store }), null);
   assert.equal(store.calls.updates, 0);
   assert.equal(store.calls.appointments, 0);
 });
@@ -229,7 +229,7 @@ test("an hour-old unfinished details draft is cleared before unrelated conversat
     profile: { name: "Sam" },
     booking: { status: "awaiting_details", startedAt: "2026-10-10T06:30:00.000Z" }
   });
-  const result = await handleBookingMessage({ userId: "test-user", text: "What services does Refalco offer?", store, now });
+  const result = await handleBookingMessage({ userId: "test-user", text: "What services does the business offer?", store, now });
   assert.equal(result, null);
   assert.equal((await store.ensureUser()).booking, null);
   assert.equal(store.calls.appointments, 0);
@@ -238,14 +238,14 @@ test("an hour-old unfinished details draft is cleared before unrelated conversat
 test("Arabic booking dates honor weekday, relative-day, and Arabic-Indic time digits", () => {
   const now = new Date("2026-09-29T12:00:00.000Z");
   const policy = { ...completePolicy, durationMinutes: 30 };
-  const weekday = parseBookingDetails("الثلاثاء الساعة 10:30 لمناقشة مشاريع ريفالكو", policy, now);
-  const relative = parseBookingDetails("غداً الساعة 10:30 لمناقشة مشاريع ريفالكو", policy, now);
-  const arabicDigits = parseBookingDetails("الأربعاء الساعة ١١:٠٠ لمناقشة مشاريع ريفالكو", policy, now);
+  const weekday = parseBookingDetails("الثلاثاء الساعة 10:30 لمناقشة مشاريع الشركة", policy, now);
+  const relative = parseBookingDetails("غداً الساعة 10:30 لمناقشة مشاريع الشركة", policy, now);
+  const arabicDigits = parseBookingDetails("الأربعاء الساعة ١١:٠٠ لمناقشة مشاريع الشركة", policy, now);
 
   assert.equal(weekday.start.toISOString(), "2026-10-06T07:30:00.000Z");
   assert.equal(relative.start.toISOString(), "2026-09-30T07:30:00.000Z");
   assert.equal(arabicDigits.start.toISOString(), "2026-09-30T08:00:00.000Z");
-  assert.equal(weekday.purpose, "لمناقشة مشاريع ريفالكو");
+  assert.equal(weekday.purpose, "لمناقشة مشاريع الشركة");
   assert.match(formatBookingTime(weekday.start, policy, "arabic"), /10:30 ص/);
 });
 
@@ -256,7 +256,7 @@ test("a date and greeting are not accepted as a meeting purpose", () => {
   assert.equal(parseBookingDetails("Tuesday October 6 at 10:30 مرحبا", policy, now).purpose, "");
 });
 
-test("booking asks for a real purpose instead of saving a generic Refalco meeting", async (t) => {
+test("booking asks for a real purpose instead of saving a generic the business meeting", async (t) => {
   resetCalendarEnv(t, true);
   const now = new Date("2026-09-29T12:00:00.000Z");
   const user = { id: "test-user", profile: {}, booking: { status: "awaiting_details", startedAt: now.toISOString() } };
@@ -468,7 +468,7 @@ test("Arabic WhatsApp booking saves customer-approved time as pending admin revi
 
   const started = await handleBookingMessage({ userId: user.id, text: "أريد حجز اجتماع", store, now });
   assert.match(started.response, /أرسل اليوم والوقت المفضلين/);
-  const proposed = await handleBookingMessage({ userId: user.id, text: "الاثنين الساعة 11:00 لمناقشة مشروع ريفالكو", store, now });
+  const proposed = await handleBookingMessage({ userId: user.id, text: "الاثنين الساعة 11:00 لمناقشة مشروع الشركة", store, now });
   assert.match(proposed.response, /الموعد متاح/);
   assert.match(proposed.response, /أجب بنعم للتأكيد/);
   assert.equal(busyChecks.length, 2);

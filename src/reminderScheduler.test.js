@@ -39,7 +39,7 @@ test("sends a reminder only for a confirmed appointment and records provider ID"
 
   assert.deepEqual(result, { claimed: 1, sent: 1 });
   assert.equal(sent[0].to, "35799111222@s.whatsapp.net");
-  assert.match(sent[0].message.text, /Refalco meeting is scheduled/);
+  assert.match(sent[0].message.text, /your meeting is scheduled/);
   assert.equal(updates[0].patch.status, "sent");
   assert.equal(updates[0].patch.providerMessageId, "wamid-1");
 });

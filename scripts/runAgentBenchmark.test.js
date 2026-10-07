@@ -201,7 +201,7 @@ test("runLegacyAiResponse: an AI-routed scenario with a successful injected mode
     existingUser: user
   });
   assert.equal(routed.shouldUseAi, true, "A01 is expected to route to the legacy AI path");
-  const stubAnswer = "Refalco provides company formation, accounting, and tax filing services in Cyprus.";
+  const stubAnswer = "the business provides company formation, accounting, and tax filing services in Cyprus.";
   const result = await runLegacyAiResponse(scenario, routed, { callOpenRouter: async () => stubAnswer });
   assert.equal(result.aiModelAttempted, true);
   assert.equal(result.aiModelUsed, true);
@@ -238,7 +238,7 @@ test("booking harness: requestBookingAction executes against bookingStoreFor + w
   const user = buildUser(scenario, "bench-agent-test");
   const result = await withCalendarEnv({ busy: [] }, () =>
     TOOL_REGISTRY.requestBookingAction.run(
-      { ...SLOT, purpose: "Discuss Refalco services" },
+      { ...SLOT, purpose: "Discuss the business services" },
       { store: bookingStoreFor(user), user, userId: user.id, policy: BOOKING_POLICY, now: BOOKING_NOW, inboundMessageId: "bench-agent-E01-test-0", language: "english" }
     )
   );

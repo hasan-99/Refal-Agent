@@ -185,16 +185,16 @@ SCENARIOS.push({
   description: "Basic company-information question is answered via RAG with no booking/handover and no unnecessary question.",
   featureTags: ["rag"],
   run: () => runInfo({
-    message: "What services does Refalco provide?",
+    message: "What services does the business provide?",
     locale: "english",
     decisions: [
-      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "Refalco services" } },
-      { type: "respond", text: "Refalco provides company formation, accounting, and tax filing services in Cyprus." }
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "the business services" } },
+      { type: "respond", text: "the business provides company formation, accounting, and tax filing services in Cyprus." }
     ],
     // REFAL-AGENT-028: real matching content (not a bare placeholder) — the
     // new factual-grounding gate in agentLoop.js checks the scripted
     // "respond" text's claimed services against this evidence.
-    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "Refalco provides company formation, accounting, and tax filing services in Cyprus." }] } }
+    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "the business provides company formation, accounting, and tax filing services in Cyprus." }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["proposeHandover", "requestBookingAction"], ragUsed: true, maxQuestions: 0, fallbackUsed: false, languageMismatch: false }
 });
@@ -510,10 +510,10 @@ SCENARIOS.push({
   run: () => withCalendarEnv({ busy: [] }, async () => {
     const store = confirmingStore();
     const result = await runWithTools({
-      message: "Can we meet Monday at 10:00 to discuss Refalco services?",
+      message: "Can we meet Monday at 10:00 to discuss the business services?",
       locale: "english",
       decisions: [
-        { type: "tool", tool: "requestBookingAction", args: { ...SLOT, purpose: "Discuss Refalco services" } },
+        { type: "tool", tool: "requestBookingAction", args: { ...SLOT, purpose: "Discuss the business services" } },
         { type: "respond", text: "Your meeting request has been received; I will confirm the details once everything is finalized." }
       ],
       toolContext: bookingToolContext(store)
@@ -758,12 +758,12 @@ SCENARIOS.push({
 
 SCENARIOS.push({
   id: "G05", category: "language", locale: "arabic",
-  description: "A reply containing English brand/technical terms (REFALCO, OpenRouter) inside an Arabic sentence is not a false language mismatch.",
+  description: "A reply containing English brand/technical terms (the business, OpenRouter) inside an Arabic sentence is not a false language mismatch.",
   featureTags: ["language"],
   run: () => runInfo({
     message: "مين انتو وشو بتستخدموا؟",
     locale: "arabic",
-    decisions: [{ type: "respond", text: "إحنا ريفالكو، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية." }]
+    decisions: [{ type: "respond", text: "إحنا الشركة، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية." }]
   }),
   expected: { outcome: "responded", languageMismatch: false }
 });

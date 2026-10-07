@@ -58,7 +58,7 @@ function inferDimensions({ history = [], profile = {}, booking = null, dimension
   if (/\b(today|tomorrow|this week|urgent|asap|deadline|soon|now)\b|اليوم|غدا|بكرة|عاجل|قريب|موعد نهائي|άμεσα|επείγον|αυτή την εβδομάδα/i.test(lower)) setAtLeast("timing", 4);
   if (/\b(i am the|i'm the|owner|director|decision maker|representing|company owner|founder|principal)\b|أنا المالك|مالك الشركة|صاحب الشركة|مؤسس الشركة|المدير|صاحب القرار|أمثل|ιδιοκτήτης|διευθυντής|εκπροσωπώ/i.test(lower)) setAtLeast("authority", 3);
   if (/\b(book|booking|appointment|schedule|meeting|call|next step|send details|how do we proceed)\b|حجز|موعد|اجتماع|مكالمة|الخطوة التالية|كيف نبدأ|ραντεβού|συνάντηση|επόμενο βήμα/i.test(lower) || ["booked", "confirmed"].includes(String(booking?.status || "").toLowerCase())) setAtLeast("readiness", 4);
-  if (/\b(refalco|real estate|real-estate|construction|development|investment|business|corporate)\b|رفالكو|عقارات|إنشاء|تطوير|استثمار|أعمال|εταιρεία|ακίνητ|κατασκευ/i.test(lower)) setAtLeast("fit", 3);
+  if (/\b(business|real estate|real-estate|construction|development|investment|business|corporate)\b|رفالكو|عقارات|إنشاء|تطوير|استثمار|أعمال|εταιρεία|ακίνητ|κατασκευ/i.test(lower)) setAtLeast("fit", 3);
   return result;
 }
 

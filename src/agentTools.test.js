@@ -45,23 +45,23 @@ test("searchApprovedKnowledge tolerates a broken local embedding pipeline", asyn
 test("searchApprovedKnowledge found result exposes approved chunk content through the explicit model-safe observation field", async () => {
   const store = {
     searchKnowledge: async () => [{
-      document_title: "REFALCO Services",
+      document_title: "the business Services",
       heading: "Accounting",
-      content: "REFALCO provides Company Formation, Accounting, VAT Registration and Payroll services.",
+      content: "the business provides Company Formation, Accounting, VAT Registration and Payroll services.",
       chunk_id: "chunk-123",
       review_status: "approved",
       approved_at: "2026-01-01T00:00:00.000Z",
       rank: 0.9
     }]
   };
-  const result = await searchApprovedKnowledge({ query: "Refalco services" }, { store, embedText: async () => null });
+  const result = await searchApprovedKnowledge({ query: "the business services" }, { store, embedText: async () => null });
   assert.equal(result.ok, true);
   assert.equal(result.status, "found");
   assert.equal(result.modelObservation.type, "approved_knowledge");
   assert.equal(result.modelObservation.status, "found");
   assert.equal(result.modelObservation.evidence.length, 1);
   const [item] = result.modelObservation.evidence;
-  assert.equal(item.title, "REFALCO Services");
+  assert.equal(item.title, "the business Services");
   assert.equal(item.section, "Accounting");
   assert.match(item.content, /Company Formation/);
   assert.match(item.content, /Accounting/);
@@ -116,8 +116,8 @@ test("searchApprovedKnowledge bounds total evidence content size and marks per-i
 });
 
 test("searchApprovedKnowledge preserves Arabic and Greek evidence content unchanged (within bounds)", async () => {
-  const arabicContent = "تقدم ريفالكو خدمات تأسيس الشركات والمحاسبة وتسجيل ضريبة القيمة المضافة.";
-  const greekContent = "Η REFALCO παρέχει υπηρεσίες σύστασης εταιρειών, λογιστικής και ΦΠΑ.";
+  const arabicContent = "تقدم الشركة خدمات تأسيس الشركات والمحاسبة وتسجيل ضريبة القيمة المضافة.";
+  const greekContent = "Η the business παρέχει υπηρεσίες σύστασης εταιρειών, λογιστικής και ΦΠΑ.";
   const store = {
     searchKnowledge: async () => [
       { heading: "Arabic", content: arabicContent },

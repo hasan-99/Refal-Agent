@@ -96,28 +96,19 @@ function containsRawUrlClaim(text) {
   return /https?:\/\//i.test(String(text || ""));
 }
 
-// A small, explicit allowlist of REFALCO's own domain — "an explicitly
-// trusted configured URL" per the ticket. Anything outside this domain must
-// appear verbatim in this turn's evidence content to be allowed; anything
-// that is neither is treated as invented (government/checkout/support
-// domains the ticket specifically warns about never get a free pass just
-// for looking plausible).
-const TRUSTED_URL_DOMAIN_RE = /^https?:\/\/(?:www\.)?refalco(?:group)?\.com(?:\/|$)/i;
+// No company domain is trusted implicitly. URLs require approved evidence.
 
 function extractUrls(text) {
   return String(text || "").match(/https?:\/\/\S+/giu) || [];
 }
 
-// Agent-path URL grounding: a URL is allowed only if it is on the trusted
-// REFALCO domain, or appears verbatim in this turn's approved evidence
-// content — never merely because it "looks like" a real link.
+// A URL must appear verbatim in this turn's approved evidence.
 function containsUnsupportedUrlClaim(text, evidenceItems = []) {
   const urls = extractUrls(text);
   if (urls.length === 0) return false;
   const evidenceText = combinedEvidenceText(evidenceItems);
   return urls.some((url) => {
     const cleaned = url.replace(/[).,;!?]+$/u, "");
-    if (TRUSTED_URL_DOMAIN_RE.test(cleaned)) return false;
     return !evidenceText.includes(cleaned);
   });
 }

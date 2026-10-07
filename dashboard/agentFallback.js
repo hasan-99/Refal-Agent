@@ -5,7 +5,7 @@ const { answerFromEvidence, containsProhibitedClaim, restrictedRefalcoReply } = 
 const { detectMessageLanguage } = require("../src/language.js");
 
 function isCompanyKnowledgeQuestion(text) {
-  return /\b(refalco|company|group|portfolio|project|service|leadership|ceo|approach|principle|operating)\b|ريفالكو|المجموعة|الشركة|مشروع|المشاريع|القيادة|الرئيس التنفيذي/iu.test(text);
+  return /\b(business|company|group|portfolio|project|service|leadership|ceo|approach|principle|operating)\b|الشركة|المجموعة|الشركة|مشروع|المشاريع|القيادة|الرئيس التنفيذي/iu.test(text);
 }
 
 function isFreeQuotaError(error) {
@@ -22,8 +22,8 @@ function dashboardFailureReply({ text, evidence = [], error }) {
     const grounded = answerFromEvidence(evidence);
     if (grounded && !containsProhibitedClaim(grounded.answer)) {
       const lead = language === "arabic"
-        ? "تم بلوغ الحد اليومي للنموذج المجاني. هذا مقتطف من مصدر ريفالكو المعتمد:"
-        : "The free model has reached its daily limit. Here is an approved Refalco source excerpt:";
+        ? "تم بلوغ الحد اليومي للنموذج المجاني. هذا مقتطف من مصدر الشركة المعتمد:"
+        : "The free model has reached its daily limit. Here is an approved the business source excerpt:";
       const sourceUrl = grounded.citations?.[0]?.url;
       const citation = typeof sourceUrl === "string" && /^https:\/\//iu.test(sourceUrl) ? `\n\n${language === "arabic" ? "المصدر" : "Source"}: ${sourceUrl}` : "";
       return `${lead}\n\n${grounded.answer}${citation}`;

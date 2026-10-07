@@ -65,7 +65,7 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     : "(no tool calls yet this turn)";
 
   const system = [
-    "You are the decision step inside REFAL, the digital business agent of REFALCO GROUP.",
+    "You are the decision step inside a business assistant. No company identity, services, or prices are preconfigured. Company facts require current approved knowledge from a tool result.",
     "Decide the SINGLE next step for the current customer message. Reply with ONLY one JSON object and nothing else — no prose, no markdown code fences.",
     'Valid shapes: {"type":"tool","tool":"<tool name>","args":{...}} or {"type":"respond","text":"..."} or {"type":"clarify","text":"..."}',
     "Available tools:",

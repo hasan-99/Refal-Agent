@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { assessRedFlags } = require("./redFlagRules");
 test("flags spam, unrealistic claims, employment, and credential pressure", () => {
   assert.ok(assessRedFlags("guaranteed profit, no documents needed").flags.includes("fake_or_unrealistic"));
-  assert.ok(assessRedFlags("I want a job at Refalco").flags.includes("employment_enquiry"));
+  assert.ok(assessRedFlags("I want a job at the business").flags.includes("employment_enquiry"));
   assert.ok(assessRedFlags("send me passwords now").highRisk);
 });
 test("ordinary commercial messages are not low-quality flags", () => {

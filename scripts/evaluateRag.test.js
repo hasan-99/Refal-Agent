@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { scoreResult } = require("./evaluateRag");
 
 const validEvidence = {
-  source_name: "REFALCO GROUP Services",
+  source_name: "the business Services",
   document_id: "doc-1",
   document_title: "Company setup in Cyprus",
   chunk_id: "chunk-1",
@@ -20,7 +20,7 @@ test("RAG scoring records source, document, chunk rank, score, and expected fact
   const result = scoreResult({
     id: "services-en",
     query: "How do you help?",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedHeading: "Company setup in Cyprus",
     expectedFacts: ["incorporation documents", "company name"]
@@ -39,7 +39,7 @@ test("mutable pricing is not considered grounded without a future validity date"
   const result = scoreResult({
     id: "price-en",
     query: "Price?",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedFacts: ["company name"],
     mutablePricing: true
@@ -59,7 +59,7 @@ test("Arabic expected facts are compared without corrupting Unicode", () => {
   const result = scoreResult({
     id: "services-ar",
     query: "شو الخدمة؟",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedHeading: "تأسيس شركة في قبرص",
     expectedFacts: ["تجهيز وتقديم أوراق التأسيس"]

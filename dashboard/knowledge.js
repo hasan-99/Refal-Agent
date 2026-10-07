@@ -100,17 +100,16 @@ export function assertPasteWithinLimit(content) {
   }
 }
 
-const knowledgeHosts = new Set([
-  "refalco.com", "www.refalco.com", "northdata.com", "www.northdata.com",
-  "instagram.com", "www.instagram.com", "facebook.com", "www.facebook.com",
-  "companies.gov.cy", "www.companies.gov.cy"
-]);
+// Empty by default. Operators explicitly configure permitted import hosts.
+function knowledgeHosts() {
+  return new Set(String(process.env.KNOWLEDGE_ALLOWED_HOSTS || "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
+}
 
 export function validateKnowledgeUrl(value) {
   let url;
   try { url = new URL(String(value || "")); } catch { throw httpError(400, "Enter a valid HTTPS URL."); }
-  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !knowledgeHosts.has(url.hostname.toLowerCase())) {
-    throw httpError(400, "Only HTTPS pages on Refalco, the supplied social sites, Northdata, and companies.gov.cy are allowed.");
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !knowledgeHosts().has(url.hostname.toLowerCase())) {
+    throw httpError(400, "Only HTTPS pages on explicitly configured KNOWLEDGE_ALLOWED_HOSTS are allowed. You can also upload a file or paste text.");
   }
   url.hash = "";
   return url;
@@ -124,7 +123,7 @@ export async function fetchKnowledgePage(initialUrl) {
     try {
       const response = await fetch(url, {
         redirect: "manual", signal: controller.signal,
-        headers: { "user-agent": "RAFA-KnowledgeBot/1.0 (+https://refalco.com)", accept: "text/html,application/xhtml+xml" }
+        headers: { "user-agent": "KnowledgeBot/1.0", accept: "text/html,application/xhtml+xml" }
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get("location");

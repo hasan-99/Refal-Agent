@@ -180,7 +180,7 @@ test("consented handover shares only the linked inquiry, stated name, and WhatsA
       id: "linked-inquiry-turn",
       at: offerAt,
       message: "I’m exploring a mixed-use development in Cyprus and would like an initial specialist discussion.",
-      response: "Would you like me to ask a Refalco specialist to follow up?",
+      response: "Would you like me to ask a the business specialist to follow up?",
       metadata: { intent: { primary: "development", intents: ["development", "investment", "real_estate"], language: "english" }, specialistOffer: { consentRequired: true, offeredAt: offerAt } }
     }]
   };
@@ -354,8 +354,8 @@ test("natural follow-up and connection requests create one consented handover", 
 
 test("Arabic identity and unclear project messages route to relevant local replies", async () => {
   for (const [text, expected] of [
-    ["مرحبا، مين أنت وشو بتعمل؟", /الوكيل الرقمي للأعمال في مجموعة ريفالكو/],
-    ["أهلاً، من أنت؟", /الوكيل الرقمي للأعمال في مجموعة ريفالكو/],
+    ["مرحبا، مين أنت وشو بتعمل؟", /أنا مساعدك الرقمي/],
+    ["أهلاً، من أنت؟", /أنا مساعدك الرقمي/],
     ["عندي فكرة مشروع بقبرص، بس مو متأكد إذا بتناسبني", /ما نوع المشروع الذي تفكر فيه/],
     ["أفكر بمشروع في قبرص ولا أعرف إن كان مناسباً", /ما نوع المشروع الذي تفكر فيه/]
   ]) {
@@ -370,12 +370,12 @@ test("Arabic identity and unclear project messages route to relevant local repli
 
 test("identity questions in English, Greek, and Arabic receive REFAL's local introduction", async () => {
   const cases = [
-    ["Who are you?", "english", /REFAL, REFALCO GROUP’s digital business agent/],
-    ["What do you do?", "english", /REFAL, REFALCO GROUP’s digital business agent/],
-    ["Ποιοι είστε;", "greek", /είμαι η REFAL/],
-    ["Ποια είστε;", "greek", /είμαι η REFAL/],
-    ["مين أنت؟", "arabic", /أنا رِفال، الوكيل الرقمي للأعمال/],
-    ["شو بتعملوا؟", "arabic", /أنا رِفال، الوكيل الرقمي للأعمال/]
+    ["Who are you?", "english", /digital assistant/],
+    ["What do you do?", "english", /digital assistant/],
+    ["Ποιοι είστε;", "greek", /ψηφιακός σας βοηθός/],
+    ["Ποια είστε;", "greek", /ψηφιακός σας βοηθός/],
+    ["مين أنت؟", "arabic", /أنا مساعدك الرقمي/],
+    ["شو بتعملوا؟", "arabic", /أنا مساعدك الرقمي/]
   ];
 
   for (const [text, language, expectedReply] of cases) {
@@ -394,11 +394,11 @@ test("identity questions in English, Greek, and Arabic receive REFAL's local int
   }
 });
 
-test("mentioning Refalco in a services question does not trigger the identity introduction", async () => {
+test("mentioning the business in a services question does not trigger the identity introduction", async () => {
   const user = { id: "services-not-identity", profile: {}, history: [] };
   const result = await routeMessageResult({
     userId: user.id,
-    text: "What services does Refalco offer?",
+    text: "What services does the business offer?",
     store: integrationStore(user)
   });
 
@@ -446,7 +446,7 @@ test("a stored no-pressure preference does not suppress a direct Greek timeline 
     store: integrationStore(user), existingUser: user
   });
   assert.equal(result.shouldUseAi, true);
-  assert.equal(result.response, "Ελέγχω τις εγκεκριμένες πληροφορίες της Refalco για εσάς.");
+  assert.equal(result.response, "Ελέγχω τις εγκεκριμένες πληροφορίες της the business για εσάς.");
 });
 
 test("a hypothetical result for a new customer's case does not trigger existing-client escalation", async () => {
@@ -468,7 +468,7 @@ test("language follows each current message across English, Greek, and Arabic tu
   const user = { id: "switching-user", profile: {}, history: [] };
   const store = integrationStore(user);
   const turns = [
-    ["Hello", "english", /REFALCO GROUP/], ["Γεια σας", "greek", /REFAL/], ["مرحبا", "arabic", /ريفالكو/], ["Hello there", "english", /REFALCO GROUP/]
+    ["Hello", "english", /digital assistant/], ["Γεια σας", "greek", /ψηφιακός σας βοηθός/], ["مرحبا", "arabic", /مساعدك الرقمي/], ["Hello there", "english", /digital assistant/]
   ];
   for (const [text, language, replyPattern] of turns) {
     const result = await routeMessageResult({ userId: user.id, text, store });
@@ -497,15 +497,15 @@ test("worker can reuse inbound preparation instead of persisting route state twi
   const store = integrationStore(user);
   const updateUser = store.updateUser;
   store.updateUser = async (...args) => { stateWrites += 1; return updateUser(...args); };
-  const preparedInbound = await prepareInboundMessage({ userId: user.id, incoming: "What services does Refalco offer?", user, store });
-  const result = await routeMessageResult({ userId: user.id, text: "What services does Refalco offer?", store, existingUser: user, preparedInbound });
+  const preparedInbound = await prepareInboundMessage({ userId: user.id, incoming: "What services does the business offer?", user, store });
+  const result = await routeMessageResult({ userId: user.id, text: "What services does the business offer?", store, existingUser: user, preparedInbound });
   assert.equal(result.shouldUseAi, true);
   assert.equal(stateWrites, 1);
 });
 
 test("unrelated turns do not advance or re-emit a stale opportunity intake", async () => {
   const legacyIntake = { type: "company_formation", status: "in_progress", data: { businessActivity: "old context" } };
-  for (const text of ["Hi", "مرحبا، شو خدماتكم؟", "What is Refalco?"]) {
+  for (const text of ["Hi", "مرحبا، شو خدماتكم؟", "What is the business?"]) {
     const user = { id: `stale-intake-${Math.random()}`, profile: { opportunityIntake: structuredClone(legacyIntake) }, history: [] };
     const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store: integrationStore(user) });
     assert.equal(prepared.metadata.opportunityIntake, null, text);
@@ -777,8 +777,8 @@ test("an explicit optional AI offer is tracked for the next turn and only then a
 test("a complete direct contact request is handled without asking permission again", async () => {
   for (const text of [
     "Please have a specialist contact me about this company setup",
-    "I request a specialist to contact me and agree to share this inquiry with REFALCO",
-    "Yes, I request a specialist contact me and agree to share this inquiry with REFALCO"
+    "I request a specialist to contact me and agree to share this inquiry with the business",
+    "Yes, I request a specialist contact me and agree to share this inquiry with the business"
   ]) {
     const user = { id: `direct-contact-consent-${Math.random()}`, profile: {}, history: [] };
     const result = await routeMessageResult({ userId: user.id, text, store: integrationStore(user) });
@@ -949,7 +949,7 @@ test("routeMessageResult handles a regulated Greek request locally and never fal
   const user = { id: "35799123456@s.whatsapp.net", phone: "35799123456", profile: {}, history: [] };
   const result = await routeMessageResult({ userId: user.id, text: "Μπορεί η τράπεζα να εγκρίνει σίγουρα το δάνειο;", store: integrationStore(user) });
   assert.equal(result.shouldUseAi, false);
-  assert.match(result.response, /Δεν μπορώ|Refalco/i);
+  assert.match(result.response, /Δεν μπορώ|the business/i);
   assert.doesNotMatch(result.response, /I can’t|I cannot|Before we continue/i);
   assert.ok(result.metadata.safety.risks.includes("banking"));
 });
@@ -1038,7 +1038,7 @@ test("an existing client asking for a safe written profile-update route gets Ara
   const text = "طيب، شكراً عالتنبيه. بس شو القناة الآمنة يلي بتنصحني فيها لتحديث ملفي؟";
   const result = await routeMessageResult({ userId: user.id, text, store: integrationStore(user), existingUser: user });
   assert.match(result.response, /ما عندي معلومة مؤكدة عن قناة آمنة محددة/);
-  assert.match(result.response, /وسيلة التواصل الرسمية المنشورة لدى ريفالكو/);
+  assert.match(result.response, /وسيلة التواصل الرسمية المنشورة لدى الشركة/);
   assert.doesNotMatch(result.response, /رقم الملف|رقم التحقق|أرسل.*(?:رقم|بيانات)|تواصل معي|سأتواصل/);
   assert.equal(result.metadata.existingClientVerification, undefined);
   assert.equal(result.handover, undefined);

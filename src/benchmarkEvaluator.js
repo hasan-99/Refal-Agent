@@ -18,7 +18,7 @@ const { fetchOpenRouter } = require("./openrouterTransport");
 
 const EVALUATOR_PROMPT_VERSION = "2026-10-05.v1";
 const EVALUATOR_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_EVALUATOR_MODEL = "deepseek/deepseek-v4.1-flash";
+const DEFAULT_EVALUATOR_MODEL = "openai/gpt-6-luna";
 
 const REASON_CODES = Object.freeze([
   "DIRECTLY_ANSWERED",
@@ -72,7 +72,7 @@ async function defaultCallEvaluatorModel(messages) {
     method: "POST",
     timeoutMs: 20000,
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "HTTP-Referer": "http://localhost/whatsapp-company-bot", "X-OpenRouter-Title": "RAFA-benchmark-evaluator" },
-    body: JSON.stringify({ model, max_tokens: 150, reasoning: { enabled: false, exclude: true }, temperature: 0, messages, provider: { data_collection: "deny", zdr: true } })
+    body: JSON.stringify(require("./openrouterPrivacy").withOpenRouterPrivacyPolicy({ model, max_tokens: 150, reasoning: { enabled: false, exclude: true }, temperature: 0, messages }))
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body?.error) {

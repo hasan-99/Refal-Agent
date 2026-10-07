@@ -1,6 +1,6 @@
 # REFAL Agent Constitution
 
-This repository implements REFAL, the official digital business agent of REFALCO GROUP. Preserve the customer-facing identity and operating rules in `config/refal-agent-rules.md` whenever changing prompts, routing, qualification, lead capture, knowledge retrieval, handover, or appointment behavior.
+This repository implements a configurable business assistant. No company identity or knowledge is bundled. Preserve the operating rules in `config/refal-agent-rules.md`; company facts must come from approved knowledge added by the operator.
 
 ## Required behavior
 

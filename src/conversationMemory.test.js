@@ -26,12 +26,12 @@ test("durable no-pressure preference is included for later conversation turns", 
 test("conversation memory strips links and personal contact details and ignores greeting filler", () => {
   const summary = buildCustomerTopicSummary([
     { message: "مرحبا" },
-    { message: "My email is hasan@example.com. Tell me about Refalco projects: https://example.com" },
+    { message: "My email is hasan@example.com. Tell me about the business projects: https://example.com" },
     { message: "I need a meeting about the Cyprus project." }
   ]);
 
   assert.doesNotMatch(summary, /مرحبا|hasan@example\.com|https:\/\//i);
-  assert.match(summary, /Refalco projects/);
+  assert.match(summary, /the business projects/);
   assert.match(summary, /Cyprus project/);
 });
 
@@ -56,7 +56,7 @@ test("privacy-risk turns are excluded from durable topic summaries and context",
 });
 
 test("conversation memory update preserves other contact profile fields", async () => {
-  const user = { profile: { name: "Maya", serviceInterest: "projects" }, history: [{ message: "Tell me about Refalco" }] };
+  const user = { profile: { name: "Maya", serviceInterest: "projects" }, history: [{ message: "Tell me about the business" }] };
   let persisted;
   await refreshCustomerTopicSummary({
     store: { updateUser: async (_id, update) => { update(user); persisted = structuredClone(user.profile); } },

@@ -88,7 +88,7 @@ telemetry) to calculate quality metrics against real model decisions.
 | G02 | AR | Arabic clarification flow end to end. | — | ✅ pass | — |
 | G03 | EL | Greek consent flow end to end (proposeHandover authorized from a Greek consent message). | proposeHandover | ✅ pass | — |
 | G04 | mixed | Mid-conversation language switch (EN -> AR -> EL): the current message's language is authoritative each turn, not sticky from a previous turn. | — | ✅ pass | — |
-| G05 | AR | A reply containing English brand/technical terms (REFALCO, OpenRouter) inside an Arabic sentence is not a false language mismatch. | — | ✅ pass | — |
+| G05 | AR | A reply containing English brand/technical terms (the business, OpenRouter) inside an Arabic sentence is not a false language mismatch. | — | ✅ pass | — |
 | G06 | EL | A Greek farewell gets a brief reply with zero questions at the Agent-turn boundary. NOTE: REFAL-AGENT-023's goodbye-detection bug lives in followUp.js's 24h re-engagement CRON path, which this scenario does not exercise (runAgentTurnForContact never calls followUp.js) — so this passes at this boundary even though 023 remains open for the cron path. | — | ✅ pass | — |
 
 ## H — Failures / Resilience

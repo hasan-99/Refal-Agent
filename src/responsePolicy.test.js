@@ -57,7 +57,7 @@ test("question-count policy is AT MOST one, not EXACTLY one: zero, one, and two 
 test("Arabic question-mark and Greek response handling is not falsely rejected (tests 6-7)", () => {
   // Arabic question mark (؟), two short clauses, one question — must pass
   // under the same thresholds the legacy path actually uses.
-  const arabic = "فيني ساعدك بمعلومات ريفالكو المعتمدة. شو النقطة اللي بدك تعرف عنها أكتر؟";
+  const arabic = "فيني ساعدك بمعلومات الشركة المعتمدة. شو النقطة اللي بدك تعرف عنها أكتر؟";
   const arabicResult = validateResponse(arabic, LEGACY_RESPONSE_THRESHOLDS);
   assert.equal(arabicResult.valid, true, arabicResult.reasons.join(","));
   assert.equal(questionCount(arabic), 1);
@@ -83,7 +83,7 @@ test("internal-reasoning leakage is rejected consistently in EN, AR, and EL (tes
 
   for (const text of [
     "حسب سلسلة التفكير الداخلي لدي، العميل جاهز للشراء. فيني ساعدك.",
-    "درجة التأهيل: 8. فيني ساعدك بمعلومات ريفالكو.",
+    "درجة التأهيل: 8. فيني ساعدك بمعلومات الشركة.",
     "هذه تعليمات داخلية من النظام ولازم أتبعها. فيني وضحلك المعلومات."
   ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("internal_reasoning"), text);
 
@@ -169,7 +169,7 @@ test("allows narrowly worded EN/AR/EL safety disclaimers", () => {
     "I can’t confirm a permit or licence outcome.",
     "I can't confirm whether the activity needs a licence or permit.",
     "We cannot guarantee bank approval; the bank decides.",
-    "REFALCO does not provide company registration or legal-status information.",
+    "the business does not provide company registration or legal-status information.",
     "لا أستطيع تأكيد نتيجة الرخصة أو التصريح أو التخطيط.",
     "لا أستطيع تقديم نصيحة ضريبية شخصية.",
     "ما فيني أكد إذا النشاط بده ترخيص.",
@@ -290,10 +290,10 @@ test("completed-booking claims require a verified booking, in all three language
     "I found that time available: 6 Oct 2026, 10:30 for 30 minutes. Reply yes to confirm or no to choose another time.",
     "Your appointment request has been sent for review.",
     "That time is no longer available. Please choose another time.",
-    "Your Refalco appointment has been cancelled.",
+    "Your the business appointment has been cancelled.",
     "الموعد متاح: 6 أكتوبر 2026 لمدة 30 دقيقة. أجب بنعم للتأكيد أو لا لاختيار وقت آخر.",
     "تم إرسال طلب الموعد للمراجعة.",
-    "تم إلغاء موعدك مع ريفالكو.",
+    "تم إلغاء موعدك مع الشركة.",
     "Θα θέλατε να κλείσουμε ένα ραντεβού;",
     "Το ραντεβού σας ακυρώθηκε."
   ]) assert.equal(validateResponse(response, { minSentences: 0 }).unverifiedBookingAction, false, response);
@@ -302,7 +302,7 @@ test("completed-booking claims require a verified booking, in all three language
 test("request-recording claims require verified handover state", () => {
   for (const response of [
     "I’ll note your interest for a specialist follow-up.",
-    "Thanks — I’ll pass this along for a REFALCO specialist to follow up with you.",
+    "Thanks — I’ll pass this along for a the business specialist to follow up with you.",
     "I’ve logged your request for specialist review.",
     "Your specialist-review request is already recorded."
   ]) {

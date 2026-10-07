@@ -23,7 +23,7 @@ function storeWith(content) {
   return { searchKnowledge: async () => [{ heading: "Approved information", content }] };
 }
 
-const EVIDENCE_TEXT = "REFALCO provides Company Formation for EUR 1500. Accounting services are also available.";
+const EVIDENCE_TEXT = "the business provides Company Formation for EUR 1500. Accounting services are also available.";
 
 // --- Important Integration Test (ticket-required, cases A/B/C) -------------
 
@@ -31,11 +31,11 @@ test("Important Integration Test — Case A: a response that only restates groun
   const context = buildAgentContext({ currentMessage: "What services do you provide and how much does company formation cost?", locale: "english" });
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "services and company formation price" } },
-    { type: "respond", text: "REFALCO offers Company Formation for EUR 1500 and Accounting services." }
+    { type: "respond", text: "the business offers Company Formation for EUR 1500 and Accounting services." }
   ]);
   const result = await runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store: storeWith(EVIDENCE_TEXT), embedText: async () => null } });
   assert.equal(result.outcome, "responded");
-  assert.equal(result.response, "REFALCO offers Company Formation for EUR 1500 and Accounting services.");
+  assert.equal(result.response, "the business offers Company Formation for EUR 1500 and Accounting services.");
 });
 
 test("Important Integration Test — Case B: an unsupported price (EUR 2500 vs evidence's EUR 1500) is rejected, never sent, and the turn safely falls back", async () => {
@@ -45,14 +45,14 @@ test("Important Integration Test — Case B: an unsupported price (EUR 2500 vs e
   // turn ends in a safe deterministic fallback rather than ever sending it.
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "services and company formation price" } },
-    { type: "respond", text: "REFALCO offers Company Formation for EUR 2500 and Accounting services." }
+    { type: "respond", text: "the business offers Company Formation for EUR 2500 and Accounting services." }
   ]);
   const result = await runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store: storeWith(EVIDENCE_TEXT), embedText: async () => null }, maxSteps: 2 });
   assert.notEqual(result.outcome, "responded");
   assert.equal(result.outcome, "response_rejected");
   assert.match(result.reason, /unsupported_price_claim/);
   assert.equal(typeof result.response, "string");
-  assert.notEqual(result.response, "REFALCO offers Company Formation for EUR 2500 and Accounting services.");
+  assert.notEqual(result.response, "the business offers Company Formation for EUR 2500 and Accounting services.");
 });
 
 test("Important Integration Test — Case C: unsupported added services (Payroll, Legal Representation) are rejected; a corrected second draft without them succeeds (tests 15/16/26/27)", async () => {
@@ -60,13 +60,13 @@ test("Important Integration Test — Case C: unsupported added services (Payroll
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "services and company formation price" } },
     // Step 2: supported price + an unsupported service addition — must be rejected (test 15).
-    { type: "respond", text: "REFALCO offers Company Formation for EUR 1500, Accounting, Payroll and Legal Representation." },
+    { type: "respond", text: "the business offers Company Formation for EUR 1500, Accounting, Payroll and Legal Representation." },
     // Step 3: the corrected draft drops the unsupported items — must succeed (test 16/27).
-    { type: "respond", text: "REFALCO offers Company Formation for EUR 1500 and Accounting services." }
+    { type: "respond", text: "the business offers Company Formation for EUR 1500 and Accounting services." }
   ]);
   const result = await runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store: storeWith(EVIDENCE_TEXT), embedText: async () => null }, maxSteps: 3 });
   assert.equal(result.outcome, "responded");
-  assert.equal(result.response, "REFALCO offers Company Formation for EUR 1500 and Accounting services.");
+  assert.equal(result.response, "the business offers Company Formation for EUR 1500 and Accounting services.");
   assert.equal(result.stepCount, 3);
   // Test 26: the rejection became a structured observation the retried
   // decision could see, not a silent edit or a thrown error.
@@ -81,7 +81,7 @@ test("[028-17] no_evidence: an invented company fact is rejected, never sent", a
   const context = buildAgentContext({ currentMessage: "What services do you provide?", locale: "english" });
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "services" } },
-    { type: "respond", text: "REFALCO offers Company Formation for EUR 1500 and Accounting services." }
+    { type: "respond", text: "the business offers Company Formation for EUR 1500 and Accounting services." }
   ]);
   const result = await runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store: { searchKnowledge: async () => [] }, embedText: async () => null }, maxSteps: 2 });
   assert.notEqual(result.outcome, "responded");
@@ -102,7 +102,7 @@ test("[028-18] no_evidence: a safe uncertainty response is allowed", async () =>
 
 test("[028-28] a draft that never becomes grounded within the step budget ends in the generic safe fallback, not silence or a crash", async () => {
   const context = buildAgentContext({ currentMessage: "What services do you provide?", locale: "english" });
-  const alwaysUnsupported = async () => ({ type: "respond", text: "REFALCO offers Company Formation for EUR 1500, Accounting, Payroll and Legal Representation." });
+  const alwaysUnsupported = async () => ({ type: "respond", text: "the business offers Company Formation for EUR 1500, Accounting, Payroll and Legal Representation." });
   const decide = scriptedDecider([{ type: "tool", tool: "searchApprovedKnowledge", args: { query: "services" } }]);
   let callCount = 0;
   const combinedDecide = async (args) => {

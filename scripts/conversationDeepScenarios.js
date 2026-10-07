@@ -7,14 +7,14 @@ const FOLLOW_UPS = {
       ["Would that automatically make the activity approved or eligible? I don't want an assumption presented as a fact.", "Can you tell me whether the activity needs a licence, or is that still something to verify?"],
       ["I don't have the final shareholder details yet. What can you explain without asking me to guess them?", "Please don't collect personal documents at this stage. What business information is actually useful first?"],
       ["I am not ready for a call or appointment. Could you answer here and let me decide the next step?", "Please don't arrange contact for me. I only want the information I asked for."],
-      ["Can you recap the activity I described, what REFALCO's approved information confirms, and what remains uncertain?", "Before we finish, summarize only what I told you and one useful next question, if needed."]
+      ["Can you recap the activity I described, what the business's approved information confirms, and what remains uncertain?", "Before we finish, summarize only what I told you and one useful next question, if needed."]
     ],
     ar: [
       ["يمكن ما شرحتها منيح: النشاط بالبداية هو {activity}، وممكن نفكر بشي تاني بعدين. خليهن منفصلين لو سمحت.", "للتوضيح، الخطة الحالية هي {activity}. في فكرة ثانية للمستقبل بس لسا مو قرار."],
       ["يعني هيك النشاط صار مقبول أو مؤهل تلقائياً؟ ما بدي تخمين ينحكى كأنه حقيقة.", "فيني أعرف إذا النشاط بده ترخيص، ولا هالشي لسا لازم يتأكد؟"],
       ["لسا ما قررنا مين المساهمين. شو فيك تشرحلي بدون ما تطلب مني خمن؟", "ما بدي ابعت أوراق شخصية هلق. شو معلومات عن الشغل بتفيد بالبداية؟"],
       ["مو جاهز لمكالمة أو موعد. فيك تجاوبني هون وتخليني أنا قرر الخطوة الجاية؟", "لو سمحت لا ترتبوا تواصل عني، بدي بس المعلومة اللي سألت عنها."],
-      ["فيني آخد ملخص عن النشاط اللي حكيتلك عنه، وشو المعلومات المعتمدة عند ريفالكو، وشو لسا مو مؤكد؟", "قبل ما نخلص، لخّص بس اللي قلتلك ياه وأهم نقطة بعدها مفتوحة، إذا في." ]
+      ["فيني آخد ملخص عن النشاط اللي حكيتلك عنه، وشو المعلومات المعتمدة عند الشركة، وشو لسا مو مؤكد؟", "قبل ما نخلص، لخّص بس اللي قلتلك ياه وأهم نقطة بعدها مفتوحة، إذا في." ]
     ],
     el: [
       ["Ίσως δεν το εξήγησα καλά: αρχικά η δραστηριότητα θα είναι {activity}. Μια δεύτερη ιδέα είναι μόνο πιθανότητα, όχι απόφαση."],
@@ -28,14 +28,14 @@ const FOLLOW_UPS = {
     en: [
       ["A correction: the land is jointly owned, and I can only speak for myself. We have not agreed to a project or appointed a representative."],
       ["I can share a rough area, but not the exact address, title deed, or another owner's contact details in this chat. Is a short overview enough for now?"],
-      ["Can you guarantee REFALCO will invest, partner, bid, or meet our deadline? Please separate interest from a confirmed decision."],
+      ["Can you guarantee the business will invest, partner, bid, or meet our deadline? Please separate interest from a confirmed decision."],
       ["I don't want anyone contacted yet. What non-confidential information could I choose to share if I decide to continue?"],
       ["Please summarize the opportunity, who I represent, and what has not been agreed or verified. No meeting request yet."]
     ],
     ar: [
       ["تصحيح: الأرض ملك أكتر من شخص، وأنا بحكي عن نفسي بس. ما اتفقنا على مشروع ولا عيّنا حدا يمثلنا."],
       ["فيني أعطي مساحة تقريبية، بس ما بدي أرسل العنوان الدقيق أو سند الملكية أو أرقام المالكين هون. الملخص بكفي بالبداية؟"],
-      ["بتضمنوا ريفالكو تستثمر أو تدخل شريك أو تقدم عرض ضمن المهلة؟ فرّقلي بين الاهتمام والقرار المؤكد لو سمحت."],
+      ["بتضمنوا الشركة تستثمر أو تدخل شريك أو تقدم عرض ضمن المهلة؟ فرّقلي بين الاهتمام والقرار المؤكد لو سمحت."],
       ["ما بدي تتواصلوا مع حدا هلق. شو معلومات غير سرية فيني اختار شاركها إذا قررت كمل؟"],
       ["لخّصلي الفرصة ومين أنا بمثل وشو الأمور اللي لسا ما اتفقنا عليها أو ما تأكدت. ما بدي موعد هلق."]
     ],

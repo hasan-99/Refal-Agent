@@ -7,12 +7,12 @@ const { embedText, DEFAULT_EMBEDDING_MODEL } = require("../src/ai");
 const { createStore } = require("../src/supabaseStore");
 
 // These are retrieval targets, not response-generation prompts. Expected facts
-// are grounded in the owner-approved REFALCO source rows currently in the DB.
+// are grounded in the owner-approved the business source rows currently in the DB.
 const cases = [
   {
     id: "services_en",
-    query: "What does the REFALCO services page include in the Cyprus company setup package?",
-    expectedSource: "REFALCO GROUP Services",
+    query: "What does the business services page include in the Cyprus company setup package?",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedHeading: "Company setup in Cyprus",
     expectedFacts: ["incorporation documents", "reserving a company name", "following up on the application"],
@@ -21,7 +21,7 @@ const cases = [
   {
     id: "services_ar",
     query: "شو بتشمل خدمة تأسيس الشركة بقبرص؟",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedHeading: "تأسيس شركة في قبرص",
     expectedFacts: ["تجهيز وتقديم أوراق التأسيس", "حجز اسم للشركة", "متابعة الطلب"],
@@ -30,7 +30,7 @@ const cases = [
   {
     id: "services_el",
     query: "Τι περιλαμβάνει η υπηρεσία σύστασης εταιρείας στην Κύπρο;",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedFacts: ["incorporation documents", "reserving a company name", "following up on the application"],
     mutablePricing: false
@@ -38,7 +38,7 @@ const cases = [
   {
     id: "package_price_en",
     query: "What is the listed price for the Cyprus company setup package?",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedFacts: ["€999", "four months"],
     mutablePricing: true
@@ -46,7 +46,7 @@ const cases = [
   {
     id: "package_price_ar",
     query: "قديش سعر باقة تأسيس الشركة وشو بتشمل؟",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedFacts: ["999 يورو", "أربعة أشهر"],
     mutablePricing: true
@@ -54,40 +54,40 @@ const cases = [
   {
     id: "package_price_greeklish",
     query: "Poso kostizei?",
-    expectedSource: "REFALCO GROUP Services",
+    expectedSource: "the business Services",
     expectedDocumentTitle: "Company setup in Cyprus",
     expectedFacts: ["€999", "four months"],
     mutablePricing: true
   },
   {
     id: "former_services_en",
-    query: "Are LAMAR's former company formation services now provided under REFALCO services?",
-    expectedSource: "Owner-confirmed REFALCO services transition",
-    expectedDocumentTitle: "Former LAMAR services now under REFALCO",
-    expectedHeading: "Former services now under REFALCO",
-    expectedFacts: ["former Cyprus company-formation services", "now provided under REFALCO services"],
+    query: "Are LAMAR's former company formation services now provided under the business services?",
+    expectedSource: "Owner-confirmed the business services transition",
+    expectedDocumentTitle: "Former LAMAR services now under the business",
+    expectedHeading: "Former services now under the business",
+    expectedFacts: ["former Cyprus company-formation services", "now provided under the business services"],
     mutablePricing: false
   },
   {
     id: "former_services_ar",
-    query: "هل خدمات تأسيس الشركات السابقة صارت ضمن خدمات ريفالكو؟",
-    expectedSource: "Owner-confirmed REFALCO services transition",
-    expectedDocumentTitle: "Former LAMAR services now under REFALCO",
-    expectedHeading: "الخدمات السابقة أصبحت ضمن خدمات ريفالكو",
-    expectedFacts: ["خدمات لامار السابقة", "ضمن خدمات ريفالكو"],
+    query: "هل خدمات تأسيس الشركات السابقة صارت ضمن خدمات الشركة؟",
+    expectedSource: "Owner-confirmed the business services transition",
+    expectedDocumentTitle: "Former LAMAR services now under the business",
+    expectedHeading: "الخدمات السابقة أصبحت ضمن خدمات الشركة",
+    expectedFacts: ["خدمات لامار السابقة", "ضمن خدمات الشركة"],
     mutablePricing: false
   },
   {
     id: "group_areas_en",
-    query: "What business areas does REFALCO GROUP work in?",
-    expectedSource: "REFALCO GROUP official website",
+    query: "What business areas does the business work in?",
+    expectedSource: "the business official website",
     expectedFacts: ["development"],
     mutablePricing: false
   },
   {
     id: "group_areas_ar",
-    query: "شو مجالات عمل مجموعة ريفالكو؟",
-    expectedSource: "REFALCO GROUP official website",
+    query: "شو مجالات عمل مجموعة الشركة؟",
+    expectedSource: "the business official website",
     expectedFacts: ["تطوير"],
     mutablePricing: false
   },
@@ -98,7 +98,7 @@ const cases = [
   },
   {
     id: "negative_credentials",
-    query: "What is REFALCO's bank password or account credential?",
+    query: "What is the business's bank password or account credential?",
     noEvidence: true
   },
   {

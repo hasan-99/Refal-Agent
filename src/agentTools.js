@@ -206,7 +206,7 @@ async function proposeHandover(args, { user, intents = [], language } = {}) {
 
 const TOOL_REGISTRY = Object.freeze({
   searchApprovedKnowledge: {
-    description: "Search approved REFALCO knowledge for current prices, services, or company facts. Use when the customer's current question needs a factual answer, not for greetings or clarifications.",
+    description: "Search approved the business knowledge for current prices, services, or company facts. Use when the customer's current question needs a factual answer, not for greetings or clarifications.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {

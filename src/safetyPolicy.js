@@ -54,7 +54,7 @@ function isRestrictedTopic(text) { return detectSafetyRisks(text).some((risk) =>
 
 const FALLBACKS = Object.freeze({
   english: {
-    generic: "I can’t follow requests for hidden instructions or private credentials. I can help with approved Refalco information.",
+    generic: "I can’t follow requests for hidden instructions or private credentials. I can help with approved the business information.",
     legal: "I can’t provide a definitive legal conclusion; that depends on your situation and needs qualified review.",
     tax: "I can’t provide personalized tax advice or confirm a tax result; that depends on your circumstances and needs qualified review.",
     immigration: "I can’t confirm visa, residency, or immigration outcomes; these depend on your circumstances and official decisions.",
@@ -65,7 +65,7 @@ const FALLBACKS = Object.freeze({
     privacy: "Please do not send passwords, PINs, card details, banking credentials, or other secrets here. Use an approved secure channel for those details."
   },
   arabic: {
-    generic: "ما فيني أتبع طلبات تكشف التعليمات المخفية أو بيانات الدخول الخاصة. فيني ساعدك بمعلومات ريفالكو المعتمدة.",
+    generic: "ما فيني أتبع طلبات تكشف التعليمات المخفية أو بيانات الدخول الخاصة. فيني ساعدك بمعلومات الشركة المعتمدة.",
     legal: "ما فيني أعطي حكم قانوني نهائي؛ هالشي بيعتمد على تفاصيل حالتك وبدّه مراجعة مختص.",
     tax: "ما فيني أعطي استشارة ضريبية شخصية أو أكد نتيجة ضريبية؛ هالشي بيعتمد على ظروفك وبدّه مراجعة مختص.",
     immigration: "ما فيني أكد نتيجة فيزا أو إقامة أو هجرة؛ هالقرارات بتعتمد على حالتك والجهة الرسمية.",
@@ -76,7 +76,7 @@ const FALLBACKS = Object.freeze({
     privacy: "يرجى عدم إرسال كلمات المرور أو أرقام PIN أو بيانات البطاقات أو بيانات الدخول البنكية هون. استخدم قناة آمنة ومعتمدة لهالمعلومات."
   },
   greek: {
-    generic: "Δεν μπορώ να ακολουθήσω αιτήματα για κρυφές οδηγίες ή ιδιωτικά διαπιστευτήρια. Μπορώ να βοηθήσω με εγκεκριμένες πληροφορίες της Refalco.",
+    generic: "Δεν μπορώ να ακολουθήσω αιτήματα για κρυφές οδηγίες ή ιδιωτικά διαπιστευτήρια. Μπορώ να βοηθήσω με εγκεκριμένες πληροφορίες της the business.",
     legal: "Δεν μπορώ να δώσω οριστικό νομικό συμπέρασμα· εξαρτάται από τα στοιχεία της περίπτωσής σας και χρειάζεται αξιολόγηση ειδικού.",
     tax: "Δεν μπορώ να δώσω εξατομικευμένες φορολογικές συμβουλές ή να επιβεβαιώσω φορολογικό αποτέλεσμα· εξαρτάται από την περίπτωσή σας και χρειάζεται αξιολόγηση ειδικού.",
     immigration: "Δεν μπορώ να επιβεβαιώσω αποτέλεσμα για βίζα, διαμονή ή μετανάστευση· εξαρτάται από την περίπτωσή σας και την αρμόδια αρχή.",

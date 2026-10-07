@@ -23,8 +23,8 @@ test("ordinary complaints are high priority but severe threats are urgent", () =
 });
 
 test("bare mentions of media, press, land, or an account no longer force a false escalation", () => {
-  assert.equal(assessPriority({ text: "What social media accounts does REFALCO have?" }).level, "normal");
-  assert.equal(assessPriority({ text: "Is REFALCO on the press list for industry news?" }).level, "normal");
+  assert.equal(assessPriority({ text: "What social media accounts does the business have?" }).level, "normal");
+  assert.equal(assessPriority({ text: "Is the business on the press list for industry news?" }).level, "normal");
   assert.equal(assessPriority({ text: "What do I need to open my account for the new company with a local bank?" }).level, "normal");
   assert.equal(assessPriority({ text: "Is land available near Limassol for a small villa?" }).level, "normal");
 });

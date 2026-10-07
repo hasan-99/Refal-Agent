@@ -39,7 +39,7 @@ const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
-const { buildKnowledgeSearchQuery, buildServiceSupplementQuery, isCanonicalServiceQuery, prioritizeCanonicalServiceEvidence } = require("./knowledgeQuery");
+const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -394,20 +394,9 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
       stage("embedding", stageAt);
       stageAt = performance.now();
       evidence = store.searchKnowledge ? await store.searchKnowledge(knowledgeSearchQuery, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
-      if (isCanonicalServiceQuery(knowledgeSearchQuery)) {
-        const customerLanguage = detectMessageLanguage(customerText);
-        const supplementQuery = buildServiceSupplementQuery(knowledgeSearchQuery, customerLanguage);
-        if (supplementQuery && store.searchKnowledge) {
-          const supplementEmbedding = await embedText(supplementQuery);
-          const supplement = await store.searchKnowledge(supplementQuery, supplementEmbedding, DEFAULT_EMBEDDING_MODEL, 6);
-          const seen = new Set(evidence.map((item) => item.chunk_id));
-          evidence.push(...supplement.filter((item) => !seen.has(item.chunk_id)));
-        }
-        evidence = prioritizeCanonicalServiceEvidence(evidence, customerLanguage).slice(0, 6);
-      }
       stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
     } catch (error) {
-      console.error("Refalco knowledge search failed:", safeErrorDiagnostics(error));
+      console.error("the business knowledge search failed:", safeErrorDiagnostics(error));
       logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
 
@@ -1046,7 +1035,7 @@ async function startBaileysClient() {
       console.log("RAFA WhatsApp agent is ready.");
       console.log("Data store: Supabase");
       console.log("WhatsApp credentials: local session store");
-      console.log(`AI: ${process.env.OPENROUTER_API_KEY ? `enabled (${process.env.OPENROUTER_MODEL || "openrouter/free"})` : "disabled"}`);
+      console.log(`AI: ${process.env.OPENROUTER_API_KEY ? `enabled (${require("./openrouterPrivacy").resolveOpenRouterModel(process.env.OPENROUTER_MODEL)})` : "disabled"}`);
       if (!pairingOnly) console.log(`Self-test: send "${selfTestPrefix} hi" from your linked WhatsApp account.`);
       startLocalControlServer();
       logEvent("ready", {});

@@ -6,10 +6,10 @@ function reminderText(appointment, job = {}) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(appointment.starts_at));
-  const base = `Reminder: your Refalco meeting is scheduled for ${start} (${appointment.timezone || "Europe/Nicosia"}).`;
+  const base = `Reminder: your meeting is scheduled for ${start} (${appointment.timezone || "Europe/Nicosia"}).`;
   if (job.reminder_kind === "meet_link_1h") return appointment.google_meet_url
     ? `${base}\nGoogle Meet: ${appointment.google_meet_url}`
-    : `${base}\nThe meeting link is not available yet. Please contact Refalco if you need help.`;
+    : `${base}\nThe meeting link is not available yet. Please contact the business if you need help.`;
   return base;
 }
 

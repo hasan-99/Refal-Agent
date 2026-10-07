@@ -235,8 +235,8 @@ test("a clarify draft in the wrong language is rejected the same way a respond d
   assert.match(result.reason, /language_mismatch/);
 });
 
-test("Latin brand/product names (REFALCO, OpenRouter) inside an Arabic reply never false-positive the language gate", async () => {
-  const decide = scriptedDecider([{ type: "respond", text: "إحنا ريفالكو (REFALCO)، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية. يسعدني ساعدك بأي سؤال." }]);
+test("Latin brand/product names (the business, OpenRouter) inside an Arabic reply never false-positive the language gate", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: "إحنا الشركة (the business)، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية. يسعدني ساعدك بأي سؤال." }]);
   const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {} });
   assert.equal(result.outcome, "responded", "an Arabic-dominant reply must not be rejected just for containing a Latin brand/product name");
 });
@@ -265,7 +265,7 @@ test("a very short draft (<=8 chars, legacy's own exemption) is never rejected o
 
 test("an unknown/missing locale never gates on language — nothing trustworthy to compare against", async () => {
   const unknownContext = buildAgentContext({ currentMessage: "hello" });
-  const decide = scriptedDecider([{ type: "respond", text: "مرحباً، كيف فيني ساعدك اليوم بخصوص خدمات ريفالكو؟" }]);
+  const decide = scriptedDecider([{ type: "respond", text: "مرحباً، كيف فيني ساعدك اليوم بخصوص خدمات الشركة؟" }]);
   const result = await runAgentTurn(unknownContext, { decideNextStep: decide, tools: {} });
   assert.equal(result.outcome, "responded");
 });

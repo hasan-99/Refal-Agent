@@ -87,16 +87,4 @@ create trigger set_rafa_knowledge_sources_updated_at
 before update on public.rafa_knowledge_sources
 for each row execute function public.set_rafa_updated_at();
 
-insert into public.rafa_knowledge_sources (canonical_url, display_name, source_kind, trust_tier, metadata)
-values
-  ('https://www.refalco.com/', 'Refalco Group home', 'first_party_website', 'first_party', '{"research_status":"reviewed","retrieved_on":"2026-09-29"}'),
-  ('https://refalco.com/investment-portfolio', 'Refalco investment portfolio', 'first_party_website', 'first_party', '{"research_status":"reviewed_conflicting_sensitive_claims","retrieved_on":"2026-09-29"}'),
-  ('https://refalco.com/contact', 'Refalco contact', 'first_party_website', 'first_party', '{"research_status":"contact_details_require_owner_confirmation","retrieved_on":"2026-09-29"}'),
-  ('https://www.instagram.com/refalcogroup/', 'Refalco Instagram', 'first_party_social', 'first_party', '{"research_status":"not_fetched","reason":"automated_access_unavailable"}'),
-  ('https://www.facebook.com/RefalcoGroup/', 'Refalco Facebook', 'first_party_social', 'first_party', '{"research_status":"not_fetched","reason":"automated_access_blocked"}'),
-  ('https://refalco.com/about', 'Refalco about', 'first_party_website', 'first_party', '{"research_status":"reviewed_placeholder_metrics","retrieved_on":"2026-09-29"}'),
-  ('https://refalco.com/team', 'Refalco leadership', 'first_party_website', 'first_party', '{"research_status":"reviewed_owner_approval_required","retrieved_on":"2026-09-29"}'),
-  ('https://refalco.com/why-us', 'Refalco perspectives', 'first_party_website', 'first_party', '{"research_status":"reviewed_conflicting_sensitive_claims","retrieved_on":"2026-09-29"}'),
-  ('https://www.northdata.com/Refalco%20ONE%20Ltd%C2%B7,%20%CE%9B%CE%B5%CF%85%CE%BA%CF%89%CF%83%CE%AF%CE%B1/MCIT%20%CE%97%CE%95%20382352', 'Northdata: Refalco ONE Ltd', 'secondary_directory', 'secondary', '{"research_status":"not_fetched","reason":"secondary_source_requires_official_verification"}'),
-  ('https://www.companies.gov.cy/en/business-entities/2-company/10-understanding/company-search', 'Cyprus Registrar company search', 'official_registry', 'official', '{"research_status":"official_search_guidance_only","retrieved_on":"2026-09-29"}')
-on conflict (canonical_url) do nothing;
+-- No company knowledge is seeded. Add reviewed content through the dashboard.

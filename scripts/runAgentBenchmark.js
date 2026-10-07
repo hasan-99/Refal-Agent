@@ -245,7 +245,7 @@ function buildUser(scenario, idPrefix) {
 function ragFixtureStore(scenario) {
   if (scenario.forceRagError) return { searchKnowledge: async () => { throw new Error("edge function unreachable"); } };
   if (scenario.id === "A03") return { searchKnowledge: async () => [] }; // no_evidence
-  return { searchKnowledge: async () => [{ heading: "Approved Refalco information", content: "Company formation, accounting, and tax filing services are published; company formation is EUR 1500." }] };
+  return { searchKnowledge: async () => [{ heading: "Approved the business information", content: "Company formation, accounting, and tax filing services are published; company formation is EUR 1500." }] };
 }
 
 function classifyFallbackReason(outcome) {

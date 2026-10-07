@@ -39,8 +39,8 @@ function isBookingRequest(text) {
     /(θέλω|θα ήθελα|μπορώ|μπορούμε).{0,35}(ραντεβού|συνάντηση|κλήση)/.test(value) ||
     /(ραντεβού|συνάντηση|κλήση).{0,35}(θέλω|θα ήθελα)/.test(value);
 
-  const asksAboutRefalcoProcess = /\b(?:does|do|how does|how do)\s+(?:rafa|refalco|your team|the team)\b/.test(value);
-  const asksHowToCall = /\bhow can i call (?:you|rafa|refalco|the team)\b/.test(value);
+  const asksAboutRefalcoProcess = /\b(?:does|do|how does|how do)\s+(?:rafa|business|your team|the team)\b/.test(value);
+  const asksHowToCall = /\bhow can i call (?:you|rafa|business|the team)\b/.test(value);
 
   return !asksAboutRefalcoProcess && !asksHowToCall && (english || arabic || greek);
 }
@@ -545,13 +545,13 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
     try {
       const changed = await changeAppointmentStatus({ store, appointmentId: user.booking.appointmentId, status: changeIntent, actor: "customer", now });
       const response = changeIntent === "cancelled"
-        ? (language === "arabic" ? "تم إلغاء موعدك مع ريفالكو." : language === "greek" ? "Το ραντεβού σας με τη Refalco ακυρώθηκε." : "Your Refalco appointment has been cancelled.")
+        ? (language === "arabic" ? "تم إلغاء موعدك مع الشركة." : language === "greek" ? "Το ραντεβού σας με τη the business ακυρώθηκε." : "Your the business appointment has been cancelled.")
         : (language === "arabic" ? `تم تحديث الطلب. أرسل اليوم والوقت الجديدين مع سبب مختصر، وسأطلب من الفريق مراجعتهما.` : language === "greek" ? "Το αίτημα ενημερώθηκε. Στείλτε νέα ημέρα, ώρα και σύντομο σκοπό, και θα ζητήσω από την ομάδα να το εξετάσει." : "I’ve updated your request. Send a new day, time, and brief purpose, and I’ll ask the team to review it.");
       return { response, event: null, appointment: changed };
     } catch (error) {
       const response = error.calendarChanged
-        ? (language === "arabic" ? "تم تحديث التقويم، لكن تعذر حفظ حالة الموعد في النظام. أبلغت فريق ريفالكو لمراجعة السجل." : language === "greek" ? "Το ημερολόγιο ενημερώθηκε, αλλά δεν ήταν δυνατή η αποθήκευση της κατάστασης του ραντεβού. Ενημέρωσα την ομάδα της Refalco να το ελέγξει." : "The calendar was updated, but I couldn’t save the appointment status. I’ve flagged it for the Refalco team to reconcile.")
-        : (language === "arabic" ? "تعذر تحديث الموعد في التقويم الآن، لذلك لم أغيّره. حاول مرة أخرى أو تواصل مع فريق ريفالكو." : language === "greek" ? "Δεν ήταν δυνατή η ενημέρωση του ραντεβού στο ημερολόγιο αυτή τη στιγμή, οπότε δεν άλλαξε. Δοκιμάστε ξανά ή επικοινωνήστε με τη Refalco." : "I couldn’t update the appointment in Google Calendar, so it has not been changed. Please try again or contact Refalco.");
+        ? (language === "arabic" ? "تم تحديث التقويم، لكن تعذر حفظ حالة الموعد في النظام. أبلغت فريق الشركة لمراجعة السجل." : language === "greek" ? "Το ημερολόγιο ενημερώθηκε, αλλά δεν ήταν δυνατή η αποθήκευση της κατάστασης του ραντεβού. Ενημέρωσα την ομάδα της the business να το ελέγξει." : "The calendar was updated, but I couldn’t save the appointment status. I’ve flagged it for the business team to reconcile.")
+        : (language === "arabic" ? "تعذر تحديث الموعد في التقويم الآن، لذلك لم أغيّره. حاول مرة أخرى أو تواصل مع فريق الشركة." : language === "greek" ? "Δεν ήταν δυνατή η ενημέρωση του ραντεβού στο ημερολόγιο αυτή τη στιγμή, οπότε δεν άλλαξε. Δοκιμάστε ξανά ή επικοινωνήστε με τη the business." : "I couldn’t update the appointment in Google Calendar, so it has not been changed. Please try again or contact the business.");
       return { response, event: null, error };
     }
   }
@@ -598,10 +598,10 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
     if (!details) {
       return {
         response: language === "arabic"
-          ? "أرسل تاريخًا ووقتًا واضحين، مثل الثلاثاء الساعة 10:30، مع سبب مختصر لاجتماع متعلق بريفالكو."
+          ? "أرسل تاريخًا ووقتًا واضحين، مثل الثلاثاء الساعة 10:30، مع سبب مختصر لاجتماع متعلق بالشركة."
           : language === "greek"
-            ? "Στείλτε μια σαφή ημερομηνία/ώρα και τον σκοπό, για παράδειγμα: Τρίτη 10:30 για να συζητήσουμε έργα της Refalco."
-            : "Please send a clear date/time and purpose, for example: Tuesday 10:30 to discuss Refalco projects.",
+            ? "Στείλτε μια σαφή ημερομηνία/ώρα και τον σκοπό, για παράδειγμα: Τρίτη 10:30 για να συζητήσουμε έργα της the business."
+            : "Please send a clear date/time and purpose, for example: Tuesday 10:30 to discuss the business projects.",
         event: null
       };
     }
@@ -744,10 +744,10 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
       });
       return {
         response: language === "arabic"
-          ? `تم إرسال طلب الموعد للمراجعة. سأرسل لك التفاصيل بعد تأكيده من فريق ريفالكو.`
+          ? `تم إرسال طلب الموعد للمراجعة. سأرسل لك التفاصيل بعد تأكيده من فريق الشركة.`
           : language === "greek"
-            ? `Το αίτημα ραντεβού σας στάλθηκε για έλεγχο. Θα σας στείλω τις λεπτομέρειες μόλις το επιβεβαιώσει η ομάδα της Refalco.`
-            : `Your appointment request has been sent for review. I’ll send the details once the Refalco team confirms it.`,
+            ? `Το αίτημα ραντεβού σας στάλθηκε για έλεγχο. Θα σας στείλω τις λεπτομέρειες μόλις το επιβεβαιώσει η ομάδα της the business.`
+            : `Your appointment request has been sent for review. I’ll send the details once the business team confirms it.`,
         event: null,
         appointment,
         details,
@@ -797,7 +797,7 @@ function extractBookingNameReply(text) {
   const value = raw.replace(/[.!،]+$/u, "").trim();
   const words = value.split(/\s+/u);
   if (!value || value.length > 60 || words.length > 2 || !/^[\p{L}][\p{L}'’-]*(?:\s+[\p{L}][\p{L}'’-]*)?$/u.test(value)) return null;
-  if (/^(?:i|im|i'm|dont|don't|no|not|need|want|what|how|why|where|when|who|refalco|company|business|service|services|price|cost|formation|meeting|appointment|hi|hello|hey|مرحبا|مرحبًا|أهلا|اهلا|سلام|شو|ماذا|ما|كيف|ليش|وين|متى|نعم|لا|مش|مو|بدي|اريد|أريد|شركة|خدمات|الخدمات|موعد|اجتماع|اليوم|غدا|بكرة|ευχαριστώ|όχι|δεν|θέλω|εταιρεία|υπηρεσίες)$/iu.test(value)) return null;
+  if (/^(?:i|im|i'm|dont|don't|no|not|need|want|what|how|why|where|when|who|business|company|business|service|services|price|cost|formation|meeting|appointment|hi|hello|hey|مرحبا|مرحبًا|أهلا|اهلا|سلام|شو|ماذا|ما|كيف|ليش|وين|متى|نعم|لا|مش|مو|بدي|اريد|أريد|شركة|خدمات|الخدمات|موعد|اجتماع|اليوم|غدا|بكرة|ευχαριστώ|όχι|δεν|θέλω|εταιρεία|υπηρεσίες)$/iu.test(value)) return null;
   return value;
 }
 
@@ -835,9 +835,9 @@ function bookingConfirmationMessage(start, policy, language = "english", meetLin
 }
 
 function calendarAccessFailure(language) {
-  if (language === "arabic") return "تعذر الوصول إلى تقويم ريفالكو حاليًا، لذلك لا يمكنني تأكيد المواعيد الآن. يُرجى التواصل مع فريق ريفالكو مباشرة.";
-  if (language === "greek") return "Δεν είναι δυνατή αυτή τη στιγμή η πρόσβαση στο ημερολόγιο της Refalco, οπότε δεν μπορώ να επιβεβαιώσω ραντεβού τώρα. Επικοινωνήστε απευθείας με την ομάδα της Refalco.";
-  return "REFAL cannot currently access Refalco's calendar, so I can't book an appointment right now. Please contact the Refalco team directly.";
+  if (language === "arabic") return "تعذر الوصول إلى تقويم الشركة حاليًا، لذلك لا يمكنني تأكيد المواعيد الآن. يُرجى التواصل مع فريق الشركة مباشرة.";
+  if (language === "greek") return "Δεν είναι δυνατή αυτή τη στιγμή η πρόσβαση στο ημερολόγιο της the business, οπότε δεν μπορώ να επιβεβαιώσω ραντεβού τώρα. Επικοινωνήστε απευθείας με την ομάδα της the business.";
+  return "REFAL cannot currently access the business's calendar, so I can't book an appointment right now. Please contact the business team directly.";
 }
 
 module.exports = {

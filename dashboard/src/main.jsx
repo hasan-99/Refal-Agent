@@ -371,7 +371,7 @@ function Login({ authState, mode, setMode, onAuthenticated, onResetComplete }) {
       <div className="auth-shell">
         <section className="auth-brand-panel">
           <img src={rafaLogo} alt="" />
-          <span className="auth-kicker">REFALCO WORKSPACE</span>
+          <span className="auth-kicker">the business WORKSPACE</span>
           <h1>Meet your work<br />with clarity.</h1>
           <p>One secure place for conversations, leads, knowledge, and bookings.</p>
           <div className="auth-brand-footer"><ShieldCheck size={15} /> Private team access</div>
@@ -745,7 +745,7 @@ function AgentSidebar({ role }) {
     {!collapsed && <button className="agent-backdrop" onClick={() => setCollapsed(true)} aria-label="Close REFAL chat" />}
     <aside className={collapsed ? "agent-rail collapsed" : "agent-rail"} role="dialog" aria-modal={!collapsed} aria-label="REFAL chat and tools">
       <div className="agent-rail-head">
-        <div className="agent-identity"><span className="agent-avatar"><img src={rafaLogo} alt="" /></span><span><strong>REFAL</strong><small>Refalco agent</small></span></div>
+        <div className="agent-identity"><span className="agent-avatar"><img src={rafaLogo} alt="" /></span><span><strong>REFAL</strong><small>the business agent</small></span></div>
         <div className="agent-head-actions">
           <button className="icon-button rail-toggle" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Open REFAL chat" : "Close REFAL chat"} title={collapsed ? "Open chat" : "Close chat"}>
             {collapsed ? <MessageCircle size={23} strokeWidth={2} /> : <X size={18} />}
@@ -812,7 +812,7 @@ function AgentSidebar({ role }) {
             <div className="agent-empty">
               <span className="agent-empty-mark"><img src={rafaLogo} alt="" /></span>
               <strong>What can I help with?</strong>
-              <span>Ask about approved Refalco information or get help with your inbox.</span>
+              <span>Ask about approved the business information or get help with your inbox.</span>
             </div>
           )}
           <div ref={chatEndRef} />
@@ -859,7 +859,7 @@ function AgentSidebar({ role }) {
       {section === "settings" && <section className="agent-settings agent-view">
         <div className="rail-section-title"><span>Agent settings</span></div>
         <form className="agent-model-form" onSubmit={saveAgentSettings}>
-          <label>OpenRouter model<input value={modelInput} onChange={(event) => setModelInput(event.target.value)} placeholder="inclusionai/ling-3.0-flash-sante:free" /></label>
+          <label>OpenRouter model<input value={modelInput} onChange={(event) => setModelInput(event.target.value)} placeholder="openai/gpt-6-luna" /></label>
           <button className="ghost" type="submit" disabled={!state.session || !modelInput.trim()}><Save size={15} /> Save model</button>
         </form>
         <label className="agent-memory-toggle"><input type="checkbox" checked={state.session?.memory_enabled !== false} disabled={!state.session} onChange={(event) => toggleSessionMemory(event.target.checked)} /> Use relevant saved memories in this chat</label>
@@ -1824,7 +1824,7 @@ function Bookings({ isAdmin }) {
             const safeMeetUrl = getSafeMeetUrl(booking.meetUrl);
             const pending = ["pending_review", "pending_calendar"].includes(booking.status);
             const purpose = String(booking.purpose || "").trim();
-            const purposeMissing = !purpose || purpose.toLowerCase() === "refalco meeting";
+            const purposeMissing = !purpose || purpose.toLowerCase() === "business meeting";
             const contactName = booking.name || (booking.phone === "Number hidden by WhatsApp" ? "WhatsApp contact" : booking.phone) || booking.userId || "Unknown contact";
             const identityDetail = booking.phone === "Number hidden by WhatsApp"
               ? `Number hidden by WhatsApp · ${booking.userId || "WhatsApp contact ID unavailable"}`
@@ -1838,7 +1838,7 @@ function Bookings({ isAdmin }) {
                 <div className="booking-record-when"><CalendarClock size={17} /><span><strong>{start || formatDate(booking.bookedAt)}</strong>{end && <small>{end} · {booking.timezone}</small>}</span></div>
                 <div className={`booking-record-purpose${purposeMissing ? " is-missing" : ""}`}><small>MEETING PURPOSE</small><p>{purposeMissing ? "Purpose not provided" : purpose}</p>{purposeMissing && <span>Ask the customer before confirming.</span>}</div>
               </div>
-              {pending && <div className="booking-pending-note"><Clock3 size={16} /><span><strong>{booking.status === "pending_review" ? "Waiting for Refalco review" : "Waiting for Google Calendar"}</strong><small>{booking.status === "pending_review" ? "The customer agreed to this time. It is not confirmed until an admin approves it." : "The booking is saved, but Google has not confirmed it yet."}</small></span></div>}
+              {pending && <div className="booking-pending-note"><Clock3 size={16} /><span><strong>{booking.status === "pending_review" ? "Waiting for the business review" : "Waiting for Google Calendar"}</strong><small>{booking.status === "pending_review" ? "The customer agreed to this time. It is not confirmed until an admin approves it." : "The booking is saved, but Google has not confirmed it yet."}</small></span></div>}
               {isAdmin && booking.status === "pending_review" && <div className="booking-policy-actions"><button className="primary" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "approve")}>{reviewing === booking.id ? "Saving…" : "Approve and confirm"}</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "reject")}>Reject and request another time</button></div>}
               {isAdmin && booking.status === "confirmed" && <div className="booking-policy-actions"><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "reschedule")}>Reschedule</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "cancel")}>Cancel appointment</button></div>}
               {booking.status === "rejected" && booking.reviewReason && <p className="booking-muted">Admin review note: {booking.reviewReason}</p>}

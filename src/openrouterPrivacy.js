@@ -2,16 +2,24 @@ const OPENROUTER_PRIVACY_POLICY = Object.freeze({
   data_collection: "deny",
   zdr: true
 });
-const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash";
-const DEFAULT_OPENROUTER_FALLBACK_MODEL = "qwen/qwen3.8-27b:free";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-6-luna";
+const DEFAULT_OPENROUTER_FALLBACK_MODEL = DEFAULT_OPENROUTER_MODEL;
 const LEGACY_OPENROUTER_MODELS = new Set([
   "inclusionai/ling-3.0-flash-sante:free",
-  "openrouter/free"
+  "openrouter/free",
+  "deepseek/deepseek-v4.1-flash",
+  "qwen/qwen3.8-27b:free"
 ]);
 
 function withOpenRouterPrivacyPolicy(payload) {
+  const compatible = { ...payload };
+  if (compatible.model === DEFAULT_OPENROUTER_MODEL) {
+    delete compatible.temperature;
+    delete compatible.top_p;
+    compatible.reasoning = { effort: "none", exclude: true };
+  }
   return {
-    ...payload,
+    ...compatible,
     provider: OPENROUTER_PRIVACY_POLICY
   };
 }

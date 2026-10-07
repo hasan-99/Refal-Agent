@@ -187,7 +187,7 @@ async function processTurn({ item, incoming, store, ragStore, modelEnabled, coun
       route.turn = saved.turn;
     }
   }
-  if (!response) response = "I couldn't produce a response just now. Please try again or use an approved Refalco contact channel.";
+  if (!response) response = "I couldn't produce a response just now. Please try again or use an approved the business contact channel.";
   const assessment = assessTurn({ incoming, response, language: item.locale, allowLanguageSwitch: item.allowLanguageSwitch, evidence, route, store, localOnly: item.localOnly });
   const operationalEvents = [
     ...(retrievalError ? [`rag_retrieval_error:${retrievalError}`] : []),

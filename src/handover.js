@@ -228,9 +228,9 @@ function separateCustomerAndInternalMessages({ customerMessage = "", internalMes
 // English text for an Arabic/Greek customer. Localized using the same
 // `language` value already threaded through to buildRefalLeadSummary.
 function defaultHandoverCustomerMessage(language) {
-  if (language === "arabic") return "شكرًا لك. شاركت هذا مع فريق ريفالكو المختص، وسيتابعون معك.";
-  if (language === "greek") return "Ευχαριστώ. Το μοιράστηκα με την αρμόδια ομάδα της Refalco, και θα επικοινωνήσουν μαζί σας.";
-  return "Thank you. I’ve shared this with the appropriate Refalco team, and they will follow up with you.";
+  if (language === "arabic") return "شكرًا لك. شاركت هذا مع فريق الشركة المختص، وسيتابعون معك.";
+  if (language === "greek") return "Ευχαριστώ. Το μοιράστηκα με την αρμόδια ομάδα της the business, και θα επικοινωνήσουν μαζί σας.";
+  return "Thank you. I’ve shared this with the appropriate the business team, and they will follow up with you.";
 }
 
 function createHandover({ input, customerMessage, customer, conversation, intent, intents, need, timing, value, authority, contact, language, notes, sharingScope } = {}) {

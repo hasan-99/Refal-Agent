@@ -92,12 +92,12 @@ test("owner business areas include infrastructure, technology, operations, and s
 
 test("business-scope questions are recognized as informational across English, Greek, and Arabic", () => {
   const paraphrases = [
-    "What business areas and platforms does Refalco focus on?",
-    "Which sectors and lines of business does Refalco operate in?",
-    "Σε ποιους επιχειρηματικούς τομείς και πλατφόρμες εστιάζει η Refalco;",
-    "Ποιους κλάδους καλύπτουν οι δραστηριότητες της Refalco;",
-    "ما مجالات العمل والمنصات التي تركز عليها ريفالكو؟",
-    "في أي قطاعات تعمل ريفالكو وما نطاق أعمالها؟"
+    "What business areas and platforms does the business focus on?",
+    "Which sectors and lines of business does the business operate in?",
+    "Σε ποιους επιχειρηματικούς τομείς και πλατφόρμες εστιάζει η the business;",
+    "Ποιους κλάδους καλύπτουν οι δραστηριότητες της the business;",
+    "ما مجالات العمل والمنصات التي تركز عليها الشركة؟",
+    "في أي قطاعات تعمل الشركة وما نطاق أعمالها؟"
   ];
 
   for (const text of paraphrases) {
@@ -110,9 +110,9 @@ test("business-scope questions are recognized as informational across English, G
 
 test("Greek company-activity questions remain informational when meetings are declined", () => {
   const paraphrases = [
-    "Μπορείτε να μου πείτε με τι ασχολείται η Refalco; Δεν θέλω ραντεβού ακόμη.",
-    "Με τι ασχολείται ο όμιλος Refalco; Δεν επιθυμώ συνάντηση προς το παρόν.",
-    "Τι δραστηριότητες έχει η Refalco; Δεν θέλω ραντεβού τώρα."
+    "Μπορείτε να μου πείτε με τι ασχολείται η the business; Δεν θέλω ραντεβού ακόμη.",
+    "Με τι ασχολείται ο όμιλος the business; Δεν επιθυμώ συνάντηση προς το παρόν.",
+    "Τι δραστηριότητες έχει η εταιρεία; Δεν θέλω ραντεβού τώρα."
   ];
 
   for (const text of paraphrases) {
@@ -142,7 +142,7 @@ test("questions about REFAL itself use a distinct agent-identity intent", () => 
     const result = detectIntent(text);
     assert.equal(result.primary, INTENTS.AGENT_IDENTITY, text);
   }
-  for (const text of ["What services does Refalco offer?", "ما خدمات ريفالكو؟", "Ποιες υπηρεσίες προσφέρει η Refalco;"]) {
+  for (const text of ["What services does the business offer?", "ما خدمات الشركة؟", "Ποιες υπηρεσίες προσφέρει η the business;"]) {
     const result = detectIntent(text);
     assert.notEqual(result.primary, INTENTS.AGENT_IDENTITY, text);
     assert.ok(result.intents.includes(INTENTS.SERVICES), text);

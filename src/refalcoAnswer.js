@@ -22,7 +22,7 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
   // the customer as prose. Keep only grounded declarative source sentences.
   const sentences = raw.split(/(?<=[.!؟?])\s+/u).filter((sentence) =>
     !/[؟?]/u.test(sentence) &&
-    !/(?:what services does|what does refalco offer|شو خدمات ريفالكو|ما هي الخدمات التي تقدمها|بدي اسجل شركة|طلب عن تأسيس الشركة|retrieval\s+query|search\s+query|customer\s+question|user\s+query)/iu.test(sentence)
+    !/(?:what services does|what does business offer|شو خدمات الشركة|ما هي الخدمات التي تقدمها|بدي اسجل شركة|طلب عن تأسيس الشركة|retrieval\s+query|search\s+query|customer\s+question|user\s+query)/iu.test(sentence)
   );
   const excerpt = sentences
     .filter((sentence) => allowPricing || !/(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|\b[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|(?:fee|price|package|باقة|السعر|رسوم(?:\s+التأسيس)?).{0,40}[\d٠-٩]|[\d٠-٩].{0,25}(?:يورو|دولار|جنيه))/iu.test(sentence))
@@ -74,9 +74,9 @@ function selectPricePassage(content) {
 }
 
 const EVIDENCE_QUERY_STOPWORDS = new Set([
-  "the", "and", "for", "with", "from", "that", "this", "what", "which", "where", "when", "does", "will", "would", "can", "could", "should", "have", "about", "tell", "please", "help", "need", "want", "you", "your", "company", "refalco", "refal", "information", "info", "more",
-  "ال", "في", "من", "على", "عن", "شو", "كيف", "وين", "متى", "هل", "ممكن", "بدي", "عندي", "عنا", "ما", "هي", "هو", "مع", "الى", "إلى", "ريفالكو", "ريفال", "الخدمات", "خدمات", "معلومات",
-  "και", "για", "από", "στο", "στη", "στην", "το", "τα", "της", "των", "τι", "πώς", "πού", "πότε", "είναι", "μπορεί", "μπορώ", "θέλω", "πληροφορίες", "refalco"
+  "the", "and", "for", "with", "from", "that", "this", "what", "which", "where", "when", "does", "will", "would", "can", "could", "should", "have", "about", "tell", "please", "help", "need", "want", "you", "your", "company", "business", "refal", "information", "info", "more",
+  "ال", "في", "من", "على", "عن", "شو", "كيف", "وين", "متى", "هل", "ممكن", "بدي", "عندي", "عنا", "ما", "هي", "هو", "مع", "الى", "إلى", "الشركة", "ريفال", "الخدمات", "خدمات", "معلومات",
+  "και", "για", "από", "στο", "στη", "στην", "το", "τα", "της", "των", "τι", "πώς", "πού", "πότε", "είναι", "μπορεί", "μπορώ", "θέλω", "πληροφορίες", "business"
 ]);
 
 function hasQuestionEvidenceOverlap(question, evidenceText) {
@@ -160,16 +160,16 @@ function containsProhibitedClaim(text) {
 // sentence/semicolon boundaries means an affirmative neighboring clause is
 // still checked by the normal prohibited-claim rules.
 function removeSafeDisclaimerClauses(text) {
-  const safeDisclaimer = /^(?:i|we|refalco)\s+(?:can(?:not|['’]t)|cannot|do not|don['’]t)\s+(?:provide|give|offer)\s+(?:personalized\s+|personalised\s+)?(?:tax|legal|immigration|investment|financial)\s+advice(?:\s+or\s+confirm\s+(?:a\s+)?tax\s+result)?[.!;]?$/iu;
-  const safeLegalStatusDisclaimer = /^(?:refalco|i|we)\s+(?:do not|don['’]t|does not|doesn['’]t)\s+provide\s+(?:information\s+about\s+)?(?:company\s+registration\s+or\s+)?legal[- ]status(?:\s+information)?[.!]?$/iu;
-  const safeOutcomeDisclaimer = /^(?:i|we|refalco)\s+(?:can(?:not|['’]t)|cannot|do not|don['’]t)\s+(?:guarantee|confirm|promise)\s+(?:that\s+)?(?:bank\s+approval|financing|a\s+loan outcome|a\s+tax result|a\s+permit(?:\s+(?:or\s+)?(?:licen[cs]e|planning))? outcome|(?:a\s+)?licen[cs]e outcome|(?:investment\s+)?returns?)(?:\s*;?\s*the\s+(?:bank|relevant authority)\s+decides)?[.!;]?$/iu;
-  const safeEnglishRegulatoryUncertainty = /^(?:i|we|refalco)\s+(?:can(?:not|['’]t)|cannot|do not|don['’]t)\s+(?:confirm|determine|verify)\s+(?:whether|if)\s+.{0,100}\b(?:permit|licen[cs]e|eligible|eligibility|approved|approval|regulated|tax result)\b[.!?]?$/iu;
+  const safeDisclaimer = /^(?:i|we|business)\s+(?:can(?:not|['’]t)|cannot|do not|don['’]t)\s+(?:provide|give|offer)\s+(?:personalized\s+|personalised\s+)?(?:tax|legal|immigration|investment|financial)\s+advice(?:\s+or\s+confirm\s+(?:a\s+)?tax\s+result)?[.!;]?$/iu;
+  const safeLegalStatusDisclaimer = /^(?:business|i|we)\s+(?:do not|don['’]t|does not|doesn['’]t)\s+provide\s+(?:information\s+about\s+)?(?:company\s+registration\s+or\s+)?legal[- ]status(?:\s+information)?[.!]?$/iu;
+  const safeOutcomeDisclaimer = /^(?:i|we|business)\s+(?:can(?:not|['’]t)|cannot|do not|don['’]t)\s+(?:guarantee|confirm|promise)\s+(?:that\s+)?(?:bank\s+approval|financing|a\s+loan outcome|a\s+tax result|a\s+permit(?:\s+(?:or\s+)?(?:licen[cs]e|planning))? outcome|(?:a\s+)?licen[cs]e outcome|(?:investment\s+)?returns?)(?:\s*;?\s*the\s+(?:bank|relevant authority)\s+decides)?[.!;]?$/iu;
+  const safeEnglishRegulatoryUncertainty = /^(?:i|we|business)\s+(?:can(?:not|['’]t)|cannot|do not|don['’]t)\s+(?:confirm|determine|verify)\s+(?:whether|if)\s+.{0,100}\b(?:permit|licen[cs]e|eligible|eligibility|approved|approval|regulated|tax result)\b[.!?]?$/iu;
   const safeArabic = /^(?:لا أستطيع|لا يمكنني|ما فيني|ما بقدر)\s+(?:تقديم|إعطاء)\s+(?:نصيحة|استشارة)\s+(?:ضريبية|قانونية|مالية|استثمارية)(?: شخصية)?(?:\s+أو\s+تأكيد\s+نتيجة ضريبية)?[.!؟]?$/u;
   const safeArabicOutcome = /^(?:لا أستطيع|لا يمكنني|ما فيني|ما بقدر)\s+(?:تأكيد|ضمان)\s+(?:نتيجة (?:الرخصة|التصريح|التخطيط|ضريبية)|(?:نتيجة )?موافقة البنك|الحصول على (?:رخصة|تصريح)|عوائد الاستثمار|نتيجة الرخصة أو التصريح أو التخطيط)(?:\s*؛?\s*(?:البنك|الجهة المختصة)\s+(?:هو من يقرر|تقرر))?[.!؟]?$/u;
   const safeArabicLegalStatus = /^لا\s+(?:أقدم|أوفر|أستطيع تقديم)\s+معلومات\s+عن\s+(?:تسجيل الشركات|الوضع القانوني|السجل التجاري)(?:\s+أو\s+(?:الوضع القانوني|تسجيل الشركات))?(?:\s+لها)?[.!؟]?$/u;
   const safeArabicRegulatoryUncertainty = /^(?:لا أستطيع|لا يمكنني|ما فيني|ما بقدر)\s+(?:تأكيد|أكد|تحديد|أتحقق)\s+(?:إذا|إن كان|ما إذا)?\s*.{0,100}(?:ترخيص|رخصة|مؤهل|مقبول|معتمد|خاضع للتنظيم|نتيجة ضريبية)[.!؟]?$/u;
-  const safeGreek = /^(?:δεν μπορώ|δεν μπορούμε|η refalco δεν μπορεί)\s+να\s+(?:παρέχω|παρέχουμε|παρέχει|δώσω|δώσουμε)\s+(?:εξατομικευμένη\s+)?(?:φορολογική|νομική|μεταναστευτική|επενδυτική|οικονομική)\s+συμβουλή(?:\s+ή\s+να\s+επιβεβαιώσω\s+φορολογικό\s+αποτέλεσμα)?[.!;]?$/iu;
-  const safeGreekOutcome = /^(?:δεν μπορώ|δεν μπορούμε|η refalco δεν μπορεί)\s+να\s+(?:εγγυηθώ|εγγυηθούμε|εγγυηθεί|επιβεβαιώσω|επιβεβαιώσουμε)\s+(?:την\s+)?(?:έγκριση τράπεζας|τραπεζική έγκριση|χρηματοδότηση|δάνειο|φορολογικό αποτέλεσμα|αποτέλεσμα (?:άδειας|πολεοδομικής έγκρισης)|αποτέλεσμα για άδεια ή πολεοδομική έγκριση|απόδοση επένδυσης)(?:\s*,?\s*(?:χρηματοδότηση|ή\s+δάνειο))?(?:\s*;?\s*η\s+(?:τράπεζα|αρμόδια αρχή)\s+αποφασίζει)?[.!;]?$/iu;
+  const safeGreek = /^(?:δεν μπορώ|δεν μπορούμε|η business δεν μπορεί)\s+να\s+(?:παρέχω|παρέχουμε|παρέχει|δώσω|δώσουμε)\s+(?:εξατομικευμένη\s+)?(?:φορολογική|νομική|μεταναστευτική|επενδυτική|οικονομική)\s+συμβουλή(?:\s+ή\s+να\s+επιβεβαιώσω\s+φορολογικό\s+αποτέλεσμα)?[.!;]?$/iu;
+  const safeGreekOutcome = /^(?:δεν μπορώ|δεν μπορούμε|η business δεν μπορεί)\s+να\s+(?:εγγυηθώ|εγγυηθούμε|εγγυηθεί|επιβεβαιώσω|επιβεβαιώσουμε)\s+(?:την\s+)?(?:έγκριση τράπεζας|τραπεζική έγκριση|χρηματοδότηση|δάνειο|φορολογικό αποτέλεσμα|αποτέλεσμα (?:άδειας|πολεοδομικής έγκρισης)|αποτέλεσμα για άδεια ή πολεοδομική έγκριση|απόδοση επένδυσης)(?:\s*,?\s*(?:χρηματοδότηση|ή\s+δάνειο))?(?:\s*;?\s*η\s+(?:τράπεζα|αρμόδια αρχή)\s+αποφασίζει)?[.!;]?$/iu;
   const safeGreekBankGuarantee = /^δεν μπορώ να εγγυηθώ τραπεζική έγκριση, χρηματοδότηση ή δάνειο[.!;]?$/iu;
   const safeGreekRegulatoryUncertainty = /^δεν μπορώ να (?:επιβεβαιώσω|καθορίσω|επαληθεύσω)\s+(?:αν|εάν)\s+.{0,100}(?:άδεια|έγκριση|επιλέξιμη|ρυθμιζόμενη|φορολογικό αποτέλεσμα)[.!;]?$/iu;
   return String(text || "").split(/(?<=[.!?؟;；])\s+/u).filter((clause) => {
@@ -184,13 +184,13 @@ function restrictedRefalcoReply(text) {
   const investment = /\b(?:investment\s+(?:advice|recommendations?|returns?|opportunities?)|financial advice|roi|irr|returns?|yield|profit guarantee)\b|استشارة استثمارية|نصيحة مالية|توصية استثمارية|عوائد (?:مضمونة|متوقعة)|العائد (?:المتوقع|المضمون)|عوائد الاستثمارية|عوائد استثمارية|ربح مضمون|επενδυτική συμβουλή|οικονομική συμβουλή|εγγυημένη απόδοση|κέρδος/iu.test(text);
   const legal = /\b(?:is|are|was|were|has been|have been)\s+(?:[\p{L}0-9'&.-]+\s+){0,4}(?:legally\s+)?registered\b|\b(?:registration number|company number|legal entity|company status|legal status|he\s*382352)\b|مسجل|مسجلة|السجل التجاري|كيان قانوني|الوضع القانوني|حالة الشركة|εγγεγραμ|νομική οντότητα/iu.test(text);
   if (investment) return arabic
-    ? "لا أستطيع تقديم معلومات عن الاستثمارات أو العوائد المالية أو النصائح المالية. يمكنني المساعدة بمعلومات أخرى معتمدة عن ريفالكو."
-    : language === "greek" ? "Η REFAL δεν παρέχει επενδυτικές πληροφορίες, οικονομικές αποδόσεις ή οικονομικές συμβουλές. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της Refalco."
-      : "REFAL cannot provide investment, financial-return, or financial-advice information. I can help with other approved Refalco information.";
+    ? "لا أستطيع تقديم معلومات عن الاستثمارات أو العوائد المالية أو النصائح المالية. يمكنني المساعدة بمعلومات أخرى معتمدة عن الشركة."
+    : language === "greek" ? "Η REFAL δεν παρέχει επενδυτικές πληροφορίες, οικονομικές αποδόσεις ή οικονομικές συμβουλές. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της the business."
+      : "REFAL cannot provide investment, financial-return, or financial-advice information. I can help with other approved the business information.";
   if (legal) return arabic
-    ? "لا أقدم معلومات عن تسجيل الشركات أو الوضع القانوني لها. يمكنني المساعدة بمعلومات أخرى معتمدة عن ريفالكو."
-    : language === "greek" ? "Η REFAL δεν παρέχει πληροφορίες για την εγγραφή ή το νομικό καθεστώς εταιρειών. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της Refalco."
-      : "REFAL does not provide company registration or legal-status information. I can help with other approved Refalco information.";
+    ? "لا أقدم معلومات عن تسجيل الشركات أو الوضع القانوني لها. يمكنني المساعدة بمعلومات أخرى معتمدة عن الشركة."
+    : language === "greek" ? "Η REFAL δεν παρέχει πληροφορίες για την εγγραφή ή το νομικό καθεστώς εταιρειών. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της the business."
+      : "REFAL does not provide company registration or legal-status information. I can help with other approved the business information.";
   const safety = classifySafety(text);
   return safety.restricted ? safeLocalizedFallback(text, language) : null;
 }

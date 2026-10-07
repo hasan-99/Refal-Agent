@@ -96,9 +96,9 @@ function resetCalendarEnv(t, configured) {
 
 test("[014-1] simple information request: RAG used, no booking/handover, <=1 question, EN/AR/EL", async () => {
   const CASES = {
-    english: { msg: "What services does Refalco provide?", answer: "Refalco provides company formation, accounting, and tax filing services in Cyprus." },
-    arabic: { msg: "شو الخدمات يلي بتقدمها ريفالكو؟", answer: "ريفالكو بتقدم خدمات تأسيس الشركات والمحاسبة وتقديم الإقرارات الضريبية في قبرص." },
-    greek: { msg: "Ποιες υπηρεσίες προσφέρει η Refalco;", answer: "Η Refalco προσφέρει υπηρεσίες σύστασης εταιρειών, λογιστικής και φορολογικών δηλώσεων στην Κύπρο." }
+    english: { msg: "What services does the business provide?", answer: "the business provides company formation, accounting, and tax filing services in Cyprus." },
+    arabic: { msg: "شو الخدمات يلي بتقدمها الشركة؟", answer: "الشركة بتقدم خدمات تأسيس الشركات والمحاسبة وتقديم الإقرارات الضريبية في قبرص." },
+    greek: { msg: "Ποιες υπηρεσίες προσφέρει η the business;", answer: "Η the business προσφέρει υπηρεσίες σύστασης εταιρειών, λογιστικής και φορολογικών δηλώσεων στην Κύπρο." }
   };
   for (const [locale, { msg, answer }] of Object.entries(CASES)) {
     // REFAL-AGENT-028: the new factual-grounding gate reads ONLY
@@ -280,13 +280,13 @@ test("[014-10] a booking request flows to pending-review in the customer's own l
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss Refalco services", confirm: "yes", expect: /appointment request has been sent for review/i },
-    arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات ريفالكو", confirm: "نعم", expect: /طلب الموعد للمراجعة/ },
+    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss the business services", confirm: "yes", expect: /appointment request has been sent for review/i },
+    arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات الشركة", confirm: "نعم", expect: /طلب الموعد للمراجعة/ },
     // normalizeArabicBookingText translates Arabic weekday words before
     // chrono parsing; no equivalent Greek word-normalizer exists yet (a
     // real, separate gap documented in the progress doc, not fixed here),
     // so the Greek fixture uses an explicit date chrono can parse directly.
-    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της Refalco", confirm: "ναι", expect: /αίτημα ραντεβού σας στάλθηκε για έλεγχο/ }
+    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της the business", confirm: "ναι", expect: /αίτημα ραντεβού σας στάλθηκε για έλεγχο/ }
   };
   for (const [locale, { start, details, confirm, expect }] of Object.entries(CASES)) {
     const user = { id: `booking-${locale}`, phone: "35799000000", profile: { name: "Test" }, booking: null };
@@ -320,8 +320,8 @@ test("[014-11] a calendar access failure never claims success, in the customer's
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { text: "I'd like to book a meeting", expect: /cannot currently access Refalco's calendar/i },
-    arabic: { text: "أريد حجز اجتماع", expect: /تعذر الوصول إلى تقويم ريفالكو/ },
+    english: { text: "I'd like to book a meeting", expect: /cannot currently access the business's calendar/i },
+    arabic: { text: "أريد حجز اجتماع", expect: /تعذر الوصول إلى تقويم الشركة/ },
     greek: { text: "Θέλω να κλείσω ραντεβού", expect: /Δεν είναι δυνατή αυτή τη στιγμή η πρόσβαση στο ημερολόγιο/ }
   };
   for (const [locale, { text, expect }] of Object.entries(CASES)) {
@@ -531,8 +531,8 @@ test("[014-24] the current message's language is authoritative each turn: EN->AR
 // --- 25. Mixed-language names / brands / technical terms ---------------------------------------
 
 test("[014-25] a brand/technical English term inside a normal Arabic/Greek sentence does not flip detected language", () => {
-  assert.equal(detectMessageLanguage("ريفالكو بتقدم خدمات تأسيس الشركات في قبرص عبر OpenRouter."), "arabic");
-  assert.equal(detectMessageLanguage("Η Refalco βρίσκεται στην Κύπρο και χρησιμοποιεί OpenRouter."), "greek");
+  assert.equal(detectMessageLanguage("الشركة بتقدم خدمات تأسيس الشركات في قبرص عبر OpenRouter."), "arabic");
+  assert.equal(detectMessageLanguage("Η the business βρίσκεται στην Κύπρο και χρησιμοποιεί OpenRouter."), "greek");
   // Documented limitation (not fixed here): a short reply DOMINATED by an
   // English clause/URL (more Latin script than Arabic/Greek script) can
   // still flip the majority-script vote — this is a known edge case flagged
@@ -564,10 +564,10 @@ test("[014-26] KNOWN BUG (deferred, not fixed in this ticket): complaint recap r
 
 test("[014-27] bare 'media'/'press'/'land'/'account' words do not force urgent/high priority, EN/AR/EL", () => {
   for (const text of [
-    "What social media accounts does REFALCO have?",
+    "What social media accounts does the business have?",
     "Is land available near Limassol?",
-    "شو حسابات السوشال ميديا تبع ريفالكو؟",
-    "Ποιοι λογαριασμοί μέσων κοινωνικής δικτύωσης έχει η REFALCO;"
+    "شو حسابات السوشال ميديا تبع الشركة؟",
+    "Ποιοι λογαριασμοί μέσων κοινωνικής δικτύωσης έχει η the business;"
   ]) {
     const result = assessPriority({ text });
     assert.equal(result.level, "normal", text);
@@ -661,7 +661,7 @@ test("[014-telemetry] questionSignalsFrom emits raw counts, not a semantic 'unne
 // --- handover default-message localization (small fix made in this ticket) ------------------------
 
 test("[014-fix] proposeHandover's default customer message is localized, not English-only, EN/AR/EL", () => {
-  for (const [language, expect] of [["arabic", /شاركت هذا مع فريق ريفالكو/], ["greek", /μοιράστηκα με την αρμόδια ομάδα/], ["english", /shared this with the appropriate Refalco team/]]) {
+  for (const [language, expect] of [["arabic", /شاركت هذا مع فريق الشركة/], ["greek", /μοιράστηκα με την αρμόδια ομάδα/], ["english", /shared this with the appropriate the business team/]]) {
     const handover = createHandover({ input: "please connect me to a specialist", language });
     assert.match(handover.messages.customerMessage, expect, language);
   }

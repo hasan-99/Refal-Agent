@@ -105,21 +105,26 @@ function buildMinimalDocx(paragraphText) {
   return Buffer.concat([localSection, centralDirectory, eocd]);
 }
 
-test("source URLs accept only approved HTTPS hosts and strip fragments", () => {
-  assert.equal(validateKnowledgeUrl("https://www.refalco.com/about#team").href, "https://www.refalco.com/about");
-  for (const value of ["http://refalco.com", "https://127.0.0.1", "https://example.com", "https://user:pass@refalco.com", "https://refalco.com:8443"]) {
+test("source URLs accept only explicitly configured HTTPS hosts and strip fragments", (t) => {
+  const previous = process.env.KNOWLEDGE_ALLOWED_HOSTS;
+  delete process.env.KNOWLEDGE_ALLOWED_HOSTS;
+  assert.throws(() => validateKnowledgeUrl("https://example.invalid/about"), /Only HTTPS/);
+  process.env.KNOWLEDGE_ALLOWED_HOSTS = "example.invalid";
+  t.after(() => { if (previous === undefined) delete process.env.KNOWLEDGE_ALLOWED_HOSTS; else process.env.KNOWLEDGE_ALLOWED_HOSTS = previous; });
+  assert.equal(validateKnowledgeUrl("https://example.invalid/about#team").href, "https://example.invalid/about");
+  for (const value of ["http://example.invalid", "https://127.0.0.1", "https://example.com", "https://user:pass@example.invalid", "https://example.invalid:8443"]) {
     assert.throws(() => validateKnowledgeUrl(value), /Only HTTPS/);
   }
 });
 
 test("extractor omits navigation and scripts while preserving page headings", () => {
-  const html = `<html><head><title>Refalco profile</title><script>internal noise</script></head><body>
+  const html = `<html><head><title>the business profile</title><script>internal noise</script></head><body>
     <nav>Navigation content that should never reach customers</nav><main><h1>Company overview</h1>
-    <p>Refalco develops and operates long-term projects across multiple company operating areas and markets.</p>
+    <p>the business develops and operates long-term projects across multiple company operating areas and markets.</p>
     <h2>Approach</h2><p>The company describes an integrated operating platform and a long-horizon approach for its projects.</p>
     </main><footer>Footer content excluded from the imported knowledge.</footer></body></html>`;
-  const result = extractKnowledgeText(html, "https://www.refalco.com/about");
-  assert.equal(result.title, "Refalco profile");
+  const result = extractKnowledgeText(html, "https://example.invalid/about");
+  assert.equal(result.title, "the business profile");
   assert.match(result.content, /Company overview/);
   assert.match(result.content, /Approach/);
   assert.doesNotMatch(result.content, /Navigation content|Footer content|internal noise/);
@@ -137,32 +142,32 @@ test("chunker emits ordered bounded chunks for long paragraphs", () => {
 // URL-scraper path tested above.
 
 test("TXT upload preserves English, Arabic, and Greek Unicode unchanged", async () => {
-  const text = "Refalco offers investment services.\nريفالكو تقدم خدمات استثمارية في قبرص وخارجها.\nΗ Refalco προσφέρει επενδυτικές υπηρεσίες σε πολλές χώρες.";
+  const text = "the business offers investment services.\nالشركة تقدم خدمات استثمارية في قبرص وخارجها.\nΗ the business προσφέρει επενδυτικές υπηρεσίες σε πολλές χώρες.";
   const result = await extractUploadedDocument({ buffer: Buffer.from(text, "utf8"), mimeType: "text/plain", filename: "notes.txt" });
-  assert.match(result.content, /Refalco offers investment services\./);
-  assert.match(result.content, /ريفالكو تقدم خدمات استثمارية/);
-  assert.match(result.content, /Η Refalco προσφέρει επενδυτικές υπηρεσίες/);
+  assert.match(result.content, /the business offers investment services\./);
+  assert.match(result.content, /الشركة تقدم خدمات استثمارية/);
+  assert.match(result.content, /Η the business προσφέρει επενδυτικές υπηρεσίες/);
   assert.equal(result.sourceFileType, "txt");
   assert.ok(result.chunks.length > 0);
 });
 
 test("PDF upload extracts real text content (English only — pdfkit's base-14 fonts cannot encode Arabic/Greek without an embedded font, so that is out of scope for this generated fixture)", async () => {
-  const buffer = await buildTestPdfBuffer("Refalco provides company formation and investment advisory services across Cyprus.");
+  const buffer = await buildTestPdfBuffer("the business provides company formation and investment advisory services across Cyprus.");
   const result = await extractUploadedDocument({ buffer, mimeType: "application/pdf", filename: "brochure.pdf" });
-  assert.match(result.content, /Refalco provides company formation/);
+  assert.match(result.content, /the business provides company formation/);
   assert.equal(result.sourceFileType, "pdf");
   assert.ok(result.chunks.length > 0);
 });
 
 test("DOCX upload extracts real text content from a hand-built, well-formed long document", async () => {
-  const paragraph = "Refalco DOCX knowledge ingestion test paragraph with enough length to clear the minimum extracted-text floor. ".repeat(2);
+  const paragraph = "the business DOCX knowledge ingestion test paragraph with enough length to clear the minimum extracted-text floor. ".repeat(2);
   const buffer = buildMinimalDocx(paragraph);
   const result = await extractUploadedDocument({
     buffer,
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     filename: "brief.docx"
   });
-  assert.match(result.content, /Refalco DOCX knowledge ingestion test paragraph/);
+  assert.match(result.content, /the business DOCX knowledge ingestion test paragraph/);
   assert.equal(result.sourceFileType, "docx");
   assert.ok(result.chunks.length > 0);
 });
