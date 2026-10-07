@@ -27,7 +27,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 const require = createRequire(import.meta.url);
 const { generateConversationReport } = require("../src/report.js");
 const { createStore } = require("../src/supabaseStore.js");
-const { embedText, embedTexts, normalizeOpenRouterUsage, DEFAULT_EMBEDDING_MODEL } = require("../src/ai.js");
+const { embedText, embedTexts, normalizeOpenRouterUsage, DEFAULT_EMBEDDING_MODEL, warmEmbeddingPipeline } = require("../src/ai.js");
 const { containsProhibitedClaim, restrictedRefalcoReply } = require("../src/refalcoAnswer.js");
 const { containsUnconsentedContactCommitment } = require("../src/responsePolicy.js");
 const { approvePendingAppointment, changeAppointmentStatus, formatBookingTime, hasCalendarConfig, hasOAuthCalendarCredentials, suggestAvailableTimes, verifyCalendarAccess } = require("../src/booking.js");
@@ -46,6 +46,18 @@ loadEnv(path.join(botRoot, ".env"));
 loadEnv(path.join(botRoot, ".env.rafa"));
 const store = createStore();
 const whatsappController = createWhatsAppController({ botRoot });
+
+// REFAL-ADMIN-KB — this process (the dashboard API) embeds knowledge saves
+// and searches with the same local transformers pipeline as src/bot.js, but
+// runs as a separate Node process with its own lazy-loaded singleton. Without
+// this warmup, the first knowledge save/search after every dashboard restart
+// pays the full model-load cost inline inside that HTTP request.
+const embeddingWarmStartedAt = performance.now();
+void warmEmbeddingPipeline().then(() => {
+  void logDashboardEvent("response_stage", { stage: "embedding_model_warmup", durationMs: Math.round(performance.now() - embeddingWarmStartedAt) });
+}).catch((error) => {
+  void logDashboardEvent("embedding_warmup_error", { message: String(error?.message || error).slice(0, 200) });
+});
 
 const app = express();
 const port = Number(process.env.DASHBOARD_PORT || 8787);
