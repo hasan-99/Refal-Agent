@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REFAL Brain — Plan Progress</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--card2:#1d212a;--line:#2b313d;--txt:#e6e9ef;
+        --dim:#9aa4b2;--faint:#6b7483;--done:#3fb950;--doing:#d29922;--todo:#4b5565;--acc:#5b9cf8}
+  @media (prefers-color-scheme: light){
+    :root{--bg:#f6f7f9;--card:#fff;--card2:#f0f2f5;--line:#dde1e8;--txt:#1b1f27;
+          --dim:#5a6472;--faint:#848d9b;--todo:#c2c9d4}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 18px 70px;background:var(--bg);color:var(--txt);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.4px}
+  .sub{color:var(--dim);font-size:13.5px;margin:0 0 22px}
+  .hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:18px}
+  .heroTop{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .heroPct{font-size:46px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .heroLbl{color:var(--dim);font-size:13px;text-transform:uppercase;letter-spacing:.8px}
+  .big{height:14px;border-radius:7px;background:var(--card2);overflow:hidden;margin:14px 0 4px;display:flex}
+  .big i{display:block;height:100%}
+  .big .d{background:var(--done)} .big .p{background:var(--doing)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--dim);font-size:12.5px;margin-top:8px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0 0}
+  .tile{background:var(--card2);border-radius:10px;padding:13px 15px}
+  .tile b{display:block;font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+  .tile span{color:var(--dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.7px}
+  .here{background:linear-gradient(135deg,rgba(91,156,248,.14),transparent);
+        border:1px solid var(--acc);border-radius:12px;padding:15px 18px;margin:18px 0}
+  .here .lbl{color:var(--acc);font-size:11.5px;text-transform:uppercase;letter-spacing:.9px;font-weight:700}
+  .here .what{font-size:17px;font-weight:600;margin-top:3px}
+  .ms{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:9px 0;overflow:hidden}
+  .ms[open]{border-color:var(--acc)}
+  .ms.done{opacity:.82}
+  summary{display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;list-style:none;user-select:none}
+  summary::-webkit-details-marker{display:none}
+  summary:hover{background:var(--card2)}
+  .mid{font-weight:800;font-size:13px;min-width:34px;color:var(--acc)}
+  .mtitle{flex:1;font-weight:600;font-size:14.5px}
+  .mcount{color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mbar{width:92px;height:7px;border-radius:4px;background:var(--card2);overflow:hidden;flex-shrink:0}
+  .mbar i{display:block;height:100%;background:var(--done);border-radius:4px}
+  .mpct{color:var(--dim);font-size:12px;min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+  .exit{margin:0 16px 4px;padding:9px 12px;background:var(--card2);border-radius:8px;
+        color:var(--dim);font-size:13px}
+  .phases{list-style:none;margin:4px 0 12px;padding:0 16px}
+  .phase{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;font-size:13.5px}
+  .phase:hover{background:var(--card2)}
+  .tick{width:15px;height:15px;border-radius:50%;flex-shrink:0;border:2px solid var(--todo)}
+  .phase.done .tick{background:var(--done);border-color:var(--done)}
+  .phase.doing .tick{border-color:var(--doing);background:repeating-linear-gradient(45deg,var(--doing),var(--doing) 2px,transparent 2px,transparent 4px)}
+  .pid{font-weight:700;font-size:12px;color:var(--faint);min-width:42px;font-variant-numeric:tabular-nums}
+  .ptitle{flex:1}
+  .phase.done .ptitle{color:var(--dim);text-decoration:line-through;text-decoration-color:var(--faint)}
+  .waves{color:var(--faint);font-size:11.5px;white-space:nowrap}
+  .pstatus{font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;
+           padding:2px 8px;border-radius:12px;white-space:nowrap}
+  .phase.done .pstatus{background:rgba(63,185,80,.16);color:var(--done)}
+  .phase.doing .pstatus{background:rgba(210,153,34,.16);color:var(--doing)}
+  .phase.todo .pstatus{background:var(--card2);color:var(--faint)}
+  .ctl{display:flex;gap:10px;margin:16px 0 6px}
+  button{background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:8px;
+         padding:7px 14px;font-size:13px;cursor:pointer;font-family:inherit}
+  button:hover{border-color:var(--acc)}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--faint);font-size:12px}
+  code{background:var(--card2);padding:2px 6px;border-radius:4px;font-size:12px;
+       font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>REFAL Brain — Plan Progress</h1>
+<p class="sub">Generated from <code>.planning/REFAL-BRAIN-MASTER-PLAN.md</code>. The plan is the only source of truth, so this page can never drift from it.</p>
+
+<div class="hero">
+  <div class="heroTop">
+    <span class="heroPct">1%</span>
+    <span class="heroLbl">complete &nbsp;·&nbsp; 1 of 83 phases</span>
+  </div>
+  <div class="big">
+    <i class="d" style="width:1.2048192771084338%"></i>
+    <i class="p" style="width:0%"></i>
+  </div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--done)"></i>Done 1</span>
+    <span><i class="dot" style="background:var(--doing)"></i>In progress 0</span>
+    <span><i class="dot" style="background:var(--todo)"></i>Not started 82</span>
+  </div>
+  <div class="tiles">
+    <div class="tile"><b>0/16</b><span>Milestones</span></div>
+    <div class="tile"><b>1/83</b><span>Phases</span></div>
+    <div class="tile"><b>112</b><span>Waves defined</span></div>
+    <div class="tile"><b>195</b><span>Requirements owned</span></div>
+  </div>
+</div>
+
+<div class="here">
+  <div class="lbl">▶ You are here</div>
+  <div class="what">P0.2 — Conflict register: MB vs code</div>
+</div>
+
+<div class="ctl">
+  <button onclick="document.querySelectorAll('.ms').forEach(d=>d.open=true)">Expand all</button>
+  <button onclick="document.querySelectorAll('.ms').forEach(d=>d.open=false)">Collapse all</button>
+</div>
+
+
+    <details class="ms doing" open>
+      <summary>
+        <span class="mid">M0</span>
+        <span class="mtitle">Baseline, Conflicts, Taxonomy</span>
+        <span class="mcount">1/4</span>
+        <span class="mbar"><i style="width:25%"></i></span>
+        <span class="mpct">25%</span>
+      </summary>
+      <p class="exit"><strong>Exit criteria.</strong> Verified state, a conflict register, a known defect register, a frozen knowledge taxonomy, and the golden evaluation set.</p>
+      <ul class="phases">
+        <li class="phase done">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P0.1</span>
+          <span class="ptitle">Truth baseline COMPLETE, see section 16</span>
+          
+          <span class="pstatus">Done</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P0.2</span>
+          <span class="ptitle">Conflict register: MB vs code</span>
+          <span class="waves">6 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P0.3</span>
+          <span class="ptitle">Reproduce the 13 known defects and assign each a repair</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P0.4</span>
+          <span class="ptitle">Taxonomy, ID scheme, and the Golden Evaluation Set</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M1</span>
+        <span class="mtitle">Rules: Identity, Persona, Humour, Golden Formula, Precedence</span>
+        <span class="mcount">0/7</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      <p class="exit"><strong>Exit criteria.</strong> REFAL&#39;s voice, humour calibration, answer shape, anti patterns and conflict resolution are implemented, synchronised across all surfaces, and tested in three languages. The prompt stays compact: stable rules only, reference content lives in retrieval (CX 5A).</p>
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.1</span>
+          <span class="ptitle">REFAL becomes Refalco&#39;s agent</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.2</span>
+          <span class="ptitle">Persona and the 10 roles</span>
+          <span class="waves">4 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.3</span>
+          <span class="ptitle">Humour Engine, levels 0 to 3</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.4</span>
+          <span class="ptitle">Golden Answer Formula and One Question Rule</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.5</span>
+          <span class="ptitle">Anti pattern guards</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.6</span>
+          <span class="ptitle">Policy precedence ladder NEW</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P1.7</span>
+          <span class="ptitle">Prompt surface synchronisation</span>
+          <span class="waves">9 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M2</span>
+        <span class="mtitle">Guardrail Reconciliation</span>
+        <span class="mcount">0/6</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      <p class="exit"><strong>Exit criteria.</strong> REFAL states every approved program fact while still refusing every personalized conclusion and every guarantee, in three languages, with no loss of existing protection.</p>
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P2.1</span>
+          <span class="ptitle">Claim classification taxonomy</span>
+          <span class="waves">4 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P2.2</span>
+          <span class="ptitle">Rewrite containsProhibitedClaim</span>
+          <span class="waves">6 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P2.3</span>
+          <span class="ptitle">Banking and payment gateway guard</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P2.4</span>
+          <span class="ptitle">Reservation deposit, ROI and VAT guards</span>
+          <span class="waves">3 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P2.5</span>
+          <span class="ptitle">AML, sanctions, compliance and the existing client boundary</span>
+          <span class="waves">6 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P2.6</span>
+          <span class="ptitle">Guardrail regression sweep</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M3</span>
+        <span class="mtitle">Knowledge Corpus + Fact Governance</span>
+        <span class="mcount">0/10</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      <p class="exit"><strong>Exit criteria.</strong> 87 sources live. Every MB module 2 fact is retrievable in the customer&#39;s language in the top 5, stated correctly end to end, and carries provenance metadata.</p>
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.1</span>
+          <span class="ptitle">Corporate domain (topics 1-8)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.2</span>
+          <span class="ptitle">Tax domain (topics 9-13)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.3</span>
+          <span class="ptitle">Banking and payment gateways (topic 14)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.4</span>
+          <span class="ptitle">Residency and Non Dom (topics 15-18) ⚠ highest guardrail risk, needs M2</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.5</span>
+          <span class="ptitle">Real estate (topics 19-22)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.6</span>
+          <span class="ptitle">Legal, IP, landowners, construction (topics 23-24)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.7</span>
+          <span class="ptitle">Company profile and credibility (topic 25)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.8</span>
+          <span class="ptitle">Jurisdiction comparisons (topics 26-29)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.9</span>
+          <span class="ptitle">Fact governance and approval register NEW — this is Rule 2</span>
+          <span class="waves">7 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P3.10</span>
+          <span class="ptitle">Ingestion pipeline and corpus health</span>
+          <span class="waves">7 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M4</span>
+        <span class="mtitle">Dynamic Data and Tools</span>
+        <span class="mcount">0/5</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      <p class="exit"><strong>Exit criteria.</strong> All six MB-DYN variables served from live tables through typed tools, with a test proving none appear as a literal in any prompt or chunk, and full failure state handling.</p>
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P4.1</span>
+          <span class="ptitle">Schema</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P4.2</span>
+          <span class="ptitle">Typed tools (CX 6A, 6B)</span>
+          <span class="waves">6 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P4.3</span>
+          <span class="ptitle">The &quot;never frozen&quot; enforcement test</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P4.4</span>
+          <span class="ptitle">Contract tests</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P4.5</span>
+          <span class="ptitle">Operator CRUD (hands off to M12)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M5</span>
+        <span class="mtitle">Sales Intelligence</span>
+        <span class="mcount">0/4</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P5.1</span>
+          <span class="ptitle">Cross sell hook matrix</span>
+          <span class="waves">4 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P5.2</span>
+          <span class="ptitle">Objection matrix</span>
+          <span class="waves">4 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P5.3</span>
+          <span class="ptitle">Jurisdiction benchmarking</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P5.4</span>
+          <span class="ptitle">Offer orchestration</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M6</span>
+        <span class="mtitle">Qualification and Executive Handoff</span>
+        <span class="mcount">0/6</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P6.1</span>
+          <span class="ptitle">The six dimension scorer</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P6.2</span>
+          <span class="ptitle">Tiers and action protocols</span>
+          <span class="waves">6 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P6.3</span>
+          <span class="ptitle">Instant buying signals</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P6.4</span>
+          <span class="ptitle">Executive Handoff Summary</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P6.5</span>
+          <span class="ptitle">Handover delivery and acknowledgment (CX 9C)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P6.6</span>
+          <span class="ptitle">Strategic escalation</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M7</span>
+        <span class="mtitle">Booking and Calendar</span>
+        <span class="mcount">0/5</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P7.1</span>
+          <span class="ptitle">Calendar readiness, built and shipped working</span>
+          <span class="waves">5 waves</span>
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P7.2</span>
+          <span class="ptitle">Booking state machine</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P7.3</span>
+          <span class="ptitle">Two choice offering flow</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P7.4</span>
+          <span class="ptitle">Conversation flow separation</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P7.5</span>
+          <span class="ptitle">Booking test suite</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M8</span>
+        <span class="mtitle">CRM Memory</span>
+        <span class="mcount">0/4</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P8.1</span>
+          <span class="ptitle">CRM schema</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P8.2</span>
+          <span class="ptitle">Extraction and normalisation (CX 7A)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P8.3</span>
+          <span class="ptitle">The never re-ask rule</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P8.4</span>
+          <span class="ptitle">Summaries, CRM sync, memory boundary</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M9</span>
+        <span class="mtitle">Follow up, Consent and Contact Policy</span>
+        <span class="mcount">0/4</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P9.1</span>
+          <span class="ptitle">Consent model</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P9.2</span>
+          <span class="ptitle">Opt out</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P9.3</span>
+          <span class="ptitle">Scheduler</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P9.4</span>
+          <span class="ptitle">Follow up test suite</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M10</span>
+        <span class="mtitle">Multilingual Parity</span>
+        <span class="mcount">0/5</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P10.1</span>
+          <span class="ptitle">Arabic</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P10.2</span>
+          <span class="ptitle">Greek</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P10.3</span>
+          <span class="ptitle">English</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P10.4</span>
+          <span class="ptitle">Trilingual glossary and transliteration</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P10.5</span>
+          <span class="ptitle">Parity measurement</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M11</span>
+        <span class="mtitle">Security, Privacy and Compliance</span>
+        <span class="mcount">0/4</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P11.1</span>
+          <span class="ptitle">Input and retrieval controls (CX 12A)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P11.2</span>
+          <span class="ptitle">Output and tool controls (CX 12B)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P11.3</span>
+          <span class="ptitle">Privacy, retention and routing (CX 12C)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P11.4</span>
+          <span class="ptitle">Red team round 1</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M12</span>
+        <span class="mtitle">Dashboard and Knowledge Admin</span>
+        <span class="mcount">0/4</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P12.1</span>
+          <span class="ptitle">Knowledge admin</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P12.2</span>
+          <span class="ptitle">Dynamic data admin</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P12.3</span>
+          <span class="ptitle">Operations dashboard</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P12.4</span>
+          <span class="ptitle">Human corrections</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M13</span>
+        <span class="mtitle">Scale and Reliability</span>
+        <span class="mcount">0/6</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P13.1</span>
+          <span class="ptitle">Concurrency</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P13.2</span>
+          <span class="ptitle">Shared rate limiting</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P13.3</span>
+          <span class="ptitle">Measured latency and cost (CX 15A)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P13.4</span>
+          <span class="ptitle">Resilience (CX 15B)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P13.5</span>
+          <span class="ptitle">Observability (CX 15C)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P13.6</span>
+          <span class="ptitle">Load test</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M14</span>
+        <span class="mtitle">Evaluation, Release and Independent Rollback</span>
+        <span class="mcount">0/6</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P14.1</span>
+          <span class="ptitle">Golden set scoring</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P14.2</span>
+          <span class="ptitle">Full workflow tests (CX 14C)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P14.3</span>
+          <span class="ptitle">Shadow mode</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P14.4</span>
+          <span class="ptitle">Red team round 2</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P14.5</span>
+          <span class="ptitle">Pre release checklist (CX 16A)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P14.6</span>
+          <span class="ptitle">Staged activation and independent rollback (CX 16B, 16C)</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+    <details class="ms todo" open>
+      <summary>
+        <span class="mid">M15</span>
+        <span class="mtitle">Life After Launch</span>
+        <span class="mcount">0/3</span>
+        <span class="mbar"><i style="width:0%"></i></span>
+        <span class="mpct">0%</span>
+      </summary>
+      <p class="exit"><strong>Exit criteria.</strong> A named knowledge owner and reviewer, a tested rollback, and a measurable freshness status.</p>
+      <ul class="phases">
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P15.1</span>
+          <span class="ptitle">New knowledge workflow</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P15.2</span>
+          <span class="ptitle">Feedback loop</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+        <li class="phase todo">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P15.3</span>
+          <span class="ptitle">Scheduled review</span>
+          
+          <span class="pstatus">Not started</span>
+        </li>
+      </ul>
+    </details>
+
+<footer>
+  Generated 2026-10-07 20:14 UTC · 16 milestones · 83 phases · 112 waves<br>
+  Regenerate after any plan update with <code>npm run plan:ui</code>, then refresh this page.<br>
+  Status marks come straight from the plan: <code>[ ]</code> not started · <code>[~]</code> in progress · <code>[x]</code> done.
+</footer>
+
+</div></body></html>

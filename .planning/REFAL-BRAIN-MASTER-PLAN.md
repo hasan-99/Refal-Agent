@@ -1,7 +1,9 @@
 # REFAL MASTER BRAIN — Merged Implementation Plan (v2)
 
 > **This file supersedes v1.** v1 is preserved in git history at commit `ce2559e`.
-> v2 merges the Claude plan with `newplan/Roadmap_from_codex.md`. Nothing from either was discarded.
+> v2 merges the Claude plan with the Codex roadmap. Nothing from either was discarded.
+> The Codex roadmap has been removed from the tree now that it is fully absorbed here; it is preserved in git history at commit `02fd58a` (`newplan/Roadmap_from_codex.md`).
+> **This is the only roadmap in the repository.**
 >
 > | | Score | Facts speakable day one | Phases executed |
 > | --- | --- | --- | --- |
@@ -19,7 +21,7 @@
 | --- | --- | --- |
 | **MB** | `newplan/Master Brain & Operating Rules Manual - REFAL AI.txt` | Business identity, knowledge, sales, qualification, CRM, compliance |
 | **AR** | `newplan/plan.txt` | Three layer architecture, language strategy, tables, hooks, developer sequence |
-| **CX** | `newplan/Roadmap_from_codex.md` | Operational governance, booking policy, consent, admin ops, release, maintenance |
+| **CX** | Codex roadmap, merged in and removed; in git history at `02fd58a` | Operational governance, booking policy, consent, admin ops, release, maintenance |
 | **EX** | [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.md) | Deep extraction of MB + AR into **183 stable requirement IDs** and the **12 blocker register** |
 | **BL** | [`docs/brain/SURFACE-AND-GATE-INVENTORY.md`](../docs/brain/SURFACE-AND-GATE-INVENTORY.md) | Executed P0.1 baseline: 14 surfaces, 16 gates, 670 test green |
 
@@ -93,7 +95,22 @@ Merged from Claude G1-G5 and CX section 2.2. No phase starts until the previous 
 - [ ] Every test in `package.json#scripts.test` still passes.
 - [ ] No secret value printed in any log, report, or this file.
 
-### 0.3 Safe automation boundary (CX 2.3)
+### 0.3 Database change protocol — BOSS runs every migration
+
+**This environment has no Supabase access.** Confirmed working rule, set by BOSS 2026-10-07.
+
+| | Rule |
+| --- | --- |
+| **I never execute** | No `UPDATE`, `INSERT`, `DELETE`, or DDL against any Supabase project, ever. Not even in a phase gate. |
+| **I write** | Every schema or data change becomes a numbered, reviewed `.sql` file in `supabase/migrations/`, following the existing conventions exactly: RLS enabled, `revoke` from `public`/`anon`/`authenticated`, `grant` to `service_role`, `security invoker` functions with `set search_path = ''`, `set_rafa_updated_at` trigger. |
+| **Each file is self contained** | Forward migration plus a `-- ROLLBACK:` comment block at the end holding the exact reverse statements. Safe to run twice (`if not exists`, `drop ... if exists` before create). |
+| **BOSS runs them** | One at a time, in the numbered order of section 20, whenever BOSS chooses. Nothing is batch applied behind your back. |
+| **Gate impact** | Any G2 check that needs the database is marked **`PENDING DB`** in the Result block, never claimed as passing. Code and tests that do not touch the database still run and still report a real exit code. |
+| **Read only checks** | If Supabase access ever becomes available here, inspection is `SELECT` and `INFORMATION_SCHEMA` only. Never a write. |
+
+> Related: the McAfee proxy returns 407 for Supabase, so even read access needs `HTTP_PROXY` unset. See `scripts/inspectSupabaseReadOnly.ps1` for the read only inspection path.
+
+### 0.4 Safe automation boundary (CX 2.3)
 
 "Auto fix" means safe code, prompt, schema, test or knowledge changes **in the working branch**. It never means: sending a customer message, creating a real appointment, changing an external account, exposing a credential, or deploying/restarting production.
 
@@ -1265,3 +1282,45 @@ node --test src/<module>.test.js
 ```
 
 **Honest closing note.** This is a build plan, not a completion claim. REFAL is called ready only when section 16's ledger shows every gate passed with a real exit code, and all 195 requirements have linked evidence. That is a quality bar, not a dependency. Nothing in this plan waits on anyone.
+
+---
+
+## 20. Migration run order — BOSS executes these, one at a time
+
+**I write these files. I never run them.** Each is self contained, idempotent, and carries its own `-- ROLLBACK:` block. Run them in this order; each one is safe to run on its own and the agent keeps working without it (the matching capability simply reports "not available" until its migration is applied).
+
+| # | Migration | Creates / changes | Written in | Needed before | Status |
+| --- | --- | --- | --- | --- | --- |
+| **MIG-01** | `refal_fact_register` | Per fact provenance: claim, source, type, jurisdiction, reviewer, `verified_at`, `effective_from`, `expiry_or_review_at`, approved languages, status. Plus the `expired` and `blocked` behaviour hooks | **P3.9** | REFAL stating any number with provenance | `[ ]` |
+| **MIG-02** | `refal_offers_and_pricing` | The €999 package and any promotion, with `valid_from` / `valid_until` / `active` | **P4.1** | the live price, `ACTIVE_PROMOTIONS` | `[ ]` |
+| **MIG-03** | `refal_annual_renewal_fees` | Secretary, address, accounting, audit, tax renewals | **P4.1** | `ANNUAL_RENEWAL_FEES` | `[ ]` |
+| **MIG-04** | `refal_property_inventory` | Units, city, type, status, price, `first_sale`, `pr_eligible`, availability | **P4.1** | `LIVE_PROPERTY_INVENTORY` | `[ ]` |
+| **MIG-05** | `refal_reservation_rules` | Deposit amount or percent, refundable, conditions per project | **P4.1** | `RESERVATION_DEPOSIT_RULES`, the P2.4 guard | `[ ]` |
+| **MIG-06** | `refal_government_fees` | Registry, land registry, residency application fees | **P4.1** | `GOVERNMENT_THIRD_PARTY_FEES` | `[ ]` |
+| **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | `[ ]` |
+| **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | `[ ]` |
+| **MIG-09** | `refal_consent` | What, when, language, channel, purpose, scope, source turn, opt out state | **P9.1** | any follow up or outbound action | `[ ]` |
+| **MIG-10** | booking state extensions | The 7 state machine on `rafa_appointments`, notice window, timezone fields | **P7.2** | real bookings | `[ ]` |
+| **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | `[ ]` |
+| **MIG-12** | `refal_compliance_events` + `refal_identity_verification` | AML and sanctions escalation records, one time code verification state | **P2.5** | compliance escalation, existing client unlock | `[ ]` |
+| **MIG-13** | `refal_rate_limits` | Shared counters replacing in process memory | **P13.2** | FIX fix 11, surviving a restart | `[ ]` |
+| **MIG-14** | audit extensions | Append only events for consent, score change, human correction, booking confirmation, sensitive access | **P12.4** | dashboard corrections and audit | `[ ]` |
+
+### How a migration reaches you
+
+```
+ I author the .sql in supabase/migrations/   →   it is committed with its phase
+            │
+            ▼
+ I post the SQL in the phase Result block, in a fenced code block,
+ with what it creates and what it rolls back
+            │
+            ▼
+ YOU run it when you choose, one at a time
+            │
+            ▼
+ You tell me it is applied   →   I tick its row here   →   I run the
+ database dependent G2 checks that were marked PENDING DB
+```
+
+**Nothing waits on this.** Every phase ships its code, its tests and its non database verification regardless. A missing migration only means the matching capability truthfully reports "not available" instead of inventing data, which is the behaviour the plan already requires.
