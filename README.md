@@ -29,7 +29,7 @@
 - Helps the team review conversations, leads, handovers, knowledge, bookings, and operational activity in the dashboard.
 - Supports consent-based specialist handovers, appointment requests, scheduled follow-ups, monthly reports, and connection alerts when their required configuration is available.
 
-REFAL is designed to **help first**. It answers the current question where evidence permits, asks only the next useful question, and avoids pushing a meeting or collecting details prematurely. The canonical customer-facing rules are in [`config/refal-agent-rules.md`](config/refal-agent-rules.md).
+REFAL is designed to **help first**. It answers the current question where evidence permits, asks only the next useful question, and avoids pushing a meeting or collecting details prematurely. The canonical customer-facing rules are in [`config/refal-agent-rules.md`](config/refal-agent-rules.md). The full owner-supplied source report is preserved at [`newplan/Master Brain & Operating Rules Manual - REFAL AI.txt`](newplan/Master Brain & Operating Rules Manual - REFAL AI.txt) for agent reference; its business facts are not customer-approved until they pass the approved-knowledge workflow. The implementation prompt and developer action plan are in [`newplan/plan.txt`](newplan/plan.txt), and the project roadmap is in [`newplan/Roadmap_from_codex.md`](newplan/Roadmap_from_codex.md).
 
 ## 🤝 Conversation principles
 

@@ -16,4 +16,4 @@ This repository implements a configurable business assistant. No company identit
 
 Keep the WhatsApp, dashboard, and Supabase Edge Function prompts aligned. Update tests when prompt contracts change, run the relevant test suites, and do not weaken existing privacy, approved-knowledge, or appointment safeguards.
 
-The canonical business rules are in `config/refal-agent-rules.md`; the original source supplied by the owner is outside this repository and must not be overwritten.
+The full owner-supplied source report is preserved in `newplan/Master Brain & Operating Rules Manual - REFAL AI.txt`, and the implementation prompt and developer action plan are in `newplan/plan.txt`. The project roadmap is in `newplan/Roadmap_from_codex.md`. Treat these as the source materials for REFAL agent identity, operating guidance, and intended architecture. `config/refal-agent-rules.md` contains the repository's operational behavior rules. The source documents are reference material, not automatically approved customer-facing knowledge; business facts must still follow the approved-knowledge workflow.
