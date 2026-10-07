@@ -14,6 +14,8 @@ This repository implements a configurable business assistant. No company identit
 
 ## Change discipline
 
+Before Supabase inspection, edits, migrations, removals, or Edge Function deployments, read `SUPABASE-ACCESS-GUIDE.md` for this PC's verified Windows proxy authentication flow and its verification limits. The reusable connection example is `scripts/inspectSupabaseReadOnly.ps1`; persistent troubleshooting notes are indexed in `.skyops/knowledge/INDEX.md`.
+
 Keep the WhatsApp, dashboard, and Supabase Edge Function prompts aligned. Update tests when prompt contracts change, run the relevant test suites, and do not weaken existing privacy, approved-knowledge, or appointment safeguards.
 
 The full owner-supplied source report is preserved in `newplan/Master Brain & Operating Rules Manual - REFAL AI.txt`, and the implementation prompt and developer action plan are in `newplan/plan.txt`. The single authoritative project roadmap is `.planning/REFAL-BRAIN-MASTER-PLAN.md`, with its requirement extraction in `docs/brain/SOURCE-ANALYSIS.md`. Treat these as the source materials for REFAL agent identity, operating guidance, and intended architecture. `config/refal-agent-rules.md` contains the repository's operational behavior rules. The source documents are reference material, not automatically approved customer-facing knowledge; business facts must still follow the approved-knowledge workflow.
