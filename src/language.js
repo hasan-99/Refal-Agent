@@ -33,7 +33,7 @@ function detectExplicitLanguageRequest(text) {
   const value = String(text || "").normalize("NFKC");
   if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?greek\b|\bgreek\s+(?:please|instead|from now on)\b|στα\s+ελληνικά|στα\s+ελληνικα|να\s+συνεχίσουμε\s+στα\s+ελληνικά/iu.test(value)) return "greek";
   if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?arabic\b|\barabic\s+(?:please|instead|from now on)\b|بالعربي|باللغة\s+العربية|نحكي\s+عربي|نكمل\s+عربي|رد\s+عربي/iu.test(value)) return "arabic";
-  if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?english\b|\benglish\s+(?:please|instead|from now on)\b|στα\s+αγγλικά|στα\s+αγγλικα|στα\s+αγγλικά/iu.test(value)) return "english";
+  if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?english\b|\benglish\s+(?:please|instead|from now on)\b|στα\s+αγγλικά|στα\s+αγγλικα|(?:بتحكي|بتحكوا|تحكي|تحكوا|بتتكلم|بتتكلموا|تتكلم|تتكلموا|بتحكيلي|احكي|تكلم)\s+(?:بال)?(?:إنجليزي|انجليزي|إنكليزي|انكليزي|الإنجليزية|الانجليزية)|(?:هل\s+)?(?:تجيد|بتعرف|تعرف)\s+(?:اللغة\s+)?(?:الإنجليزية|الانجليزية|إنجليزي|انجليزي|إنكليزي|انكليزي)|μιλά(?:ς|τε)\s+αγγλικά/iu.test(value)) return "english";
   return null;
 }
 

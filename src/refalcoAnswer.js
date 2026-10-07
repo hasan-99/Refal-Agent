@@ -7,8 +7,14 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
   const isPriceEvidence = (item) => /(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|\b[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|(?:fee|price|package|باقة|السعر|رسوم).{0,40}[\d٠-٩])/iu.test(String(item?.content || ""));
   const priceEvidence = evidence.filter(isPriceEvidence);
   if (((asksWhetherPriceIsCurrent || allowPricing) && !priceEvidence.length) || ((asksWhetherPriceIsCurrent || allowPricing) && priceEvidence.some((item) => !item?.valid_until || Date.parse(item.valid_until) <= Date.now() || item.review_status !== "approved"))) return null;
-  const source = asksWhetherPriceIsCurrent || allowPricing ? priceEvidence[0] : evidence[0];
-  const raw = String(source.content || "")
+  const selectedPrice = asksWhetherPriceIsCurrent || allowPricing
+    ? priceEvidence.map((item, index) => ({ item, index, passage: selectPricePassage(String(item.content || "")) }))
+      .sort((left, right) => right.passage.score - left.passage.score || left.index - right.index)[0]
+    : null;
+  const source = selectedPrice?.item || evidence[0];
+  const sourceContent = String(source.content || "");
+  const focusedPricePassage = selectedPrice?.passage?.text || "";
+  const raw = String((asksWhetherPriceIsCurrent || allowPricing) ? focusedPricePassage : sourceContent)
     .replace(/\b(?:retrieval\s+query|search\s+query|customer\s+question|user\s+query|query)\s*[:=].*$/iu, "")
     .replace(/\s+/g, " ").trim();
   // Some imported chunks include retrieval phrases to help Arabic lexical
@@ -40,6 +46,31 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
     answer,
     citations
   };
+}
+
+function selectPricePassage(content) {
+  const blocks = String(content || "").split(/\n\s*\n/gu).map((block) => block.replace(/\s+/gu, " ").trim()).filter(Boolean);
+  const priceClaim = /(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|\b[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?|يورو|دولار|جنيه)\b)/iu;
+  const unsafeExample = /^(?:❌|wrong\b|incorrect\b|خطأ\b)|(?:لا تقول|do not say|don['’]t say|μην πείτε)/iu;
+  const candidates = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (!priceClaim.test(block) || unsafeExample.test(block)) continue;
+    const previous = blocks[index - 1] || "";
+    if (unsafeExample.test(previous)) continue;
+    let score = 1;
+    if (/(?:current|published|price|fee|package|formation|setup|عرض|السعر|تكلفة|رسوم|تأسيس|τιμή|κόστος|πακέτ)/iu.test(block)) score += 4;
+    if (block.length <= 100) score += 3;
+    if (/(?:current|published|price|fee|package|formation|setup|عرض|السعر|تكلفة|رسوم|تأسيس|τιμή|κόστος|πακέτ)/iu.test(previous)) score += 2;
+    if (/[?؟]/u.test(block)) score -= 5;
+    if (/(?:غالي|رخيص|expensive|cheap|ακριβ)/iu.test(block)) score -= 4;
+    const prefix = block.length <= 100 && previous.length <= 100 && /(?:current|published|price|fee|package|عرض|السعر|تكلفة|رسوم|τιμή|κόστος|πακέτ)/iu.test(previous)
+      ? `${previous}: `
+      : "";
+    candidates.push({ score, index, text: `${prefix}${block}` });
+  }
+  candidates.sort((left, right) => right.score - left.score || left.index - right.index);
+  return candidates[0] || { score: Number.NEGATIVE_INFINITY, index: -1, text: "" };
 }
 
 const EVIDENCE_QUERY_STOPWORDS = new Set([

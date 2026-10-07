@@ -194,6 +194,8 @@ export function normalizeKnowledgeContent(value) {
 
 export function chunkKnowledge(content, sections = []) {
   const paragraphs = sections.length ? sections : normalizeKnowledgeContent(content).split(/\n\s*\n/).map((paragraph) => ({ heading: "", content: paragraph }));
+  const maxChunkChars = 1800;
+  const preferredMinimumSplit = 700;
   const output = [];
   let heading = "";
   let buffer = "";
@@ -202,20 +204,37 @@ export function chunkKnowledge(content, sections = []) {
     output.push({ chunk_index: output.length, heading, content: buffer.trim(), metadata: {} });
     buffer = "";
   };
-  for (const section of paragraphs) {
-    heading = section.heading || heading;
-    let text = section.content;
-    while (text.length > 7000) {
-      const splitAt = text.lastIndexOf(" ", 7000);
-      const boundary = splitAt > 3000 ? splitAt : 7000;
-      const part = text.slice(0, boundary);
-      if (buffer.length + part.length > 6500) flush();
-      buffer += `${buffer ? "\n\n" : ""}${part}`;
-      flush();
-      text = text.slice(boundary).trim();
+  const splitLongText = (value) => {
+    const parts = [];
+    let remaining = String(value || "").trim();
+    while (remaining.length > maxChunkChars) {
+      const window = remaining.slice(0, maxChunkChars + 1);
+      const sentenceEnds = [...window.matchAll(/[.!?؟。！？](?:\s+|$)/gu)];
+      const sentenceBoundary = sentenceEnds.map((match) => match.index + match[0].length).filter((index) => index >= preferredMinimumSplit).at(-1) || -1;
+      const lineBoundary = window.lastIndexOf("\n");
+      const wordBoundary = window.lastIndexOf(" ");
+      const boundary = sentenceBoundary > 0
+        ? sentenceBoundary
+        : lineBoundary >= preferredMinimumSplit
+          ? lineBoundary
+          : wordBoundary >= preferredMinimumSplit
+            ? wordBoundary
+            : maxChunkChars;
+      parts.push(remaining.slice(0, boundary).trim());
+      remaining = remaining.slice(boundary).trim();
     }
-    if (buffer.length + text.length > 6500) flush();
-    buffer += `${buffer ? "\n\n" : ""}${text}`;
+    if (remaining) parts.push(remaining);
+    return parts;
+  };
+  for (const section of paragraphs) {
+    const nextHeading = section.heading || heading;
+    if (buffer && nextHeading !== heading) flush();
+    heading = nextHeading;
+    for (const part of splitLongText(section.content)) {
+      const separatorLength = buffer ? 2 : 0;
+      if (buffer && buffer.length + separatorLength + part.length > maxChunkChars) flush();
+      buffer += `${buffer ? "\n\n" : ""}${part}`;
+    }
   }
   flush();
   return output.slice(0, 500);
