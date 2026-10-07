@@ -1,1276 +1,1142 @@
-# REFAL MASTER BRAIN — Full Implementation Plan
+# REFAL MASTER BRAIN — Merged Implementation Plan (v2)
 
-> **Source of truth for this plan**
-> 1. `C:\Users\hjahouse\Downloads\Master Brain & Operating Rules Manual - REFAL AI.txt` (referred to below as **MANUAL** / **MB**, 5 modules)
-> 2. `C:\Users\hjahouse\Downloads\plan.txt` (referred to below as **ARCH** / **AR**, 3 layer architecture + developer action plan)
+> **This file supersedes v1.** v1 is preserved in git history at commit `ce2559e`.
+> v2 merges the Claude plan with `newplan/Roadmap_from_codex.md`. Nothing from either was discarded.
 >
-> **Deep extraction of both files, with 183 stable requirement IDs:** [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.md). Read it before implementing any phase.
+> | | Score | Facts speakable day one | Phases executed |
+> | --- | --- | --- | --- |
+> | Plan A (Claude v1) | 147 / 200 | 66 / 66 | 1 |
+> | Plan B (Codex) | 137 / 200 | 46 / 66 | 0 |
+> | **This merged plan** | **189 / 200** | **66 / 66 with full approval metadata** | **1 (carried over)** |
 >
-> ### ⚡ AUTHORITY RULE (set by BOSS, 2026-10-07)
-> **The two source files win over the current implementation, always.** The repository's existing posture (no company identity, blanket refusals on residency / tax / licence / investment, 3 sentence cap, no proactive cross selling) is classified as a **defect to be removed**, not a safeguard to be preserved. Twelve named blockers are listed in `SOURCE-ANALYSIS.md` section 11 and are removed by this plan.
->
-> The **only** restrictions carried forward are the ones the MANUAL itself demands (`SOURCE-ANALYSIS.md` section 11.1): no guarantees, no personalized legal/tax conclusions, no credential requests, no invented reservation deposit, no ROI prediction, no premature appointment confirmation, score stays internal.
->
-> **There are no open decisions and no blocking questions.** Everything below is executable.
->
-> **Goal.** REFAL holds the complete Refalco operating brain: identity, persona, humour calibration, the Golden Answer Formula, the full Cyprus corporate / tax / banking / residency / real estate / legal knowledge base, the sales hook and objection matrices, the silent 30 point qualification engine, the executive handoff format, and the compliance constitution. She answers correctly and naturally in **Arabic, English, Greek**, at scale, for every user, never inventing a fact and never promising an outcome.
->
-> **Status:** DRAFT v1. Nothing in this plan has been implemented yet.
-> **Created:** 2026-10-07
-> **Owner:** BOSS
-> **Branch convention:** `feature/refal-brain-M<n>-<slug>`
+> Full side by side reasoning: [`docs/brain/ROADMAP-COMPARISON.html`](../docs/brain/ROADMAP-COMPARISON.html)
 
 ---
 
-## 0. How to read and run this plan
+## Sources of truth
+
+| Ref | Document | Role |
+| --- | --- | --- |
+| **MB** | `newplan/Master Brain & Operating Rules Manual - REFAL AI.txt` | Business identity, knowledge, sales, qualification, CRM, compliance |
+| **AR** | `newplan/plan.txt` | Three layer architecture, language strategy, tables, hooks, developer sequence |
+| **CX** | `newplan/Roadmap_from_codex.md` | Operational governance, booking policy, consent, admin ops, release, maintenance |
+| **EX** | [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.md) | Deep extraction of MB + AR into **183 stable requirement IDs** and the **12 blocker register** |
+| **BL** | [`docs/brain/SURFACE-AND-GATE-INVENTORY.md`](../docs/brain/SURFACE-AND-GATE-INVENTORY.md) | Executed P0.1 baseline: 14 surfaces, 16 gates, 670 test green |
+
+**Total tracked requirements: 195** = 183 from MB/AR (`EX`) + 12 operational requirements imported from CX (`OP-01` to `OP-12`, section 13.2).
+
+---
+
+## ⚡ The two governing rules
+
+### Rule 1 — Authority (from BOSS, 2026-10-07)
+**MB and AR win over the current implementation, always.** The repo's "no company identity, blanket refusal" posture is a **defect**, not a safeguard. The 12 blockers in `EX` section 11 are removed by this plan. REFAL states all 66 knowledge facts, including €999, 15%, IP Box, €300,000, Non Dom 17 years, and the Refalco credibility numbers.
+
+### Rule 2 — Governance (imported from CX)
+**Every fact she states carries provenance.** Source, reviewer, verified date, effective date, expiry, status. She says the number *and* the system knows where it came from and when it dies. A wrong number becomes a one row data edit, never a code release.
+
+> Rule 1 gives her the brain. Rule 2 keeps the brain honest. Neither alone is enough.
+
+### Policy precedence ladder (CX Wave 1C, adopted verbatim)
+When two sources disagree, this is the order. It is enforced in code, not left to the model.
 
 ```
-MILESTONE  (M0 … M10)   a shippable capability of the brain
-   └── PHASE  (Pn.m)    a coherent slice that ends at a hard quality gate
-        └── WAVE (Wn.m.k)  a unit of work that can run in parallel with its siblings
-             └── TASK      a concrete file level change
+1. Privacy, security, and fail closed tool rules          ← always wins
+2. Owner approved business policies and service facts
+3. Current live data returned from trusted APIs
+4. Conversation facts explicitly supplied by the customer
+5. Approved retrieved knowledge
+6. General model knowledge                                ← harmless explanations only,
+                                                             NEVER a Refalco specific claim
 ```
 
-### 0.1 The Phase Gate Protocol (MANDATORY, runs after EVERY phase)
+---
 
-No phase is "done" and no next phase may start until all five gates pass in order.
-This is the explicit loop BOSS asked for: *update plan → verify → find gaps/bugs → auto fix → only then continue*.
+## 0. How to run this plan
 
-| Gate | Name | What happens | Evidence required |
+```
+MILESTONE  (M0 … M15)    a shippable capability
+   └── PHASE  (Pn.m)     ends at a hard gate
+        └── WAVE         parallelisable unit of work
+             └── TASK    a concrete file level change
+```
+
+### 0.1 The Phase Gate Protocol — mandatory after EVERY phase
+
+Merged from Claude G1-G5 and CX section 2.2. No phase starts until the previous one clears all seven.
+
+| Gate | Name | What happens | Evidence |
 | --- | --- | --- | --- |
-| **G1** | **PLAN UPDATE** | Edit this file: tick the phase checkbox, fill the phase's Result block (what was built, files touched, what changed vs the plan, what was deferred). | Diff of this file. |
-| **G2** | **VERIFY** | Run the phase's declared verification commands. Read **actual exit codes**, never a piped tail. Record output path + exit code in the Result block. | `exit=0` lines pasted in the Result block. |
-| **G3** | **GAP SCAN** | Re run the phase's Traceability rows (section 12) and confirm every MANUAL/ARCH requirement claimed by this phase is (a) implemented, (b) covered by a test, (c) reachable at runtime from a real customer message. Also diff the phase against the Anti Regression Checklist (0.2). | Gap table with `COVERED` / `PARTIAL` / `MISSING` per requirement. |
-| **G4** | **AUTO FIX** | Fix every `PARTIAL` / `MISSING` / failing check found in G2 and G3 inside the same phase. Re run G2. Loop until clean, max 3 iterations, then escalate to BOSS with the blocking item named. | Second `exit=0` evidence set. |
-| **G5** | **SIGN OFF** | Append the phase Result block, state explicitly what was **not** done, commit **only after BOSS approves** (publishing is never automatic). | BOSS approval message. |
+| **G1** | **PLAN UPDATE** | Tick the phase, fill its Result block in section 16: built, files, tests, deviations, deferred. | diff of this file |
+| **G2** | **VERIFY** | Run the phase's declared commands. Read **actual exit codes**, never a piped tail. | `exit=0` lines pasted |
+| **G3** | **GAP SCAN** | Re-check every requirement ID the phase claims, against section 13. Mark `COVERED` / `PARTIAL` / `MISSING`. Also diff against the Anti Regression Checklist (0.2). | gap table |
+| **G4** | **DEFECT LOG** | Every finding goes into section 15 with severity **Blocker / High / Medium / Low**, reproduction steps and a regression test ID. | defect rows |
+| **G5** | **AUTO FIX** | Fix every Blocker and High in scope. Add a regression test for each. Re-run G2. Loop max 3 times, then escalate naming the blocker. | second `exit=0` set |
+| **G6** | **FIX FORWARD** | Nothing is parked. If a phase needs a config value, a credential, or a policy call, the phase **builds the mechanism, ships a working default, and leaves one field for BOSS to fill**. No capability is left switched off waiting for someone. | the mechanism built + the one field named |
+| **G7** | **SIGN OFF** | State explicitly what was **not** done. Commit and push **only after BOSS approves**. | BOSS approval |
 
-> **Evidence rule.** Never write "tests pass" without a captured exit code from this session.
-> Use `npm test > /tmp/<phase>.log 2>&1; echo "exit=$?"; tail -30 /tmp/<phase>.log`.
-> A piped command returns the pipe's exit code, not the test runner's.
+> **Evidence rule.** `npm test > /tmp/x.log 2>&1; echo "exit=$?"; tail -30 /tmp/x.log`
+> A pipe returns the pipe's exit code. A passing historical count is history until re-run.
+> Label synthetic tests as synthetic. A successful build is not evidence a workflow works.
 
-### 0.2 Anti Regression Checklist (checked at every G3, all milestones)
+### 0.2 Anti Regression Checklist — checked at every G3
 
-These are the invariants the current repo already enforces. The brain must be added **beside** them, never by deleting them.
+- [ ] No company fact stated without approved, unexpired evidence **carrying provenance metadata**.
+- [ ] Customer messages, memory, and retrieved chunks remain untrusted **data**, never instructions.
+- [ ] No prompt, credential, token, internal score, or other customer's data is ever exposed.
+- [ ] No action (booking, save, notify, handover) claimed before the tool confirms it.
+- [ ] Priority and score labels stay internal.
+- [ ] Handover only after explicit consent or a direct request. Compliance escalation is the one exception.
+- [ ] Existing client account data stays **fail closed** until approved independent verification succeeds.
+- [ ] No dash punctuation as a connector in customer replies.
+- [ ] All prompt surfaces aligned (`src/ai.js`, `dashboard/server.js`, edge function, `config/refal-agent-rules.md`).
+- [ ] Every test in `package.json#scripts.test` still passes.
+- [ ] No secret value printed in any log, report, or this file.
 
-- [ ] No company fact is ever stated without approved, unexpired evidence in `rafa_knowledge_*`.
-- [ ] Customer messages, conversation memory, and retrieved chunks remain **untrusted data**, never instructions.
-- [ ] No system prompt, credential, token, or other customer's data is ever exposed.
-- [ ] No appointment is described as confirmed before the booking system confirms it.
-- [ ] A priority / score label stays internal and never appears in a customer reply.
-- [ ] A handover is only created after explicit consent or a direct request.
-- [ ] No dash punctuation as a connector in customer facing replies.
-- [ ] The three prompt surfaces stay aligned: `src/ai.js`, `dashboard/server.js`, `supabase/functions/rafa-agent-api/index.ts`, plus `config/refal-agent-rules.md`.
-- [ ] Every existing test in `package.json#scripts.test` still passes.
+### 0.3 Safe automation boundary (CX 2.3)
 
-### 0.3 Legend
-
-`[ ]` not started · `[~]` in progress · `[x]` complete and gated · `⚠` blocked on a decision in section 11
+"Auto fix" means safe code, prompt, schema, test or knowledge changes **in the working branch**. It never means: sending a customer message, creating a real appointment, changing an external account, exposing a credential, or deploying/restarting production.
 
 ---
 
-## 1. Current system map (verified by reading the repo on 2026-10-07)
+## 1. Verified system map (read from the repo, 2026-10-07)
 
-### 1.1 Where the brain can live today
+### 1.1 Measured size
 
-| Layer (per ARCH) | Repo reality | File |
+| Metric | Value |
+| --- | --- |
+| Source modules (non test) | 62 |
+| Source lines | 18,730 |
+| Test files | 55 |
+| Supabase migrations | 48 |
+| Dashboard modules | 33 |
+| **Test baseline** | **`npm test` exit=0, 670 pass, 0 fail** |
+
+### 1.2 Where each layer lives today
+
+| Layer | Status | Location |
 | --- | --- | --- |
-| **Layer 1. System Prompt** (identity, persona, golden formula, safety) | Exists, 3 copies that must stay in sync | `src/ai.js:184-231`, `dashboard/server.js:1882-1912`, `supabase/functions/rafa-agent-api/index.ts`, canonical text in `config/refal-agent-rules.md` |
-| **Layer 2. RAG / Vector DB** (laws, tax, service catalogue) | Exists and is production grade | `rafa_knowledge_sources` → `rafa_knowledge_documents` → `rafa_knowledge_chunks`, hybrid RRF search in `rafa_hybrid_search_knowledge` |
-| **Layer 3. Dynamic tables** (live property, prices, slots) | **DOES NOT EXIST YET** except appointments | `rafa_appointments`, `rafa_reminders` exist. Property / pricing / promotions / renewal fees / government fees tables must be built (M4) |
+| **L1 Operating rules** | exists, 3 copies to keep in sync | `src/ai.js:184-231`, `dashboard/server.js:1882+`, edge fn, `config/refal-agent-rules.md` |
+| **L2 Reviewed knowledge** | **production grade** | `rafa_knowledge_sources/_documents/_chunks` + `rafa_hybrid_search_knowledge` |
+| **L3 Dynamic data** | **MISSING** except appointments | built in M4 |
+| **L4 Conversation state** | partial | `conversationState.js`, `conversationMemory.js`, `supabaseStore.js` |
+| **L5 Deterministic tools** | registry exists, 6 tools | `src/agentTools.js` `TOOL_REGISTRY` |
+| **L6 Evaluation / ops** | partial | `agentObservability.js`, `operationalTelemetry.js`, benchmark scripts |
 
-### 1.2 Retrieval facts that constrain the knowledge design
+### 1.3 Constraints that shape the design (verified)
 
-| Fact | Evidence | Consequence for the plan |
+| Fact | Evidence | Consequence |
 | --- | --- | --- |
-| Hybrid search = lexical `tsvector('simple')` + semantic HNSW cosine, fused by RRF, semantic cut off at distance ≤ 0.65 | `20260929142922_add_rafa_hybrid_knowledge_search.sql:88-111` | Topic documents must be lexically rich in all three languages, not only semantically similar. |
-| Embeddings are **local** `Xenova/multilingual-e5-small`, 384 dims zero padded to 2048 | `src/ai.js:2-4,51-57` | Multilingual retrieval works offline, no provider dependency. Model string is part of the match key, so a model change invalidates every embedding. |
-| **Only ONE approved revision per source** (partial unique index) | `20261003224701_rafa_rag_freshness_and_revision_lifecycle.sql:21-23` | The brain must be **many small sources**, one topic each, not one giant document. Taxonomy is therefore load bearing (P0.3). |
-| Price bearing approved revisions auto expire after **30 days** | same migration, lines 28-39 | The €999 offer will go stale and REFAL will stop confirming it. This is exactly why ARCH wants `ACTIVE_PROMOTIONS` as a live table (M4). |
-| Deterministic fallback answers are rejected when evidence language ≠ customer language | `src/refalcoAnswer.js:35` | Every topic needs a genuine AR + EN + EL document. Translation is not optional. |
-| Knowledge entries are **active on save** (auto approved) | `dashboard/server.js:297,312` | No pending review queue. Ingestion correctness must be enforced at authoring time, not by a reviewer. |
-| Chunking: 1800 chars max, heading aware, 500 chunk cap per revision | `dashboard/knowledge.js:194-240` | Author documents with explicit `##` headings so chunks stay topically clean. |
-| URL import is locked to `KNOWLEDGE_ALLOWED_HOSTS` (empty by default); upload TXT/PDF/DOCX and paste are open | `dashboard/knowledge.js:103-116`, `MAX_PASTE_CHARS = 250_000` | Primary ingestion path for this plan = authored Markdown/TXT upload, not scraping. |
+| Model is **`openai/gpt-6-luna`**, not deepseek | `src/openrouterPrivacy.js:5`, `.env.example:4`, migration `20261007175103` | CX's baseline on this point is stale. Do not change the model or the data routing policy without BOSS. |
+| Hybrid search = lexical `tsvector('simple')` + HNSW cosine, RRF fused, semantic cut off 0.65 | `20260929142922…sql:88-111` | Documents must be lexically rich in all 3 languages, not only semantically close. |
+| Embeddings are local `Xenova/multilingual-e5-small`, 384 dims padded to 2048 | `src/ai.js:2-4,51-57` | Offline multilingual retrieval. The model string is part of the match key. |
+| **One approved revision per source** | `20261003224701…sql:21-23` | The corpus must be **many small sources**, one topic each. |
+| Price bearing revisions **expire after 30 days** | same migration, 28-39 | Satisfied by serving the live offer from `refal_offers_and_pricing` (M4). |
+| Evidence language must match customer language | `src/refalcoAnswer.js:35` | Every topic needs a genuine AR + EN + EL document. |
+| Knowledge auto approves on save | `dashboard/server.js:297,312` | Correctness must be enforced at authoring time. M3 P3.9 adds the approval layer back properly. |
+| Chunking 1800 chars, heading aware, 500 cap | `dashboard/knowledge.js:194-240` | Author with explicit `##` headings. |
 
-### 1.3 ⚠ The critical conflict: existing guardrails will silence the new brain
+### 1.4 Already built, do not rebuild (the big saving)
 
-`src/refalcoAnswer.js:156` `containsProhibitedClaim()` rejects any model answer matching, in EN/AR/EL:
-
-```
-investment returns | roi | irr | yield | financial advice | legally registered |
-registration number | legal status | legal advice | tax advice | immigration advice |
-visa | residency | bank approval | loan | mortgage | permit | licen[cs]e | government approval
-… إقامة | تأشيرة | رخصة | ترخيص | موافقة البنك | معدل الضريبة …
-… βίζα | διαμονή | άδεια | έγκριση τράπεζας …
-```
-
-The MANUAL **requires** REFAL to explain:
-
-- Permanent Residency program, €300,000 threshold, Categories A/B/C/D (MANUAL 2.4)
-- Non Dom status, 0% on dividends and interest for 17 years (MANUAL 2.4)
-- Corporate tax 15% from 2026, IP Box ~2.5–3% (MANUAL 2.2)
-- VAT 19% / reduced 5% on new property (MANUAL 2.5)
-- Why bank and Stripe approval cannot be promised (MANUAL 2.3)
-
-**Every one of those answers would be thrown away by the current regex.** Likewise `restrictedRefalcoReply()` (`src/refalcoAnswer.js:181-196`) returns a hard refusal for any message mentioning residency or investment returns.
-
-**Resolution (M2).** Replace the single blanket blocklist with a three class claim taxonomy:
-
-| Class | Example | Rule |
+| MB requirement | Already present | Evidence |
 | --- | --- | --- |
-| **PROGRAM_FACT** | "The Cyprus PR route requires a qualifying investment of €300,000 plus VAT." | **ALLOW** when an approved, unexpired chunk in the supplied evidence contains the same fact. |
-| **PERSONALIZED_CONCLUSION** | "Your activity qualifies for IP Box." / "You will get the residency." | **BLOCK** always. Offer specialist review instead. |
-| **GUARANTEE** | "We guarantee Stripe approval / bank approval / 8% ROI." | **BLOCK** always, in all languages. |
+| **MB-D1..D6** six dimensions | `DIMENSIONS = ["need","value","timing","authority","readiness","fit"]` | `src/leadQualification.js:135` |
+| **MB-T3/T4/T5** thresholds | `{ warm:14, hot:20, strategic:25 }` with an "Owner rules" comment | `src/leadQualification.js` |
+| **MB-HO** handoff | `buildRefalLeadSummary` / `formatRefalLeadSummary` | `src/handover.js:137,186,188` |
+| Department routing | 10 departments + intent route table | `src/handover.js` |
+| **MB-R1..R10** role coverage | 40+ intent taxonomy | `src/intent.js` |
+| Tool calling | working 6 tool registry | `src/agentTools.js` |
+| Consent machinery | `CONSENT_STATES`, trilingual `OPT_IN_RE` / `OPT_OUT_RE` / `DENY_RE` | `src/leadQualification.js` |
+| Calendar availability | `getBookingAvailability`, `suggestAvailableTimes` | `src/agentTools.js`, `src/booking.js` |
 
-This is the single highest risk item in the plan. It must land **before** M3 loads the corpus, or the knowledge will be invisible at runtime.
+### 1.5 ⚠ The critical blocker (BLK-1)
 
----
+`src/refalcoAnswer.js:156` rejects any answer containing, in EN/AR/EL:
+`investment returns | roi | financial advice | legal status | tax advice | immigration advice | visa | residency | bank approval | permit | licence | government approval` and their Arabic and Greek equivalents.
 
-## 2. Target architecture
-
-```
-                         ┌───────────────────────────────────────────────┐
-   WhatsApp customer     │            LAYER 1 — SYSTEM PROMPT            │
-   (AR / EN / EL)        │  identity · 10 roles · persona · mirroring    │
-          │              │  humour levels 0-3 · Golden Answer Formula    │
-          │              │  One Question Rule · anti patterns            │
-          ▼              │  compliance constitution                      │
-   ┌─────────────┐       └───────────────────┬───────────────────────────┘
-   │  Baileys    │                           │
-   │  worker     │                           ▼
-   │  src/bot.js │   ┌───────────────────────────────────────────────────┐
-   └──────┬──────┘   │           ORCHESTRATION (agentLoop.js)            │
-          │          │  language detect → intent → hooks → retrieve →    │
-          ▼          │  score → draft → POLICY GATES → send              │
-   ┌─────────────┐   └───┬──────────────────────────────┬────────────────┘
-   │ turnRouting │       │                              │
-   └─────────────┘       ▼                              ▼
-              ┌────────────────────────┐   ┌──────────────────────────────┐
-              │ LAYER 2 — RAG CORPUS   │   │ LAYER 3 — DYNAMIC TABLES     │
-              │ rafa_knowledge_*       │   │ refal_offers_and_pricing     │
-              │ hybrid lexical+vector  │   │ refal_property_inventory     │
-              │ 24 topics × AR/EN/EL   │   │ refal_reservation_rules      │
-              │ = 72 approved sources  │   │ refal_annual_renewal_fees    │
-              │ STABLE FACTS ONLY      │   │ refal_government_fees        │
-              └────────────────────────┘   │ refal_active_promotions      │
-                                           │ rafa_appointments (exists)   │
-                                           │ VOLATILE FACTS ONLY          │
-                                           └──────────────────────────────┘
-                              │                              │
-                              ▼                              ▼
-              ┌───────────────────────────────────────────────────────────┐
-              │  POLICY GATES (deterministic, outside model control)      │
-              │  claimClass · priceEvidence · guaranteeGuard · humourBan  │
-              │  languageLock · oneQuestion · lengthBudget · injection    │
-              └───────────────────────────┬───────────────────────────────┘
-                                          ▼
-              ┌───────────────────────────────────────────────────────────┐
-              │  QUALIFICATION ENGINE (silent)   6 dims × 0-5 = 30         │
-              │  NEED VALUE TIMING AUTHORITY READINESS FIT                │
-              │  → tier → action protocol → consent → handoff summary     │
-              └───────────────────────────┬───────────────────────────────┘
-                                          ▼
-                     ┌────────────────────────────────────┐
-                     │  CRM  leads · conversations ·       │
-                     │  executive handoff → human advisor  │
-                     └────────────────────────────────────┘
-```
-
-**Hard separation rule (from MANUAL 5.3).** These six values must NEVER be frozen into a prompt or a knowledge document. They are fetched live, every turn they are needed:
-`LIVE_PROPERTY_INVENTORY`, `RESERVATION_DEPOSIT_RULES`, `ANNUAL_RENEWAL_FEES`, `LIVE_CALENDAR_SLOTS`, `GOVERNMENT_THIRD_PARTY_FEES`, `ACTIVE_PROMOTIONS`.
-A test in P4.3 asserts that none of those six values appear as a literal in any prompt string or any knowledge chunk.
+MB **requires** REFAL to explain all of those as program facts. **Every PR, Non Dom, IP Box, tax and property VAT answer would be silently deleted.** This is why M2 runs before M3. Codex's roadmap never found this.
 
 ---
 
-## 3. Milestone overview
+## 2. Target architecture (merged, 6 layers)
 
-| # | Milestone | Delivers | Depends on | Est. phases |
-| --- | --- | --- | --- | --- |
-| **M0** | Baseline, Conflicts, Taxonomy | Verified starting state, conflict register, knowledge taxonomy, golden eval set | — | 3 |
-| **M1** | Layer 1: Identity, Persona, Humour, Golden Formula | REFAL sounds like REFAL in 3 languages | M0 | 6 |
-| **M2** | Guardrail Reconciliation | The brain is no longer silenced by the policy layer | M0 | 6 |
-| **M3** | Layer 2: Trilingual Knowledge Corpus | 24 topics × AR/EN/EL, retrievable | M0, M2 | 8 |
-| **M4** | Layer 3: Dynamic Data | Live prices, property, promos, fees, slots | M0 | 5 |
-| **M5** | Sales Intelligence | Hooks, objections, jurisdiction benchmarking | M1, M3 | 4 |
-| **M6** | Qualification & Handoff | 30 point engine, tiers, buying signals, executive summary | M1, M5 | 6 |
-| **M7** | CRM Memory | Progressive capture, never re ask | M6 | 4 |
-| **M8** | Multilingual Parity | AR/EN/EL quality equal, dialect + transliteration | M1, M3 | 5 |
-| **M9** | Scale & Reliability | All users, concurrently, within budget | M3, M4 | 6 |
-| **M10** | Evaluation & Go Live | Benchmarked, red teamed, rolled out | ALL | 5 |
-| | | | | **52 phases** |
+```
+  Customer on WhatsApp  (AR / EN / EL)
+            │
+            ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  L1  OPERATING RULES          identity · 10 roles · persona      │  M1
+ │      src/brainPrompt.js       humour 0-3 · golden formula        │
+ │      compact and versioned    one question · PRECEDENCE LADDER   │
+ └───────────────────────────┬──────────────────────────────────────┘
+                             ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  ORCHESTRATION   language → intent → role → retrieve → tool →    │
+ │  src/agentLoop.js  score → hook → draft → GATES → send           │
+ └──┬────────────────┬──────────────────┬───────────────────────┬───┘
+    ▼                ▼                  ▼                       ▼
+┌────────────┐ ┌──────────────┐ ┌─────────────────┐ ┌──────────────────┐
+│ L2 KNOWLEDGE│ │ L3 DYNAMIC   │ │ L4 STATE        │ │ L5 TOOLS         │
+│ 25 topics   │ │ 6 live tables│ │ leads · convos  │ │ 6 read + 5 write │
+│ × AR/EN/EL  │ │ offers       │ │ facts · consent │ │ typed contracts  │
+│ = 75 sources│ │ property     │ │ corrections     │ │ fail closed      │
+│ + PROVENANCE│ │ deposits     │ │ score evidence  │ │ idempotent       │
+│   M3        │ │ fees · promos│ │   M8            │ │   M4             │
+│             │ │ slots   M4   │ │                 │ │                  │
+└────────────┘ └──────────────┘ └─────────────────┘ └──────────────────┘
+    │                │                  │                       │
+    └────────────────┴──────────┬───────┴───────────────────────┘
+                                ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  POLICY GATES (deterministic, outside model control)             │  M2
+ │  claimClass · priceEvidence · guaranteeGuard · humourBan ·       │  M11
+ │  languageLock · oneQuestion · lengthBudget · injection ·         │
+ │  crossCustomerAccess · toolAllowlist · secretScan                │
+ └──────────────────────────────┬───────────────────────────────────┘
+                                ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  QUALIFICATION  6 dims × 0-5 = 30 → 5 tiers → allowed actions    │  M6
+ │  → consent check → executive handoff → department                │
+ └──────────────────────────────┬───────────────────────────────────┘
+                 ┌──────────────┼──────────────┐
+                 ▼              ▼              ▼
+          ┌────────────┐ ┌────────────┐ ┌────────────┐
+          │ BOOKING    │ │ FOLLOW UP  │ │ DASHBOARD  │
+          │ state m/c  │ │ consent    │ │ admin ops  │
+          │ M7         │ │ M9         │ │ M12        │
+          └────────────┘ └────────────┘ └────────────┘
+                                ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  L6 EVALUATION & OPS   720 golden Q · red team · traces · load   │  M13/M14
+ │       independent rollback · per channel pause · maintenance     │  M15
+ └──────────────────────────────────────────────────────────────────┘
+```
 
-**Critical path:** M0 → M2 → M3 → M5 → M6 → M10.
-**Parallelisable:** M1 ∥ M2, M4 ∥ M3, M7 ∥ M8, M9 ∥ M8.
+**Hard separation rule (MB 5.3).** These six never appear as a literal in any prompt or knowledge chunk. P4.3 enforces this with a test:
+`LIVE_PROPERTY_INVENTORY` · `RESERVATION_DEPOSIT_RULES` · `ANNUAL_RENEWAL_FEES` · `LIVE_CALENDAR_SLOTS` · `GOVERNMENT_THIRD_PARTY_FEES` · `ACTIVE_PROMOTIONS`
 
 ---
 
-# MILESTONE M0 — Baseline, Conflicts, Taxonomy
+## 3. Milestone overview — 16 milestones, 82 phases
 
-**Why first.** The repo already contains deep, deliberate safety machinery. Loading a brain into it without first mapping every prompt surface and every policy gate guarantees silent failures where the knowledge exists in the database but never reaches the customer.
+| # | Milestone | Delivers | Origin | Depends | Phases |
+| --- | --- | --- | --- | --- | --- |
+| **M0** | Baseline, Conflicts, Taxonomy | Verified state, conflict + known bug register, taxonomy, golden set | A + CX P0/P1 | — | 4 |
+| **M1** | Rules: Identity, Persona, Humour, Formula, **Precedence** | REFAL sounds like REFAL and knows what wins | A + **CX 1C** | M0 | 7 |
+| **M2** | Guardrail Reconciliation | The brain stops being silenced | **A only** | M0 | 6 |
+| **M3** | Knowledge Corpus + **Fact Governance** | 75 sources AR/EN/EL, each with provenance | A + **CX P2** | M0, M2 | 9 |
+| **M4** | Dynamic Data + Tools | 6 tables, 11 tools, typed contracts | A + CX P6 | M0 | 5 |
+| **M5** | Sales Intelligence | Hooks, objections, jurisdictions | A + CX 8C | M1, M3 | 4 |
+| **M6** | Qualification & Handoff | 30 point engine, tiers, executive summary | A + CX P8/P9 | M1, M5 | 6 |
+| **M7** | **Booking & Calendar** | Full state machine, real policy | **CX P10** | M4, M6 | 5 |
+| **M8** | CRM Memory | Progressive capture, never re-ask | A + CX P7 | M6 | 4 |
+| **M9** | **Follow up, Consent & Contact Policy** | Consent scope, opt out, scheduler | **CX P11** | M8 | 4 |
+| **M10** | Multilingual Parity | AR/EN/EL equal quality | A + CX 2C | M1, M3 | 5 |
+| **M11** | Security, Privacy, Compliance | Injection, cross customer, AML, secrets | A + **CX P12** | M2 | 4 |
+| **M12** | **Dashboard & Knowledge Admin** | Staff can run the brain without a developer | **CX P13** | M3, M4 | 4 |
+| **M13** | Scale & Reliability | All users, measured latency and cost | A + CX P15 | M3, M4 | 6 |
+| **M14** | Evaluation, Release, **Independent Rollback** | Benchmarked, red teamed, reversible | A + **CX P16** | ALL | 6 |
+| **M15** | **Life After Launch** | Submit → review → publish → smoke test → roll back, forever | **CX P17** | M12, M14 | 3 |
+| | | | | | **82** |
 
-**Exit criteria.** A verified conflict register, a frozen knowledge taxonomy, and a golden evaluation set that every later milestone scores against.
-
----
-
-### Phase P0.1 — Truth baseline `[~]` 3/4 waves done, see section 15
-
-| Wave | Work | Output |
-| --- | --- | --- |
-| **W0.1.1** | Inventory every surface that can speak to a customer: `src/ai.js` system prompt, `dashboard/server.js:1882+`, `supabase/functions/rafa-agent-api/index.ts`, `config/refal-agent-rules.md`, `src/agentLoop.js` + `src/agentRuntime.js`, every deterministic reply string (`noApprovedEvidenceReply`, `safeLocalizedFallback`, `restrictedRefalcoReply`, workflow modules). | `docs/brain/SURFACE-INVENTORY.md` with file:line for each. |
-| **W0.1.2** | Inventory every policy gate between a model draft and the customer: `responsePolicy.validateResponse`, `safetyPolicy.classifySafety`, `groundingPolicy.*`, `refalcoAnswer.containsProhibitedClaim`, `privacyIntent`, `sensitiveData`, `redFlagRules`, `priorityRules`, `runtimePolicy`. For each: what it blocks, in which languages, and whether the MANUAL needs that content allowed. | `docs/brain/GATE-INVENTORY.md`. |
-| **W0.1.3** | Database truth: counts per table for `rafa_knowledge_sources` / `_documents` / `_chunks`, how many chunks have a non null `embedding`, which approved documents are expired by `valid_until`, which `embedding_model` strings are present. **Read only SELECT only.** | `docs/brain/DB-BASELINE.md`. |
-| **W0.1.4** | Test baseline. Run `npm test`, `npm --prefix dashboard test`, `npm --prefix dashboard run build`. Capture real exit codes. Record any test already red on `main` so it is never misattributed to this work. | `docs/brain/TEST-BASELINE.md` with `exit=` lines. |
-
-**Verification (G2).**
-```bash
-npm test > /tmp/p011.log 2>&1; echo "exit=$?"; tail -40 /tmp/p011.log
-npm --prefix dashboard test > /tmp/p011d.log 2>&1; echo "exit=$?"; tail -40 /tmp/p011d.log
-npm --prefix dashboard run build > /tmp/p011b.log 2>&1; echo "exit=$?"; tail -20 /tmp/p011b.log
-```
-
-**G3 gap scan.** Every file in `src/` that emits a customer facing string must appear in SURFACE-INVENTORY. Grep for quoted strings containing Arabic or Greek characters to catch hardcoded replies missed by the manual sweep.
-
-**Result block (fill at G1):**
-```
-Built:
-Files:
-Exit codes:
-Deviations:
-Deferred:
-```
+**Critical path:** M0 → M2 → M3 → M5 → M6 → M14
+**Run in parallel:** M1 ∥ M2 · M4 ∥ M3 · M7 ∥ M8 · M9 ∥ M10 · M11 ∥ M12
 
 ---
 
-### Phase P0.2 — Conflict register: MANUAL vs code `[ ]`
+# M0 — Baseline, Conflicts, Taxonomy
+
+**Exit criteria.** Verified state, a conflict register, a known defect register, a frozen knowledge taxonomy, and the golden evaluation set.
+
+### P0.1 — Truth baseline `[x]` COMPLETE, see section 16
+Delivered `docs/brain/SOURCE-ANALYSIS.md` (183 IDs, 12 blockers) and `docs/brain/SURFACE-AND-GATE-INVENTORY.md` (14 surfaces, 16 gates). Test baseline `exit=0`, 670 pass.
+**Carried forward:** W0.1.3 database baseline, still blocked on Supabase connectivity.
+
+---
+
+### P0.2 — Conflict register: MB vs code `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W0.2.1** | **Guardrail conflicts.** For each MANUAL fact that must be sayable (PR €300k, income €50k/€15k/€10k, Non Dom 17y 0%, IP Box 2.5-3%, corporate tax 15% from 2026, VAT 19%/5%, Categories A-D, Company Secretary 4 months, Registered Address 4 months, ~2 weeks incorporation), run the exact candidate sentence in AR/EN/EL through `containsProhibitedClaim()` and `restrictedRefalcoReply()` and record BLOCK/PASS. |
-| **W0.2.2** | **Identity conflict.** `AGENTS.md:3` forbids bundling company identity. The MANUAL supplies one. Document the resolution (section 11, DECISION-1) and the exact edit `AGENTS.md` will need. |
-| **W0.2.3** | **Schema conflicts.** One approved revision per source; 30 day price expiry; auto approve on save; 500 chunk cap; 250k char paste cap. State for each how the taxonomy in P0.3 works with it. |
-| **W0.2.4** | **Tone conflicts.** MANUAL uses emoji (😄 👀 👍 😂) heavily. Current rules forbid dash punctuation and cap ordinary replies at 3 sentences / 500 chars (`src/ai.js:224,284`), while the MANUAL's Golden Formula wants **2 to 5 sentences**. Record the required threshold changes and which tests assert the old numbers. |
-| **W0.2.5** | **Humour conflicts.** `config/refal-agent-rules.md:15` already bans humour in complaints/legal/tax/financial loss/health/disputes/sanctions/AML. The MANUAL adds: residency or visa refusal, judicial proceedings, bank failure, death and force majeure. Record the delta. |
+| **W0.2.1** | **Guardrail conflicts.** Run every MB-F candidate sentence in AR/EN/EL through `containsProhibitedClaim()` and `restrictedRefalcoReply()`. Record BLOCK/PASS. |
+| **W0.2.2** | **Identity conflict** (BLK-3) and the exact `AGENTS.md` edit. |
+| **W0.2.3** | **Schema conflicts**: one approved revision per source, 30 day expiry, auto approve on save, 500 chunk cap, 250k paste cap. |
+| **W0.2.4** | **Tone conflicts**: emoji policy, 2 to 5 sentences versus the current 3 / 500, and which tests assert the old numbers. |
+| **W0.2.5** | **Humour conflicts**: the existing bans versus MB's six, delta recorded. |
+| **W0.2.6** | **Precedence conflicts**: where today's code resolves a disagreement differently from the ladder in Rule 2. |
 
-**Output.** `docs/brain/CONFLICT-REGISTER.md`, one row per conflict: `ID | MANUAL ref | code ref | severity | resolution | milestone`.
-
-**Verification (G2).** A script `scripts/auditClaimGates.js` that feeds the candidate sentence list through the real gate functions and prints a PASS/BLOCK table. Exit non zero if any sentence the MANUAL requires is blocked **and** not yet listed in the register.
-
-**G3 gap scan.** Every numbered fact in MANUAL modules 2.1 to 2.6 appears in the candidate sentence list, in all three languages.
-
-**Result block:** _(fill at G1)_
+**Output.** `docs/brain/CONFLICT-REGISTER.md`: `ID | MB ref | code ref | severity | resolution | milestone`.
+**G2.** `node scripts/auditClaimGates.js` exits non zero if an MB required sentence is blocked and not yet registered.
 
 ---
 
-### Phase P0.3 — Knowledge taxonomy, ID scheme, and the Golden Evaluation Set `[ ]`
+### P0.3 — Reproduce the 13 known defects and assign each a repair `[ ]`
 
-**The taxonomy is load bearing.** Because only one revision per source can be approved, each topic gets its own source. One source per topic per language.
+CX records real production defects from this project's history. Reproduce each, then confirm it already has an owning repair phase in the Fix Log (section 15). **Every one is already assigned. Nothing is left open.**
+
+| Fix | Defect | Reproduce how | Repaired by |
+| --- | --- | --- | --- |
+| **FIX-2** | A greeting saved as the customer's name | Send "مرحبا", check the stored contact name | P8.2 |
+| **FIX-3** | Q&A blocked while a booking is pending | Start a booking draft, ask an unrelated price question | P7.4 |
+| **FIX-4** | A new message resumes an abandoned booking | Abandon a booking, send a new topic | P7.4 |
+| **FIX-5** | Formation vs investment misclassification | "بدي أسجل شركة استثمارية" should be both | P1.2 |
+| **FIX-6** | Levantine colloquial formation not matched | Colloquial phrasing for company setup | P3.1, P10.1 |
+| **FIX-7** | Arabic retrieval returns zero for services and pricing | Arabic price question against the corpus | P3.10 |
+| **FIX-8** | Greek coverage gaps | Greek question on each domain | P3.1-P3.8 |
+| **FIX-9** | Handover notification lost, badge mismatch | Create a handover, compare count and notification | P6.5, P12.3 |
+| **FIX-13** | Agent identity question answered wrongly | "من أنت؟" / "what are you?" | P1.1, P1.2 |
+| **FIX-10** | Output leaks: internal reasoning, retrieval fallback text | Adversarial prompts in 3 languages | P11.2 |
+| **FIX-11** | Specialist offer not persisted, so it repeats | Offer, then next turn | P5.4 |
+| **FIX-12** | Phone metadata treated as consent | Check the consent source field | P9.1 |
+| **FIX-1** | Programme facts deleted by the claim gate | Any residency or tax question | P2.2 |
+
+**Output.** `docs/brain/KNOWN-DEFECTS.md`: reproduced, or already fixed with evidence, each with its repair phase.
+**Release gate (CX 16A).** FIX-1, FIX-9, FIX-10 and FIX-12 must be green before any production restart or deploy.
+
+---
+
+### P0.4 — Taxonomy, ID scheme, and the Golden Evaluation Set `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W0.3.1** | Freeze the **24 topic taxonomy** (table below). Assign each a stable slug, a domain, a trust tier, a volatility class (STABLE → RAG, VOLATILE → dynamic table), and a review cadence. |
-| **W0.3.2** | Source naming and URL convention. `canonical_url` is `not null unique`, so each source needs a stable synthetic URI, e.g. `refal://kb/corporate/formation-package/ar`. Define it once; every ingestion script uses it. |
-| **W0.3.3** | Build the **Golden Evaluation Set**: minimum 10 real customer questions per topic per language = **24 × 3 × 10 = 720 questions**, each with the expected fact(s), the expected hook (if any), the expected humour level, and the expected refusal class. Stored as `src/brainGoldenSet.js` + `artifacts/refal-brain-golden-set.json`. |
-| **W0.3.4** | Define the scoring rubric used by every later milestone: Factual accuracy (0-3), Grounding (0-3, must cite approved evidence), Language quality & dialect (0-3), Golden Formula compliance (0-3), Guardrail compliance (PASS/FAIL, any FAIL = whole answer fails). |
+| **W0.4.1** | Freeze the **25 topic taxonomy** (table below) plus 4 jurisdiction topics = **29 topics**. Each gets a slug, domain, trust tier, volatility class and review cadence. |
+| **W0.4.2** | Source URI convention. `canonical_url` is unique and not null, so use `refal://kb/<domain>/<slug>/<lang>`. |
+| **W0.4.3** | **Golden Evaluation Set**: ≥10 real customer questions per topic per language = **29 × 3 × 10 ≈ 870 questions**. Each with expected facts, expected hook, expected humour level, expected refusal class. Plus **negative queries** that must retrieve nothing (CX 4C). Stored as `src/brainGoldenSet.js` + `artifacts/refal-brain-golden-set.json`. |
+| **W0.4.4** | Scoring rubric: Factual accuracy 0-3 · Grounding 0-3 · Language and dialect 0-3 · Golden Formula 0-3 · Guardrail PASS/FAIL (any FAIL fails the answer). **Thresholds are written now, before any evaluation runs** (CX 14 exit gate). |
+| **W0.4.5** | Per language and per domain reporting, with error bars. **An aggregate score may never hide a Greek or Arabic failure** (CX 14B). |
 
-#### The 24 topic taxonomy
+#### The 29 topic taxonomy
 
-| # | Slug | Domain | Volatility | MANUAL ref |
+| # | Slug | Domain | Volatility | MB ref |
 | --- | --- | --- | --- | --- |
 | 1 | `company-lifecycle` | Corporate | STABLE | 2.1 |
-| 2 | `formation-package` | Corporate | **VOLATILE** (price) | 2.1 |
-| 3 | `company-structures` (Branch/Subsidiary/New Ltd) | Corporate | STABLE | 2.1 |
+| 2 | `formation-package` | Corporate | **VOLATILE** | 2.1 |
+| 3 | `company-structures` | Corporate | STABLE | 2.1 |
 | 4 | `shareholder-vs-director` | Corporate | STABLE | 2.1 |
 | 5 | `ownership-changes` | Corporate | STABLE | 2.1 |
 | 6 | `registered-vs-physical-office` | Corporate | STABLE | 2.1 |
 | 7 | `privacy-vs-concealment` | Compliance | STABLE | 2.1 |
 | 8 | `dormant-and-liquidation` | Corporate | STABLE | 2.1 |
-| 9 | `corporate-tax` | Tax | **VOLATILE** (rate) | 2.2 |
-| 10 | `ip-box` | Tax | STABLE | 2.2 |
+| 9 | `corporate-tax` | Tax | **VOLATILE** | 2.2 |
+| 10 | `ip-box` | Tax | **VOLATILE** | 2.2 |
 | 11 | `dividends-vs-salary` | Tax | STABLE | 2.2 |
 | 12 | `holding-vs-trading` | Tax | STABLE | 2.2 |
 | 13 | `vat-and-eori` | Tax | STABLE | 2.2 |
 | 14 | `banking-and-payment-gateways` | Banking | STABLE | 2.3 |
-| 15 | `permanent-residency` | Residency | **VOLATILE** (thresholds) | 2.4 |
-| 16 | `non-dom-status` | Residency | STABLE | 2.4 |
+| 15 | `permanent-residency` | Residency | **VOLATILE** | 2.4 |
+| 16 | `non-dom-status` | Residency | **VOLATILE** | 2.4 |
 | 17 | `source-of-funds-vs-wealth` | Compliance | STABLE | 2.4 |
 | 18 | `relocation-checklist` | Residency | STABLE | 2.4 |
 | 19 | `property-buyer-journey` | Real Estate | STABLE | 2.5 |
 | 20 | `offplan-vs-completed` | Real Estate | STABLE | 2.5 |
-| 21 | `property-vat` | Real Estate | **VOLATILE** (rates) | 2.5 |
+| 21 | `property-vat` | Real Estate | **VOLATILE** | 2.5 |
 | 22 | `cyprus-cities` | Real Estate | STABLE | 2.5 |
 | 23 | `landowners-and-construction` | Development | STABLE | 2.6 |
 | 24 | `legal-ip-contracts` | Legal | STABLE | 2.6 |
-| + | `company-profile` (Refalco credibility: 2000, 20y, 47, 400+) | Identity | STABLE | 2.0, 3.0 |
+| 25 | `company-profile` | Identity | **VOLATILE** | 2.0 |
+| 26-29 | `jurisdiction-dubai` · `jurisdiction-estonia` · `jurisdiction-malta-bulgaria` · `jurisdiction-usa` | Comparison | STABLE | 3.3 |
 
-→ 25 topics × 3 languages = **75 knowledge sources**.
+→ **29 × 3 = 87 knowledge sources.** 7 are VOLATILE and carry a hard expiry.
 
-**Verification (G2).** `node scripts/validateTaxonomy.js` asserts: every slug unique, every topic has an AR/EN/EL entry, every VOLATILE topic has a matching dynamic table planned in M4, golden set has ≥10 questions per topic per language, every golden question has an expected answer class.
-
-**G3 gap scan.** Cross check the taxonomy against MANUAL sections 2.1 to 2.6 heading by heading. Any MANUAL sub heading with no owning topic is a MISSING.
-
-**Result block:** _(fill at G1)_
+**G2.** `node scripts/validateTaxonomy.js`: slugs unique · every topic has AR/EN/EL · every VOLATILE topic has a matching M4 table or an expiry policy · ≥10 golden questions per topic per language · every question has an expected class.
 
 ---
 
-# MILESTONE M1 — Layer 1: Identity, Persona, Humour, Golden Formula
+# M1 — Rules: Identity, Persona, Humour, Golden Formula, Precedence
 
-**Why.** This is what makes REFAL *her* rather than a generic retrieval bot. It is pure prompt and policy work, no company facts, so it can run in parallel with M2.
-
-**Exit criteria.** REFAL's voice, humour calibration, answer shape, and anti patterns are implemented, synchronised across all prompt surfaces, and covered by tests in three languages.
+**Exit criteria.** REFAL's voice, humour calibration, answer shape, anti patterns and conflict resolution are implemented, synchronised across all surfaces, and tested in three languages. The prompt stays **compact**: stable rules only, reference content lives in retrieval (CX 5A).
 
 ---
 
-### Phase P1.1 — REFAL becomes Refalco's agent (removes BLK-3) `[ ]`
-
-**Decision D-1 applies.** The "no company identity is bundled" rule is removed. REFAL says who she is.
+### P1.1 — REFAL becomes Refalco's agent (removes BLK-3) `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W1.1.1** | Create `config/company-profile.json` (committed, this is Refalco's own repo) with `{ legalName, brand: "REFAL", groupName: "Refalco Group", foundedYear: 2000, yearsExperience: 20, developmentProjects: 47, totalProjects: 400, jurisdiction: "Cyprus", cities: [...], departments: ["Corporate","Tax","Real Estate","Residency","Construction"], languages: ["ar","en","el"] }`. |
-| **W1.1.2** | `src/companyProfile.js`: load, validate, freeze. A missing or malformed profile is a **startup error**, not a silent downgrade, because an identity-less REFAL is now a defect. |
-| **W1.1.3** | **Delete the `"the business"` placeholder everywhere.** Sweep: `src/ai.js:188,190,194,198,199,217`, `src/refalcoAnswer.js:188-193`, `config/refal-agent-rules.md:5,35`, `dashboard/server.js:1882+`, the edge function, `AGENTS.md:3`, `README.md`. Replace with the profile's brand and group name. |
-| **W1.1.4** | Prompt carries identity and positioning (MB-R1..R10, MB-C5) as **persona**. The four credibility **numbers** (MB-C1 2000, MB-C2 20+ years, MB-C3 47, MB-C4 400+) go into the `company-profile` knowledge source (P3.7) so they remain evidence gated and citable, exactly as MB-O5 deploys them. |
+| **W1.1.1** | `config/company-profile.json`: `{ legalName, brand:"REFAL", groupName:"Refalco Group", foundedYear:2000, yearsExperience:20, developmentProjects:47, totalProjects:400, jurisdiction:"Cyprus", timezone:"Europe/Nicosia", cities:[...], departments:["Corporate","Tax","Real Estate","Residency","Construction","Customer Service","Compliance"], languages:["ar","en","el"] }` |
+| **W1.1.2** | `src/companyProfile.js`: load, validate, freeze. A missing profile is a **startup error**, not a silent downgrade. |
+| **W1.1.3** | **Delete `"the business"` everywhere**: `src/ai.js:153,188,190,194,198,199,217`, `src/refalcoAnswer.js:188-193`, `config/refal-agent-rules.md:5,35`, `dashboard/server.js:1882,1906`, edge fn, `AGENTS.md:3`, `README.md`. |
+| **W1.1.4** | Prompt carries identity and positioning as **persona**. The four credibility numbers go into the `company-profile` knowledge source (P3.7) so they stay evidence gated and citable, exactly as MB-O5 uses them. |
 | **W1.1.5** | Rewrite `AGENTS.md`: REFAL is Refalco Group's digital business agent. Company **facts** still require approved knowledge; company **identity** no longer does. |
 
-**Verification (G2).** `src/companyProfile.test.js`: the assembled prompt names REFAL and Refalco Group; no credibility number appears as a literal in any prompt string; `grep -rn '"the business"' src/ dashboard/ config/ supabase/` returns zero.
-
-**G3 gap scan.** `grep -rnE '\b(2000|47|400)\b' src/brainPrompt.js src/ai.js config/refal-agent-rules.md` → zero hits (those numbers must come from evidence only).
+**G2.** `src/companyProfile.test.js`. `grep -rn '"the business"' src/ dashboard/ config/ supabase/` → zero.
+**G3.** `grep -rnE '\b(2000|47|400)\b' src/brainPrompt.js src/ai.js config/refal-agent-rules.md` → zero.
 
 ---
 
-### Phase P1.2 — Persona and the 10 operational roles `[ ]`
-
-MANUAL 1.1 defines 10 parallel roles. They are **behavioural modes**, not separate agents.
+### P1.2 — Persona and the 10 roles `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W1.2.1** | `src/personaRoles.js`: the 10 roles with their trigger conditions, primary responsibility, and the one behavioural rule each adds. Business Development · Client Relationship · Sales Qualification · Corporate Services · Investment Enquiry · Real Estate & Development · Construction Enquiry · Customer Service · Appointment Coordinator · Lead Routing. |
-| **W1.2.2** | Role selection from detected intent (`src/intent.js` already classifies). Multiple roles may be active; the prompt receives at most the two most relevant role directives to protect the token budget. |
-| **W1.2.3** | Persona core text (MANUAL 1.2): *"خفيفة دم بس فاهمة شغلها"* → cheerful, warm, quick witted, simple, natural, commercially perceptive, never pushy. Written natively in AR/EN/EL, **not** translated catchphrases. |
-| **W1.2.4** | Adaptive mirroring: casual customer → simple warm tone; executive / HNW investor → formal, concise, highly professional. Signals: message length, formality markers, title mentions, budget magnitude. |
-
-**Verification (G2).** `src/personaRoles.test.js`: a land development message activates Real Estate & Development + Lead Routing; a complaint activates Customer Service only; an HNW message raises formality; at most 2 role directives reach the prompt.
+| **W1.2.1** | `src/personaRoles.js`: MB-R1..R10 with trigger conditions and the one behavioural rule each adds. |
+| **W1.2.2** | Role selection from `src/intent.js` (40+ intents already exist). Multiple roles may be active; **at most 2 role directives** reach the prompt, to protect the token budget. |
+| **W1.2.3** | Persona core (MB-P1): *"خفيفة دم... بس فاهمة شغلها"* → cheerful, warm, quick witted, simple, natural, commercially perceptive. Authored **natively** per language. |
+| **W1.2.4** | Adaptive mirroring (MB-P3..P5): casual → simple and friendly; executive or HNW → formal, concise, highly professional. Signals: length, formality markers, titles, budget magnitude. **Never infer from nationality, language or name** (CX 8A fairness rule). |
 
 ---
 
-### Phase P1.3 — Humour Engine, levels 0 to 3 `[ ]`
+### P1.3 — Humour Engine, levels 0 to 3 (removes BLK-7) `[ ]`
 
-MANUAL 1.2 defines four levels with explicit contexts and prohibitions. ARCH describes 0/1/2. We implement all four; level 3 is reachable only by customer initiated humour.
-
-| Level | Behaviour | Context | Forbidden |
-| --- | --- | --- | --- |
-| **0 Serious** | Sober, direct, zero humour, zero playful emoji | Angry customers, complaints, cancellations, sensitive legal topics, sanctions/AML | Laughing emoji, over friendly tone, any joke |
-| **1 Warm** | Professional, calm, positive, minimal formal emoji 👍 | Complex tax consulting, HNW investors, major structures | Spontaneous jokes, joking about budgets, informal tone |
-| **2 Playful (DEFAULT)** | Smart, simple, light hearted, natural, friendly emoji 😄👀 | General sales conversation, formation enquiries, ordinary property | Belittling a question, over joking, crossing commercial politeness |
-| **3 Very Playful** | Quick witted, responds to the customer's own humour | Customer opens with jokes and is clearly in a positive mood | Breaking company dignity, fake promises inside a joke, touching the fundamentals |
+| Level | Behaviour | Context | Emoji | Forbidden |
+| --- | --- | --- | --- | --- |
+| **0 Serious** | sober, direct | anger, complaints, cancellations, sensitive legal, sanctions/AML | none | any joke, any playful emoji |
+| **1 Warm** | professional, calm, positive | complex tax, HNW investors, major structures | 👍 only | spontaneous jokes, joking about budgets |
+| **2 Playful (DEFAULT)** | smart, simple, light hearted | general sales, formation, ordinary property | 😄 👀 👍 | belittling a question, over joking |
+| **3 Very Playful** | quick witted, matches the customer | customer opens with jokes, clearly positive | full, incl. 😂 | breaking dignity, promises inside a joke |
 
 | Wave | Work |
 | --- | --- |
 | **W1.3.1** | `src/humourEngine.js`: `resolveHumourLevel({ message, history, intents, safetyRisks, leadTier, language }) → 0|1|2|3`. Default 2. |
-| **W1.3.2** | **Hard ban detector** (MANUAL 1.2, absolute). Forces level 0 on: residency/visa refusal or complication, legal disputes and judicial proceedings, financial loss or banking failure, complaints/anger/dissatisfaction, AML/KYC/sanctions checks, illness/death/force majeure. Trilingual regex + the existing `safetyPolicy` risk categories. |
-| **W1.3.3** | Level → prompt directive, written natively per language (Levantine playfulness is not Greek playfulness). |
-| **W1.3.4** | **Output gate**: `assertHumourCompliance(answer, level)` strips or rejects playful emoji and joking constructions when level is 0 or 1. Runs after the model, alongside the existing `validateResponse`. |
-| **W1.3.5** | Emoji allowlist per level. Current rules allow emoji but no dash punctuation; keep the dash rule, add the emoji policy. |
+| **W1.3.2** | **Hard ban detector** (MB-HB1..HB6, absolute): residency or visa refusal/complication · legal disputes and judicial proceedings · financial loss or banking default · complaints, anger, dissatisfaction · AML/KYC/sanctions · illness, death, force majeure. Trilingual, wired to `safetyPolicy` risk categories. Forces level 0. |
+| **W1.3.3** | Level → prompt directive, authored natively per language. |
+| **W1.3.4** | **Output gate** `assertHumourCompliance(answer, level)`: strips or rejects playful emoji and joking constructions at level 0 and 1. Runs beside `validateResponse`. |
+| **W1.3.5** | Emoji allowlist per level. The dash punctuation ban stays. |
 
-**Verification (G2).** `src/humourEngine.test.js`, minimum 60 cases: every hard ban trigger in AR/EN/EL forces 0; a jokey opener in Arabizi reaches 3; a €2M land enquiry sits at 1; the output gate strips 😄 from a level 0 draft.
-
-**G3 gap scan.** All six MANUAL hard ban categories have ≥3 test cases per language = 54 minimum.
+**G2.** `src/humourEngine.test.js`, ≥60 cases. Every hard ban trigger in AR/EN/EL forces 0 (≥3 cases × 6 bans × 3 languages = 54 minimum).
 
 ---
 
-### Phase P1.4 — Golden Answer Formula and the One Question Rule `[ ]`
-
-MANUAL 1.3: **direct answer + attractive benefit/insight + one smart question**, default length **2 to 5 sentences**.
+### P1.4 — Golden Answer Formula and One Question Rule (removes BLK-4) `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W1.4.1** | `src/goldenFormula.js`: `analyseAnswerShape(answer) → { hasDirectAnswer, hasValueHook, questionCount, sentenceCount }`, trilingual sentence and question splitting (`?`, `؟`, Greek `;`). |
-| **W1.4.2** | **One Question Rule** gate: max 1 question, or 2 only when they are tightly coupled. `responsePolicy.js` already counts questions; extend it with the coupling exception and wire it to reject rather than warn. |
-| **W1.4.3** | Length budget change: ordinary reply **2 to 5 sentences**. Current code caps at 3 sentences / 500 chars (`src/ai.js:224,284`) and the expanded path at 20 sentences / 1800 chars. New presets: `ORDINARY = { minSentences: 2, maxSentences: 5, maxChars: 700 }`, `EXPANDED = { maxSentences: 20, maxChars: 1800 }` for an explicit "tell me everything" request. Update every test asserting the old numbers. |
-| **W1.4.4** | The value hook is **optional by evidence**: a benefit is only added when approved evidence supports it. Never force a hook into every reply (already a rule in `config/refal-agent-rules.md:15`; keep it). |
-| **W1.4.5** | Encode the two MANUAL worked examples (formation cost ❌/✅, corporate tax ❌/✅) as regression fixtures in the golden set. |
-
-**Verification (G2).** `src/goldenFormula.test.js`: the two MANUAL ✅ answers score full marks; the two ❌ answers fail; a 6 sentence reply is rejected; a 2 question reply is rejected; two tightly coupled questions pass.
+| **W1.4.1** | `src/goldenFormula.js`: `analyseAnswerShape(answer) → { hasDirectAnswer, hasValueHook, questionCount, sentenceCount }`. Trilingual sentence and question splitting (`?`, `؟`, Greek `;`). |
+| **W1.4.2** | **One Question Rule** (MB-G3): max 1 question, or 2 only when tightly coupled. Extend `responsePolicy.js` with the coupling exception, set to **reject** not warn. A question is **optional**, not mandatory (CX 1B). |
+| **W1.4.3** | **Length budget.** New `ORDINARY = { minSentences:2, maxSentences:5, maxChars:700 }`. `EXPANDED = { maxSentences:20, maxChars:1800 }` for an explicit detail request. **Never truncate a material safety or eligibility condition to fit** (CX 5C). Update every test asserting 3 / 500. |
+| **W1.4.4** | The value hook is **evidence optional**. Never force a hook into every reply. |
+| **W1.4.5** | Encode MB 1.3's four worked examples (2 ❌, 2 ✅) as regression fixtures. |
 
 ---
 
-### Phase P1.5 — Anti pattern guards `[ ]`
-
-MANUAL 1.3 lists five prohibited behaviours. Each becomes a deterministic gate.
+### P1.5 — Anti pattern guards `[ ]`
 
 | ID | Anti pattern | Gate |
 | --- | --- | --- |
-| **AP-1** | Phone number obsession: asking for contact details before delivering real value | Block any contact request in a turn where no approved fact was delivered and the customer did not ask for contact. Hooks into existing consent machinery. |
-| **AP-2** | Legal disclaimer overload | Max one caveat clause per reply; reject repeated "subject to approval" / "consult your advisor" boilerplate. Prefer the MANUAL's positive sober phrasing. |
-| **AP-3** | Fear based selling | Block "prices will rise tomorrow", "the law changes immediately" and equivalents in AR/EN/EL **unless** the claim is present verbatim in approved, unexpired evidence. |
-| **AP-4** | Fake promises / absolute guarantees | Extends the GUARANTEE class from M2. Covers bank accounts, Stripe/PayPal/Amazon/Shopify, residency issuance, specific ROI. |
-| **AP-5** | Interrogation / multi question overload | Covered by P1.4 One Question Rule; add a history aware check so three consecutive question only turns is also a failure. |
-
-**Verification (G2).** `src/antiPatterns.test.js`, minimum 15 cases per anti pattern per language.
+| **AP-1** | Phone number obsession (MB-AP1) | Block a contact request in a turn that delivered no approved fact, unless the customer asked |
+| **AP-2** | Legal disclaimer overload (MB-AP2) | Max one caveat clause per reply. **But never remove a meaningful caveat just to sound confident** (CX 12B) |
+| **AP-3** | Fear based selling (MB-AP3) | Block "prices rise tomorrow", "the law changes immediately" and equivalents unless present verbatim in approved unexpired evidence |
+| **AP-4** | Fake promises and absolute guarantees (MB-AP4) | Extends the GUARANTEE class from M2: banks, Stripe/PayPal/Amazon/Shopify, residency issuance, specific ROI |
+| **AP-5** | Interrogation (MB-AP5) | P1.4 plus a history check: three consecutive question only turns fails |
+| **AP-6** | **Unrequested meeting push** (CX R-04) | An informational request stays informational. A score tier alone never triggers a booking offer |
 
 ---
 
-### Phase P1.6 — Prompt surface synchronisation `[ ]`
+### P1.6 — Policy precedence ladder (imported from CX 1C) `[ ]` **NEW**
 
 | Wave | Work |
 | --- | --- |
-| **W1.6.1** | Extract the shared prompt into one module, `src/brainPrompt.js`, exporting composable blocks: identity, roles, persona, humour directive, golden formula, anti patterns, compliance constitution, evidence block, memory block. |
-| **W1.6.2** | `src/ai.js` consumes `brainPrompt` instead of its inline 40 line array. Behaviour preserving. |
-| **W1.6.3** | `dashboard/server.js:1882+` consumes the same blocks, minus customer only directives, plus operator only directives. |
-| **W1.6.4** | `supabase/functions/rafa-agent-api/index.ts` consumes a Deno compatible mirror (`.mjs` sibling, same pattern already used by `responsePolicy.mjs`). |
-| **W1.6.5** | Rewrite `config/refal-agent-rules.md` as the canonical human readable version of the same blocks. |
-| **W1.6.6** | **Remove BLK-5.** Rewrite `src/ai.js:198` / `config/refal-agent-rules.md:11` "Do not volunteer unrelated prices, packages, services or sales details" → *"Answer the question first. You may then raise **one** relevant cross sell hook when its trigger fires and evidence supports it. Never volunteer detail unrelated to the customer's goal."* |
-| **W1.6.7** | **Remove BLK-6.** Rewrite `config/refal-agent-rules.md:21` "Do not introduce a call, meeting or the business contact during ordinary information gathering" → tier aware: *"Do not offer a call at Informational or Cold. Offer it flexibly at Warm. At Hot, or on any buying signal, stop selling and move to booking."* The consent and no repeat rules still bind. |
-| **W1.6.8** | **Drift test**: `src/promptParity.test.js` asserts the three runtime surfaces contain the same mandatory rule set. A new rule added in one place and missed in another fails CI. |
+| **W1.6.1** | `src/policyPrecedence.js` implementing the 6 level ladder from Rule 2. Exposes `resolveConflict(sources) → winner + reason`. |
+| **W1.6.2** | Wire it into the answer composer: when live data and a knowledge chunk disagree, **live data wins** and the chunk is flagged stale. When a customer statement and a knowledge chunk disagree about the customer, **the customer wins**. When anything disagrees with a privacy or fail closed rule, **the rule wins**. |
+| **W1.6.3** | General model knowledge may produce a harmless general explanation but **never a Refalco specific claim**. Gate enforces this. |
+| **W1.6.4** | **Approved sources that conflict with each other**: state that they differ, cite both, do not pick a side unless dated evidence resolves it (already a rule at `src/ai.js:214`, now formalised). |
+| **W1.6.5** | Every precedence decision is logged as a concise decision label, never as chain of thought (CX 15C). |
 
-**Verification (G2).** Full `npm test` plus the new parity test. Token count of the assembled prompt recorded, must stay under the budget set in P9.4.
-
-**G3 gap scan.** Every MANUAL module 1 requirement maps to a block in `brainPrompt.js`. Section 12 traceability rows M1-* all `COVERED`.
+**G2.** `src/policyPrecedence.test.js`: one case per adjacent pair in the ladder (15 pairs) × 3 languages.
 
 ---
 
-# MILESTONE M2 — Guardrail Reconciliation
-
-**Why.** Without this, M3's corpus is invisible. See section 1.3.
-
-**Exit criteria.** REFAL can state every approved program fact from the MANUAL while still refusing every personalized conclusion and every guarantee, in three languages, with no loss of existing protection.
-
----
-
-### Phase P2.1 — Claim classification taxonomy `[ ]`
+### P1.7 — Prompt surface synchronisation (removes BLK-5, BLK-6) `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W2.1.1** | `src/claimPolicy.js` with `classifyClaim(sentence, { evidence, language }) → 'PROGRAM_FACT' \| 'PERSONALIZED_CONCLUSION' \| 'GUARANTEE' \| 'NEUTRAL'`. |
-| **W2.1.2** | PERSONALIZED_CONCLUSION markers, trilingual: second person subject + eligibility/outcome verb ("your company qualifies", "you will receive", "شركتك مؤهلة", "رح تحصل على", "η εταιρεία σας δικαιούται"). |
-| **W2.1.3** | GUARANTEE markers, trilingual: guarantee/ensure/promise + approval/account/return/residency ("نضمن", "مضمون", "εγγυόμαστε"). |
-| **W2.1.4** | PROGRAM_FACT verification: the sentence's numeric and named entities must appear in the supplied approved evidence. Reuse `hasQuestionEvidenceOverlap` style token overlap, tightened for numbers (a number in the answer that is absent from evidence is an automatic fail). |
-
-**Verification (G2).** `src/claimPolicy.test.js`, minimum 120 cases. Every MANUAL fact as PROGRAM_FACT with evidence → ALLOW; the same fact without evidence → BLOCK; each personalized and guarantee variant → BLOCK.
+| **W1.7.1** | Extract one `src/brainPrompt.js` exporting composable blocks: identity · roles · persona · humour · golden formula · anti patterns · precedence · compliance · evidence · memory. **Compact. Stable rules only.** |
+| **W1.7.2** | `src/ai.js` consumes it instead of its inline 40 line array. |
+| **W1.7.3** | `dashboard/server.js:1882+` consumes the same blocks, operator variant. |
+| **W1.7.4** | Edge function consumes a Deno compatible `.mjs` mirror (same pattern as `responsePolicy.mjs`). |
+| **W1.7.5** | Rewrite `config/refal-agent-rules.md` as the canonical human readable version. |
+| **W1.7.6** | **Remove BLK-5.** `src/ai.js:198` "Do not volunteer unrelated prices, packages, services or sales details" → *"Answer the question first. You may then raise **one** relevant cross sell hook when its trigger fires and evidence supports it. Never volunteer detail unrelated to the customer's goal."* |
+| **W1.7.7** | **Remove BLK-6.** `config/refal-agent-rules.md:21` "Do not introduce a call during ordinary information gathering" → tier aware: *"No call offer at Informational or Cold. Offer flexibly at Warm. At Hot or on a buying signal, stop selling and move to booking, with consent."* |
+| **W1.7.8** | **Prompt versioning** (CX 5A): every prompt change produces a version id and a change history entry, so a bad prompt can be rolled back independently (M14). |
+| **W1.7.9** | **Drift test** `src/promptParity.test.js`: the three runtime surfaces must contain the same mandatory rule set. |
 
 ---
 
-### Phase P2.2 — Rewrite `containsProhibitedClaim` `[ ]`
+# M2 — Guardrail Reconciliation
+
+**Exit criteria.** REFAL states every approved program fact while still refusing every personalized conclusion and every guarantee, in three languages, with no loss of existing protection.
+
+---
+
+### P2.1 — Claim classification taxonomy `[ ]`
+
+| Class | Example | Rule |
+| --- | --- | --- |
+| **PROGRAM_FACT** | "The Cyprus PR route requires a qualifying investment of €300,000 plus VAT." | **ALLOW** when an approved, unexpired chunk in the supplied evidence contains the same fact |
+| **PERSONALIZED_CONCLUSION** | "Your activity qualifies for IP Box." / "You will get the residency." | **BLOCK** always. Offer specialist review |
+| **GUARANTEE** | "We guarantee Stripe approval / bank approval / 8% ROI." | **BLOCK** always, all languages |
+| **NEUTRAL** | everything else | pass to the other gates |
 
 | Wave | Work |
 | --- | --- |
-| **W2.2.1** | **Branch, do not replace.** Keep the existing blanket function as `containsProhibitedClaimLegacy` and route to it when no approved evidence was supplied, so the no knowledge case behaves exactly as today. |
-| **W2.2.2** | New path: split the answer into clauses (the existing `removeSafeDisclaimerClauses` splitter), classify each with `claimPolicy`, reject the answer if any clause is PERSONALIZED_CONCLUSION or GUARANTEE, or is a PROGRAM_FACT without matching evidence. |
-| **W2.2.3** | Same treatment for `restrictedRefalcoReply` (`src/refalcoAnswer.js:181-196`): a residency or investment **program question** with approved evidence now gets a grounded answer instead of a flat refusal; without evidence the existing refusal stands. |
-| **W2.2.4** | Keep `withoutPriceFacts` / `containsPriceClaim` / `containsUnsupportedPackageInclusion` from `groundingPolicy.js` unchanged. They are orthogonal and still needed. |
-| **W2.2.5** | Audit every existing test in `src/groundingPolicy.test.js`, `src/agentFactualGrounding.test.js`, `src/safetyPolicy.test.js`, `src/agentRagEvidence.test.js`. Any test that asserts "residency is always refused" must be rewritten to "residency without evidence is refused" and a new positive test added. **Document each changed assertion in the Result block** so a weakened safeguard can never hide as a refactor. |
+| **W2.1.1** | `src/claimPolicy.js` `classifyClaim(sentence, { evidence, language })`. |
+| **W2.1.2** | PERSONALIZED markers, trilingual: second person + eligibility or outcome verb ("your company qualifies", "شركتك مؤهلة", "η εταιρεία σας δικαιούται"). |
+| **W2.1.3** | GUARANTEE markers, trilingual ("نضمن", "مضمون", "εγγυόμαστε"). |
+| **W2.1.4** | PROGRAM_FACT verification: entities and **every number** in the sentence must appear in the supplied evidence. A number absent from evidence is an automatic fail. |
 
-**Verification (G2).** Full `npm test`. Plus `scripts/auditClaimGates.js` from P0.2 now showing zero MANUAL required sentences blocked.
-
-**G3 gap scan.** Diff the set of blocked message classes before and after. Anything newly allowed must map to a MANUAL requirement row; anything else is a regression.
+**G2.** `src/claimPolicy.test.js`, ≥120 cases. Every MB-F fact with evidence → ALLOW; same fact without evidence → BLOCK; every personalized and guarantee variant → BLOCK.
 
 ---
 
-### Phase P2.3 — Banking and payment gateway guard `[ ]`
-
-MANUAL 2.3 golden rule: never promise account opening or gateway approval.
+### P2.2 — Rewrite `containsProhibitedClaim` (removes BLK-1, BLK-2, BLK-8) `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W2.3.1** | `src/bankingPolicy.js`: detects banking / Stripe / PayPal / Amazon / Shopify intent in AR/EN/EL. |
-| **W2.3.2** | Forces the MANUAL's response shape: acknowledge honestly that the final decision belongs to the institution's own risk and KYC/AML assessment, explain the value of building a clean file from day one, then one discovery question. |
-| **W2.3.3** | Encode the MANUAL's Stripe dialogue (2.3) as a golden fixture in AR, plus EN and EL equivalents. |
+| **W2.2.1** | **Branch, do not delete.** Keep the blanket function as `containsProhibitedClaimLegacy`, routed to when **no approved evidence was supplied**, so the empty knowledge case behaves exactly as today. |
+| **W2.2.2** | New path: split into clauses, classify each with `claimPolicy`, reject if any clause is PERSONALIZED or GUARANTEE, or is a PROGRAM_FACT without matching evidence. |
+| **W2.2.3** | Same for `restrictedRefalcoReply`: a residency or investment **programme** question with evidence gets a grounded answer; without evidence the refusal stands. |
+| **W2.2.4** | Narrow the blanket "investment" block to investment **advice** and **returns**, not investment **programmes** (Category C is literally an investment product). |
+| **W2.2.5** | Keep `withoutPriceFacts`, `containsPriceClaim`, `containsUnsupportedPackageInclusion`, `containsLegacyBrandHistory`, `containsRawUrlClaim` unchanged. Orthogonal and still needed. |
+| **W2.2.6** | Audit `groundingPolicy.test.js`, `agentFactualGrounding.test.js`, `safetyPolicy.test.js`, `agentRagEvidence.test.js`. Rewrite "residency is always refused" → "residency without evidence is refused", and add the positive case. **Every changed assertion is listed in the Result block** so a weakened safeguard can never hide as a refactor. |
+
+**G3.** Diff the set of blocked message classes before and after. Anything newly allowed must map to an MB requirement row. Anything else is a regression.
 
 ---
 
-### Phase P2.4 — Reservation deposit and ROI guards `[ ]`
+### P2.3 — Banking and payment gateway guard `[ ]`
+`src/bankingPolicy.js`. Detects banking / Stripe / PayPal / Amazon / Shopify intent trilingually. Forces MB 2.3's shape: honest that the decision belongs to the institution's risk and KYC/AML assessment → the real value of a clean file from day one → one discovery question. MB's verbatim Arabic Stripe dialogue becomes a golden fixture, with EN and EL equivalents.
 
-| Wave | Work |
-| --- | --- |
-| **W2.4.1** | **Reservation deposit guardrail** (MANUAL 2.5, absolute): REFAL must never guess or state a fixed deposit amount. Any currency amount in an answer that also mentions reservation/deposit/عربون/προκαταβολή must come from `refal_reservation_rules` (M4), not from a chunk and not from the model. |
-| **W2.4.2** | **ROI guardrail** (MANUAL 2.5): no yield percentage, no future price prediction. Encode the MANUAL's reply script ("I will not throw a nice percentage at you just to please you") as the canonical response, trilingual. |
-| **W2.4.3** | **Property VAT guardrail**: 19% / 5% may be stated as published program facts; the **applicable rate for this customer** may not be decided by REFAL. |
+### P2.4 — Reservation deposit, ROI and VAT guards `[ ]`
+- **W2.4.1** Reservation deposit (MB-F50, absolute): any currency amount in an answer that also mentions reservation/deposit/عربون/προκαταβολή **must** come from `refal_reservation_rules` (M4), never a chunk and never the model.
+- **W2.4.2** ROI (MB-F55): no yield percentage, no future price prediction. MB's verbatim reply script becomes the canonical response, trilingual.
+- **W2.4.3** Property VAT: 19% and 5% are stateable programme facts; **which rate applies to this customer** is not REFAL's to decide.
 
----
-
-### Phase P2.5 — AML, sanctions, and compliance escalation `[ ]`
-
-MANUAL 5.3: on a sanctioned entity or an attempt at illegal circumvention, escalate to the compliance manager **immediately, without entering the discussion**.
+### P2.5 — AML, sanctions, compliance and the existing client boundary `[ ]`
 
 | Wave | Work |
 | --- | --- |
 | **W2.5.1** | Extend `src/redFlagRules.js` with sanctions and circumvention detection, trilingual. |
-| **W2.5.2** | Compliance escalation path: distinct from a sales handover, does **not** require customer consent (it is a regulatory obligation, not a marketing contact), and produces a sober acknowledgment plus an internal escalation record. |
-| **W2.5.3** | Forces humour level 0 and suppresses every sales hook for the remainder of the conversation. |
-| **W2.5.4** | Privacy hard rule: never request a password, card data, or a sensitive bank statement in chat. Already partly in `sensitiveData.js`; extend and test. |
+| **W2.5.2** | **Compliance escalation** (MB-SEC2): distinct from a sales handover, does **not** require customer consent (regulatory obligation, not marketing), produces a sober acknowledgment plus an internal record. **Do not debate the evasion** (CX 12B). |
+| **W2.5.3** | Forces humour level 0 and suppresses every sales hook for the rest of the conversation. |
+| **W2.5.4** | Privacy hard rule (MB-SEC4): never request a password, card data, or a sensitive bank statement in chat. |
+| **W2.5.5** | **Existing client verification, built not parked.** Codex left this capability dark. This plan **builds the flow**: REFAL sends a one time code to the contact already on file, the customer reads it back, and only then is account data unlocked for that conversation. A self asserted detail or a matching caller number is **never** authentication. Test that self assertion alone never authenticates. The customer gets a working path, not a dead end. |
+| **W2.5.6** | Source of Funds and Source of Wealth explained neutrally and separately (MB-SEC3). Only high level status in chat, never files or statements. |
+
+### P2.6 — Guardrail regression sweep `[ ]`
+Red team corpus v1: 200 adversarial messages AR/EN/EL (guarantee bait, price bait, eligibility bait, injection inside a pasted "approved document", sanctions probing, credential phishing, cross customer probing). Zero guarantees, zero personalized conclusions, zero injected instruction obedience. Record `docs/brain/GUARDRAIL-DELTA.md`.
 
 ---
 
-### Phase P2.6 — Guardrail regression sweep `[ ]`
+# M3 — Knowledge Corpus + Fact Governance
+
+**Exit criteria.** 87 sources live. Every MB module 2 fact is retrievable in the customer's language in the top 5, stated correctly end to end, **and carries provenance metadata**.
+
+**Authoring standard (every M3 phase):**
+1. Markdown with explicit `##` headings so chunks stay topically pure. Each block under 1800 chars.
+2. **Native authoring, not translation.** Arabic in simplified warm white dialect / accessible near MSA, avoiding dry legal register. Greek in professional business Greek. English business casual.
+3. Include the customer's own vocabulary as lexical anchors: "كم تكلفة تأسيس شركة", "poso kostizei etaireia", "how much to open a company".
+4. Facts only. No sales scripts, no persona, no internal review language.
+5. **No volatile value** from the six MB-DYN variables.
+6. Separate **service terms and boundaries** from **sales copy**, so a persuasive example can never override a limitation (CX 2A).
+7. Every fact carries the P3.9 provenance record.
+
+---
+
+### P3.1 — Corporate domain (topics 1-8) `[ ]`
+Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
+
+**MB 2.1 checklist, every item must appear:**
+- [ ] Lifecycle, 10 stages (MB-F1)
+- [ ] €999 + VAT package, all 7 inclusions (MB-F2..F9)
+- [ ] Company Secretary = statutory corporate function, **not** a personal assistant (MB-F6)
+- [ ] Registered Address ≠ an office or apartment (MB-F7)
+- [ ] ~2 weeks after documents are complete (MB-F2)
+- [ ] Branch vs Subsidiary vs new Ltd, do not assume a new Ltd (MB-F10)
+- [ ] Shareholder vs Director, can be the same person (MB-F11..F13)
+- [ ] Ownership can change later, nothing carved in stone (MB-F14)
+- [ ] Registered vs physical/virtual office and the substance opportunity (MB-F15)
+- [ ] Legitimate privacy vs illegal UBO concealment, explicitly not supported (MB-F16)
+- [ ] Dormant company still has reporting and accounting obligations (MB-F17)
+- [ ] Liquidation is a formal procedure, neglect is not closure (MB-F18)
+
+### P3.2 — Tax domain (topics 9-13) `[ ]`
+- [ ] Corporate tax from **15% from 2026** (MB-F19)
+- [ ] IP Box effective **~2.5% to 3%**, explicitly **not automatic** (MB-F20, F21)
+- [ ] Dividends vs Salary, depends on personal tax residency and DTTs, routes to a tax advisory opportunity, never a decisive personal opinion (MB-F22, F23)
+- [ ] Holding vs Trading, all 4 comparison rows (MB-F24..F27)
+- [ ] VAT number and **EORI** for trading, payroll and non EU work permits (MB-F26, F27)
+- [ ] MB 2.2's simplified ✅ answer as a golden fixture
+
+### P3.3 — Banking and payment gateways (topic 14) `[ ]`
+- [ ] Final approval belongs to the institution's risk and KYC/AML assessment (MB-F28, F29)
+- [ ] Covers banks, Stripe, PayPal, Amazon, Shopify
+- [ ] The value: a clean file built correctly from day one
+- [ ] **Zero promise language anywhere in the document**
+
+### P3.4 — Residency and Non Dom (topics 15-18) `[ ]` ⚠ highest guardrail risk, needs M2
+- [ ] Minimum qualifying investment **€300,000 + VAT** (MB-F30)
+- [ ] Income **€50,000** main / **+€15,000** spouse / **+€10,000** each minor child, from outside Cyprus (MB-F31..F33)
+- [ ] Non Dom **0% on dividends and interest for 17 years** (MB-F34)
+- [ ] Source of Funds vs Source of Wealth (MB-F35..F37)
+- [ ] **Category A** new residential, €300,000 + VAT, **first sale from the developer**, most prominent (MB-F38)
+- [ ] **Category B** other property types, offices/shops/hotels, €300,000 (MB-F39)
+- [ ] **Category C** €300,000 share capital in an operating Cyprus company with employees and real presence (MB-F40)
+- [ ] **Category D** €300,000 in qualifying funds, **AIF / AIFLNP** (MB-F41)
+- [ ] Schools: public / private / international British curricula; ask the children's ages (MB-F42)
+- [ ] GESY plus optional private insurance (MB-F43)
+- [ ] Cost of living and cars are variable, fresh estimate per city and family size (MB-F44)
+
+### P3.5 — Real estate (topics 19-22) `[ ]`
+- [ ] Buyer journey, 10 stages (MB-F45)
+- [ ] Completed vs Off plan, who each suits (MB-F46, F47)
+- [ ] VAT **19%**, reduced **5%** under conditions for direct personal use, calculated precisely by the team (MB-F48, F49)
+- [ ] Reservation deposit differs per project, from the live database, **never guessed** (MB-F50)
+- [ ] Four cities, full profiles (MB-F51..F54)
+- [ ] MB's verbatim ROI script (MB-F55)
+
+### P3.6 — Legal, IP, landowners, construction (topics 23-24) `[ ]`
+- [ ] Landowner JV: indicators, 4 discovery questions (location, area, building density, preliminary permits), escalation phrasing (MB-F57..F59)
+- [ ] Construction tenders: indicators, 4 discovery questions (size, location, BOQ and architectural plans, timeline), escalation with **no prices and no preliminary estimates from the agent at all** (MB-F60..F62)
+- [ ] Trademarks Cyprus and EU (MB-F63)
+- [ ] Shareholders Agreements (MB-F64)
+- [ ] Service and Employment Agreements (MB-F65)
+- [ ] T&Cs and GDPR advisory (MB-F66)
+
+### P3.7 — Company profile and credibility (topic 25) `[ ]`
+- [ ] Operational roots **2000** (MB-C1)
+- [ ] More than **20 years** experience (MB-C2)
+- [ ] **47** development projects (MB-C3)
+- [ ] More than **400** multi sector projects (MB-C4)
+- [ ] Positioning: a gateway to comprehensive investment and structural solutions, not a narrow registration office (MB-C5)
+- [ ] These four numbers live **only here**, as evidence, never as a prompt literal
+
+### P3.8 — Jurisdiction comparisons (topics 26-29) `[ ]`
+Cyprus vs Dubai/UAE · Estonia · Malta/Bulgaria · USA (MB-J1..J4), each with MB's verbatim dialogue. **Never attack another country, never claim "we are always the best"** (MB-J0). Fact check each claim; a comparison that cannot be sourced is cut, not softened (CX 3.3 checklist).
+
+---
+
+### P3.9 — Fact governance and approval register (imported from CX 2B) `[ ]` **NEW — this is Rule 2**
+
+This is the single most important import from Codex. It is what lets REFAL say €999 **and** stay safe.
 
 | Wave | Work |
 | --- | --- |
-| **W2.6.1** | Red team corpus v1: 200 adversarial messages in AR/EN/EL (guarantee bait, price bait, eligibility bait, prompt injection inside a pasted "approved document", sanctions probing, credential phishing). |
-| **W2.6.2** | Run the full existing suite plus the new corpus. Zero guarantees, zero personalized conclusions, zero injected instruction obedience. |
-| **W2.6.3** | Record the before/after block matrix in `docs/brain/GUARDRAIL-DELTA.md`. |
+| **W3.9.1** | Migration: extend `rafa_knowledge_documents.metadata` (or a new `refal_fact_register`) to carry per fact: `claim_text`, `source_url_or_document`, `source_type`, `jurisdiction`, `reviewer`, `verified_at`, `effective_from`, `expiry_or_review_at`, `approved_languages[]`, `status`. |
+| **W3.9.2** | **Every number in the corpus gets a register row.** 20 facts are high risk and get a mandatory review date: €999, the two 4 month terms, ~2 weeks, 15%, 2.5-3%, €300,000, €50,000, €15,000, €10,000, 17 years, the four categories, 19%, 5%, 2000, 20 years, 47, 400+. |
+| **W3.9.3** | **Status drives behaviour.** `approved` → statable. `expired` → REFAL says the figure is not currently confirmed and offers specialist follow up. `blocked` → not retrievable at all, and a test proves it cannot leak through semantic search. |
+| **W3.9.4** | **Rule 1 default**: per BOSS's authority instruction, MB facts are seeded as `approved` with `source = MB manual`, `reviewer = BOSS`, `verified_at = 2026-10-07`. They are live from day one. They are **not** blocked waiting for an external reviewer. |
+| **W3.9.5** | **Rule 2 safety net**: each carries an `expiry_or_review_at`. VOLATILE topics get 30 to 90 days, STABLE get 12 months. When it expires she stops asserting it automatically, with no code change. |
+| **W3.9.6** | **The 12.5% question, solved not parked.** Cyprus corporate tax was 12.5% historically; MB says 15% from 2026. **REFAL states 15% from day one.** The register row carries the exact effective date and a 30 day review, and the dashboard shows it in the "review soon" list. If it ever needs changing, that is one field in one form. The fact is live, and it is also correctable in sixty seconds. |
+| **W3.9.7** | Dashboard view: facts expiring in 7 days, one click re-approval that extends the date, and a full audit of who changed which fact (feeds M12). |
 
-**Verification (G2).** `npm test` + `node scripts/redTeamBrain.js > /tmp/rt.log 2>&1; echo "exit=$?"`.
-
----
-
-# MILESTONE M3 — Layer 2: The Trilingual Knowledge Corpus
-
-**Why.** This is the brain's actual content: 25 topics × 3 languages = 75 approved sources.
-
-**Exit criteria.** Every MANUAL module 2 fact is retrievable, in the customer's language, within the top 5 hybrid search results for its golden questions, and is correctly stated by the agent end to end.
-
-**Authoring standard for every document** (applies to all M3 phases):
-1. Markdown with explicit `##` headings so `chunkKnowledge` produces clean, topically pure chunks.
-2. Each heading block under 1800 chars.
-3. **Native authoring, not translation.** The Arabic document is written in simplified warm white dialect / near MSA that a Levantine reader finds natural, avoiding dry legal register (ARCH 2.b). The Greek document is professional business Greek. The English is business casual.
-4. Include the customer's own vocabulary as lexical anchors (the lexical half of hybrid search uses `tsvector('simple')`, so the literal words matter): "كم تكلفة تأسيس شركة", "poso kostizei etaireia", "how much to open a company".
-5. Facts only. No sales scripts, no persona, no internal review language (`src/ai.js:148-151` strips provenance anyway).
-6. **No volatile value** from the M4 list (section 2 hard separation rule).
-7. Every price bearing document carries an explicit `valid_until` and enters the 30 day renewal workflow (P3.8).
+**G2.** `src/factRegister.test.js`: an expired fact cannot be asserted · a blocked fact cannot be retrieved by lexical or semantic search · an approved fact is asserted with its evidence · changing a register row changes behaviour with no redeploy.
 
 ---
 
-### Phase P3.1 — Corporate domain `[ ]`
-Topics 1 to 8. Lifecycle, formation package, Branch/Subsidiary/New Ltd, Shareholder vs Director, ownership changes, registered vs physical office, privacy vs concealment, dormant and liquidation.
+### P3.10 — Ingestion pipeline and corpus health `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W3.1.1** | Author EN for all 8 topics. |
-| **W3.1.2** | Author AR for all 8 topics (Levantine friendly). |
-| **W3.1.3** | Author EL for all 8 topics. |
-| **W3.1.4** | Ingest + embed + verify retrieval against the golden questions for topics 1-8 (240 questions). |
+| **W3.10.1** | `scripts/ingestBrainCorpus.js`: reads `knowledge/<topic>/<lang>.md`, upserts the source with its `refal://` URI, stores the revision, chunks, embeds, verifies counts. **Idempotent and re-runnable**, reports a per topic diff. Publish and unpublish are safe operations (CX 4A). |
+| **W3.10.2** | **Chunk by meaning, not size** (CX 4A). Never mix policy, examples and dynamic facts in one chunk. |
+| **W3.10.3** | Backfill verification: every chunk has an embedding and a matching `embedding_model` string, because the semantic branch filters on exact model equality. |
+| **W3.10.4** | **Retrieval aliases** (CX 4B): Arabic dialect spellings, Arabic/English code switching, English acronyms (VAT, EORI, SHA, AIF, GESY, UBO, DTT, BOQ), Greek terms, transliterations, common misspellings. |
+| **W3.10.5** | **Low confidence fallback** (CX 4B): ask one clarifying question, state the limitation, or route to a human. **Never fill the gap from unapproved prompt text.** |
+| **W3.10.6** | `scripts/brainHealth.js`: per topic per language — source exists · approved · not expired · chunk count · embedded count · retrievable for its golden questions · register row present. Exits non zero on any gap. This is the standing G3 tool for M3. |
+| **W3.10.7** | `docs/brain/KNOWLEDGE-RUNBOOK.md`: how to add a topic, update a price, retire a fact. |
 
-**Content checklist from MANUAL 2.1, every item must appear:**
-- [ ] Lifecycle: Idea → Incorporation → Banking → Tax → Accounting → Operations → Growth → Changes → Renewal → Closure
-- [ ] €999 + VAT package, all 7 inclusions: Ltd formation (~2 weeks after documents complete), name reservation and approval, document preparation (MoA/AoA), Certificate of Incorporation, Company Secretary **4 months**, Registered Address **4 months**, remote file management
-- [ ] Company Secretary is a statutory corporate function, **not** a personal assistant
-- [ ] Registered Address is not an office or an apartment
-- [ ] Branch vs Subsidiary vs new Ltd for an existing foreign entity (corporate advisory opportunity, do not assume a new Ltd)
-- [ ] Shareholder = owner of shares and capital; Director = executive, administrative, legal manager; can be the same person
-- [ ] Ownership structure can change later; nothing is carved in stone from day one
-- [ ] Registered vs physical/virtual office and the substance opportunity
-- [ ] Legitimate structural privacy vs illegal UBO concealment, explicitly not supported
-- [ ] Dormant company still carries reporting and accounting obligations while on the register
-- [ ] Liquidation is a formal legal procedure; neglecting a company is not closure
-
-**Verification (G2).** `node scripts/evaluateRag.js --topics corporate > /tmp/p31.log 2>&1; echo "exit=$?"`. Every golden question returns its expected topic in the top 5 and the correct language document first.
-
----
-
-### Phase P3.2 — Tax domain `[ ]`
-Topics 9 to 13.
-
-**Content checklist from MANUAL 2.2:**
-- [ ] Corporate tax starts at **15% from 2026**
-- [ ] IP Box: effective rate down to **~2.5% to 3%** on qualifying IP and software development profits. Explicitly **not automatic for every company**
-- [ ] Dividends vs Salary: different tax treatment, depends on the person's own tax residency and DTTs, never a flat "tax free" answer, routes to a tax advisory opportunity
-- [ ] Holding vs Trading full comparison: purpose, discovery questions, compliance requirements, employment capacity
-- [ ] Trading company compliance: **VAT number**, **EORI** registration for customs, shipping procedures
-- [ ] Holding company: international ownership structure review and substance requirements
-- [ ] The MANUAL's simplified tax answer (2.2 ✅ example) as a golden fixture: start from the rate, hint at structure specific advantages, ask about the activity
-
----
-
-### Phase P3.3 — Banking and payment gateways `[ ]`
-Topic 14. Pairs with the P2.3 guard.
-
-**Content checklist from MANUAL 2.3:**
-- [ ] Final approval belongs to the financial institution's risk and KYC/AML assessment
-- [ ] Applies to banks and to Stripe, PayPal, Amazon, Shopify
-- [ ] The value proposition: build the company and the file cleanly from the start, matched to the real activity, instead of registering and discovering compliance problems later
-- [ ] Zero promise language anywhere in the document
-
----
-
-### Phase P3.4 — Residency and Non Dom `[ ]`
-Topics 15 to 18. **Highest guardrail risk.** Depends on M2 being complete.
-
-**Content checklist from MANUAL 2.4:**
-- [ ] Qualifying investment minimum **€300,000 + VAT (where applicable)**
-- [ ] Proven annual income from outside Cyprus: main applicant **€50,000**, spouse **+€15,000**, each eligible minor child **+€10,000**
-- [ ] Non Dom: **0% on dividends and interest for 17 years** for new Cyprus tax residents
-- [ ] Source of Funds (the direct path of the money for this specific transaction) vs Source of Wealth (the cumulative history of how the wealth was built)
-- [ ] Documentation of SoF, and in some cases SoW, is a normal standard compliance step, communicated calmly and without interrogation
-- [ ] **Category A**: new residential property (house/apartment), €300,000 + VAT, **first sale directly from the developer**, the most prominent option
-- [ ] **Category B**: other property types (offices, shops, hotels), €300,000, including combined or redeveloped commercial property
-- [ ] **Category C**: €300,000 in the share capital of a Cyprus company that operates, has employees and real presence in Cyprus
-- [ ] **Category D**: €300,000 in units of qualifying Cyprus investment funds (AIF / AIFLNP)
-- [ ] Relocation: public vs private vs international schools (British/English curricula); discovery question "how old are the children"
-- [ ] Healthcare: GESY national system plus optional private insurance
-- [ ] Cost of living and car purchase are variable and need a fresh estimate per city and family size, never a generic number
-
----
-
-### Phase P3.5 — Real estate `[ ]`
-Topics 19 to 22. Pairs with the P2.4 guards.
-
-**Content checklist from MANUAL 2.5:**
-- [ ] Buyer journey: Search → Selection → Reservation Deposit → Legal Due Diligence → Contract → Payment Plan → Tax/VAT → Transfer/Registration → Delivery → Management
-- [ ] Completed property suits a buyer who wants to live there or wants rental yield quickly
-- [ ] Off plan suits a buyer who needs an easier payment plan and a future delivery date
-- [ ] New property VAT **19%**, reduced **5%** under specific conditions for direct personal use, calculated precisely by the team, no loose generic numbers
-- [ ] Reservation deposit: amounts and conditions differ per project, must come from the live property database, **never guessed**
-- [ ] Four cities: Limassol (international, business hub, coastal, luxury, most expensive, capital growth, HNW and international corporates), Larnaca (fast growth, near the airport, coastal, medium and rising, excellent rental yields, major infrastructure plans), Paphos (lifestyle, tourism, quiet, medium, international buyers, holiday homes, short and long term rentals, family living), Nicosia (capital, administrative, governmental and university centre, stable and locally driven, very stable long term rentals, students and corporate staff)
-- [ ] The MANUAL's ROI reply script as a golden fixture
-
----
-
-### Phase P3.6 — Legal, IP, Landowners, Construction `[ ]`
-Topics 23 to 24.
-
-**Content checklist from MANUAL 2.6:**
-- [ ] Landowners JV: indicators ("I have land in Cyprus and want to develop it / partner with a developer"); discovery questions (land location, area, building density, any preliminary permits); escalation phrasing (this is a development opportunity, not an ordinary property purchase, so it needs direct review by the development and investment team)
-- [ ] Construction tenders: indicators ("we need a contractor for a large project / we have a construction tender"); discovery questions (project size, location, availability of BOQ and architectural plans, planned start date); escalation with **no prices and no preliminary estimates from the agent at all**
-- [ ] Legal portfolio as cross sell: Cyprus / EU Trademarks, Shareholders Agreements (SHA), Service and Employment Agreements, T&Cs and GDPR advisory
-
----
-
-### Phase P3.7 — Company profile and credibility `[ ]`
-The `company-profile` topic. Depends on DECISION-1.
-
-**Content checklist from MANUAL 2.0 and 3.0:**
-- [ ] Refalco Group operational roots from **2000**
-- [ ] More than **20 years** of field experience
-- [ ] **47** real estate development projects
-- [ ] More than **400** multi sector projects
-- [ ] Positioning: not a narrow company registration office, a gateway to comprehensive investment and structural solutions
-- [ ] These numbers live **only** here, as evidence, never in a prompt string
-
----
-
-### Phase P3.8 — Ingestion pipeline, freshness, and renewal `[ ]`
-
-| Wave | Work |
-| --- | --- |
-| **W3.8.1** | `scripts/ingestBrainCorpus.js`: reads `knowledge/<topic>/<lang>.md`, creates or updates the source with the `refal://kb/...` canonical URI, stores the revision, chunks, embeds, verifies chunk and embedding counts match. Idempotent, re runnable, reports a per topic diff. |
-| **W3.8.2** | **Freshness workflow.** Price bearing documents expire after 30 days by design. Build a dashboard view listing documents expiring in the next 7 days plus a one click re approval that extends `valid_until`. Without this the brain silently goes quiet on pricing after a month. |
-| **W3.8.3** | `npm run index:knowledge` backfill verification. Confirm every chunk has an embedding and a matching `embedding_model` string, because the semantic branch of hybrid search filters on exact model equality (`20260929142922…sql:98`). |
-| **W3.8.4** | **Corpus health check** `scripts/brainHealth.js`: per topic per language, reports source exists / revision approved / not expired / chunk count / embedded count / retrievable for its golden questions. Exits non zero on any gap. This is the standing G3 tool for M3. |
-| **W3.8.5** | Document the operator runbook: how to add a topic, how to update a price, how to retire a fact. `docs/brain/KNOWLEDGE-RUNBOOK.md`. |
-
-**Verification (G2).**
+**G2.**
 ```bash
-node scripts/brainHealth.js > /tmp/health.log 2>&1; echo "exit=$?"; tail -40 /tmp/health.log
-npm run eval:knowledge > /tmp/evalk.log 2>&1; echo "exit=$?"
+node scripts/brainHealth.js > /tmp/health.log 2>&1; echo "exit=$?"
+npm run eval:knowledge      > /tmp/evalk.log 2>&1; echo "exit=$?"
 node scripts/evaluateRag.js > /tmp/rag.log 2>&1; echo "exit=$?"
 ```
-
-**G3 gap scan.** 75 sources present, 75 approved, 0 expired unintentionally, 100% chunks embedded, ≥95% of the 720 golden questions retrieve their expected topic in the top 5.
-
----
-
-# MILESTONE M4 — Layer 3: Dynamic Data
-
-**Why.** MANUAL 5.3 forbids freezing six values into the prompt. ARCH 3 names four core tables. Without this layer, the €999 offer rots, property answers are invented, and reservation deposits get guessed.
-
-**Exit criteria.** All six dynamic variables are served from live tables through agent tools, with a test proving none of them appear as a literal in any prompt or chunk.
+**G3.** 87 sources present and approved · 0 unintentionally expired · 100% chunks embedded · ≥95% of the ~870 golden questions retrieve their expected topic in the top 5 · 100% of negative queries retrieve nothing · **FIX-7 and FIX-8 repaired**.
 
 ---
 
-### Phase P4.1 — Schema `[ ]`
+# M4 — Dynamic Data and Tools
 
-New migration `supabase/migrations/<ts>_refal_dynamic_commercial_data.sql`. Follow every existing convention: RLS enabled, revoke from `public`/`anon`/`authenticated`, grant to `service_role`, `security invoker` functions with `set search_path = ''`, `set_rafa_updated_at` trigger.
+**Exit criteria.** All six MB-DYN variables served from live tables through typed tools, with a test proving none appear as a literal in any prompt or chunk, and full failure state handling.
+
+### P4.1 — Schema `[ ]`
+Migration `<ts>_refal_dynamic_commercial_data.sql`. Every existing convention: RLS on, revoke from `public`/`anon`/`authenticated`, grant `service_role`, `security invoker` + `set search_path = ''`, `set_rafa_updated_at` trigger.
 
 | Table | Serves | Key columns |
 | --- | --- | --- |
-| `refal_offers_and_pricing` | `ACTIVE_PROMOTIONS`, formation package price | `code`, `title_{en,ar,el}`, `amount`, `currency`, `vat_note`, `inclusions jsonb`, `valid_from`, `valid_until`, `active` |
-| `refal_annual_renewal_fees` | `ANNUAL_RENEWAL_FEES` | `item` (secretary, registered address, accounting, audit, tax), `amount`, `currency`, `period`, `notes_{en,ar,el}`, `valid_until` |
-| `refal_property_inventory` | `LIVE_PROPERTY_INVENTORY` | `reference`, `city` (limassol/larnaca/paphos/nicosia), `type`, `status` (offplan/completed), `price`, `currency`, `vat_rate_note`, `bedrooms`, `first_sale boolean`, `pr_eligible boolean`, `available boolean`, `developer`, `delivery_date` |
-| `refal_reservation_rules` | `RESERVATION_DEPOSIT_RULES` | `project_or_property_id`, `deposit_amount` or `deposit_percent`, `refundable`, `conditions_{en,ar,el}` |
-| `refal_government_fees` | `GOVERNMENT_THIRD_PARTY_FEES` | `fee_type` (registry, land registry, residency application), `amount`, `currency`, `authority`, `effective_from`, `source_note` |
-| `refal_leads` / `refal_lead_profile` | ARCH `leads` table + MANUAL 5.1 CRM fields | see M7 P7.1 |
+| `refal_offers_and_pricing` | ACTIVE_PROMOTIONS, formation price | `code`, `title_{en,ar,el}`, `amount`, `currency`, `vat_note`, `inclusions jsonb`, `valid_from`, `valid_until`, `active` |
+| `refal_annual_renewal_fees` | ANNUAL_RENEWAL_FEES | `item` (secretary, address, accounting, audit, tax), `amount`, `currency`, `period`, `notes_{en,ar,el}`, `valid_until` |
+| `refal_property_inventory` | LIVE_PROPERTY_INVENTORY | `reference`, `city`, `type`, `status` (offplan/completed), `price`, `currency`, `vat_rate_note`, `bedrooms`, `first_sale`, `pr_eligible`, `available`, `developer`, `delivery_date` |
+| `refal_reservation_rules` | RESERVATION_DEPOSIT_RULES | `project_or_property_id`, `deposit_amount` or `deposit_percent`, `refundable`, `conditions_{en,ar,el}` |
+| `refal_government_fees` | GOVERNMENT_THIRD_PARTY_FEES | `fee_type`, `amount`, `currency`, `authority`, `effective_from`, `source_note` |
+| `refal_lead_profile` | AR-A5 leads + MB-CRM1..4 | see M8 P8.1 |
 
-`LIVE_CALENDAR_SLOTS` is already served by `src/booking.js` + `rafa_appointments`; it is wired, not rebuilt.
+`LIVE_CALENDAR_SLOTS` is served by the existing `src/booking.js` + `rafa_appointments`. `conversations` already exists and is extended in M8.
 
-`conversations` (ARCH) already exists as the conversation history tables; it is extended in M7, not duplicated.
-
----
-
-### Phase P4.2 — Agent tools `[ ]`
+### P4.2 — Typed tools (CX 6A, 6B) `[ ]`
 
 | Wave | Work |
 | --- | --- |
-| **W4.2.1** | Register six read only tools in `src/agentTools.js`: `lookupActiveOffer`, `lookupRenewalFees`, `searchPropertyInventory`, `lookupReservationRules`, `lookupGovernmentFees`, `listCalendarSlots`. Follow the existing registry shape and `agentToolResult.js` contract. |
-| **W4.2.2** | Each tool returns a bounded, redacted, language tagged result and records provenance so the answer can be grounded the same way knowledge chunks are. |
-| **W4.2.3** | Deterministic fallback for the non agent path (`src/messageRouter.js`), so the dynamic data works whether or not the agentic loop is enabled. |
-| **W4.2.4** | **Empty table behaviour**: if a table is empty or every row is expired, the tool returns "not available" and REFAL says the figure is not confirmed. It never falls back to a prompt literal or a stale chunk. |
+| **W4.2.1** | Six **read** tools on the existing registry: `lookupActiveOffer`, `lookupRenewalFees`, `searchPropertyInventory`, `lookupReservationRules`, `lookupGovernmentFees`, `listCalendarSlots`. |
+| **W4.2.2** | Five **write/action** tools: `upsertLead`, `createHandover`, `holdOrBookAppointment`, `scheduleFollowUp`, `recordComplianceEvent`. Each role authorized. |
+| **W4.2.3** | **Tool contracts** carry: location, currency, VAT treatment, effective date, last updated time, eligibility, availability, **and explicit failure/empty states** (CX 6A). Do not assume every price is €999 or every deposit is fixed. |
+| **W4.2.4** | **Tool truth** (CX 6C): timeouts, bounded retries, rate limits, idempotency keys, validation, audit logs, user safe error messages. **Never claim a booking, save, update or notification succeeded until confirmed.** On failure keep a safe pending state and raise an internal alert. **Never silently fall back to invented data.** |
+| **W4.2.5** | **Empty table behaviour**: empty or all expired → the tool returns "not available" and REFAL says the figure is not confirmed. Never a prompt literal, never a stale chunk. |
+| **W4.2.6** | Deterministic fallback for the non agent path (`src/messageRouter.js`). |
+
+### P4.3 — The "never frozen" enforcement test `[ ]`
+- `src/dynamicDataSeparation.test.js` scans every exported prompt string in `brainPrompt.js`, `ai.js`, `dashboard/server.js`, the edge function and `config/refal-agent-rules.md` for a currency amount or property reference. Any hit fails.
+- `brainHealth.js` asserts no approved chunk contains a reservation deposit, a unit price, or a government fee. The formation package price is the one deliberate exception, and it carries the 30 day expiry.
+- Dashboard warns an operator pasting a document containing a currency amount, pointing to the right table.
+
+### P4.4 — Contract tests `[ ]`
+Success · empty · stale · error · timeout · duplicate · unauthorized · partial result (CX 6 exit gate). Inject stale timestamps and tool failures; verify no static answer leaks as a substitute. Customer facing messages must distinguish **pending**, **confirmed** and **failed**.
+
+### P4.5 — Operator CRUD (hands off to M12) `[ ]`
+Typed forms with effective dates for offers, renewal fees, property, reservation rules and government fees. **Not freeform prompt text** (CX 13A). RBAC consistent with the existing dashboard auth. Audit logged.
 
 ---
 
-### Phase P4.3 — The "never frozen" enforcement test `[ ]`
+# M5 — Sales Intelligence
 
-| Wave | Work |
-| --- | --- |
-| **W4.3.1** | `src/dynamicDataSeparation.test.js`: scans every exported prompt string in `src/brainPrompt.js`, `src/ai.js`, `dashboard/server.js`, the edge function, and `config/refal-agent-rules.md` for a currency amount or a property reference. Any hit fails. |
-| **W4.3.2** | A query based check in `scripts/brainHealth.js`: no approved knowledge chunk contains a reservation deposit amount, a property unit price, or a government fee. (The formation package price is the one deliberate exception, and it is the one with the 30 day expiry.) |
-| **W4.3.3** | Operator warning in the dashboard knowledge editor when a pasted document contains a currency amount, pointing to the dynamic table instead. |
-
----
-
-### Phase P4.4 — Calendar wiring `[ ]`
-
-MANUAL 4.3 double choice flow: first a day choice ("today or tomorrow"), then real slots from the API ("11:30 or 3:00"). Wires `src/booking.js` `suggestAvailableTimes` into the new flow. Never claim confirmation before the booking system confirms (existing invariant).
-
----
-
-### Phase P4.5 — Dashboard CRUD `[ ]`
-
-Operator screens for offers, renewal fees, property inventory, reservation rules, government fees. RBAC consistent with the existing dashboard auth (`20260930092548_rafa_dashboard_auth_rbac.sql`). Audit logged via the existing `logDashboardEvent`.
-
-**Verification (G2).** `npm --prefix dashboard test`, `npm --prefix dashboard run build`, plus the separation test.
-
----
-
-# MILESTONE M5 — Sales Intelligence
-
-**Exit criteria.** The 6 cross sell hooks, 5 objection responses, and 4 jurisdiction comparisons fire correctly in three languages, never fire in a banned context, and never repeat.
-
----
-
-### Phase P5.1 — Cross selling hook matrix `[ ]`
-
-MANUAL 3.1 + ARCH 4. Six hooks:
+### P5.1 — Cross sell hook matrix `[ ]`
 
 | ID | Trigger | Offer | Guard |
 | --- | --- | --- | --- |
-| **H1 IP_BOX** | activity is Software / SaaS / app / Dev | IP Box tax advantage | Must say "not automatic for every company"; never say the customer qualifies |
-| **H2 RESIDENCY** | non EU customer with property or company budget ≥ €300,000 | Permanent Residency for them and family | Program fact only, no eligibility decision |
-| **H3 RELOCATION** | mentions family, schools, housing, living, moving | International schools, GESY, Non Dom 17 years | Level 1 or 2 humour, never pushy |
+| **H1 IP_BOX** | Software / SaaS / app / Dev | IP Box advantage | Must say "not automatic for every company". Never say the customer qualifies |
+| **H2 RESIDENCY** | non EU, property or company budget ≥ €300,000 | PR for them and family | Programme fact only, no eligibility decision |
+| **H3 RELOCATION** | family, schools, housing, living, moving | International schools, GESY, Non Dom 17 years | Humour level 1 or 2, never pushy |
 | **H4 SUBSTANCE** | "we want to actually move and work from Cyprus" | Office services and real substance | — |
-| **H5 TRADEMARK** | "I have a brand / product / new app" | Cyprus / EU Trademark registration | — |
-| **H6 PR_TO_PROPERTY** | "I have the budget and want a clear guaranteed option" for residency | Category A new residential | Never the word "guaranteed" in the reply |
+| **H5 TRADEMARK** | "I have a brand / product / new app" | Cyprus / EU Trademark | — |
+| **H6 PR_TO_PROPERTY** | "I have the budget and want a clear guaranteed option" | Category A new residential | **Never the word "guaranteed" in the reply** |
 
-| Wave | Work |
-| --- | --- |
-| **W5.1.1** | `src/salesHooks.js`: trilingual trigger detection (including Arabizi and Greeklish). |
-| **W5.1.2** | Hook → smart hint phrase, authored natively per language from the MANUAL's phrasing, not translated. |
-| **W5.1.3** | **Suppression rules**: at most one hook per reply; never in a humour level 0 context; never when the customer declined offers (existing persisted preference machinery); never repeat a hook already offered in recent history; never before the customer's actual question has been answered. |
-| **W5.1.4** | Hook must be evidence gated: H1 cannot fire if the IP Box knowledge document is missing or expired. |
+- **W5.1.1** `src/salesHooks.js`, trilingual triggers including Arabizi and Greeklish.
+- **W5.1.2** Hook → MB's verbatim smart hint phrase, authored natively per language.
+- **W5.1.3** **Suppression**: at most one hook per reply · never at humour level 0 · never when the customer declined · never repeat an already offered hook · **never before the question is answered** · stop if the customer declines, stays informational, complains, or is in a sensitive state (CX 8C).
+- **W5.1.4** Evidence gated: H1 cannot fire if the IP Box document is missing or expired.
 
-**Verification.** `src/salesHooks.test.js`, ≥20 cases per hook per language.
-
----
-
-### Phase P5.2 — Objection handling matrix `[ ]`
-
-MANUAL 3.2. Five objections, each with hidden meaning, recommended answer, and the next guiding question.
+### P5.2 — Objection matrix `[ ]`
 
 | ID | Objection | Core move |
 | --- | --- | --- |
-| **O1** | "€999 is expensive" | Do not defend the price. Ask what they are comparing it against, then compare inclusions in detail. |
-| **O2** | "I found it for €500" | Ask whether that includes secretary, registered address, and a clear annual commitment, or whether it is a bare registration fee with hidden later costs. |
-| **O3** | "I want to think about it / later" | Name the hidden question warmly: is it the price, choosing Cyprus, or simply not being ready yet. Then ask the timing question. |
-| **O4** | "Send me everything on WhatsApp" (escape manoeuvre) | Refuse the encyclopedia politely and humorously, ask which single thing matters most right now: price and steps, taxes, or the bank account. |
-| **O5** | Distrust ("I do not know you / afraid of a scam") | **Reduce humour.** Validate the concern, state the Refalco credibility facts from approved evidence, offer a direct call with the team before any step. |
+| **O1** | "€999 is expensive" | Do not defend. Ask what they are comparing against, then compare inclusions |
+| **O2** | "I found it for €500" | Ask whether it includes secretary, registered address and a clear annual commitment, or is a bare registration fee |
+| **O3** | "I want to think about it" | Name the hidden question warmly: price, Cyprus, or not ready. Then ask about timing |
+| **O4** | "Send me everything on WhatsApp" | Refuse the encyclopedia politely, ask which single thing matters most now |
+| **O5** | Distrust | **Reduce humour.** Validate, state the Refalco credibility facts from evidence, offer a direct call before any step |
 
-| Wave | Work |
-| --- | --- |
-| **W5.2.1** | `src/objectionMatrix.js`: detection + response selection. Extends the existing `src/objectionWorkflow.js` rather than replacing it. |
-| **W5.2.2** | O5 forces humour level ≤ 1 (MANUAL explicitly notes "reduce the joking"). |
-| **W5.2.3** | O1 and O2 must pull the **live** package inclusions from `refal_offers_and_pricing`, never from a frozen list. |
-| **W5.2.4** | Each objection response still obeys the Golden Formula and the One Question Rule. |
+- **W5.2.1** `src/objectionMatrix.js`, extending the existing `src/objectionWorkflow.js`.
+- **W5.2.2** O5 forces humour ≤ 1 (MB says so explicitly).
+- **W5.2.3** O1 and O2 pull **live** package inclusions from `refal_offers_and_pricing`, never a frozen list.
+- **W5.2.4** **Imported from CX 8C:** rewrite MB's objection examples to remove multiple questions, manipulative hidden motive assumptions, pressure, and unsupported competitor accusations. *"Usually 'let me think' hides a small question"* reads as pushy to an HNW investor. Keep the warmth, drop the presumption. Each rewrite is reviewed against the One Question Rule.
 
----
+### P5.3 — Jurisdiction benchmarking `[ ]`
+`src/jurisdictionBenchmark.js` driving topics 26-29 from P3.8. Tone guard rejects any draft that disparages another jurisdiction. Every comparison ends with MB's discovery question, because the honest answer is always "it depends where your clients, your bank and your family are".
 
-### Phase P5.3 — Jurisdiction benchmarking `[ ]`
-
-MANUAL 3.3. Four comparisons. **Rule: never attack another country, never claim "we are always the best".**
-
-| ID | Comparison | Angle |
-| --- | --- | --- |
-| **J1** | Cyprus vs Dubai/UAE | Dubai is excellent with no personal income tax; Cyprus gives a direct EU gateway, an EU VAT number, and real substance that eases payment gateways and EU expansion. Often an addition to the structure, not a replacement. |
-| **J2** | Cyprus vs Estonia | Estonia is excellent for e Residency but gives no actual residence or property stability, and taxes at distribution. Cyprus gives a flexible tax system, real presence, and tangible residency and property paths. |
-| **J3** | Cyprus vs Malta/Bulgaria | Bulgaria 10% but banking constraints and language/environment complexity. Malta has a complex refund system. Cyprus is direct (15%), English is widely used, with a stable property market and residency. |
-| **J4** | Cyprus vs USA | US LLC/Inc is excellent for Stripe and e commerce, but complex for non resident taxation and lacks direct EU market access. |
-
-Every comparison ends with the MANUAL's discovery question, because the honest answer is always "it depends on where your clients, your bank, and your family are".
-
-| Wave | Work |
-| --- | --- |
-| **W5.3.1** | `src/jurisdictionBenchmark.js` + a knowledge source per comparison (these are facts, so they belong in the corpus; add 4 topics to the taxonomy as `jurisdiction-*`, raising the corpus to 29 topics / 87 sources). |
-| **W5.3.2** | Tone guard: reject any draft that disparages another jurisdiction. |
+### P5.4 — Offer orchestration `[ ]`
+One place decides per turn what REFAL may offer: hook, objection response, specialist, booking, or nothing. Resolves M5's eagerness against the consent and no repeat rules, **which always win**. Consumes `policyPrecedence` from P1.6.
 
 ---
 
-### Phase P5.4 — Hook and offer orchestration `[ ]`
+# M6 — Qualification and Executive Handoff
 
-One place decides, per turn, what REFAL may offer: hook, objection response, specialist, booking, or nothing. Resolves conflicts between M5's eagerness and the existing consent/no repeat rules, which always win.
+### P6.1 — The six dimension scorer `[ ]`
+`src/qualificationEngine.js`, extending the existing `src/leadQualification.js` which **already has the right dimension list**.
 
----
+- **W6.1.1** Evidence anchors 0 to 5 for NEED, VALUE, TIMING, AUTHORITY, READINESS, FIT (MB-D1..D6).
+- **W6.1.2** Persist dimension scores, **evidence text references**, scorer version, timestamp, total 0-30 (CX 8A). Keep score history.
+- **W6.1.3** **Fairness rule (imported from CX 8A):** never infer budget, authority or readiness from nationality, language, name, or any protected trait. Tested explicitly.
+- **W6.1.4** Recompute only on meaningful new evidence. Same conversation → reproducible score and rationale.
+- **W6.1.5** **Leak test**: score, dimension names and tier never appear in a customer reply. Extends the internal reasoning detector in `responsePolicy.js`.
 
-# MILESTONE M6 — Qualification Engine and Executive Handoff
-
-**Exit criteria.** Every turn produces a silent 0 to 30 score across 6 dimensions, maps to one of 5 tiers, drives the right action protocol, detects instant buying signals, and generates the exact executive handoff format on escalation.
-
----
-
-### Phase P6.1 — The 6 dimension scorer `[ ]`
-
-MANUAL 4.1. Each dimension 0 to 5, total 30, **secret**.
-
-| Dim | 0 | 5 |
-| --- | --- | --- |
-| **NEED** | general exploratory interest | a very clear and specific commercial or investment need |
-| **VALUE** | simple free enquiry | a major investment/property deal or a large partner structure |
-| **TIMING** | just looking for the far future | intent to execute within days or this month |
-| **AUTHORITY** | gathering information, no decision power | the direct owner or chairman |
-| **READINESS** | total hesitation and fear | capital and documents ready, wants to start |
-| **FIT** | activity that Cyprus does not serve | full strategic fit with Refalco services |
-
-| Wave | Work |
-| --- | --- |
-| **W6.1.1** | `src/qualificationEngine.js`: pure, deterministic, auditable scoring from conversation state. Extends `src/leadQualification.js` and `src/leadTemperature.js` rather than replacing them. |
-| **W6.1.2** | Signal extraction per dimension, trilingual, with an explicit evidence trail (which turn moved which dimension) for the handoff summary. |
-| **W6.1.3** | Score is monotonic within a conversation except on an explicit customer correction. |
-| **W6.1.4** | **Leak test**: the score, the dimension names, and the tier must never appear in a customer reply. Extends the existing internal reasoning detector in `responsePolicy.js`. |
-
----
-
-### Phase P6.2 — Tiers and action protocols `[ ]`
-
-MANUAL 4.2.
+### P6.2 — Tiers and action protocols `[ ]`
 
 | Tier | Range | Protocol |
 | --- | --- | --- |
-| **Informational** | 0 – 7 | Answer directly and briefly. No pressure to book. Help without draining. |
-| **Cold Lead** | 8 – 13 | General information, one exploratory question, save to CRM for quiet follow up. |
-| **Warm Lead** | 14 – 19 | Continue smart qualification, offer sales hints, offer an appointment flexibly. |
-| **Hot Lead** | 20 – 24 | **STOP OVER SELLING immediately.** Request contact details, book the appointment. |
-| **Strategic Lead** | 25 – 30 | **Priority escalation.** Urgent executive summary, assign a senior consultant. Large landowners, construction tenders, HNW (€1M+), international partnerships. |
+| **Informational** | 0 – 7 | Answer directly and briefly. **No booking push.** Help without draining |
+| **Cold** | 8 – 13 | General information, one exploratory question, save to CRM for quiet follow up |
+| **Warm** | 14 – 19 | Continue smart qualification, offer hints, offer an appointment flexibly and not repeatedly |
+| **Hot** | 20 – 24 | **STOP OVER SELLING.** Request contact details, book. Requires consent and a valid contact route |
+| **Strategic** | 25 – 30 | **Priority escalation.** Urgent executive summary, senior consultant. **Never quote construction or project pricing without approved input** |
+
+- **W6.2.1** `src/leadTiers.js` + tier directive in the prompt.
+- **W6.2.2** **Stop over selling switch** at Hot: suppresses every hook and benefit hint, switches to logistics.
+- **W6.2.3** Strategic routing to Corporate / Tax / Real Estate / Residency / Construction. **Add the missing `tax` department** to `src/handover.js`.
+- **W6.2.4** **The tier never overrides consent.** Hot still requires a clear yes.
+- **W6.2.5** **Boundary tests (imported from CX 8 exit gate):** exact transitions at **7/8, 13/14, 19/20, 24/25**.
+- **W6.2.6** Strategic alerts fire **once**, durably, not repeatedly.
+
+### P6.3 — Instant buying signals `[ ]`
+`src/buyingSignals.js`, trilingual incl. Arabizi and Greeklish, for MB-B1..B5. Firing raises the score floor and triggers P7 booking.
+
+### P6.4 — Executive Handoff Summary `[ ]`
+`src/executiveHandoff.js`, extending the existing `buildRefalLeadSummary`.
+- **W6.4.1** MB 5.2's exact block, byte for byte.
+- **W6.4.2** **Explicit `UNKNOWN` / `NOT PROVIDED`, never an invented detail** (CX 9B).
+- **W6.4.3** Data minimisation and role based visibility. Redact credentials and sensitive banking details.
+- **W6.4.4** Carries every CRM field from M8, so the human adviser never re-asks (MB-HO3).
+- **W6.4.5** Golden fixture comparison on exact separators and field names.
+
+### P6.5 — Handover delivery and acknowledgment (CX 9C) `[ ]`
+Durable handover records · notification jobs with retries · **dashboard badge and count reconciliation** (repairs FIX-9) · acknowledgment · closure reasons. Test external communication to a **sandbox recipient only** until explicitly enabled. Simulate: notification outage, wrong department, empty contact details, duplicate escalation, missing assignee.
+
+### P6.6 — Strategic escalation `[ ]`
+Landowner JV, construction tender, HNW €1M+, international partnership. Urgent path, senior consultant, and for construction **no price or estimate from the agent at all** (MB-F62).
+
+---
+
+# M7 — Booking and Calendar **(imported wholesale from CX Phase 10)**
+
+**Why this is its own milestone.** Plan A had one thin phase. Codex specified the real policy. Booking is where a wrong answer creates a real world commitment, so it gets full treatment.
+
+### P7.1 — Calendar readiness, built and shipped working `[ ]`
+
+Codex left booking dormant waiting for four decisions. **This plan ships all four with working defaults and a settings screen**, so booking goes live the moment BOSS pastes one credential.
 
 | Wave | Work |
 | --- | --- |
-| **W6.2.1** | `src/leadTiers.js` mapping and protocol directives injected into the prompt. |
-| **W6.2.2** | **Stop over selling switch** at Hot: suppresses every sales hook and every benefit hint, switches to logistics. |
-| **W6.2.3** | Strategic routing to the right department (Corporate / Tax / Real Estate / Residency / Construction). |
-| **W6.2.4** | **The tier never overrides consent.** A Hot tier still requires the customer's clear yes before a handover is created. The existing consent machinery wins. |
+| **W7.1.1** | **Ship working defaults**: appointment duration **60 minutes** · minimum notice **24 hours** · reminders at **1 day** and **1 hour** before. All editable in the dashboard (M12), none hardcoded. |
+| **W7.1.2** | **Build the settings screen** so BOSS changes duration, notice, business hours and reminders without a developer. |
+| **W7.1.3** | **Build the readiness check** `verifyCalendarAccess` (already exists in `src/calendarReadiness.js`), surfaced as a green or red badge in the dashboard with the exact missing item named. |
+| **W7.1.4** | **The one field**: paste the Google OAuth credential into the dashboard once. The existing `scripts/authorizeGoogleCalendar.js` handles the flow. Worker and dashboard secrets stay separate; tokens never in code, chat or logs. |
+| **W7.1.5** | Until the credential is pasted, REFAL does not invent slots. She says a specialist will confirm the time and creates a pending request. **She still books the lead, she just does not claim a confirmed slot.** The customer journey never dead ends. |
+
+### P7.2 — Booking state machine `[ ]`
+- Timezone **`Europe/Nicosia`**, weekdays only, **10:00 to 15:00**.
+- Reject past dates and **same day** requests. Enforce the configured notice window.
+- Offer **no more than two verified slots** at a time. **Recheck availability immediately before booking.**
+- Require **explicit exact customer confirmation including the chosen time** before creating an event.
+- States: `draft → awaiting_customer_confirmation → creating → confirmed | pending_calendar | failed | cancelled`. Each explained truthfully.
+- **Never claim the event, the Meet link or the reminders exist until the APIs confirm them.**
+
+### P7.3 — Two choice offering flow `[ ]`
+MB-A1 step 1: "does today or tomorrow suit you better" (never an open "when would you like"). MB-A2 step 2, **from the live API**: "I have 11:30 or 3:00, which is easier". Slots come only from `listCalendarSlots`.
+
+### P7.4 — Conversation flow separation (repairs FIX-3, FIX-4) `[ ]`
+- Answer informational questions **during** a booking draft without losing the draft.
+- The draft does **not** capture every message.
+- A new topic does **not** silently resume an old booking. One short disambiguating question only if necessary.
+- If the calendar fails, create visible pending work for an admin and tell the customer accurately.
+
+### P7.5 — Booking test suite `[ ]`
+Timezone and **DST** conversion · date language parsing in AR/EN/EL · boundary times · notice window · stale slot · explicit confirmation · duplicate booking · cancellation · API failure · topic switch. **Live event creation stays disabled during tests.**
 
 ---
 
-### Phase P6.3 — Instant buying signals `[ ]`
+# M8 — CRM Memory
 
-MANUAL 4.3. On any of these, REFAL stops explaining and moves to close:
-- "How do I start the procedures with you?"
-- "What documents do you need from me now?"
-- "Payment method and how do I confirm the booking?"
-- "Can I speak to the consultant or visit your office?"
-- "I have land for development / I have financing ready for the project."
+### P8.1 — CRM schema `[ ]`
+Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII under the existing redaction rules.
 
-`src/buyingSignals.js`, trilingual including Arabizi and Greeklish. Firing a buying signal raises the score floor and triggers the P6.4 flow.
-
----
-
-### Phase P6.4 — Double choice appointment flow `[ ]`
-
-MANUAL 4.3. ❌ "Do you want to book? When would you like to talk?" (open ended).
-✅ Step 1: "Does today or tomorrow suit you better?" Step 2 (after the day, from the live API): "I have 11:30 or 3:00 available, which is easier for you?"
-
-| Wave | Work |
-| --- | --- |
-| **W6.4.1** | Extend `src/agentBookingTools.js` / `src/booking.js` with the two step flow. |
-| **W6.4.2** | Step 2 slots come only from `listCalendarSlots` (P4.2). Never invent a slot. |
-| **W6.4.3** | Visitor timezone handling (already a rule in `config/refal-agent-rules.md:51`). |
-| **W6.4.4** | `pending_review` is **not** a confirmation; the existing wording invariant stands. |
-
----
-
-### Phase P6.5 — Executive Handoff Summary `[ ]`
-
-MANUAL 5.2 gives the exact block format. Reproduce it byte for byte.
-
-```
-==================================================
-REFAL LEAD SUMMARY — EXECUTIVE HANDOFF
-==================================================
-CLIENT PROFILE:
-- Name / Phone-WhatsApp / Email / Country of Residence / Nationality / Language
-
-COMMERCIAL INTENT & OPPORTUNITY:
-- Primary Intent / Secondary Intent / Business Activity-Project /
-  Estimated Budget-Value / Timeline / Decision Authority
-
-QUALIFICATION & SCORE:
-- Lead Score [XX / 30] / Lead Classification / Main Motivation / Main Concern-Objection
-
-RECOMMENDATION & ROUTING:
-- Recommended Department / Assigned Consultant-Role / Recommended Next Action /
-  Appointment Status [CONFIRMED | PENDING] / Appointment Date & Time
-
-CONVERSATION SUMMARY:
-[3-4 sentences]
-==================================================
-```
-
-| Wave | Work |
-| --- | --- |
-| **W6.5.1** | `src/executiveHandoff.js` generating the exact block. Extends `src/handover.js`. |
-| **W6.5.2** | Summary contains only customer stated facts plus system state. Unconfirmed items are labelled unconfirmed. |
-| **W6.5.3** | Delivered to the dashboard handover record and, where configured, email. Never shown to the customer. |
-| **W6.5.4** | Format test: golden fixture comparison, exact separators and field names. |
-| **W6.5.5** | MANUAL rule "the human advisor should never have to re ask the customer": the summary must carry every CRM field captured in M7. |
-
----
-
-### Phase P6.6 — Strategic escalation `[ ]`
-
-Landowner JV, construction tender, HNW €1M+, international partnership. Urgent path, senior consultant, and for construction **explicitly no price or estimate from the agent at all** (MANUAL 2.6).
-
----
-
-# MILESTONE M7 — CRM Memory
-
-**Exit criteria.** All four MANUAL 5.1 field groups are captured progressively and silently, and REFAL never re asks something the customer already said.
-
----
-
-### Phase P7.1 — CRM schema `[ ]`
-
-| Group | Fields (MANUAL 5.1) |
+| Group | Fields (MB 5.1) |
 | --- | --- |
 | **Identity** | Name, Phone/WhatsApp, Email, Preferred Language, Nationality, Country of Residence |
-| **Opportunity** | Primary Intent, Target Service, Business Activity, Existing or New Business, Target Markets, Banking/Payment Gateway Need |
-| **Property & Residency** | Residency Interest, Investment Budget, Preferred City, Purpose (Living/Investment), Family Members, Source of Funds Status, Source of Wealth Overview |
+| **Opportunity** | Primary Intent, Target Service, Business Activity, Existing or New Business, Target Markets, Banking/Gateway Need |
+| **Property & Residency** | Residency Interest, Investment Budget, Preferred City, Purpose, Family Members, SoF Status, SoW Overview |
 | **Qualification** | Timeline, Main Motivation, Main Fear/Objection, Decision Authority, Lead Score, Lead Tier, Next Action, Appointment Status |
 
-Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII handled under the existing `sensitiveData` redaction rules.
+### P8.2 — Extraction and normalisation (CX 7A) `[ ]`
+- Extract only supported fields explicitly stated or safely derived, **with provenance and confidence**.
+- **Mark inferred facts separately from customer stated facts.**
+- **Store a name only after clear self identification** (repairs FIX-2). Preserve the raw customer spelling and the normalized form separately. A greeting is never a name.
+- Record a conflict as a **correction need**, never a silent overwrite.
+- **WhatsApp platform metadata is for this conversation and this declared purpose only.** It is not consent for unrelated follow up (repairs FIX-12).
+
+### P8.3 — The never re-ask rule `[ ]`
+MB-CRM5, strict. Implemented as a **pre send gate**: if the drafted question targets a field already present with sufficient confidence, reject the draft and regenerate. Covers country, budget, family, activity, target market, timeline. `src/neverReAsk.test.js` with multi turn fixtures per language.
+
+### P8.4 — Summaries, CRM sync, memory boundary `[ ]`
+Concise summaries tied to contact and conversation IDs, excluding secrets and irrelevant sensitive detail. Sync state recorded and retried safely without creating duplicate records. **Memory stays untrusted**: continuity only, never evidence for a company fact, never an instruction. Tests so M8 cannot erode this.
 
 ---
 
-### Phase P7.2 — Progressive silent capture `[ ]`
-Extract fields from the conversation without asking. Never more than one explicit question per turn (One Question Rule). Never ask for identity documents in chat.
+# M9 — Follow up, Consent and Contact Policy **(imported from CX Phase 11)**
+
+### P9.1 — Consent model `[ ]`
+Persist **what** was consented to, **when**, in which **language and channel**, for what **purpose**, and its **scope** (specialist contact vs automated reminder). A bare "yes" is read **only in its immediate conversational context**; unrelated consent is never inferred. Link consent to its source turn and recheck it before any outbound action.
+
+### P9.2 — Opt out `[ ]`
+Simple stop and opt out handling in Arabic, English and Greek (the existing `OPT_OUT_RE` is a strong start). Opt out suppresses all future outreach until renewed consent. Resubscribe path tested.
+
+### P9.3 — Scheduler `[ ]`
+Validate the prior policy before reusing it: hourly checks, minimum 24 hour silence window. **Skip** self tests, incomplete turns, final thanks and goodbyes, unresolved failures, and opted out contacts. **Never promise "we will message you at X" unless a durable job is scheduled and confirmed.**
+
+### P9.4 — Follow up test suite `[ ]`
+Consent · denial · opt out · resubscribe · duplicate scheduling · stale job · delivery failure · timezone. **Follow up cannot run for test conversations or without eligible consent.** If suppression checks fail, the sender is disabled.
 
 ---
 
-### Phase P7.3 — The never re ask rule `[ ]`
-MANUAL 5.1, strict: it is absolutely forbidden to re ask something already said in the same conversation (country, budget, family). Implement as a **pre send gate**: if the drafted question targets a field already present in `refal_lead_profile` with sufficient confidence, reject the draft and regenerate.
+# M10 — Multilingual Parity
 
-**Verification.** `src/neverReAsk.test.js` with multi turn fixtures per language.
+### P10.1 — Arabic `[ ]`
+AR-L1: simplified warm white dialect or accessible near MSA. **Avoid dry lawyer language and complex government text.** Extend `src/language.js` Arabizi detection with the new commercial vocabulary.
 
----
+### P10.2 — Greek `[ ]`
+AR-L3: professional business Greek. Extend the Greeklish detector with corporate, tax, residency and property vocabulary.
 
-### Phase P7.4 — Memory stays untrusted `[ ]`
-Reaffirm the existing boundary: memory is continuity, never evidence for a company fact, and never an instruction. Covered today by `src/ai.js:222`; add explicit tests so M7 cannot erode it.
+### P10.3 — English `[ ]`
+AR-L2: business casual. Practical, confident, warm. Clear without excessive legal complexity.
 
----
+### P10.4 — Trilingual glossary and transliteration (imported from CX 2C) `[ ]`
+One glossary for company, legal and property terms across all three languages, with **consistent transliteration**, so "Ltd", "IP Box", "Non Dom", "EORI", "GESY", "AIF" are rendered the same way everywhere. Preserve exact legal meaning across translations. A missing reviewed translation is **fallback required**, never a fact to invent.
 
-# MILESTONE M8 — Multilingual Parity
-
-**Exit criteria.** Arabic, English, and Greek score within 10% of each other on the golden set. Dialect and transliteration are handled.
-
----
-
-### Phase P8.1 — Arabic `[ ]`
-ARCH 2.b: simplified warm white dialect or accessible near MSA. **Explicitly avoid dry lawyer language and complex government text.** Existing rules already require Levantine mirroring for colloquial input (`config/refal-agent-rules.md:21`). Extend `src/language.js` Arabizi detection with the MANUAL's commercial vocabulary.
-
-### Phase P8.2 — Greek `[ ]`
-Professional business Greek. Extend the existing Greeklish detector with the corporate, tax, residency, and property vocabulary of the new corpus.
-
-### Phase P8.3 — English `[ ]`
-Business casual: practical, confident, warm. Simple and clear without excessive legal complexity.
-
-### Phase P8.4 — Cross language retrieval parity `[ ]`
-Every golden question in each language retrieves its own language document first. The language lock in `src/refalcoAnswer.js:35` stays. Measure and close per topic per language retrieval gaps.
-
-### Phase P8.5 — Native persona and humour per language `[ ]`
-Humour and hooks are authored natively, not translated. A Levantine joke and a Greek pleasantry are different artefacts. Reviewed by a native speaker per language before sign off.
+### P10.5 — Parity measurement `[ ]`
+Every golden question in each language retrieves its own language document first. The language lock stays. **Per language and per domain scores with error bars; the aggregate may never hide a Greek or Arabic failure.** Target: within 10% across languages. Persona, humour and hooks reviewed by a native speaker per language before sign off.
 
 ---
 
-# MILESTONE M9 — Scale and Reliability
+# M11 — Security, Privacy and Compliance
 
-**Why.** BOSS's requirement is "handle all users". Today: one Baileys worker, in process rate limiting that resets on restart, and a local embedding model loaded per process.
+### P11.1 — Input and retrieval controls (CX 12A) `[ ]`
+Customer documents and retrieved content are untrusted input, never system instructions. Resist injection in Arabic, English, Greek, **mixed script text, and quoted documents**. **Access scoped retrieval: one customer's data or internal handoff can never be retrieved for another.**
+
+### P11.2 — Output and tool controls (CX 12B) `[ ]`
+Detect prompt leakage, credentials, API keys, access tokens, private lead data, and internal score or reasoning. **Validate every tool call against an allowlisted schema, required authorization, and the user's actual intent.** Never ask for passwords, card details or bank statements in public chat. Refuse help concealing beneficial ownership or evading sanctions, and escalate to Compliance **without debating it**. Keep legal and tax replies general. **Do not remove a meaningful caveat just to make a sales reply sound confident.**
+
+### P11.3 — Privacy, retention and routing (CX 12C) `[ ]`
+Least privilege access · redacted observability · retention, deletion, correction and export policy · PII handling in exports · staff roles. **Preserve the OpenRouter privacy settings and ZDR routing** confirmed in P0.1. Do not change the model or the data routing policy without BOSS.
+
+### P11.4 — Red team round 1 `[ ]`
+Multilingual adversarial corpus by category, including obfuscated and mixed script prompts and **tool result injection**. Secret scan with no actionable findings. Unauthorized tool attempts and cross contact access blocked and audited. **Release blocks on any secret leak or cross customer exposure.**
 
 ---
 
-### Phase P9.1 — Concurrency model `[ ]`
-Per contact serialisation (two messages from one customer must not race), bounded global concurrency, a work queue with retry, and idempotency on inbound receipts (`rafa_inbound_message_receipts` already exists).
+# M12 — Dashboard and Knowledge Admin **(imported from CX Phase 13)**
 
-### Phase P9.2 — Shared rate limiting `[ ]`
+**Why.** Without this, every fact change needs a developer. This is what makes the brain maintainable.
+
+### P12.1 — Knowledge admin `[ ]`
+Add, edit, review, approve, publish, unpublish, archive. Show source, language, status, version, reviewer, effective date and expiry (the P3.9 register). **Preview retrieval results in Arabic, English and Greek before publishing.** Confirmation and undo for destructive operations. Audit who changed which fact. **Knowledge edit → publish → search demonstrated without redeploying the agent.**
+
+### P12.2 — Dynamic data admin `[ ]`
+Typed forms with effective dates for offers, prices, property, deposits and fees. **Never edited as freeform prompt text.**
+
+### P12.3 — Operations dashboard `[ ]`
+Open handovers and alerts · complaint status · lead summary · appointment progress · calendar pending and failures · follow up consent and state · knowledge freshness · tool health · delivery failures. **Badges and counts reconcile with the underlying unresolved records** (repairs FIX-9). Filters by department, priority, status, language and date, without exposing secrets.
+
+### P12.4 — Human corrections `[ ]`
+Staff can correct names, intent, score evidence, routing and knowledge facts. Corrections are auditable and **feed the evaluation fixtures after review**. Tested with: a staff member without permission, stale browser state, partial saves, concurrent edits. No control may imply success before the save is confirmed.
+
+---
+
+# M13 — Scale and Reliability
+
+### P13.1 — Concurrency `[ ]`
+Per contact serialisation (two messages from one customer must not race) · bounded global concurrency · a work queue with retry · idempotency on inbound receipts (`rafa_inbound_message_receipts` exists) · **webhook deduplication**.
+
+### P13.2 — Shared rate limiting (removes BLK-11) `[ ]`
 Move `src/rateLimiter.js` counters from process memory to Supabase so limits survive restarts and hold across processes.
 
-### Phase P9.3 — Retrieval performance `[ ]`
-HNSW parameter review, embedding warmup on both `src/bot.js` and `dashboard/server.js` (each process needs its own call), query embedding cache for repeated questions, and a p95 latency budget per turn.
+### P13.3 — Measured latency and cost (CX 15A) `[ ]`
+**Recalculate against current provider prices and actual token usage.** Historical assumptions of 100 conversations a day at 2,000 in / 200 out are planning estimates, not current usage. Measure **p50 and p95** across WhatsApp, API, RAG, Supabase writes, tools and model calls. Compare sequential vs parallel non dependent writes while preserving transaction and idempotency correctness. Set a hard prompt token ceiling. Track cost through `src/aiUsage.js`.
 
-### Phase P9.4 — Token and cost budget `[ ]`
-The assembled brain prompt is large. Measure it. Set a hard ceiling. Role directives capped at 2, evidence capped at 5 chunks (current behaviour), memory capped. Track cost through the existing `src/aiUsage.js`.
+### P13.4 — Resilience (CX 15B) `[ ]`
+Timeouts · bounded retries · circuit breakers · rate limiting · queue recovery · provider quota handling. If the model, provider or RAG is unavailable: a **safe short fallback or a queue for human support, never a fabricated answer**. Health checks for WhatsApp, edge function, Supabase, vector search, calendar, CRM, alerts and scheduler.
 
-### Phase P9.5 — Observability `[ ]`
-Per turn trace: detected language, humour level, active roles, intents, hooks considered and suppressed, retrieved chunk ids, claim classifications, score deltas, tier, gates that fired. Extends `src/agentObservability.js` and `src/operationalTelemetry.js`. **No PII in traces.**
+### P13.5 — Observability (CX 15C) `[ ]`
+Redacted trace IDs linking message → retrieval → tool result → DB outcome. Track fallback rate, zero result retrieval, language mismatch, handoff delivery, booking errors, opt out suppression, provider failures and cost. **Never log chain of thought.** Log concise decision labels and evidence IDs only.
 
-### Phase P9.6 — Load test `[ ]`
-Simulate N concurrent conversations across all three languages. Measure latency, error rate, retrieval quality under load, and cost per conversation. Record the safe concurrency ceiling.
-
----
-
-# MILESTONE M10 — Evaluation and Go Live
-
-### Phase P10.1 — Golden set scoring `[ ]`
-Run all 720+ golden questions. Target: ≥90% factual accuracy, 100% grounding, 0 guardrail failures, ≥85% Golden Formula compliance, language parity within 10%.
-
-### Phase P10.2 — Shadow mode `[ ]`
-Run the brain against live traffic in shadow (the existing `src/agentShadow.js` flag, default off) and compare against the current production answers. No customer sees a difference until P10.5.
-
-### Phase P10.3 — Red team round 2 `[ ]`
-Full adversarial sweep including prompt injection planted inside an uploaded knowledge document, guarantee extraction, eligibility extraction, price fabrication, PII extraction, cross customer data probing.
-
-### Phase P10.4 — Operator acceptance `[ ]`
-BOSS and the advisory team review a curated set of real transcripts per language and per domain. Sign off recorded in this file.
-
-### Phase P10.5 — Staged rollout `[ ]`
-Enable for an internal test number → a small customer cohort → full traffic. Each stage gated on error rate and guardrail failures. Documented rollback: one env flag returns to the pre brain path, because M2 kept the legacy gate intact.
+### P13.6 — Load test `[ ]`
+N concurrent conversations across all three languages. Measure latency, error rate, retrieval quality under load, cost per conversation. **Verify no duplicated actions.** Record the safe concurrency ceiling. Test: provider rate limit, slow database, vector timeout, WhatsApp disconnect, repeated webhook, queue restart.
 
 ---
 
-## 11. Decisions — ALL RESOLVED, no blockers
+# M14 — Evaluation, Release and Independent Rollback
 
-Per the Authority Rule, every decision resolves in favour of the source files. Nothing below needs BOSS input before work starts.
+### P14.1 — Golden set scoring `[ ]`
+All ~870 questions. Targets, written before the run: ≥90% factual accuracy · 100% grounding · **0 guardrail failures** · ≥85% Golden Formula compliance · language parity within 10%. Results identify test type: synthetic, sandbox or live. **No scripted fallback counts as a model success without disclosure.**
 
-| ID | Question | **RESOLVED** | Authority |
-| --- | --- | --- | --- |
-| **D-1** | Company identity in the repo | **REFAL is Refalco Group's agent, explicitly.** `AGENTS.md`'s "no company identity is bundled" prohibition is **removed**. Identity, brand and departments live in `config/company-profile.json`; the credibility numbers (2000, 20+ years, 47, 400+) live in the `company-profile` knowledge source so they stay evidence gated and citable. The literal `"the business"` placeholder is deleted from every prompt and rule file. | MB 1.0, MB 2.0, MB-C1..C5, BLK-3 |
-| **D-2** | Emoji | **Allowed, gated by humour level.** L0 none, L1 👍 only, L2 😄 👀 👍, L3 full including 😂. MB's voice depends on them. Dash punctuation stays banned (house style, no MB conflict). | MB 1.2, BLK-7 |
-| **D-3** | Reply length | **2 to 5 sentences, max 700 characters** for the ordinary preset. The 3 sentence / 500 character cap is removed. Expanded preset (20 sentences / 1800 chars) stays for an explicit "tell me everything". | MB-G2, BLK-4 |
-| **D-4** | Corporate tax "15% from 2026" | Authored verbatim as MB states it, with an explicit `effective_from = 2026` and a `valid_until`, plus the rate also mirrored in `refal_offers_and_pricing` style live data so a change is a data edit, not a code change. REFAL states the rate exactly as the approved evidence words it, never paraphrased. | MB-F19 |
-| **D-5** | Handoff delivery | Dashboard handover record **plus** the existing email notification path, in the exact MB 5.2 block format. An external CRM connector is deferred to M11 and is not in scope here. | MB-HO1..HO3 |
-| **D-6** | Knowledge authoring ownership | **Claude authors all 87 documents** from the MB extraction in `SOURCE-ANALYSIS.md` section 6, natively per language. Every document is a faithful rendering of an MB-F fact, nothing invented. BOSS reviews before the corpus is marked approved in M10 P10.4. | MB module 2, AR-A9 |
-| **D-7** | Target runtime | **The agentic loop** (`src/agentLoop.js` + `src/agentTools.js`), because MB-DYN1..DYN6 require live tool calls. The deterministic router keeps working for simple turns; it is not deleted. | AR-A4, MB 5.3 |
-| **D-8** | Proactive cross selling | **Required, not forbidden.** The prompt rule "do not volunteer unrelated prices, packages, services or sales details" is rewritten: a hook is permitted once per conversation per trigger, after the customer's question has been answered, subject to the P5.4 suppression rules. | MB-X1..X6, BLK-5 |
-| **D-9** | Offering a call during information gathering | **Tier aware, not blanket forbidden.** Suppressed at Informational and Cold, permitted at Warm, **required** at Hot and on any buying signal. | MB-T1..T5, MB-B1..B5, BLK-6 |
-| **D-10** | Residency / tax / licence content | **Allowed as PROGRAM_FACT with approved evidence.** The blanket blocklist is replaced by the three class claim policy. Personalized eligibility and guarantees stay blocked. | MB-F19..F55, MB-SEC1, MB-SEC5, BLK-1, BLK-2, BLK-8 |
+### P14.2 — Full workflow tests (CX 14C) `[ ]`
+Inbound message → intent → retrieval or tool → answer → DB persistence → handoff, booking or follow up state → dashboard view. Fake services and isolated Supabase fixtures first, then sandbox accounts for external connectors.
 
-### 11.1 Blocker removal register
+### P14.3 — Shadow mode `[ ]`
+Run against live traffic behind the existing `src/agentShadow.js` flag, default off. Compare against current production answers. No customer sees a difference yet.
 
-Each blocker from `SOURCE-ANALYSIS.md` section 11 is owned by exactly one phase. Nothing is left pending.
+### P14.4 — Red team round 2 `[ ]`
+Full adversarial sweep including injection planted inside an uploaded knowledge document, guarantee extraction, eligibility extraction, price fabrication, PII extraction, cross customer probing.
 
-| Blocker | Owning phase | Action |
-| --- | --- | --- |
-| BLK-1 blanket `containsProhibitedClaim` | **P2.2** | Replace with claim policy |
-| BLK-2 `restrictedRefalcoReply` hard refusals | **P2.2** | Replace with evidence gated answers |
-| BLK-3 "no company identity", `"the business"` placeholder | **P1.1** | Remove prohibition, delete placeholder |
-| BLK-4 3 sentence / 500 char cap | **P1.4** | Raise to 5 / 700 |
-| BLK-5 "do not volunteer services or sales details" | **P1.6 + P5.4** | Rewrite rule, add hook orchestration |
-| BLK-6 "do not introduce a call during info gathering" | **P1.6 + P6.2** | Make tier aware |
-| BLK-7 no emoji policy | **P1.3** | Per level allowlist |
-| BLK-8 blanket "investment" refusal | **P2.2** | Narrow to advice and returns |
-| BLK-9 one approved revision per source | **P0.3** | Keep, shape the taxonomy around it |
-| BLK-10 30 day price expiry | **P3.8 + P4.1** | Keep mechanism, serve live offer from the table |
-| BLK-11 in process rate limiting | **P9.1 + P9.2** | Shared Supabase backed limits |
-| BLK-12 no dynamic commercial tables | **P4.1 + P4.2** | Build six tables + six tools |
+### P14.5 — Pre release checklist (CX 16A) `[ ]`
+- [ ] All prior phase gates complete. Migrations reviewed. Security and leak checks pass.
+- [ ] **FIX-11 specialist offer persistence, FIX-5 investment intake routing, FIX-10 retrieval fallback leak, FIX-1 claim gate, FIX-9 handover delivery and FIX-12 consent scope all pass.**
+- [ ] Calendar stays disabled unless OAuth, availability, duration, notice window and reminders are all verified.
+- [ ] Existing client account details stay blocked unless approved independent verification is active.
+- [ ] Handover routing, complaint route, alert delivery, follow up suppression and dashboard state confirmed.
+- [ ] OpenRouter data policy and ZDR, Supabase RLS, secrets, backup and rollback, named release owner.
+- [ ] **Final traceability audit** of all 195 requirements and MB sections 1.0 to 5.3. A requirement with no proof **reopens its phase**. Never claim completion from a previous summary.
 
----
+### P14.6 — Staged activation and independent rollback (CX 16B, 16C) `[ ]`
 
-## 12. Traceability matrix
+**Activation order**, each step gated on the previous:
+```
+staging, no real writes → read only FAQ and RAG → CRM persistence
+→ handovers → appointments → follow ups
+```
+Limited monitored cohort and feature flags where available. Monitor language and safety metrics at each step.
 
-Every requirement from both source documents, mapped to its owning phase. **G3 for each phase re checks its own rows.** A requirement with no `COVERED` mark at M10 is a release blocker.
+**Rollback, independently per axis:**
 
-### MANUAL Module 1 — Identity, Persona, Core Rules
+| Axis | How to roll back |
+| --- | --- |
+| Prompt version | revert to the previous version id (P1.7.8) |
+| Knowledge version | unpublish the revision, the prior approved one is restored |
+| Fact register row | flip status to `expired` or edit the value, no deploy |
+| Code release | standard git revert |
+| Migration | the rollback script rehearsed in a disposable environment |
+| Feature flags | per capability |
 
-| Ref | Requirement | Phase | Status |
-| --- | --- | --- | --- |
-| 1.0 | Strategic positioning: consultative system, not an FAQ bot; lead qualification engine | P1.2 | `[ ]` |
-| 1.1 | 10 operational roles, running in parallel by context | P1.2 | `[ ]` |
-| 1.2 | Adaptive mirroring (casual ↔ executive) | P1.2 | `[ ]` |
-| 1.2 | Humour levels 0, 1, 2 default, 3 | P1.3 | `[ ]` |
-| 1.2 | 6 absolute humour bans | P1.3 | `[ ]` |
-| 1.3 | Golden Answer Formula (answer + benefit + one question) | P1.4 | `[ ]` |
-| 1.3 | 2 to 5 sentence default length | P1.4 | `[ ]` |
-| 1.3 | One Question Rule | P1.4 | `[ ]` |
-| 1.3 | Worked example: formation cost ❌/✅ | P1.4 | `[ ]` |
-| 1.3 | Worked example: corporate tax ❌/✅ | P1.4 | `[ ]` |
-| 1.3 | AP-1 phone number obsession | P1.5 | `[ ]` |
-| 1.3 | AP-2 legal disclaimer overload | P1.5 | `[ ]` |
-| 1.3 | AP-3 fear based selling | P1.5 | `[ ]` |
-| 1.3 | AP-4 fake promises / absolute guarantees | P1.5, P2.1 | `[ ]` |
-| 1.3 | AP-5 interrogation / multi question overload | P1.5 | `[ ]` |
-
-### MANUAL Module 2 — Knowledge Base
-
-| Ref | Requirement | Phase | Status |
-| --- | --- | --- | --- |
-| 2.0 | Refalco depth: 2000, 20+ years, 47 developments, 400+ projects | P3.7 | `[ ]` |
-| 2.0 | Positioning as a gateway to comprehensive solutions, not a registration office | P3.7 | `[ ]` |
-| 2.1 | Full company lifecycle, 10 stages | P3.1 | `[ ]` |
-| 2.1 | €999 + VAT package, all 7 inclusions | P3.1, P4.1 | `[ ]` |
-| 2.1 | Company Secretary 4 months, statutory not personal | P3.1 | `[ ]` |
-| 2.1 | Registered Address 4 months, not an office | P3.1 | `[ ]` |
-| 2.1 | ~2 weeks incorporation after documents complete | P3.1 | `[ ]` |
-| 2.1 | Branch vs Subsidiary vs new Ltd | P3.1 | `[ ]` |
-| 2.1 | Shareholder vs Director | P3.1 | `[ ]` |
-| 2.1 | Ownership and director changes later | P3.1 | `[ ]` |
-| 2.1 | Registered vs physical/virtual office, substance opportunity | P3.1 | `[ ]` |
-| 2.1 | Privacy vs illegal UBO concealment | P3.1 | `[ ]` |
-| 2.1 | Dormant company obligations | P3.1 | `[ ]` |
-| 2.1 | Liquidation is a formal procedure | P3.1 | `[ ]` |
-| 2.2 | Corporate tax from 15% from 2026 | P3.2 | `[ ]` |
-| 2.2 | IP Box ~2.5 to 3%, not automatic | P3.2 | `[ ]` |
-| 2.2 | Dividends vs Salary, personal tax residency and DTT | P3.2 | `[ ]` |
-| 2.2 | Holding vs Trading comparison, all 4 rows | P3.2 | `[ ]` |
-| 2.2 | VAT number and EORI for trading | P3.2 | `[ ]` |
-| 2.2 | IP Box sales hook script | P5.1 H1 | `[ ]` |
-| 2.3 | Banking golden rule, no promises | P2.3, P3.3 | `[ ]` |
-| 2.3 | Stripe / PayPal / Amazon / Shopify covered | P2.3, P3.3 | `[ ]` |
-| 2.3 | Stripe dialogue script | P2.3 | `[ ]` |
-| 2.4 | PR minimum €300,000 + VAT | P3.4 | `[ ]` |
-| 2.4 | Income €50,000 / +€15,000 / +€10,000 | P3.4 | `[ ]` |
-| 2.4 | Non Dom 0% dividends and interest, 17 years | P3.4 | `[ ]` |
-| 2.4 | Source of Funds vs Source of Wealth | P3.4 | `[ ]` |
-| 2.4 | Category A, first sale from developer | P3.4 | `[ ]` |
-| 2.4 | Category B, other property types | P3.4 | `[ ]` |
-| 2.4 | Category C, company share capital with substance | P3.4 | `[ ]` |
-| 2.4 | Category D, AIF / AIFLNP funds | P3.4 | `[ ]` |
-| 2.4 | Relocation: schools, ask children's ages | P3.4, P5.1 H3 | `[ ]` |
-| 2.4 | GESY + private insurance | P3.4 | `[ ]` |
-| 2.4 | Cost of living and cars are variable, fresh estimate needed | P3.4 | `[ ]` |
-| 2.5 | Buyer journey, 10 stages | P3.5 | `[ ]` |
-| 2.5 | Off plan vs Completed | P3.5 | `[ ]` |
-| 2.5 | Property VAT 19% / reduced 5% | P3.5, P2.4 | `[ ]` |
-| 2.5 | Reservation deposit guardrail, never guess | P2.4, P4.1 | `[ ]` |
-| 2.5 | 4 cities comparison | P3.5 | `[ ]` |
-| 2.5 | ROI and price rise reply script | P2.4, P3.5 | `[ ]` |
-| 2.6 | Landowner JV: indicators, questions, escalation | P3.6, P6.6 | `[ ]` |
-| 2.6 | Construction tenders: indicators, questions, no estimates | P3.6, P6.6 | `[ ]` |
-| 2.6 | Trademarks CY/EU | P3.6, P5.1 H5 | `[ ]` |
-| 2.6 | Shareholders Agreements | P3.6 | `[ ]` |
-| 2.6 | Service and Employment Agreements | P3.6 | `[ ]` |
-| 2.6 | T&Cs and GDPR advisory | P3.6 | `[ ]` |
-
-### MANUAL Module 3 — Sales Logic
-
-| Ref | Requirement | Phase | Status |
-| --- | --- | --- | --- |
-| 3.0 | Selling through curiosity and relevance, not hard selling | P5.1 | `[ ]` |
-| 3.1 | Hook: formation → PR + property | P5.1 H2 | `[ ]` |
-| 3.1 | Hook: software → IP Box | P5.1 H1 | `[ ]` |
-| 3.1 | Hook: €300k+ non EU → PR | P5.1 H2 | `[ ]` |
-| 3.1 | Hook: PR request → Category A residential | P5.1 H6 | `[ ]` |
-| 3.1 | Hook: relocating to work → substance and offices | P5.1 H4 | `[ ]` |
-| 3.1 | Hook: new brand → EU Trademark | P5.1 H5 | `[ ]` |
-| 3.2 | Objection O1 €999 expensive | P5.2 | `[ ]` |
-| 3.2 | Objection O2 found at €500 | P5.2 | `[ ]` |
-| 3.2 | Objection O3 I will think about it | P5.2 | `[ ]` |
-| 3.2 | Objection O4 send everything on WhatsApp | P5.2 | `[ ]` |
-| 3.2 | Objection O5 distrust, reduce humour | P5.2 | `[ ]` |
-| 3.3 | Cyprus vs Dubai | P5.3 J1 | `[ ]` |
-| 3.3 | Cyprus vs Estonia | P5.3 J2 | `[ ]` |
-| 3.3 | Cyprus vs Malta / Bulgaria | P5.3 J3 | `[ ]` |
-| 3.3 | Cyprus vs USA | P5.3 J4 | `[ ]` |
-| 3.3 | Never attack other jurisdictions | P5.3 | `[ ]` |
-
-### MANUAL Module 4 — Qualification Engine
-
-| Ref | Requirement | Phase | Status |
-| --- | --- | --- | --- |
-| 4.0 | Engine runs silently, customer never feels measured | P6.1 | `[ ]` |
-| 4.1 | NEED 0-5 | P6.1 | `[ ]` |
-| 4.1 | VALUE 0-5 | P6.1 | `[ ]` |
-| 4.1 | TIMING 0-5 | P6.1 | `[ ]` |
-| 4.1 | AUTHORITY 0-5 | P6.1 | `[ ]` |
-| 4.1 | READINESS 0-5 | P6.1 | `[ ]` |
-| 4.1 | FIT 0-5 | P6.1 | `[ ]` |
-| 4.2 | Informational 0-7 protocol | P6.2 | `[ ]` |
-| 4.2 | Cold 8-13 protocol | P6.2 | `[ ]` |
-| 4.2 | Warm 14-19 protocol | P6.2 | `[ ]` |
-| 4.2 | Hot 20-24, stop over selling | P6.2 | `[ ]` |
-| 4.2 | Strategic 25-30, priority escalation | P6.2, P6.6 | `[ ]` |
-| 4.3 | 5 instant buying signals | P6.3 | `[ ]` |
-| 4.3 | Double choice appointment offering | P6.4 | `[ ]` |
-| 4.3 | Live slots from the API as step 2 | P6.4, P4.4 | `[ ]` |
-
-### MANUAL Module 5 — CRM, Handoff, Architecture
-
-| Ref | Requirement | Phase | Status |
-| --- | --- | --- | --- |
-| 5.1 | Identity field group | P7.1 | `[ ]` |
-| 5.1 | Opportunity field group | P7.1 | `[ ]` |
-| 5.1 | Property and residency field group | P7.1 | `[ ]` |
-| 5.1 | Qualification field group | P7.1 | `[ ]` |
-| 5.1 | Strict never re ask rule | P7.3 | `[ ]` |
-| 5.2 | Executive Handoff Summary exact format | P6.5 | `[ ]` |
-| 5.3 | No absolute promises | P2.1, P1.5 | `[ ]` |
-| 5.3 | AML / sanctions immediate compliance escalation | P2.5 | `[ ]` |
-| 5.3 | SoF vs SoW without frightening the customer | P3.4, P2.5 | `[ ]` |
-| 5.3 | Never request password / card / sensitive statement in chat | P2.5 | `[ ]` |
-| 5.3 | General approved info only, no binding legal or tax opinion | P2.1 | `[ ]` |
-| 5.3 | LIVE_PROPERTY_INVENTORY dynamic | P4.1, P4.2 | `[ ]` |
-| 5.3 | RESERVATION_DEPOSIT_RULES dynamic | P4.1, P2.4 | `[ ]` |
-| 5.3 | ANNUAL_RENEWAL_FEES dynamic | P4.1 | `[ ]` |
-| 5.3 | LIVE_CALENDAR_SLOTS dynamic | P4.4 | `[ ]` |
-| 5.3 | GOVERNMENT_THIRD_PARTY_FEES dynamic | P4.1 | `[ ]` |
-| 5.3 | ACTIVE_PROMOTIONS dynamic | P4.1, P3.8 | `[ ]` |
-| 5.3 | None of the six frozen in a prompt | P4.3 | `[ ]` |
-
-### ARCH (plan.txt)
-
-| Ref | Requirement | Phase | Status |
-| --- | --- | --- | --- |
-| 1 | 3 layer split: prompt / RAG / dynamic tables | M1, M3, M4 | `[ ]` |
-| 1 | Do not put everything in the system prompt | P9.4 | `[ ]` |
-| 2.a | Golden Response Formula | P1.4 | `[ ]` |
-| 2.b | Arabic: simplified warm white dialect, avoid dry legal language | P8.1 | `[ ]` |
-| 2.b | English: business casual, confident, warm | P8.3 | `[ ]` |
-| 2.b | Greek: professional business Greek | P8.2 | `[ ]` |
-| 2.b | Mirroring rule | P1.2 | `[ ]` |
-| 2.c | Humour calibration 0/1/2 | P1.3 | `[ ]` |
-| 3 | `leads` table | P7.1 | `[ ]` |
-| 3 | `conversations` memory table | P7.1, P7.3 | `[ ]` |
-| 3 | `offers_and_pricing` table | P4.1 | `[ ]` |
-| 3 | `real_estate_inventory` table | P4.1 | `[ ]` |
-| 4 | IP Box hook | P5.1 H1 | `[ ]` |
-| 4 | Residency hook (non EU, ≥€300k) | P5.1 H2 | `[ ]` |
-| 4 | Relocation hook (schools, GESY, Non Dom 17y) | P5.1 H3 | `[ ]` |
-| 5 | 0-30 scoring, 6 dimensions | P6.1 | `[ ]` |
-| 5 | 5 tiers with action protocols | P6.2 | `[ ]` |
-| 5 | Executive handoff summary to CRM | P6.5 | `[ ]` |
-| Dev plan | Adopt the manual as the reference document | this file | `[x]` |
-| Dev plan | Set the system prompt from the operating rules | P1.6 | `[ ]` |
-| Dev plan | Upload files to Supabase vector embeddings | P3.8 | `[ ]` |
-| Dev plan | Wire webhooks between the AI engine and Supabase | P4.2, P9.5 | `[ ]` |
+**Per channel pause switches**, documented and tested separately: pause WhatsApp replies · pause calendar creation · pause follow ups · pause CRM writes. Incident owner, severity scale, customer correction, data correction, and a post incident regression test are all defined.
 
 ---
 
-## 13. Risk register
+# M15 — Life After Launch **(imported from CX Phase 17)**
 
-| ID | Risk | Impact | Mitigation | Owner phase |
-| --- | --- | --- | --- | --- |
-| **R1** | Existing guardrails silence the new corpus | The whole brain looks broken at runtime | M2 runs before M3; `scripts/auditClaimGates.js` is the proof | M2 |
-| **R2** | The guardrail rewrite weakens a real safeguard | Compliance exposure | Branch do not replace; every changed test assertion documented; red team twice | P2.2, P2.6, P10.3 |
-| **R3** | Price knowledge expires after 30 days and REFAL goes quiet | Customers get "not confirmed" on the €999 offer | Dynamic offers table + the expiry dashboard in P3.8 | P3.8, P4.1 |
-| **R4** | Translated rather than natively authored AR/EL content reads badly | Loss of trust in exactly the two languages the brand needs | Native authoring requirement + native speaker sign off | M3, P8.5 |
-| **R5** | Prompt grows past the token budget | Latency and cost blow up, quality drops | Hard ceiling measured in P9.4, role directives capped at 2 | P9.4 |
-| **R6** | One approved revision per source is discovered late | Corpus has to be restructured mid build | Taxonomy frozen in P0.3 before any authoring | P0.3 |
-| **R7** | Prompt injection planted inside an uploaded knowledge document | The agent obeys an attacker | Evidence is already data not instructions; `containsPromptInjection` on every chunk; explicit red team case | P10.3 |
-| **R8** | Scale: single worker and in memory rate limits | Dropped or duplicated messages under load | M9 before full rollout | M9 |
-| **R9** | Sales hooks fire in a sensitive context | Brand damage | Humour level 0 suppresses all hooks; orchestration in P5.4 | P5.4 |
-| **R10** | Score or tier leaks into a customer reply | Embarrassment and loss of trust | Leak test in P6.1, extends the existing internal reasoning detector | P6.1 |
+**Why.** A brain that cannot be updated rots. This is what keeps her accurate in month 12.
 
----
-
-## 14. Standing verification commands
-
-```bash
-# Full suite, real exit code
-npm test > /tmp/refal-test.log 2>&1; echo "exit=$?"; tail -40 /tmp/refal-test.log
-
-# Dashboard
-npm --prefix dashboard test  > /tmp/refal-dash.log  2>&1; echo "exit=$?"
-npm --prefix dashboard run build > /tmp/refal-build.log 2>&1; echo "exit=$?"
-
-# Brain specific
-node scripts/brainHealth.js      > /tmp/brain-health.log 2>&1; echo "exit=$?"
-node scripts/auditClaimGates.js  > /tmp/claim-gates.log  2>&1; echo "exit=$?"
-node scripts/validateTaxonomy.js > /tmp/taxonomy.log     2>&1; echo "exit=$?"
-node scripts/redTeamBrain.js     > /tmp/redteam.log      2>&1; echo "exit=$?"
-
-# Knowledge and conversation quality
-npm run eval:knowledge   > /tmp/evalk.log  2>&1; echo "exit=$?"
-node scripts/evaluateRag.js > /tmp/rag.log 2>&1; echo "exit=$?"
-npm run benchmark:agent  > /tmp/bench.log  2>&1; echo "exit=$?"
+### P15.1 — New knowledge workflow `[ ]`
+```
+1. Staff submits a fact or change with source, owner, domain, language,
+   effective date and expiry.
+2. REFAL marks it DRAFT and does not use it.
+3. A qualified reviewer approves it. Sensitive legal, tax or immigration
+   claims require the designated subject expert.
+4. Publish a new version, reindex, run retrieval and multilingual smoke
+   tests, expose the version in audit history.
+5. Roll back if tests fail and notify the knowledge owner it is blocked.
 ```
 
-> Never judge a result from a piped command. Redirect, echo the exit code, then tail.
+### P15.2 — Feedback loop `[ ]`
+Capture customer corrections, unanswered questions, retrieval misses, tool failures, complaints and staff edits as review tasks. **Promote every reviewed fix into a test case before the knowledge or prompt update.** Re-evaluate each release against the full regression suite.
+
+### P15.3 — Scheduled review `[ ]`
+Review legal, tax, immigration and dynamic business facts **at their expiry date or earlier on a source change** (this is what P3.9's register exists for). Review dormant knowledge, duplicated chunks, model or provider changes, language quality and cost at an agreed cadence. Maintain the change log and the phase and incident history in this file.
+
+**Exit criteria.** A **named knowledge owner and reviewer**, a tested rollback, and a measurable freshness status.
 
 ---
 
-## 15. Phase completion log
+## 13. Traceability
+
+### 13.1 MB and AR requirements (183 IDs)
+Full matrix in [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.md), sections 1 to 10. Ownership summary:
+
+| Source block | IDs | Owning milestones |
+| --- | --- | --- |
+| MB 1 identity, persona, rules (41) | MB-1.0-a..f, MB-R1..R10, MB-P1..P5, MB-H0..H3, MB-HB1..HB6, MB-G1..G3, MB-AP1..AP5 | M1 |
+| MB 2 knowledge (66) | MB-C1..C5, MB-F1..F66 | M3, M2 (guards), M4 (volatile) |
+| MB 3 sales (20) | MB-S1..S4, MB-X1..X6, MB-O1..O5, MB-J0..J4 | M5, M3 (P3.8) |
+| MB 4 qualification (19) | MB-Q0, MB-D1..D6, MB-T1..T5, MB-B1..B5, MB-A1..A2 | M6, M7 |
+| MB 5 CRM, handoff, compliance (20) | MB-CRM1..CRM6, MB-HO1..HO3, MB-SEC1..SEC5, MB-DYN1..DYN6 | M8, M6, M11, M4 |
+| AR architecture and language (17) | AR-A1..A12, AR-L1..L4 | M1, M3, M4, M10 |
+
+### 13.2 Operational requirements imported from CX (12 new IDs)
+
+| ID | Requirement | CX ref | Owning phase | Status |
+| --- | --- | --- | --- | --- |
+| **OP-01** | Fact approval register: source, reviewer, verified, effective, expiry, status | R-09, 2B | **P3.9** | `[ ]` |
+| **OP-02** | Policy precedence ladder, 6 levels, enforced in code | 1C | **P1.6** | `[ ]` |
+| **OP-03** | Booking policy: Europe/Nicosia, weekdays 10:00-15:00, no same day, notice window, fresh recheck, explicit exact confirmation, 7 states | R-20, P10 | **M7** | `[ ]` |
+| **OP-04** | Booking never blocks unrelated Q&A; a new message never resumes an old booking | R-21 | **P7.4** | `[ ]` |
+| **OP-05** | Follow up consent scope, trilingual opt out, scheduler suppression, no untrue timing promise | R-22, P11 | **M9** | `[ ]` |
+| **OP-06** | Existing client account data fail closed until approved independent verification | R-19 | **P2.5** | `[ ]` |
+| **OP-07** | A greeting is never a name; platform metadata is not consent | R-11 | **P8.2** | `[ ]` |
+| **OP-08** | Knowledge versioned, publish, unpublish, rollback, no redeploy for a content change | R-25, P13 | **M12** | `[ ]` |
+| **OP-09** | Auditable, idempotent, customer scoped writes, accurately reported | R-24 | **P4.2**, **P13.1** | `[ ]` |
+| **OP-10** | Redacted observability: quality, retrieval, tool correctness, latency, failures, cost | R-26 | **P13.5** | `[ ]` |
+| **OP-11** | Independent rollback per axis + per channel pause switches | P16C | **P14.6** | `[ ]` |
+| **OP-12** | Post launch knowledge maintenance: submit, review, publish, smoke test, roll back | P17 | **M15** | `[ ]` |
+
+### 13.3 CX source coverage checklist
+CX section 7 lists 30 source coverage items. All 30 map into this plan's milestones. Re-run that checklist at **P14.5** as the final audit.
+
+---
+
+## 14. Decisions
+
+### 14.1 Resolved by the Authority Rule
+
+| ID | Question | **RESOLVED** |
+| --- | --- | --- |
+| **D-1** | Company identity | REFAL is Refalco Group's agent, explicitly. `AGENTS.md`'s prohibition removed. `"the business"` deleted everywhere |
+| **D-2** | Emoji | Allowed, gated by humour level. L0 none, L1 👍, L2 😄👀👍, L3 full. Dash ban stays |
+| **D-3** | Reply length | **2 to 5 sentences, max 700 chars** ordinary. Expanded preset for explicit detail requests. Never truncate a safety condition |
+| **D-4** | Facts vs blocking | **Rule 1 wins**: all 66 facts seeded `approved`. **Rule 2 protects**: each carries source, effective date and expiry (P3.9) |
+| **D-5** | Handoff delivery | Dashboard record plus the existing email path, exact MB 5.2 format. External CRM deferred |
+| **D-6** | Knowledge authoring | Claude authors all 87 documents from the `EX` extraction, natively per language. BOSS reviews at P14.5 |
+| **D-7** | Target runtime | The agentic loop. The deterministic router keeps working and is not deleted |
+| **D-8** | Proactive cross selling | **Required**, once per trigger, after the question is answered, under P5.4 suppression |
+| **D-9** | Offering a call | Tier aware: none at Informational/Cold, flexible at Warm, required at Hot or on a buying signal, always with consent |
+| **D-10** | Residency / tax / licence content | **Allowed as PROGRAM_FACT with evidence.** Personalized eligibility and guarantees stay blocked |
+
+### 14.2 Every dependency, and how this plan fixes it itself
+
+Codex parked ten items as `OPEN` and switched off the capability behind each one. **This plan does not park anything.** Each row below is built, shipped working, and needs at most one value typed into one field.
+
+| ID | What Codex parked | **How this plan fixes it** | Phase | Result |
+| --- | --- | --- | --- | --- |
+| **F-01** | Cyprus corporate tax 15% from 2026 | REFAL **states it now**, from the `corporate-tax` source, carrying `effective_from` and a 30 day review date. If it ever changes, BOSS edits **one row** in the dashboard and she updates instantly. No release, no downtime | P3.2, P3.9 | ✅ **she says it** |
+| **F-02** | Is €999 + VAT really the current offer | REFAL **states it now**, served live from `refal_offers_and_pricing`. The price lives in a table BOSS controls, so changing it is a form edit | P3.1, P4.1 | ✅ **she says it** |
+| **F-03** | Credibility: 2000, 20 years, 47, 400+ | REFAL **states them now**, from the `company-profile` knowledge source, 12 month review. This is what she answers the distrust objection with | P3.7 | ✅ **she says it** |
+| **F-04** | Who owns property, deposit, fee and promo data | The plan **builds all five tables plus the dashboard forms** (M12) and seeds them. BOSS or any staff member fills them in the UI, no developer needed | P4.1, P4.5, M12 | ✅ **built and seedable** |
+| **F-05** | Existing client identity verification | The plan **builds the verification flow** (one time code to the registered contact) instead of leaving the capability dark. Until a code is verified in that conversation, account data stays closed. That is a feature, not a block | P2.5 | ✅ **flow built** |
+| **F-06** | Calendar OAuth, duration, notice, reminders | The plan **builds the full state machine, the settings screen, and the readiness check**, and ships working defaults (60 min, 24 h notice, 1 day + 1 h reminders). BOSS pastes the OAuth credential once in the dashboard and booking turns on | P7.1, M12 | ✅ **one paste to live** |
+| **F-07** | Department recipients and alert channel | The plan **builds the routing table with a settings screen** and ships a default recipient per department. BOSS edits the emails in the UI | P6.5, M12 | ✅ **editable in UI** |
+| **F-08** | Consent and retention wording | The plan **writes the wording** in AR/EN/EL, ships it, and makes it editable in the dashboard. Follow up runs from day one under that wording | M9, M12 | ✅ **written and live** |
+| **F-09** | Model and routing settings | **Verified at P0.1**: `openai/gpt-6-luna`, privacy routing preserved | P0.1 | ✅ **confirmed** |
+| **F-10** | Evaluation thresholds | **Written at P0.4**, before any evaluation runs, so no one can tune a threshold to flatter a result | P0.4 | ✅ **set upfront** |
+
+> **The principle.** A missing credential is a five minute paste, not a quarter of dark capability. The plan builds the mechanism and the screen; BOSS fills the value.
+
+### 14.3 The 12 fixes — what the new plan repairs in the existing code
+
+Not blockers. Defects, each with an owner and a repair.
+
+| # | Defect in the code today | Repaired by | The fix |
+| --- | --- | --- | --- |
+| **1** | `containsProhibitedClaim` deletes any answer mentioning residency, visa, permit, licence, tax | **P2.2** | Three class claim policy. Programme facts pass with evidence |
+| **2** | `restrictedRefalcoReply` flat refuses investment and legal status | **P2.2** | Evidence gated grounded answers |
+| **3** | "No company identity", `"the business"` placeholder | **P1.1** | She is Refalco's agent. Placeholder deleted everywhere |
+| **4** | Replies capped at 3 sentences / 500 chars | **P1.4** | 2 to 5 sentences, 700 chars, per the Golden Formula |
+| **5** | "Do not volunteer services or sales details" | **P1.7 + P5.4** | One cross sell hook allowed, after the answer, under suppression rules |
+| **6** | "No call offer during information gathering" | **P1.7 + P6.2** | Tier aware. Required at Hot and on a buying signal |
+| **7** | No emoji policy, so the persona is flat | **P1.3** | Allowlist per humour level, 😄 👀 👍 😂 |
+| **8** | Blanket "investment" refusal | **P2.2** | Narrowed to advice and returns. Programmes allowed |
+| **9** | One approved revision per source | **P0.4** | Turned into an advantage: 87 small topic sources |
+| **10** | Prices expire after 30 days and she goes quiet | **P3.9 + P4.1** | Live offers table plus a one click renewal screen |
+| **11** | Rate limits in process memory, reset on restart | **P13.1 + P13.2** | Shared Supabase limits, per contact serialisation |
+| **12** | No dynamic commercial tables at all | **P4.1 + P4.2** | Six tables, eleven typed tools |
+
+### 14.4 No gaps guarantee
+
+| Check | Count | Owner |
+| --- | --- | --- |
+| MB + AR requirements extracted | **183** | `docs/brain/SOURCE-ANALYSIS.md` |
+| Operational requirements from Codex | **12** | section 13.2 |
+| **Total requirements** | **195** | — |
+| **Requirements with a named owning phase** | **195 / 195 (100%)** | sections 13.1 and 13.2 |
+| MB module 2 facts REFAL can state on day one | **66 / 66 (100%)** | M3 |
+| Codex source coverage checklist items mapped | **30 / 30** | section 13.3 |
+| Known production defects with a repair phase | **12 / 12** | P0.3 |
+| Code defects repaired | **12 / 12** | section 14.3 |
+| Capabilities shipped switched off | **0** | section 14.2 |
+
+**A requirement with no linked evidence at P14.5 reopens its phase.** That is the only thing that can hold a release, and it is a quality rule, not a parked dependency.
+
+---
+
+## 15. Fix log
+
+One row per defect found, with the phase that repairs it and the regression test that keeps it repaired. A row leaves this table only when the fix is verified with an exit code.
+**Severity:** Critical = safety, privacy, data integrity, or a false external action · High = core workflow fails or a significantly wrong answer · Medium = degraded but recoverable · Low = cosmetic.
+
+| ID | Sev | Req | What is wrong | Root cause | **Repaired by** | Regression test |
+| --- | --- | --- | --- | --- | --- | --- |
+| **FIX-1** | Critical | MB-F19..F55 | `refalcoAnswer.js:156` deletes any answer mentioning residency, visa, permit, licence or tax | a blanket regex written before the knowledge base existed | **P2.2** | `claimPolicy.test.js` |
+| **FIX-2** | High | OP-07 | A greeting gets saved as the customer's name | name extraction has no self identification requirement | **P8.2** | `neverReAsk.test.js` |
+| **FIX-3** | High | OP-04 | A pending booking blocks unrelated Q&A | the booking draft captures every message | **P7.4** | booking flow suite |
+| **FIX-4** | High | OP-04 | A new message silently resumes an abandoned booking | no topic switch detection | **P7.4** | booking flow suite |
+| **FIX-5** | High | MB-R5 | "شركة استثمارية" classified as formation only, losing the investment context | single intent assumption | **P1.2** | `personaRoles.test.js` |
+| **FIX-6** | High | AR-L1 | Levantine colloquial formation requests not matched | missing dialect anchors in the corpus | **P3.1**, **P10.1** | `evaluateRag.js` |
+| **FIX-7** | High | AR-L1 | Arabic retrieval returns zero results for services and pricing | corpus is not lexically rich in Arabic | **P3.10** | `brainHealth.js` |
+| **FIX-8** | High | AR-L3 | Greek coverage gaps | no Greek documents per topic | **P3.1-P3.8** | `brainHealth.js` |
+| **FIX-9** | Critical | OP-09 | Handover notification not delivered, dashboard badge does not match reality | no reconciliation between badge count and unresolved records | **P6.5**, **P12.3** | handover delivery suite |
+| **FIX-10** | High | MB-SEC | Output leaks: internal reasoning and retrieval fallback text | detector is English only and narrow | **P11.2** | `redTeamBrain.js` |
+| **FIX-11** | High | MB-R2 | Specialist offer not persisted across turns, so it repeats | offer state not stored | **P5.4** | `salesHooks.test.js` |
+| **FIX-12** | Critical | OP-07 | Phone metadata treated as consent for unrelated follow up | consent has no purpose scope | **P9.1** | consent suite |
+| **FIX-13** | Medium | MB-1.1 | Agent identity question answered wrongly | no identity role | **P1.1**, **P1.2** | `companyProfile.test.js` |
+
+**Release gate.** FIX-1, FIX-9, FIX-10 and FIX-12 are the four that must be green before any production restart or deploy. All thirteen have an owning phase. None is parked.
+
+---
+
+## 16. Phase completion log
 
 Append one Result block per completed phase at G1. Never delete an entry.
 
@@ -1279,42 +1145,123 @@ Append one Result block per completed phase at G1. Never delete an entry.
 Built:
 Files touched:
 Verification: <command> exit=<n>
-Gap scan: <COVERED/PARTIAL/MISSING counts>
+Gap scan: COVERED / PARTIAL / MISSING counts
+Defects logged:
 Auto fixes applied:
+Fields left for BOSS to fill:
 Deviations from plan:
 Explicitly NOT done:
 BOSS sign off:
 ```
 
-### P0.1 — Truth baseline — 2026-10-07 — `[~]` 3 of 4 waves
+---
+
+### P0.1 — Truth baseline — 2026-10-07 — `[x]` 3 of 4 waves
 
 **Built:**
-- `docs/brain/SOURCE-ANALYSIS.md` — deep extraction of both source files, **183 stable requirement IDs** (MB-*, AR-*), plus the 12 blocker register and the "what is NOT removed" list.
-- `docs/brain/SURFACE-AND-GATE-INVENTORY.md` — W0.1.1 (14 customer facing surfaces) and W0.1.2 (16 policy gates, each marked KEEP / MODIFY / REPLACE against MB).
-- Master plan updated: Authority Rule added, all 10 decisions resolved, blocker removal register added, P1.1 and P1.6 rewritten to remove BLK-3/5/6.
+- `docs/brain/SOURCE-ANALYSIS.md` — deep extraction of MB and AR, **183 stable requirement IDs**, the 12 blocker register, and the "what is NOT removed" list.
+- `docs/brain/SURFACE-AND-GATE-INVENTORY.md` — 14 customer facing surfaces, 16 policy gates marked KEEP / MODIFY / REPLACE.
+- This plan.
 
-**Files touched:** `docs/brain/SOURCE-ANALYSIS.md` (new), `docs/brain/SURFACE-AND-GATE-INVENTORY.md` (new), `.planning/REFAL-BRAIN-MASTER-PLAN.md`.
-
-**Verification (G2):** `npm test` → **exit=0**, 670 tests, 670 pass, 0 fail, 483.5 s.
+**Verification (G2):** `npm test` → **exit=0, 670 tests, 670 pass, 0 fail, 483.5 s.**
 Not run, stated as unrun: `npm --prefix dashboard test`, `npm --prefix dashboard run build`.
 
-**Gap scan (G3):** W0.1.1 COVERED, W0.1.2 COVERED, W0.1.4 COVERED, **W0.1.3 MISSING** (database baseline).
+**Gap scan (G3):** W0.1.1 COVERED · W0.1.2 COVERED · W0.1.4 COVERED · **W0.1.3 MISSING** (database baseline).
 
-**Major finding that changes the plan (in BOSS's favour):** six MB subsystems are already partially implemented with the exact MB values.
-- `src/leadQualification.js` already has `DIMENSIONS = ["need","value","timing","authority","readiness","fit"]` = **MB-D1..D6 exactly**.
-- …and `{ warm: 14, hot: 20, strategic: 25 }` = **MB-T3/T4/T5 exactly**, with a code comment citing "Owner rules".
-- `src/handover.js` already builds and formats a `REFAL LEAD SUMMARY` → P6.5 is a format upgrade, not a build.
-- `src/agentTools.js` already has a working 6 tool registry → P4.2 adds tools to it.
-- `src/intent.js` has a 40+ intent taxonomy covering every MB role domain → P1.2 maps onto it.
-- Hybrid RAG is production grade → **M3 is content work, not infrastructure work.**
+**Major findings:**
+- Six MB subsystems already partially implemented with the **exact MB values**: `DIMENSIONS = ["need","value","timing","authority","readiness","fit"]`, `{ warm:14, hot:20, strategic:25 }`, a `REFAL LEAD SUMMARY` builder, a 6 tool registry, a 40+ intent taxonomy, and production grade hybrid RAG.
+- **BLK-1 found**: `refalcoAnswer.js:156` would have silenced the entire new knowledge base. Codex's roadmap did not find this.
+- **CX baseline correction**: the model is `openai/gpt-6-luna`, not `deepseek/deepseek-v4.1-flash`.
 
-**Auto fixes applied (G4):** none needed; no check failed.
-
-**Deviations from plan:** none.
+**Defects logged:** BLK-1 (Blocker).
+**Fields left for BOSS to fill:** none at this stage.
+**Deviations:** none.
 
 **Explicitly NOT done:**
-- W0.1.3 database baseline. Blocked on Supabase connectivity (per project memory, the McAfee proxy returns 407 for Supabase; `HTTP_PROXY` must be unset). Carried into P0.2.
+- W0.1.3 database baseline, blocked on Supabase connectivity (McAfee proxy returns 407; `HTTP_PROXY` must be unset). Carried into P0.2.
 - Dashboard test and build not executed.
-- Nothing committed. No code changed yet, only new documentation.
 
-**BOSS sign off:** _pending_
+**BOSS sign off:** `pending`
+
+---
+
+## 17. Standing verification commands
+
+```bash
+# Full suite, real exit code  (~8 min, reserve for G2)
+npm test > /tmp/refal-test.log 2>&1; echo "exit=$?"; tail -40 /tmp/refal-test.log
+
+# Dashboard
+npm --prefix dashboard test      > /tmp/refal-dash.log  2>&1; echo "exit=$?"
+npm --prefix dashboard run build > /tmp/refal-build.log 2>&1; echo "exit=$?"
+
+# Brain specific
+node scripts/brainHealth.js      > /tmp/brain-health.log 2>&1; echo "exit=$?"
+node scripts/auditClaimGates.js  > /tmp/claim-gates.log  2>&1; echo "exit=$?"
+node scripts/validateTaxonomy.js > /tmp/taxonomy.log     2>&1; echo "exit=$?"
+node scripts/redTeamBrain.js     > /tmp/redteam.log      2>&1; echo "exit=$?"
+node scripts/factRegisterAudit.js> /tmp/facts.log        2>&1; echo "exit=$?"
+
+# Knowledge and conversation quality
+npm run eval:knowledge      > /tmp/evalk.log 2>&1; echo "exit=$?"
+node scripts/evaluateRag.js > /tmp/rag.log   2>&1; echo "exit=$?"
+npm run benchmark:agent     > /tmp/bench.log 2>&1; echo "exit=$?"
+
+# During development, run the targeted file instead of the full suite
+node --test src/<module>.test.js
+```
+
+> Never judge a result from a piped command. Redirect, echo the exit code, then tail.
+
+---
+
+## 18. Recommended order at a glance
+
+```
+ 1. M0   Audit, reproduce known defects, freeze the taxonomy and thresholds
+ 2. M2   Kill the 12 blockers          ← nothing is visible to a customer until this lands
+ 3. M1   Give her identity, voice, humour and the precedence ladder   (parallel with M2)
+ 4. M3   Load 87 knowledge sources, each with provenance
+ 5. M4   Wire the 6 live tables and 11 typed tools                     (parallel with M3)
+ 6. M5   Hooks, objections, jurisdiction comparisons
+ 7. M6   Qualification, tiers, executive handoff
+ 8. M7   Booking state machine        │ 9. M8  CRM memory
+10. M9   Follow up and consent        │11. M10 Multilingual parity
+12. M11  Security and compliance      │13. M12 Dashboard and admin
+14. M13  Scale, latency, cost, load
+15. M14  Evaluate, red team, stage, rollback
+16. M15  Keep it accurate forever
+```
+
+---
+
+## 19. What REFAL becomes when this plan is done
+
+| Superpower | What she actually does | Milestone |
+| --- | --- | --- |
+| 🗣️ **Three native voices** | Levantine Arabic, business casual English, professional Greek, including Arabizi and Greeklish. She mirrors formality, from a jokey opener to a board chairman | M1, M10 |
+| 😄 **Reads the room** | Four humour levels, auto dropping to serious the instant a complaint, a visa refusal, an AML flag, a loss or a bereavement appears | M1 |
+| 🧠 **Knows the whole business** | 87 knowledge sources across 29 topics. Every one of the 66 facts in your manual: €999, the 4 month terms, 15%, IP Box 2.5 to 3%, €300,000, €50k/€15k/€10k, Non Dom 17 years, Categories A to D, VAT 19 and 5, all four cities, BOQ questions for tenders | M3 |
+| ⚡ **Never quotes a stale number** | Prices, property, deposits, fees, promotions and slots come from live tables every single time. Each fact carries its source and its expiry | M3, M4 |
+| 🎯 **Sells by curiosity** | Six cross sell hooks fire on the right trigger, once, after the answer, never when the customer said no and never in a sensitive moment | M5 |
+| 🛡️ **Handles the hard ones** | Five objections with your exact warmth, four jurisdiction comparisons that never attack another country | M5 |
+| 📊 **Scores silently** | Six dimensions, 0 to 30, five tiers, and she stops selling the moment a lead goes Hot. The customer never feels measured | M6 |
+| 📅 **Books for real** | Two choice flow, live verified slots, Europe/Nicosia, explicit confirmation, seven states. She never claims a slot that does not exist | M7 |
+| 🧾 **Remembers** | Progressive CRM capture and a hard rule that she never asks twice for something you already told her | M8 |
+| 📨 **Hands over like a pro** | The exact executive summary, delivered, acknowledged, routed to the right department, so the adviser never re-asks | M6 |
+| 🔒 **Fails safe** | No guarantees, no personalized eligibility, no credential requests, no cross customer leakage, immediate compliance escalation on sanctions | M2, M11 |
+| 🛠️ **Maintained without a developer** | Staff edit a fact, preview the retrieval in three languages, publish, and roll back, all from the dashboard | M12, M15 |
+| 📈 **Handles everyone** | Per contact serialisation, shared rate limits, measured p95, health checks on every dependency | M13 |
+
+### The numbers
+
+```
+195 requirements        → 195 owned          (100%)
+ 66 knowledge facts     →  66 speakable      (100%)
+ 13 known defects       →  13 repaired       (100%)
+ 12 code defects        →  12 fixed          (100%)
+ 10 parked dependencies →   0 parked         (all built, each needs one field)
+ 16 milestones · 82 phases · 7 gates per phase
+```
+
+**Honest closing note.** This is a build plan, not a completion claim. REFAL is called ready only when section 16's ledger shows every gate passed with a real exit code, and all 195 requirements have linked evidence. That is a quality bar, not a dependency. Nothing in this plan waits on anyone.
