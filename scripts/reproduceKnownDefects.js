@@ -171,31 +171,59 @@ function fix2() {
 }
 
 // ------------------------------------------------------- DB / corpus / model gated
-function notTestableHere() {
-  const gated = [
-    ["FIX-7", "Arabic retrieval returns zero for services and pricing", "live Supabase corpus + embeddings", "P3.10"],
-    ["FIX-8", "Greek coverage gaps", "live Supabase corpus per domain", "P3.1-P3.8"],
-    ["FIX-9", "Handover notification lost, badge mismatch", "live store + dashboard counts", "P6.5, P12.3"],
-    ["FIX-10", "Output leaks: internal reasoning, retrieval fallback text", "live model round trip (adversarial, 3 languages)", "P11.2"],
-    ["FIX-11", "Specialist offer not persisted, so it repeats", "live store across turns", "P5.4"],
-    ["FIX-12", "Phone metadata treated as consent", "live store consent source field", "P9.1"],
+//
+// The W0.1.3 database baseline was EXECUTED on 2026-10-08 (read only, 129 rows,
+// exit=0). That retired the blanket "no live DB from the agent session" reason
+// these six defects used to carry, and it answered two of them outright:
+// rafa_knowledge_sources / _documents / _chunks are ALL EMPTY (0/0/0 against a
+// target of 87). So FIX-7 and FIX-8 are not retrieval-quality defects at all,
+// they are a content gap, and no amount of retrieval tuning can reproduce or
+// repair them before M3 ingestion lands.
+//
+// Each remaining entry now states its OWN blocker instead of a shared premise.
+function corpusGatedDefects() {
+  const rootCaused = [
+    ["FIX-7", "Arabic retrieval returns zero for services and pricing", "P3.10"],
+    ["FIX-8", "Greek coverage gaps", "P3.1-P3.8"],
   ];
-  for (const [fix, defect, needs, repairedBy] of gated) {
-    record(fix, defect, "NOT-TESTABLE", `Requires ${needs}. Not run; no live DB from the agent session per BOSS protocol 2026-10-08.`, repairedBy);
+  for (const [fix, defect, repairedBy] of rootCaused) {
+    record(fix, defect, "ROOT-CAUSED",
+      "W0.1.3 baseline (2026-10-08): the knowledge corpus is EMPTY — 0 sources, 0 documents, 0 chunks. "
+      + "Retrieval returns zero in every language, not just this one, so this is a CONTENT gap rather than a "
+      + "retrieval-quality defect. Not reproducible until M3 ingestion loads the corpus.",
+      repairedBy);
+  }
+
+  const gated = [
+    ["FIX-9", "Handover notification lost, badge mismatch",
+      "handover rows plus dashboard counts, which requires WRITING test data. Read-only access is available "
+      + "(SUPABASE-ACCESS-GUIDE.md) but writes to application tables need BOSS's per-change authorization.", "P6.5, P12.3"],
+    ["FIX-10", "Output leaks: internal reasoning, retrieval fallback text",
+      "a live model round trip in 3 languages. Blocked on OPENROUTER_API_KEY, not on the database — the key in "
+      + ".env is rejected with 401. See REFAL-AGENT-016.", "P11.2"],
+    ["FIX-11", "Specialist offer not persisted, so it repeats",
+      "a multi-turn conversation persisted across turns, which requires WRITING test data. Same authorization "
+      + "boundary as FIX-9.", "P5.4"],
+    ["FIX-12", "Phone metadata treated as consent",
+      "consent rows carrying a source field, which requires WRITING test data. Same authorization boundary as "
+      + "FIX-9. Note rafa_contact_consents currently has RLS enabled with ZERO policies (W0.1.3 block 09).", "P9.1"],
+  ];
+  for (const [fix, defect, blocker, repairedBy] of gated) {
+    record(fix, defect, "NOT-TESTABLE", `Requires ${blocker}`, repairedBy);
   }
 }
 
 async function main() {
   fix1(); fix2(); fix5(); fix6(); fix13(); orthography();
   await bookingDefects();
-  notTestableHere();
+  corpusGatedDefects();
 
   if (process.argv[2] === "--json") {
     process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
     return;
   }
 
-  const order = { REPRODUCED: 0, "ALREADY-FIXED": 1, "ALREADY-FIXED (detection only)": 1, "NOT-TESTABLE": 2 };
+  const order = { REPRODUCED: 0, "ALREADY-FIXED": 1, "ALREADY-FIXED (detection only)": 1, "ROOT-CAUSED": 2, "NOT-TESTABLE": 3 };
   results.sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3));
 
   process.stdout.write("P0.3 — known defect reproduction\n");

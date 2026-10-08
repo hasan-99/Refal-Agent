@@ -265,17 +265,16 @@ MB **requires** REFAL to explain all of those as program facts. **Every PR, Non 
 
 **Exit criteria.** Verified state, a conflict register, a known defect register, a frozen knowledge taxonomy, and the golden evaluation set.
 
-### P0.1 — Truth baseline `[~]` 3 of 4 waves, see section 16
+### P0.1 — Truth baseline `[x]` all 4 waves, see section 16
 Delivered `docs/brain/SOURCE-ANALYSIS.md` (183 IDs, 12 blockers) and `docs/brain/SURFACE-AND-GATE-INVENTORY.md` (14 surfaces, 16 gates). Test baseline re-verified 2026-10-08: `exit=0`, **670 tests, 670 pass, 0 fail**.
-**Carried forward:** W0.1.3 database baseline. W0.1.1, W0.1.2, W0.1.4 COVERED.
-**W0.1.3 status (2026-10-08):** the inspection script is **written and waiting on BOSS** — `supabase/inspection/W0.1.3_database_baseline.sql`, read only, 10 labelled blocks, schema-verified against the migrations. It is **not run**; no live Supabase from the agent session.
-**BOSS sign off:** `pending`. P0.1 is not complete until BOSS runs that file, the output is recorded in section 16, and BOSS signs.
+**All four waves covered.** W0.1.3 was **executed 2026-10-08**, read only, 129 rows, exit=0, and is recorded in section 16.
+**BOSS sign off:** `pending`. The data is in; only the signature is outstanding.
 
 | Wave | Work |
 | --- | --- |
 | **W0.1.1** `[x]` | **Source extraction.** MB and AR mined into 183 stable requirement IDs and the 12 blocker register → `docs/brain/SOURCE-ANALYSIS.md`. |
 | **W0.1.2** `[x]` | **Surface and gate inventory.** 14 customer facing surfaces, 16 policy gates marked KEEP / MODIFY / REPLACE. |
-| **W0.1.3** `[ ]` | **Database baseline.** Inspection SQL written and schema-verified; **awaiting BOSS's run**. This is the only thing still holding P0.1 open. |
+| **W0.1.3** `[x]` | **Database baseline. EXECUTED 2026-10-08**, read only, 129 rows, exit=0. Corpus empty (0/0/0), BLK-12 confirmed, CR-010 already enforced, pgvector 0.8.2 present. Full record in section 16. |
 | **W0.1.4** `[x]` | **Test baseline with real exit codes.** Re-verified 2026-10-08: root `exit=0` 670/670; dashboard `exit=0` 85/85; dashboard build `exit=0`. |
 
 ---
@@ -367,7 +366,8 @@ CX records real production defects from this project's history. Reproduce each, 
 **G2.** `node scripts/validateTaxonomy.js`: slugs unique · every topic has AR/EN/EL · every VOLATILE topic has a matching M4 table or an expiry policy · ≥10 golden questions per topic per language · every question has an expected class.
 
 **Database changes (apply in order).**
-1. `supabase/inspection/W0.1.3_database_baseline.sql` — read only, 10 labelled blocks. No writes, no rollback needed. Closes W0.1.3 and therefore P0.1. See `supabase/inspection/README.md`.
+1. [x] `supabase/inspection/W0.1.3_database_baseline.sql` — EXECUTED 2026-10-08, read only, 129 rows, exit=0. Closed W0.1.3 and therefore P0.1. Results in section 16. See `supabase/inspection/README.md`.
+2. [x] `supabase/inspection/W0.1.3_database_baseline_SINGLE.sql` — EXECUTED 2026-10-08. Same ten checks folded into one statement, because the Supabase SQL editor returns only the last statement of a multi-statement batch. Use this one for any re-run.
 
 ---
 
@@ -1239,6 +1239,47 @@ Not run, stated as unrun: `npm --prefix dashboard test`, `npm --prefix dashboard
 
 ---
 
+#### W0.1.3 EXECUTED — 2026-10-08 — `[x]`
+
+**How it was run.** First partially by BOSS pasting blocks into the Supabase SQL editor, then in full by the agent session via the Management API with `read_only = true`, using the credential and proxy pattern in `SUPABASE-ACCESS-GUIDE.md`. Runner: `scripts/runW013Baseline.ps1` → `supabase/inspection/W0.1.3_database_baseline_SINGLE.sql`. Connection check `connection_ok = 1`, **129 rows, exit=0**.
+
+**Editor trap, recorded so it is not re-derived.** The original ten-statement file returns only the *last* statement's result in the Supabase SQL editor, so the first run came back with block 10 alone. `W0.1.3_database_baseline_SINGLE.sql` folds all ten checks into one statement and does not have this problem. Both files are kept.
+
+**Correction to the script itself.** The expected-table list guessed `rafa_agent_chat`, which does not exist. The real conversation tables are `rafa_agent_sessions`, `rafa_agent_messages` and `rafa_agent_memories`, and all three **do** exist with 2 RLS policies each. The original `exists_now = false` was an agent naming error, **not** a missing capability. Both SQL files were corrected.
+
+| Block | Result |
+| --- | --- |
+| **01** table presence | 3 knowledge tables exist. **All 6 dynamic commercial tables absent** → **BLK-12 CONFIRMED**, M4 starts from bare ground. |
+| **02** corpus size | **0 sources, 0 documents, 0 chunks** against a target of 87. |
+| **03** review status | no rows |
+| **04** expiry state | all zero, `earliest/latest_expiry` null |
+| **05** language coverage | no rows |
+| **06** canonical_url scheme | no rows — **no collision risk**, the `refal://kb/...` scheme has a clean namespace |
+| **07** trust_tier usage | no rows — **CR-023 is a schema-only conflict**, no live data to migrate |
+| **08** indexes | 90 on `rafa_*`. **CR-010 satisfied.** |
+| **09** RLS | 26 public tables, **RLS enabled on all 26**, 13 of them with **0 policies** |
+| **10** environment | PostgreSQL 17.6 · `vector 0.8.2`, `pg_stat_statements 1.11`, `pgcrypto 1.3`, `supabase_vault 0.3.1`, `uuid-ossp 1.1` |
+
+**Finding 1 — the corpus is empty, which re-scopes two defects.** FIX-7 ("Arabic retrieval returns zero") and FIX-8 ("Greek coverage gaps") were filed as retrieval-quality defects. Block 02 shows retrieval returns zero in **every** language because there is nothing to retrieve. These are a **content gap**, so M3 ingestion must precede any retrieval tuning. This confirms the hypothesis recorded in `docs/brain/KNOWN-DEFECTS.md`.
+
+**Finding 2 — CR-010 is already satisfied by the schema.** The expected partial unique index is present and exactly as specified:
+```
+CREATE UNIQUE INDEX rafa_knowledge_documents_one_approved_per_source_idx
+  ON public.rafa_knowledge_documents USING btree (source_id)
+  WHERE (review_status = 'approved'::text)
+```
+The database already enforces one approved revision per source. P3.9 inherits an enforced invariant rather than having to build one.
+
+**Finding 3 — M3's infrastructure needs no extension work.** `vector 0.8.2` is installed and `rafa_knowledge_chunks` already carries `..._embedding_idx` and `..._search_idx`. The embedding and full-text paths are built; only content is missing.
+
+**Finding 4 — RLS is enabled everywhere but policy-less on half the tables.** All 26 public tables have `relrowsecurity = true`, `relforcerowsecurity = false`. 13 carry **zero** policies, including `rafa_audit_events`, `rafa_contact_consents`, `rafa_contact_blocks`, `rafa_conversation_turns`, `rafa_complaints`, `rafa_lead_qualifications`, `rafa_settings`. RLS with no policy denies all non-superuser access, so this is **fail-closed, not a leak** — but it means those tables are reachable only via a `service_role` key, which bypasses RLS entirely. **Tenant isolation is therefore enforced by application code, not by the database.** `relforcerowsecurity = false` also means the table owner bypasses RLS. This is an input to **M13**, and is recorded as a new observation, **OBS-W013-RLS**, not as a defect: the current posture is intentional for a single-tenant bot and only becomes a risk if the anon key is ever given direct table access.
+
+**Unobservable, not clean.** With zero documents, **CR-011 / BLK-10** (30-day auto-expiry on price-bearing revisions) cannot be exercised. Block 04 shows nothing is expired because nothing exists. This check must be re-run after M3 ingestion before BLK-10 can be called resolved.
+
+**Raw output:** 129 rows, written by the runner to a temp file outside the repository. Not committed, per the rule that the code repo stays source only.
+
+---
+
 ### P0.2 — Conflict register: MB vs code — 2026-10-08 — `[x]`
 
 **Built:**
@@ -1271,7 +1312,14 @@ Not run, stated as unrun: `npm --prefix dashboard test`, `npm --prefix dashboard
 
 **Verification:** `node scripts/reproduceKnownDefects.js` → exit=0. Every row **executed**, not reasoned about.
 
-**Result:** REPRODUCED **3** · ALREADY-FIXED **5** · NOT-TESTABLE here **6**.
+**Result (original run, 2026-10-08):** REPRODUCED **3** · ALREADY-FIXED **5** · NOT-TESTABLE here **6**.
+
+**Revised after the W0.1.3 baseline, same day:** REPRODUCED **3** · ALREADY-FIXED **5** · **ROOT-CAUSED 2** · NOT-TESTABLE **4**. Re-run verified `exit=0`, 14 defects.
+
+All six "not testable" verdicts had shared one premise: *"no live DB from the agent session."* The baseline run disproved it, so each entry now states its own real blocker:
+- **FIX-7, FIX-8 → ROOT-CAUSED.** The corpus is empty (0/0/0). These are a **content gap**, not retrieval-quality defects, and cannot be reproduced before M3 ingestion. No retrieval tuning would have helped.
+- **FIX-10** is blocked on `OPENROUTER_API_KEY` (401), **not** on the database.
+- **FIX-9, FIX-11, FIX-12** need test data *written* to application tables. Read access is available and proven; writes still require BOSS's per-change authorization.
 
 **The CX claim holds:** all 13 have an owning repair phase. Nothing is unassigned.
 

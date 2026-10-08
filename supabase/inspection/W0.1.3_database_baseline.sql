@@ -40,8 +40,11 @@ from (values
   ('rafa_knowledge_sources'),
   ('rafa_knowledge_documents'),
   ('rafa_knowledge_chunks'),
-  -- conversation / CRM (M8)
-  ('rafa_agent_chat'),
+  -- conversation / CRM (M8). Verified names, 2026-10-08: an earlier version of
+  -- this list guessed 'rafa_agent_chat', which does not exist. These three do.
+  ('rafa_agent_sessions'),
+  ('rafa_agent_messages'),
+  ('rafa_agent_memories'),
   -- the six dynamic commercial tables MB-DYN1..6 requires (M4, BLK-12)
   ('refal_offers_and_pricing'),
   ('refal_company_profile'),

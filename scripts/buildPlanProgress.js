@@ -96,9 +96,19 @@ function parsePlan(markdown) {
       continue;
     }
     if (inDbBlock) {
-      const item = /^\d+\.\s+`([^`]+)`\s*(?:—\s*(.*))?$/.exec(line.trim());
+      // An item may carry an explicit run mark before the filename:
+      //   1. [x] `file.sql` — ...   already executed against the database
+      //   1. [ ] `file.sql` — ...   not executed yet
+      //   1. `file.sql` — ...       no mark, fall back to "does the file exist"
+      // File existence alone can never prove a script was RUN, so without the
+      // mark the badge only ever claims the file is ready, never that it ran.
+      const item = /^\d+\.\s+(?:\[([ x~])\]\s+)?`([^`]+)`\s*(?:—\s*(.*))?$/.exec(line.trim());
       if (item) {
-        milestone.dbChanges.push({ file: item[1], note: cleanTitle(item[2] || "") });
+        milestone.dbChanges.push({
+          ran: item[1] === "x",
+          file: item[2],
+          note: cleanTitle(item[3] || "")
+        });
         continue;
       }
       if (line.trim() !== "") inDbBlock = false;
@@ -213,11 +223,16 @@ function renderDbChanges(entry) {
   if (!entry.dbChanges.length) return "";
   const rows = entry.dbChanges.map((d, i) => {
     const exists = fs.existsSync(path.join(ROOT, d.file));
+    const state = d.ran
+      ? { cls: "ran", label: "executed" }
+      : exists
+        ? { cls: "ready", label: "ready to run" }
+        : { cls: "planned", label: "not written yet" };
     return `
-          <li class="dbrow">
-            <span class="dbnum">${i + 1}</span>
+          <li class="dbrow${d.ran ? " ran" : ""}">
+            <span class="dbnum">${d.ran ? "✓" : i + 1}</span>
             <code class="dbfile">${esc(d.file)}</code>
-            <span class="dbbadge ${exists ? "ready" : "planned"}">${exists ? "ready to run" : "not written yet"}</span>
+            <span class="dbbadge ${state.cls}">${state.label}</span>
             ${d.note ? `<span class="dbnote">${esc(d.note)}</span>` : ""}
           </li>`;
   }).join("");
@@ -353,8 +368,11 @@ function render(milestones, totals, generatedAt) {
   .dbfile{font-size:11.5px}
   .dbbadge{font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;
            padding:2px 7px;border-radius:10px;white-space:nowrap}
-  .dbbadge.ready{background:rgba(63,185,80,.16);color:var(--done)}
+  .dbbadge.ran{background:rgba(63,185,80,.16);color:var(--done)}
+  .dbbadge.ready{background:rgba(210,153,34,.16);color:var(--doing)}
   .dbbadge.planned{background:var(--card);color:var(--faint);border:1px solid var(--line)}
+  .dbrow.ran .dbnum{background:rgba(63,185,80,.16);color:var(--done)}
+  .dbrow.ran .dbfile{opacity:.7}
   .dbnote{flex:1 1 100%;color:var(--dim);font-size:12px;padding-left:28px}
   .ctl{display:flex;gap:10px;margin:16px 0 6px}
   button{background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:8px;
