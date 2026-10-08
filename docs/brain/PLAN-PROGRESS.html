@@ -63,6 +63,36 @@
   .phase.done .pstatus{background:rgba(63,185,80,.16);color:var(--done)}
   .phase.doing .pstatus{background:rgba(210,153,34,.16);color:var(--doing)}
   .phase.todo .pstatus{background:var(--card2);color:var(--faint)}
+  /* waves nested under a phase */
+  .waveWrap{list-style:none;margin:0;padding:0}
+  .waves-list{list-style:none;margin:1px 0 7px;padding:0 0 0 34px;
+              border-left:2px solid var(--line);margin-left:17px}
+  .wave{display:flex;align-items:center;gap:9px;padding:3px 8px;border-radius:5px;
+        font-size:12.5px;color:var(--dim)}
+  .wave:hover{background:var(--card2)}
+  .wtick{width:9px;height:9px;border-radius:50%;flex-shrink:0;border:1.5px solid var(--todo)}
+  .wave.done .wtick{background:var(--done);border-color:var(--done)}
+  .wave.doing .wtick{border-color:var(--doing);background:var(--doing)}
+  .wave.done .wlabel{text-decoration:line-through;text-decoration-color:var(--faint);opacity:.72}
+  .wid{font-weight:700;font-size:11px;color:var(--faint);min-width:56px;font-variant-numeric:tabular-nums}
+  .wlabel{flex:1}
+  .mwaves{color:var(--faint);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* database change block, end of each milestone */
+  .dbblock{margin:6px 16px 14px;padding:12px 14px;background:var(--card2);
+           border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:9px}
+  .dbhead{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+          color:var(--acc);margin-bottom:9px}
+  .dblist{list-style:none;margin:0;padding:0;counter-reset:db}
+  .dbrow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:5px 0;font-size:12.5px}
+  .dbrow + .dbrow{border-top:1px dashed var(--line)}
+  .dbnum{width:19px;height:19px;border-radius:50%;background:var(--acc);color:#fff;
+         font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .dbfile{font-size:11.5px}
+  .dbbadge{font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;
+           padding:2px 7px;border-radius:10px;white-space:nowrap}
+  .dbbadge.ready{background:rgba(63,185,80,.16);color:var(--done)}
+  .dbbadge.planned{background:var(--card);color:var(--faint);border:1px solid var(--line)}
+  .dbnote{flex:1 1 100%;color:var(--dim);font-size:12px;padding-left:28px}
   .ctl{display:flex;gap:10px;margin:16px 0 6px}
   button{background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:8px;
          padding:7px 14px;font-size:13px;cursor:pointer;font-family:inherit}
@@ -79,29 +109,29 @@
 
 <div class="hero">
   <div class="heroTop">
-    <span class="heroPct">1%</span>
-    <span class="heroLbl">complete &nbsp;·&nbsp; 1 of 83 phases</span>
+    <span class="heroPct">4%</span>
+    <span class="heroLbl">complete &nbsp;·&nbsp; 3 of 83 phases</span>
   </div>
   <div class="big">
-    <i class="d" style="width:1.2048192771084338%"></i>
-    <i class="p" style="width:0%"></i>
+    <i class="d" style="width:3.614457831325301%"></i>
+    <i class="p" style="width:1.2048192771084338%"></i>
   </div>
   <div class="legend">
-    <span><i class="dot" style="background:var(--done)"></i>Done 1</span>
-    <span><i class="dot" style="background:var(--doing)"></i>In progress 0</span>
-    <span><i class="dot" style="background:var(--todo)"></i>Not started 82</span>
+    <span><i class="dot" style="background:var(--done)"></i>Done 3</span>
+    <span><i class="dot" style="background:var(--doing)"></i>In progress 1</span>
+    <span><i class="dot" style="background:var(--todo)"></i>Not started 79</span>
   </div>
   <div class="tiles">
     <div class="tile"><b>0/16</b><span>Milestones</span></div>
-    <div class="tile"><b>1/83</b><span>Phases</span></div>
-    <div class="tile"><b>112</b><span>Waves defined</span></div>
-    <div class="tile"><b>195</b><span>Requirements owned</span></div>
+    <div class="tile"><b>3/83</b><span>Phases</span></div>
+    <div class="tile"><b>14/116</b><span>Waves done</span></div>
+    <div class="tile"><b>5</b><span>DB files to run</span></div>
   </div>
 </div>
 
 <div class="here">
   <div class="lbl">▶ You are here</div>
-  <div class="what">P0.2 — Conflict register: MB vs code</div>
+  <div class="what">P0.1 — Truth baseline 3 of 4 waves, see section 16</div>
 </div>
 
 <div class="ctl">
@@ -114,46 +144,147 @@
       <summary>
         <span class="mid">M0</span>
         <span class="mtitle">Baseline, Conflicts, Taxonomy</span>
-        <span class="mcount">1/4</span>
-        <span class="mbar"><i style="width:25%"></i></span>
-        <span class="mpct">25%</span>
+        <span class="mwaves">14/15w</span>
+        <span class="mcount">3/4</span>
+        <span class="mbar"><i style="width:75%"></i></span>
+        <span class="mpct">75%</span>
       </summary>
       <p class="exit"><strong>Exit criteria.</strong> Verified state, a conflict register, a known defect register, a frozen knowledge taxonomy, and the golden evaluation set.</p>
       <ul class="phases">
-        <li class="phase done">
+        <li class="phase doing">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P0.1</span>
-          <span class="ptitle">Truth baseline COMPLETE, see section 16</span>
+          <span class="ptitle">Truth baseline 3 of 4 waves, see section 16</span>
+          <span class="waves">3/4 waves</span>
+          <span class="pstatus">In progress</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="3" data-total="4">
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.1.1</span>
+              <span class="wlabel">Source extraction</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.1.2</span>
+              <span class="wlabel">Surface and gate inventory</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.1.3</span>
+              <span class="wlabel">Database baseline</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.1.4</span>
+              <span class="wlabel">Test baseline with real exit codes</span>
+            </li>
+          </ul>
+        </li>
+        <li class="phase done">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P0.2</span>
+          <span class="ptitle">Conflict register: MB vs code completed 2026-10-08</span>
+          <span class="waves">6/6 waves</span>
+          <span class="pstatus">Done</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="6" data-total="6">
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.2.1</span>
+              <span class="wlabel">Guardrail conflicts</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.2.2</span>
+              <span class="wlabel">Identity conflict (BLK-3) and the exact AGENTS</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.2.3</span>
+              <span class="wlabel">Schema conflicts: one approved revision per source, 30 day expiry, au…</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.2.4</span>
+              <span class="wlabel">Tone conflicts: emoji policy, 2 to 5 sentences versus the current 3 /…</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.2.5</span>
+              <span class="wlabel">Humour conflicts: the existing bans versus MB&#39;s six, delta recorded.</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.2.6</span>
+              <span class="wlabel">Precedence conflicts: where today&#39;s code resolves a disagreement diff…</span>
+            </li>
+          </ul>
+        </li>
+        <li class="phase done">
+          <span class="tick" aria-hidden="true"></span>
+          <span class="pid">P0.3</span>
+          <span class="ptitle">Reproduce the 13 known defects and assign each a repair completed 2026-10-08</span>
           
           <span class="pstatus">Done</span>
         </li>
-        <li class="phase todo">
-          <span class="tick" aria-hidden="true"></span>
-          <span class="pid">P0.2</span>
-          <span class="ptitle">Conflict register: MB vs code</span>
-          <span class="waves">6 waves</span>
-          <span class="pstatus">Not started</span>
-        </li>
-        <li class="phase todo">
-          <span class="tick" aria-hidden="true"></span>
-          <span class="pid">P0.3</span>
-          <span class="ptitle">Reproduce the 13 known defects and assign each a repair</span>
-          
-          <span class="pstatus">Not started</span>
-        </li>
-        <li class="phase todo">
+        <li class="phase done">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P0.4</span>
-          <span class="ptitle">Taxonomy, ID scheme, and the Golden Evaluation Set</span>
-          <span class="waves">5 waves</span>
-          <span class="pstatus">Not started</span>
+          <span class="ptitle">Taxonomy, ID scheme, and the Golden Evaluation Set completed 2026-10-08</span>
+          <span class="waves">5/5 waves</span>
+          <span class="pstatus">Done</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="5" data-total="5">
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.4.1</span>
+              <span class="wlabel">Freeze the 25 topic taxonomy (table below) plus 4 jurisdiction topics…</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.4.2</span>
+              <span class="wlabel">Source URI convention</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.4.3</span>
+              <span class="wlabel">Golden Evaluation Set: ≥10 real customer questions per topic per lang…</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.4.4</span>
+              <span class="wlabel">Scoring rubric: Factual accuracy 0-3 · Grounding 0-3 · Language and d…</span>
+            </li>
+            <li class="wave done">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W0.4.5</span>
+              <span class="wlabel">Per language and per domain reporting, with error bars</span>
+            </li>
+          </ul>
         </li>
       </ul>
+      
+      <div class="dbblock">
+        <div class="dbhead">🗄 Database changes for M0 — apply in this order</div>
+        <ol class="dblist">
+          <li class="dbrow">
+            <span class="dbnum">1</span>
+            <code class="dbfile">supabase/inspection/W0.1.3_database_baseline.sql</code>
+            <span class="dbbadge ready">ready to run</span>
+            <span class="dbnote">read only, 10 labelled blocks. No writes, no rollback needed. Closes W0.1.3 and therefore P0.1. See supabase/inspection/README.md.</span>
+          </li>
+        </ol>
+      </div>
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M1</span>
         <span class="mtitle">Rules: Identity, Persona, Humour, Golden Formula, Precedence</span>
+        <span class="mwaves">0/33w</span>
         <span class="mcount">0/7</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -164,29 +295,140 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P1.1</span>
           <span class="ptitle">REFAL becomes Refalco&#39;s agent</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.1.1</span>
+              <span class="wlabel">config/company-profile</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.1.2</span>
+              <span class="wlabel">src/companyProfile</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.1.3</span>
+              <span class="wlabel">Delete &quot;the business&quot; everywhere: src/ai</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.1.4</span>
+              <span class="wlabel">Prompt carries identity and positioning as persona</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.1.5</span>
+              <span class="wlabel">Rewrite AGENTS</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P1.2</span>
           <span class="ptitle">Persona and the 10 roles</span>
-          <span class="waves">4 waves</span>
+          <span class="waves">0/4 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="4">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.2.1</span>
+              <span class="wlabel">src/personaRoles</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.2.2</span>
+              <span class="wlabel">Role selection from src/intent</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.2.3</span>
+              <span class="wlabel">Persona core (MB-P1): *&quot;خفيفة دم</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.2.4</span>
+              <span class="wlabel">Adaptive mirroring (MB-P3</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P1.3</span>
           <span class="ptitle">Humour Engine, levels 0 to 3</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.3.1</span>
+              <span class="wlabel">src/humourEngine</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.3.2</span>
+              <span class="wlabel">Hard ban detector (MB-HB1</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.3.3</span>
+              <span class="wlabel">Level → prompt directive, authored natively per language</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.3.4</span>
+              <span class="wlabel">Output gate assertHumourCompliance(answer, level): strips or rejects…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.3.5</span>
+              <span class="wlabel">Emoji allowlist per level</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P1.4</span>
           <span class="ptitle">Golden Answer Formula and One Question Rule</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.4.1</span>
+              <span class="wlabel">src/goldenFormula</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.4.2</span>
+              <span class="wlabel">One Question Rule (MB-G3): max 1 question, or 2 only when tightly cou…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.4.3</span>
+              <span class="wlabel">Length budget</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.4.4</span>
+              <span class="wlabel">The value hook is evidence optional</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.4.5</span>
+              <span class="wlabel">Encode MB 1</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -199,22 +441,102 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P1.6</span>
           <span class="ptitle">Policy precedence ladder NEW</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.6.1</span>
+              <span class="wlabel">src/policyPrecedence</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.6.2</span>
+              <span class="wlabel">Wire it into the answer composer: when live data and a knowledge chun…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.6.3</span>
+              <span class="wlabel">General model knowledge may produce a harmless general explanation bu…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.6.4</span>
+              <span class="wlabel">Approved sources that conflict with each other: state that they diffe…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.6.5</span>
+              <span class="wlabel">Every precedence decision is logged as a concise decision label, neve…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P1.7</span>
           <span class="ptitle">Prompt surface synchronisation</span>
-          <span class="waves">9 waves</span>
+          <span class="waves">0/9 waves</span>
           <span class="pstatus">Not started</span>
         </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="9">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.1</span>
+              <span class="wlabel">Extract one src/brainPrompt</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.2</span>
+              <span class="wlabel">src/ai</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.3</span>
+              <span class="wlabel">dashboard/server</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.4</span>
+              <span class="wlabel">Edge function consumes a Deno compatible</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.5</span>
+              <span class="wlabel">Rewrite config/refal-agent-rules</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.6</span>
+              <span class="wlabel">Remove BLK-5</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.7</span>
+              <span class="wlabel">Remove BLK-6</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.8</span>
+              <span class="wlabel">Prompt versioning (CX 5A): every prompt change produces a version id…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W1.7.9</span>
+              <span class="wlabel">Drift test src/promptParity</span>
+            </li>
+          </ul>
+        </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M2</span>
         <span class="mtitle">Guardrail Reconciliation</span>
+        <span class="mwaves">0/19w</span>
         <span class="mcount">0/6</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -225,15 +547,73 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P2.1</span>
           <span class="ptitle">Claim classification taxonomy</span>
-          <span class="waves">4 waves</span>
+          <span class="waves">0/4 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="4">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.1.1</span>
+              <span class="wlabel">src/claimPolicy</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.1.2</span>
+              <span class="wlabel">PERSONALIZED markers, trilingual: second person + eligibility or outc…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.1.3</span>
+              <span class="wlabel">GUARANTEE markers, trilingual (&quot;نضمن&quot;, &quot;مضمون&quot;, &quot;εγγυόμαστε&quot;).</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.1.4</span>
+              <span class="wlabel">PROGRAM_FACT verification: entities and every number in the sentence…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P2.2</span>
           <span class="ptitle">Rewrite containsProhibitedClaim</span>
-          <span class="waves">6 waves</span>
+          <span class="waves">0/6 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="6">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.2.1</span>
+              <span class="wlabel">Branch, do not delete</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.2.2</span>
+              <span class="wlabel">New path: split into clauses, classify each with claimPolicy, reject…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.2.3</span>
+              <span class="wlabel">Same for restrictedRefalcoReply: a residency or investment programme…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.2.4</span>
+              <span class="wlabel">Narrow the blanket &quot;investment&quot; block to investment advice and return…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.2.5</span>
+              <span class="wlabel">Keep withoutPriceFacts, containsPriceClaim, containsUnsupportedPackag…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.2.6</span>
+              <span class="wlabel">Audit groundingPolicy</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -246,15 +626,68 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P2.4</span>
           <span class="ptitle">Reservation deposit, ROI and VAT guards</span>
-          <span class="waves">3 waves</span>
+          <span class="waves">0/3 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="3">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.4.1</span>
+              <span class="wlabel">Reservation deposit (MB-F50, absolute): any currency amount in an ans…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.4.2</span>
+              <span class="wlabel">ROI (MB-F55): no yield percentage, no future price prediction. MB&#39;s v…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.4.3</span>
+              <span class="wlabel">Property VAT: 19% and 5% are stateable programme facts; which rate ap…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P2.5</span>
           <span class="ptitle">AML, sanctions, compliance and the existing client boundary</span>
-          <span class="waves">6 waves</span>
+          <span class="waves">0/6 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="6">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.5.1</span>
+              <span class="wlabel">Extend src/redFlagRules</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.5.2</span>
+              <span class="wlabel">Compliance escalation (MB-SEC2): distinct from a sales handover, does…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.5.3</span>
+              <span class="wlabel">Forces humour level 0 and suppresses every sales hook for the rest of…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.5.4</span>
+              <span class="wlabel">Privacy hard rule (MB-SEC4): never request a password, card data, or…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.5.5</span>
+              <span class="wlabel">Existing client verification, built not parked</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W2.5.6</span>
+              <span class="wlabel">Source of Funds and Source of Wealth explained neutrally and separate…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -264,11 +697,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M3</span>
         <span class="mtitle">Knowledge Corpus + Fact Governance</span>
+        <span class="mwaves">0/14w</span>
         <span class="mcount">0/10</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -335,22 +770,113 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P3.9</span>
           <span class="ptitle">Fact governance and approval register NEW — this is Rule 2</span>
-          <span class="waves">7 waves</span>
+          <span class="waves">0/7 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="7">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.1</span>
+              <span class="wlabel">Migration: extend rafa_knowledge_documents</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.2</span>
+              <span class="wlabel">Every number in the corpus gets a register row</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.3</span>
+              <span class="wlabel">Status drives behaviour</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.4</span>
+              <span class="wlabel">Rule 1 default: per BOSS&#39;s authority instruction, MB facts are seeded…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.5</span>
+              <span class="wlabel">Rule 2 safety net: each carries an expiry_or_review_at</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.6</span>
+              <span class="wlabel">The 12</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.9.7</span>
+              <span class="wlabel">Dashboard view: facts expiring in 7 days, one click re-approval that…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P3.10</span>
           <span class="ptitle">Ingestion pipeline and corpus health</span>
-          <span class="waves">7 waves</span>
+          <span class="waves">0/7 waves</span>
           <span class="pstatus">Not started</span>
         </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="7">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.1</span>
+              <span class="wlabel">scripts/ingestBrainCorpus</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.2</span>
+              <span class="wlabel">Chunk by meaning, not size (CX 4A)</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.3</span>
+              <span class="wlabel">Backfill verification: every chunk has an embedding and a matching em…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.4</span>
+              <span class="wlabel">Retrieval aliases (CX 4B): Arabic dialect spellings, Arabic/English c…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.5</span>
+              <span class="wlabel">Low confidence fallback (CX 4B): ask one clarifying question, state t…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.6</span>
+              <span class="wlabel">scripts/brainHealth</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W3.10.7</span>
+              <span class="wlabel">docs/brain/KNOWLEDGE-RUNBOOK</span>
+            </li>
+          </ul>
+        </li>
       </ul>
+      
+      <div class="dbblock">
+        <div class="dbhead">🗄 Database changes for M3 — apply in this order</div>
+        <ol class="dblist">
+          <li class="dbrow">
+            <span class="dbnum">1</span>
+            <code class="dbfile">supabase/migrations/&lt;ts&gt;_refal_fact_governance.sql</code>
+            <span class="dbbadge planned">not written yet</span>
+            <span class="dbnote">P3.9. Stop the save path forcing review_status=&#39;approved&#39; and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing trust_tier CHECK (CR-023). Must not break the partial unique index behind CR-010.</span>
+          </li>
+        </ol>
+      </div>
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M4</span>
         <span class="mtitle">Dynamic Data and Tools</span>
+        <span class="mwaves">0/6w</span>
         <span class="mcount">0/5</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -368,8 +894,42 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P4.2</span>
           <span class="ptitle">Typed tools (CX 6A, 6B)</span>
-          <span class="waves">6 waves</span>
+          <span class="waves">0/6 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="6">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W4.2.1</span>
+              <span class="wlabel">Six read tools on the existing registry: lookupActiveOffer, lookupRen…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W4.2.2</span>
+              <span class="wlabel">Five write/action tools: upsertLead, createHandover, holdOrBookAppoin…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W4.2.3</span>
+              <span class="wlabel">Tool contracts carry: location, currency, VAT treatment, effective da…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W4.2.4</span>
+              <span class="wlabel">Tool truth (CX 6C): timeouts, bounded retries, rate limits, idempoten…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W4.2.5</span>
+              <span class="wlabel">Empty table behaviour: empty or all expired → the tool returns &quot;not a…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W4.2.6</span>
+              <span class="wlabel">Deterministic fallback for the non agent path (src/messageRouter.js).</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -393,11 +953,24 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
+      <div class="dbblock">
+        <div class="dbhead">🗄 Database changes for M4 — apply in this order</div>
+        <ol class="dblist">
+          <li class="dbrow">
+            <span class="dbnum">1</span>
+            <code class="dbfile">supabase/migrations/&lt;ts&gt;_refal_dynamic_commercial_data.sql</code>
+            <span class="dbbadge planned">not written yet</span>
+            <span class="dbnote">P4.1. The six commercial tables: refal_offers_and_pricing, refal_annual_renewal_fees, refal_property_inventory, refal_reservation_rules, refal_government_fees, refal_lead_profile. RLS on, revoke from public/anon/authenticated, grant service_role, security invoker, set search_path = &#39;&#39;, set_rafa_updated_at trigger. Removes BLK-12.</span>
+          </li>
+        </ol>
+      </div>
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M5</span>
         <span class="mtitle">Sales Intelligence</span>
+        <span class="mwaves">0/8w</span>
         <span class="mcount">0/4</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -408,15 +981,63 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P5.1</span>
           <span class="ptitle">Cross sell hook matrix</span>
-          <span class="waves">4 waves</span>
+          <span class="waves">0/4 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="4">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.1.1</span>
+              <span class="wlabel">src/salesHooks</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.1.2</span>
+              <span class="wlabel">Hook → MB&#39;s verbatim smart hint phrase, authored natively per language.</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.1.3</span>
+              <span class="wlabel">Suppression: at most one hook per reply · never at humour level 0 · n…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.1.4</span>
+              <span class="wlabel">Evidence gated: H1 cannot fire if the IP Box document is missing or e…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P5.2</span>
           <span class="ptitle">Objection matrix</span>
-          <span class="waves">4 waves</span>
+          <span class="waves">0/4 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="4">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.2.1</span>
+              <span class="wlabel">src/objectionMatrix</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.2.2</span>
+              <span class="wlabel">O5 forces humour ≤ 1 (MB says so explicitly)</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.2.3</span>
+              <span class="wlabel">O1 and O2 pull live package inclusions from refal_offers_and_pricing,…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W5.2.4</span>
+              <span class="wlabel">Imported from CX 8C: rewrite MB&#39;s objection examples to remove multip…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -433,11 +1054,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M6</span>
         <span class="mtitle">Qualification and Executive Handoff</span>
+        <span class="mwaves">0/16w</span>
         <span class="mcount">0/6</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -448,15 +1071,78 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P6.1</span>
           <span class="ptitle">The six dimension scorer</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.1.1</span>
+              <span class="wlabel">Evidence anchors 0 to 5 for NEED, VALUE, TIMING, AUTHORITY, READINESS…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.1.2</span>
+              <span class="wlabel">Persist dimension scores, evidence text references, scorer version, t…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.1.3</span>
+              <span class="wlabel">Fairness rule : never infer budget, authority or readiness from natio…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.1.4</span>
+              <span class="wlabel">Recompute only on meaningful new evidence</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.1.5</span>
+              <span class="wlabel">Leak test: score, dimension names and tier never appear in a customer…</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P6.2</span>
           <span class="ptitle">Tiers and action protocols</span>
-          <span class="waves">6 waves</span>
+          <span class="waves">0/6 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="6">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.2.1</span>
+              <span class="wlabel">src/leadTiers</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.2.2</span>
+              <span class="wlabel">Stop over selling switch at Hot: suppresses every hook and benefit hi…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.2.3</span>
+              <span class="wlabel">Strategic routing to Corporate / Tax / Real Estate / Residency / Cons…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.2.4</span>
+              <span class="wlabel">The tier never overrides consent</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.2.5</span>
+              <span class="wlabel">Boundary tests : exact transitions at 7/8, 13/14, 19/20, 24/25.</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.2.6</span>
+              <span class="wlabel">Strategic alerts fire once, durably, not repeatedly</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -469,8 +1155,37 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P6.4</span>
           <span class="ptitle">Executive Handoff Summary</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.4.1</span>
+              <span class="wlabel">MB 5</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.4.2</span>
+              <span class="wlabel">Explicit UNKNOWN / NOT PROVIDED, never an invented detail (CX 9B).</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.4.3</span>
+              <span class="wlabel">Data minimisation and role based visibility</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.4.4</span>
+              <span class="wlabel">Carries every CRM field from M8, so the human adviser never re-asks (…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W6.4.5</span>
+              <span class="wlabel">Golden fixture comparison on exact separators and field names.</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -487,11 +1202,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M7</span>
         <span class="mtitle">Booking and Calendar</span>
+        <span class="mwaves">0/5w</span>
         <span class="mcount">0/5</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -502,8 +1219,37 @@
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P7.1</span>
           <span class="ptitle">Calendar readiness, built and shipped working</span>
-          <span class="waves">5 waves</span>
+          <span class="waves">0/5 waves</span>
           <span class="pstatus">Not started</span>
+        </li>
+        <li class="waveWrap">
+          <ul class="waves-list" data-done="0" data-total="5">
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W7.1.1</span>
+              <span class="wlabel">Ship working defaults: appointment duration 60 minutes · minimum noti…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W7.1.2</span>
+              <span class="wlabel">Build the settings screen so BOSS changes duration, notice, business…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W7.1.3</span>
+              <span class="wlabel">Build the readiness check verifyCalendarAccess (already exists in src…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W7.1.4</span>
+              <span class="wlabel">The one field: paste the Google OAuth credential into the dashboard o…</span>
+            </li>
+            <li class="wave todo">
+              <span class="wtick" aria-hidden="true"></span>
+              <span class="wid">W7.1.5</span>
+              <span class="wlabel">Until the credential is pasted, REFAL does not invent slots</span>
+            </li>
+          </ul>
         </li>
         <li class="phase todo">
           <span class="tick" aria-hidden="true"></span>
@@ -534,11 +1280,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M8</span>
         <span class="mtitle">CRM Memory</span>
+        
         <span class="mcount">0/4</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -574,11 +1322,24 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
+      <div class="dbblock">
+        <div class="dbhead">🗄 Database changes for M8 — apply in this order</div>
+        <ol class="dblist">
+          <li class="dbrow">
+            <span class="dbnum">1</span>
+            <code class="dbfile">supabase/migrations/&lt;ts&gt;_refal_crm_lead_profile.sql</code>
+            <span class="dbbadge planned">not written yet</span>
+            <span class="dbnote">P8.1. One row per contact, RLS, service role only, PII under the existing redaction rules. Extends refal_lead_profile from M4.</span>
+          </li>
+        </ol>
+      </div>
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M9</span>
         <span class="mtitle">Follow up, Consent and Contact Policy</span>
+        
         <span class="mcount">0/4</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -614,11 +1375,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M10</span>
         <span class="mtitle">Multilingual Parity</span>
+        
         <span class="mcount">0/5</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -661,11 +1424,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M11</span>
         <span class="mtitle">Security, Privacy and Compliance</span>
+        
         <span class="mcount">0/4</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -701,11 +1466,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M12</span>
         <span class="mtitle">Dashboard and Knowledge Admin</span>
+        
         <span class="mcount">0/4</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -741,11 +1508,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M13</span>
         <span class="mtitle">Scale and Reliability</span>
+        
         <span class="mcount">0/6</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -795,11 +1564,24 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
+      <div class="dbblock">
+        <div class="dbhead">🗄 Database changes for M13 — apply in this order</div>
+        <ol class="dblist">
+          <li class="dbrow">
+            <span class="dbnum">1</span>
+            <code class="dbfile">supabase/migrations/&lt;ts&gt;_refal_shared_rate_limits.sql</code>
+            <span class="dbbadge planned">not written yet</span>
+            <span class="dbnote">P13.2. Move src/rateLimiter.js counters out of process memory so limits survive a restart and hold across workers. Removes BLK-11.</span>
+          </li>
+        </ol>
+      </div>
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M14</span>
         <span class="mtitle">Evaluation, Release and Independent Rollback</span>
+        
         <span class="mcount">0/6</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -849,11 +1631,13 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
     <details class="ms todo" open>
       <summary>
         <span class="mid">M15</span>
         <span class="mtitle">Life After Launch</span>
+        
         <span class="mcount">0/3</span>
         <span class="mbar"><i style="width:0%"></i></span>
         <span class="mpct">0%</span>
@@ -882,10 +1666,11 @@
           <span class="pstatus">Not started</span>
         </li>
       </ul>
+      
     </details>
 
 <footer>
-  Generated 2026-10-07 20:14 UTC · 16 milestones · 83 phases · 112 waves<br>
+  Generated 2026-10-08 15:13 UTC · 16 milestones · 83 phases · 116 waves<br>
   Regenerate after any plan update with <code>npm run plan:ui</code>, then refresh this page.<br>
   Status marks come straight from the plan: <code>[ ]</code> not started · <code>[~]</code> in progress · <code>[x]</code> done.
 </footer>

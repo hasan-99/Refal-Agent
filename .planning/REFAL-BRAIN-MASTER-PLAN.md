@@ -265,13 +265,22 @@ MB **requires** REFAL to explain all of those as program facts. **Every PR, Non 
 
 **Exit criteria.** Verified state, a conflict register, a known defect register, a frozen knowledge taxonomy, and the golden evaluation set.
 
-### P0.1 — Truth baseline `[x]` COMPLETE, see section 16
-Delivered `docs/brain/SOURCE-ANALYSIS.md` (183 IDs, 12 blockers) and `docs/brain/SURFACE-AND-GATE-INVENTORY.md` (14 surfaces, 16 gates). Test baseline `exit=0`, 670 pass.
-**Carried forward:** W0.1.3 database baseline, still blocked on Supabase connectivity.
+### P0.1 — Truth baseline `[~]` 3 of 4 waves, see section 16
+Delivered `docs/brain/SOURCE-ANALYSIS.md` (183 IDs, 12 blockers) and `docs/brain/SURFACE-AND-GATE-INVENTORY.md` (14 surfaces, 16 gates). Test baseline re-verified 2026-10-08: `exit=0`, **670 tests, 670 pass, 0 fail**.
+**Carried forward:** W0.1.3 database baseline. W0.1.1, W0.1.2, W0.1.4 COVERED.
+**W0.1.3 status (2026-10-08):** the inspection script is **written and waiting on BOSS** — `supabase/inspection/W0.1.3_database_baseline.sql`, read only, 10 labelled blocks, schema-verified against the migrations. It is **not run**; no live Supabase from the agent session.
+**BOSS sign off:** `pending`. P0.1 is not complete until BOSS runs that file, the output is recorded in section 16, and BOSS signs.
+
+| Wave | Work |
+| --- | --- |
+| **W0.1.1** `[x]` | **Source extraction.** MB and AR mined into 183 stable requirement IDs and the 12 blocker register → `docs/brain/SOURCE-ANALYSIS.md`. |
+| **W0.1.2** `[x]` | **Surface and gate inventory.** 14 customer facing surfaces, 16 policy gates marked KEEP / MODIFY / REPLACE. |
+| **W0.1.3** `[ ]` | **Database baseline.** Inspection SQL written and schema-verified; **awaiting BOSS's run**. This is the only thing still holding P0.1 open. |
+| **W0.1.4** `[x]` | **Test baseline with real exit codes.** Re-verified 2026-10-08: root `exit=0` 670/670; dashboard `exit=0` 85/85; dashboard build `exit=0`. |
 
 ---
 
-### P0.2 — Conflict register: MB vs code `[ ]`
+### P0.2 — Conflict register: MB vs code `[x]` completed 2026-10-08
 
 | Wave | Work |
 | --- | --- |
@@ -287,7 +296,7 @@ Delivered `docs/brain/SOURCE-ANALYSIS.md` (183 IDs, 12 blockers) and `docs/brain
 
 ---
 
-### P0.3 — Reproduce the 13 known defects and assign each a repair `[ ]`
+### P0.3 — Reproduce the 13 known defects and assign each a repair `[x]` completed 2026-10-08
 
 CX records real production defects from this project's history. Reproduce each, then confirm it already has an owning repair phase in the Fix Log (section 15). **Every one is already assigned. Nothing is left open.**
 
@@ -312,7 +321,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P0.4 — Taxonomy, ID scheme, and the Golden Evaluation Set `[ ]`
+### P0.4 — Taxonomy, ID scheme, and the Golden Evaluation Set `[x]` completed 2026-10-08
 
 | Wave | Work |
 | --- | --- |
@@ -356,6 +365,9 @@ CX records real production defects from this project's history. Reproduce each, 
 → **29 × 3 = 87 knowledge sources.** 7 are VOLATILE and carry a hard expiry.
 
 **G2.** `node scripts/validateTaxonomy.js`: slugs unique · every topic has AR/EN/EL · every VOLATILE topic has a matching M4 table or an expiry policy · ≥10 golden questions per topic per language · every question has an expected class.
+
+**Database changes (apply in order).**
+1. `supabase/inspection/W0.1.3_database_baseline.sql` — read only, 10 labelled blocks. No writes, no rollback needed. Closes W0.1.3 and therefore P0.1. See `supabase/inspection/README.md`.
 
 ---
 
@@ -660,6 +672,11 @@ node scripts/evaluateRag.js > /tmp/rag.log 2>&1; echo "exit=$?"
 
 ---
 
+**Database changes (apply in order).**
+1. `supabase/migrations/<ts>_refal_fact_governance.sql` — P3.9. Stop the save path forcing `review_status='approved'` and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing `trust_tier` CHECK (CR-023). Must not break the partial unique index behind CR-010.
+
+---
+
 # M4 — Dynamic Data and Tools
 
 **Exit criteria.** All six MB-DYN variables served from live tables through typed tools, with a test proving none appear as a literal in any prompt or chunk, and full failure state handling.
@@ -699,6 +716,11 @@ Success · empty · stale · error · timeout · duplicate · unauthorized · pa
 
 ### P4.5 — Operator CRUD (hands off to M12) `[ ]`
 Typed forms with effective dates for offers, renewal fees, property, reservation rules and government fees. **Not freeform prompt text** (CX 13A). RBAC consistent with the existing dashboard auth. Audit logged.
+
+---
+
+**Database changes (apply in order).**
+1. `supabase/migrations/<ts>_refal_dynamic_commercial_data.sql` — P4.1. The six commercial tables: `refal_offers_and_pricing`, `refal_annual_renewal_fees`, `refal_property_inventory`, `refal_reservation_rules`, `refal_government_fees`, `refal_lead_profile`. RLS on, revoke from public/anon/authenticated, grant service_role, security invoker, `set search_path = ''`, `set_rafa_updated_at` trigger. Removes BLK-12.
 
 ---
 
@@ -855,6 +877,11 @@ Concise summaries tied to contact and conversation IDs, excluding secrets and ir
 
 ---
 
+**Database changes (apply in order).**
+1. `supabase/migrations/<ts>_refal_crm_lead_profile.sql` — P8.1. One row per contact, RLS, service role only, PII under the existing redaction rules. Extends `refal_lead_profile` from M4.
+
+---
+
 # M9 — Follow up, Consent and Contact Policy **(imported from CX Phase 11)**
 
 ### P9.1 — Consent model `[ ]`
@@ -943,6 +970,11 @@ Redacted trace IDs linking message → retrieval → tool result → DB outcome.
 
 ### P13.6 — Load test `[ ]`
 N concurrent conversations across all three languages. Measure latency, error rate, retrieval quality under load, cost per conversation. **Verify no duplicated actions.** Record the safe concurrency ceiling. Test: provider rate limit, slow database, vector timeout, WhatsApp disconnect, repeated webhook, queue restart.
+
+---
+
+**Database changes (apply in order).**
+1. `supabase/migrations/<ts>_refal_shared_rate_limits.sql` — P13.2. Move `src/rateLimiter.js` counters out of process memory so limits survive a restart and hold across workers. Removes BLK-11.
 
 ---
 
@@ -1195,10 +1227,86 @@ Not run, stated as unrun: `npm --prefix dashboard test`, `npm --prefix dashboard
 **Deviations:** none.
 
 **Explicitly NOT done:**
-- W0.1.3 database baseline, blocked on Supabase connectivity (McAfee proxy returns 407; `HTTP_PROXY` must be unset). Carried into P0.2.
-- Dashboard test and build not executed.
+- W0.1.3 database baseline. Carried into P0.2.
+  **Protocol set by BOSS on 2026-10-08:** do not depend on a live Supabase connection from the agent session. Anything the database baseline needs is written as a `.sql` file under `supabase/migrations/` (timestamped, idempotent, with a `-- ROLLBACK:` block), or as a read-only inspection `.sql`, and **BOSS runs it and returns the output**. The baseline is then recorded from what BOSS pastes back.
+  Superseded note: an earlier version of this line said the fix was to unset `HTTP_PROXY`. That is wrong. See `SUPABASE-ACCESS-GUIDE.md`, which uses the proxy *with* default credentials. Kept here only so the bad advice is not re-derived.
+- ~~Dashboard test and build not executed.~~ **Executed 2026-10-08:** `npm --prefix dashboard test` → **exit=0, 85 tests, 85 pass, 0 fail**. `npm --prefix dashboard run build` → **exit=0**, built in 3.67 s. This gap is now closed.
 
 **BOSS sign off:** `pending`
+
+**Update 2026-10-08.** W0.1.3 is now **written and waiting on BOSS**, not merely missing:
+`supabase/inspection/W0.1.3_database_baseline.sql` — read only, 10 labelled blocks, every column name verified against `supabase/migrations/*.sql` first. Two of the agent's initial column assumptions were **wrong** and were corrected before the file shipped: `canonical_url` lives on `rafa_knowledge_sources` (not `..._documents`), and the language column is `language_code` (not `lang`). Running the file is the only remaining step for P0.1.
+
+---
+
+### P0.2 — Conflict register: MB vs code — 2026-10-08 — `[x]`
+
+**Built:**
+- `docs/brain/CONFLICT-REGISTER.md` — **23 conflicts** (7 blockers, 9 high, 5 medium/low, 2 already compliant).
+- `src/brainMbCandidates.js` — 22 MB candidate sentences (18 must-pass facts, 4 must-block controls) x 3 languages = **66 test sentences**.
+- `scripts/auditClaimGates.js` — the G2 gate, with split exit codes.
+- `scripts/diagnoseClaimGate.js` — names the exact trigger term per conflict.
+
+**Verification (G2):** `node scripts/auditClaimGates.js` → **exit=2**, 27/66 conflicts, **0 unregistered**, 1 known safety leak outstanding. Exit 2 is the designed "P0.2 passes, M2 owes a fix" code; exit 1 would mean unregistered conflicts.
+
+**Headline measurement:** **27 of 66 sentences (40.9%)** of approved MB facts are destroyed by the live gates. en 9/22 · ar 10/22 · el 8/22.
+
+**Major findings:**
+- **Scope correction to BLK-1/BLK-2.** A **third** gate is the dominant blocker: `classifySafety()` in `src/safetyPolicy.js:15-27`, reached via `refalcoAnswer.js:194`. It causes **24 of 27** conflicts, and 13 of those are invisible to `containsProhibitedClaim`. Fixing only line 156 would leave most of BLK-1's damage in place.
+- **BLK-13** language asymmetry: English rules need a *phrase*, Arabic and Greek match a *bare noun*. Proven: the same MB-F19 fact gives `en risks=[]` but `ar risks=[tax]` and `el risks=[tax]`.
+- **BLK-14** Arabic guarantee **leak** (fail open): `عائد مضمون`, `أرباح مضمونة`, `عائد سنوي مؤكد` all pass every gate while the en/el equivalents block correctly.
+- **BLK-15** unanchored `vat` substring: `private`, `innovative`, `renovation`, `activate`, `excavation` are all classified as restricted tax topics. "We offer private office space in Limassol." is RESTRICTED.
+- **Correction to BLK-4.** BLK-4 records "3 sentences / 500 chars" in both places. Only half is true: `DEFAULT_MAX_SENTENCES` is **already 5**. Only the prompt string at `ai.js:224` and the 500-char cap conflict. Smaller fix than recorded.
+- **CR-021:** the policy precedence ladder **does not exist in code at all**. `src/priorityRules.js` is lead triage, not source precedence.
+
+**Ordering constraint discovered:** CR-007 (the Arabic leak) must be fixed **before or with** the loosening in CR-001..CR-006. P2.3 cannot be scheduled after P2.2; they ship together.
+
+**Defects logged:** BLK-13, BLK-14, BLK-15. **Deviations:** none. **Fields for BOSS:** none.
+
+---
+
+### P0.3 — Reproduce the 13 known defects — 2026-10-08 — `[x]`
+
+**Built:** `docs/brain/KNOWN-DEFECTS.md`, `scripts/reproduceKnownDefects.js`.
+
+**Verification:** `node scripts/reproduceKnownDefects.js` → exit=0. Every row **executed**, not reasoned about.
+
+**Result:** REPRODUCED **3** · ALREADY-FIXED **5** · NOT-TESTABLE here **6**.
+
+**The CX claim holds:** all 13 have an owning repair phase. Nothing is unassigned.
+
+- **Reproduced:** FIX-1 (3/3 probe facts blocked), FIX-6 (**4 of 5** Levantine phrasings return `unknown`), and one new defect.
+- **Already fixed, with evidence:** FIX-2 (0/7 greetings captured as a name, 2/2 real names still captured), FIX-3, FIX-4 (drafts expire after 60 min), FIX-5 (`detectIntents` is multi-label and returns both), FIX-13 detection.
+- **⚠ FIX-13 splits in two.** Detection is green in all three languages; the **answer** is still broken, since replies contain the literal `the business` (222 occurrences). Do not close FIX-13 on the detection evidence.
+- **New: BLK-16, no Arabic orthographic normalisation.** `الإقامة` → `intents=[residency_enquiry, immigration] safety=[immigration]`, but `الاقامة` (bare alef, how people actually type) → `intents=[unknown] safety=[]`. This both misses the intent **and bypasses the safety classifier**, a second fail-open independent of BLK-14. Both normalisers strip diacritics and tatweel only; neither folds hamza, alef maqsura or taa marbuta. Every Arabic regex in the repo inherits this.
+
+**Release gate (CX 16A):** FIX-1 is REPRODUCED and FIX-9/10/12 are unverified, so **no deploy is possible today**.
+
+**Hypothesis recorded, not asserted:** FIX-7/FIX-8 may be partly *upstream* failures (query refused or misclassified before retrieval) rather than corpus-quality failures. P3.10 should test both layers separately before rebuilding a corpus that may not be at fault.
+
+---
+
+### P0.4 — Taxonomy, ID scheme, and the Golden Evaluation Set — 2026-10-08 — `[x]`
+
+**Built:**
+- `src/brainTaxonomy.js` — 29 topics frozen, each with slug, domain, trust tier, volatility and a **derived** review cadence (30 / 180 / 365 days, never hand set).
+- `src/brainGoldenSetSchema.js` — refusal classes, the 4-axis rubric, and the thresholds, **frozen before any evaluation runs**.
+- `src/brainGoldenSet{.corporate,.tax,.residency,.property,.profile}.js` — the questions.
+- `src/brainGoldenSet.js` — assembler + **17 CX 4C negative queries**.
+- `src/brainEvalReport.js` — per language and per domain reporting with **Wilson** intervals (chosen over the normal approximation because per-cell n=10, where the normal approximation reports false confidence).
+- `scripts/validateTaxonomy.js` — the G2 gate.
+- `artifacts/refal-brain-golden-set.json` — 431 KB.
+
+**Verification (G2):** `node scripts/validateTaxonomy.js` → **exit=0, 11/11 checks passed**.
+**870 / 870 questions** across 87 cells, exactly 10 per topic per language, **ar=290 en=290 el=290**, 0 validation errors, 87 unique canonical URIs, all 7 volatile topics backed.
+
+**Refusal mix:** none 819 · guarantee 27 · personalized 18 · security 3 · out_of_scope 3. The guarantee and personalized entries sit deliberately **beside** the must-pass facts in the same topic, so the set measures *discrimination*, not just permissiveness. A gate that blocks both is BLK-1; a gate that allows both is BLK-14.
+
+**Threshold choice worth noting:** `maxLanguageSpread = 0.05`. An aggregate score may never hide a weak language (CX 14B), and this specifically catches a BLK-13 regression where English passes and Arabic/Greek do not.
+
+**Conflict found while writing the W0.1.3 baseline → CR-023.** The database already constrains `trust_tier` to `official / first_party / secondary / operator_supplied`, while P0.4 froze `regulated / commercial / explanatory`. These are **different axes** (provenance vs governance demand) and must not be collapsed. Recorded for P3.9.
+
+**Deviations:** none. **Fields for BOSS:** none.
 
 ---
 
@@ -1224,9 +1332,28 @@ npm run eval:knowledge      > /tmp/evalk.log 2>&1; echo "exit=$?"
 node scripts/evaluateRag.js > /tmp/rag.log   2>&1; echo "exit=$?"
 npm run benchmark:agent     > /tmp/bench.log 2>&1; echo "exit=$?"
 
+# M0 phase gates (added by P0.2 / P0.3 / P0.4, 2026-10-08)
+node scripts/auditClaimGates.js      > /tmp/gates.log 2>&1; echo "exit=$?"   # P0.2 G2
+node scripts/validateTaxonomy.js     > /tmp/tax.log   2>&1; echo "exit=$?"   # P0.4 G2
+node scripts/reproduceKnownDefects.js > /tmp/defects.log 2>&1; echo "exit=$?" # P0.3 observation
+
+# Investigating a single blocked sentence
+node scripts/diagnoseClaimGate.js "<sentence>"
+node scripts/diagnoseClaimGate.js --all
+
 # During development, run the targeted file instead of the full suite
 node --test src/<module>.test.js
 ```
+
+**Reading `auditClaimGates.js` exit codes.** They are deliberately split, because "recorded" and "fixed" are different questions owned by different milestones:
+
+| Exit | Meaning |
+| --- | --- |
+| **0** | no unregistered conflict and no safety leak |
+| **1** | **P0.2 fails** — a blocked MB fact is not recorded in `CONFLICT-REGISTER.md` |
+| **2** | **P0.2 passes, M2 owes a fix** — all conflicts registered, a fail-open leak remains |
+
+P0.2's gate condition is `exit != 1`. M2's exit gate is `exit == 0`. Registration must never wave a safety leak through, which is why a leak is not exit 0; but it must also not block P0.2 forever on a repair that belongs to P2.3.
 
 > Never judge a result from a piped command. Redirect, echo the exit code, then tail.
 
