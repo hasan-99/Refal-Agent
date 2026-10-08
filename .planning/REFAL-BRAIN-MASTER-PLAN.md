@@ -1288,9 +1288,11 @@ The database already enforces one approved revision per source. P3.9 inherits an
 - `scripts/auditClaimGates.js` — the G2 gate, with split exit codes.
 - `scripts/diagnoseClaimGate.js` — names the exact trigger term per conflict.
 
-**Verification (G2):** `node scripts/auditClaimGates.js` → **exit=2**, 27/66 conflicts, **0 unregistered**, 1 known safety leak outstanding. Exit 2 is the designed "P0.2 passes, M2 owes a fix" code; exit 1 would mean unregistered conflicts.
+**Verification (G2), original run:** `node scripts/auditClaimGates.js` → **exit=2**, 27/66 conflicts, **0 unregistered**, 1 known safety leak outstanding. Exit 2 is the designed "P0.2 passes, M2 owes a fix" code; exit 1 would mean unregistered conflicts.
 
-**Headline measurement:** **27 of 66 sentences (40.9%)** of approved MB facts are destroyed by the live gates. en 9/22 · ar 10/22 · el 8/22.
+**Re-verified 2026-10-08 after the BLK-14/15/16 fixes:** → **exit=0**, 25/66 conflicts, **0 unregistered, no safety leak**. `RESULT: PASS`. The outstanding leak that forced exit 2 (`MBC-903 ar BLOCK->PASS via none`) is closed, so M2's exit condition for the leak is already met. Fixing BLK-15 also unblocked **MBC-013**, the GESY healthcare fact, which was refused in English only because *"pri**vat**e health insurance"* contains the unanchored substring `vat`.
+
+**Headline measurement:** **27 of 66 sentences (40.9%)** of approved MB facts are destroyed by the live gates. en 9/22 · ar 10/22 · el 8/22. **Now 25 of 66 (37.9%)** — en 8/22 · ar 9/22 · el 8/22 — after BLK-14/15/16. The remaining 25 are BLK-13's broader language asymmetry plus the claim-class work, both owned by P2.2.
 
 **Major findings:**
 - **Scope correction to BLK-1/BLK-2.** A **third** gate is the dominant blocker: `classifySafety()` in `src/safetyPolicy.js:15-27`, reached via `refalcoAnswer.js:194`. It causes **24 of 27** conflicts, and 13 of those are invisible to `containsProhibitedClaim`. Fixing only line 156 would leave most of BLK-1's damage in place.

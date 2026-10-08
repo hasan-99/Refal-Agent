@@ -1,4 +1,4 @@
-const { detectMessageLanguage } = require("./language");
+const { detectMessageLanguage, foldArabicLetters, foldRulePatterns } = require("./language");
 
 const SAFETY_CATEGORIES = Object.freeze({
   PROMPT_INJECTION: "prompt_injection",
@@ -12,22 +12,48 @@ const SAFETY_CATEGORIES = Object.freeze({
   INVESTMENT: "investment"
 });
 
-const rules = [
+// BLK-16. The bare-alef spelling of a restricted term used to BYPASS this
+// classifier entirely, which is a fail-open rather than a missed match. The fold
+// is applied to both the incoming text and the source of every rule below; see
+// `foldArabicLetters` in ./language for why both sides are required.
+const rawRules = [
   [SAFETY_CATEGORIES.PROMPT_INJECTION, /(?:ignore|disregard|override|forget|bypass|follow only).{0,80}(?:instruction|prompt|rule|system|developer)|(?:reveal|show|print|expose|repeat).{0,80}(?:hidden|system|developer|secret).{0,40}(?:prompt|instruction|message)|(?:تعليمات(?:ي|نا|النظام)?|التعليمات|قواعد النظام).{0,60}(?:تجاهل|تخطى|تجاوز|اتبع)|(?:تجاهل|تخطى|تجاوز).{0,80}(?:التعليمات|القواعد|الرسائل السابقة)|(?:اكشف|أظهر|اعرض|اطبع).{0,80}(?:التعليمات|الموجه|البرومبت|الأسرار)|(?:αγνόησε|παράβλεψε|παρακάμψε).{0,80}(?:οδηγίες|κανόνες|προηγούμενα)|(?:αποκάλυψε|εμφάνισε|δείξε).{0,80}(?:prompt|οδηγίες|μυστικά)/iu],
   [SAFETY_CATEGORIES.PRIVACY, /(?:api[_ -]?key|access token|secret|password|passcode|\bpin\b|credit card|banking credentials|\biban\b|\b(?:otp|one[- ]time (?:password|code)|verification code|cvv|cvc|security code|passport(?: number| no\.?)?|national id(?: number| no\.?)?|identity card(?: number| no\.?)?|account number|bank account)\b\s*(?:is|:|#|=)?\s*[A-Z0-9][A-Z0-9\s-]{2,40}|(?<![\p{L}\p{N}])[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?![\p{L}\p{N}])|كلمة المرور|كلمة السر|رمز(?: الدخول| التعريف| التحقق| التأكيد| لمرة واحدة)?|رقم (?:الحساب|الآيبان|الايبان|الجواز|الهوية)|رقم التعريف|بطاقة|بيانات البنك|κωδικό|κωδικός|κάρτα|τραπεζικά στοιχεία|αριθμός (?:λογαριασμού|διαβατηρίου|ταυτότητας))/iu],
   [SAFETY_CATEGORIES.LEGAL, /legal advice|legal conclusion|is it legal|lawyer|lawsuit|contract advice|قانوني|استشارة قانونية|هل هذا قانوني|محامي|عقد|νομική συμβουλή|δικηγόρος|είναι νόμιμο|σύμβαση/iu],
-  [SAFETY_CATEGORIES.TAX, /tax advice|tax rate|tax result|tax liability|vat|ضريبة|ضرائب|نسبة الضريبة|نتيجة ضريبية|φορολογική συμβουλή|φορολογία|φόρος|φπα/iu],
+  // BLK-15. `vat` was unanchored, so it matched INSIDE ordinary words: `private`,
+  // `innovative`, `renovation` and `activate` all classified as restricted tax
+  // topics and triggered a refusal. \b restricts it to the standalone term.
+  [SAFETY_CATEGORIES.TAX, /tax advice|tax rate|tax result|tax liability|\bvat\b|ضريبة|ضرائب|نسبة الضريبة|نتيجة ضريبية|φορολογική συμβουλή|φορολογία|φόρος|φπα/iu],
   [SAFETY_CATEGORIES.IMMIGRATION, /immigration|immigration advice|visa|residency|residence permit|citizenship|work permit|هجرة|تأشيرة|فيزا|إقامة|جنسية|άδεια παραμονής|μετανάστευση|βίζα|υπηκοότητα/iu],
   [SAFETY_CATEGORIES.BANKING, /bank.{0,20}(?:approval|approve)|(?:loan|mortgage|financing).{0,20}approval|guarantee(?:d)? loan|bank account|موافقة البنك|قرض|رهن|تمويل|حساب بنكي|έγκριση τράπεζας|δάνειο|στεγαστικό|χρηματοδότηση/iu],
   [SAFETY_CATEGORIES.PERMIT, /(?:\b(?:will|would|am i eligible|do i qualify|is it guaranteed|guarantee|confirm).{0,70}\b(?:permit|license|licence|planning permission|zoning)|\b(?:can i get|can i obtain|will i get).{0,50}\b(?:permit|license|licence|planning permission|zoning)|\b(?:permit|license|licence|planning permission|zoning).{0,70}\b(?:approved|granted|eligible|qualify|guaranteed|will i get))|(?:(?:هل سأحصل على|هل يمكنني الحصول على|هل أستحق|هل ستتم الموافقة على|هل تضمن).{0,60}(?:رخصة|ترخيص|تصريح|موافقة البناء)|(?:رخصة|ترخيص|تصريح|موافقة البناء).{0,60}(?:مضمونة|سأحصل|موافقة|مؤهل))|(?:(?:θα εγκριθεί|θα πάρω|είμαι επιλέξιμ|εγγυημένη).{0,60}(?:άδεια|πολεοδομική άδεια|αδειοδότηση)|(?:άδεια|πολεοδομική άδεια|αδειοδότηση).{0,60}(?:έγκριση|επιλεξιμότητα|εγγύηση))/iu],
   [SAFETY_CATEGORIES.APPROVAL, /government approval|company approval|guarantee(?:d)? approval|will be approved|موافقة حكومية|اعتماد الشركة|مضمون الموافقة|سيتم قبوله|κρατική έγκριση|έγκριση εταιρείας|σίγουρη έγκριση/iu],
   // A business mentioning investment is not inherently a request for financial
   // advice. Restrict only advice, recommendations, performance/return claims.
-  [SAFETY_CATEGORIES.INVESTMENT, /\b(?:investment\s+(?:advice|recommendations?)|investment.{0,30}(?:returns?|roi|irr|yield)|(?:returns?|roi|irr|yield).{0,30}investment|financial advice|guaranteed(?: investment)? returns?|expected returns?|roi|irr|yield|profit guarantee|recommend(?:ation)?s? (?:about|for) investments?)\b|استشارة استثمارية|نصيحة مالية|توصية استثمارية|عوائد (?:مضمونة|متوقعة)|العائد (?:المتوقع|المضمون)|عوائد الاستثمارية|عوائد استثمارية|ربح مضمون|επενδυτική συμβουλή|οικονομική συμβουλή|εγγυημένη απόδοση|κέρδος/iu]
+  // BLK-14. The Arabic alternatives here were a FAIL-OPEN, not merely a gap. They
+  // listed specific inflected forms — `عوائد مضمونة` (plural + feminine) and
+  // `العائد المضمون` (both definite) — so the singular `عائد مضمون`, the plural
+  // `أرباح مضمونة` and the modifier-separated `عائد سنوي مؤكد` all passed EVERY
+  // gate, while their English and Greek equivalents blocked. A guaranteed-return
+  // promise is exactly the claim this category exists to stop, so the asymmetry
+  // let the highest-risk phrasing through in one language only.
+  //
+  // The replacement crosses noun against qualifier instead of enumerating pairs,
+  // and tolerates up to two intervening words so `عائد سنوي مؤكد` is caught.
+  // `ال` prefixes are optional, which covers the definite forms the old list
+  // spelled out. Arabic letters here are folded by `foldArabicLetters` at build
+  // time, so the pointed and bare-alef spellings both match (BLK-16).
+  [SAFETY_CATEGORIES.INVESTMENT, /\b(?:investment\s+(?:advice|recommendations?)|investment.{0,30}(?:returns?|roi|irr|yield)|(?:returns?|roi|irr|yield).{0,30}investment|financial advice|guaranteed(?: investment)? returns?|expected returns?|roi|irr|yield|profit guarantee|recommend(?:ation)?s? (?:about|for) investments?)\b|استشارة استثمارية|نصيحة مالية|توصية استثمارية|عوائد الاستثمارية|عوائد استثمارية|(?:ال)?(?:عائد|عوائد|عائدات|ربح|أرباح|مردود)(?:\s+\S+){0,2}\s+(?:ال)?(?:مضمون|مضمونة|مؤكد|مؤكدة|متوقع|متوقعة)|επενδυτική συμβουλή|οικονομική συμβουλή|εγγυημένη απόδοση|κέρδος/iu]
 ];
 
+// Authored in pointed Arabic for readability, folded once at module load so the
+// patterns match the folded text (BLK-16).
+const rules = foldRulePatterns(rawRules);
+
 function normalizeSafetyText(text) {
-  return String(text || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, "").replace(/\s+/gu, " ").trim();
+  return foldArabicLetters(
+    String(text || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, "").replace(/\s+/gu, " ").trim()
+  );
 }
 
 const NON_DISCLOSURE_CLAUSE = /(?:\b(?:(?:i|we|you)\s+)?(?:please\s+)?(?:will not|won't|do not|don't|cannot|can't|never)\s+(?:send|share|give|provide|disclose)\s+(?:a|an|any|my|the)?\s*(?:passwords?|passcodes?|pins?|tokens?|secrets?|credentials?|account(?:\s+numbers?)?|ibans?|otps?|cvvs?|passports?(?:\s+numbers?)?|card details?)\b[^.!?؟;؛]*|(?:ما\s*رح|لن|لا\s+أريد|ما\s+بدي|مو\s+رح|مش\s+رح)\s*(?:أرسل|ارسل|أشارك|شارك|أعطي|اعطي|أبعث|ابعث)\s*(?:أي|كلمة|كلمات|رمز|رموز|بيانات)?\s*(?:(?:كلمة|كلمات)\s+المرور|(?:كلمة|كلمات)\s+السر|رموز?(?:\s+الدخول|\s+التحقق)?|بيانات\s+(?:الدخول|الاعتماد|البنك)|رقم\s+الحساب)[^.!?؟;؛]*|(?:δεν\s+θα|δεν\s+θέλω\s+να|μην)\s*(?:στείλω|μοιραστώ|δώσω|κοινοποιήσω)\s*(?:κανένα|κανέναν|κωδικό(?:ς|υς)?|διαπιστευτήρια|στοιχεία)?\s*(?:κωδικό(?:ς|υς)?|διαπιστευτήρια|στοιχεία\s+σύνδεσης|κάρτα|τραπεζικά\s+στοιχεία|αριθμό\s+λογαριασμού)[^.!?؟;؛]*)/giu;

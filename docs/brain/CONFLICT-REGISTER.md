@@ -17,6 +17,8 @@ Corpus: `src/brainMbCandidates.js`, 22 candidate sentences (18 MB facts that REF
 
 ## Headline measurement (W0.2.1)
 
+> **Superseded 2026-10-08.** The figures below are the *original* sweep, kept as the P0.2 baseline. After the BLK-14/15/16 fixes the measurement is **25 conflicts (37.9%)** — en 8 · ar 9 · el 8 — and the gate exits **0**. See "RESOLVED 2026-10-08" below.
+
 | Metric | Value |
 | --- | --- |
 | Sentences tested | **66** (22 candidates × 3 languages) |
@@ -60,6 +62,28 @@ The dominant blocker is a **third gate**: `classifySafety()` in `src/safetyPolic
 | **BLK-15** | **Unanchored `vat` substring.** `vat` appears in the TAX rule with no word boundary, so every ordinary word containing the letters *v-a-t* is classified as a restricted tax topic. | `src/safetyPolicy.js:19` | `private` `innovative` `renovation` `activate` `cultivate` `excavation` `motivation` all return `risks=[tax]`. "We offer private office space in Limassol." is RESTRICTED. | **High** | Anchor as `\bvat\b`. Add a regression test over an ordinary-business-English wordlist. | M2 (P2.2) |
 
 > BLK-15 is why MBC-013 (the GESY healthcare fact) is blocked in English: the phrase is *"pri**vat**e health insurance"*.
+
+### ✅ RESOLVED 2026-10-08 — BLK-14, BLK-15 and BLK-16
+
+All three were fixed in `src/safetyPolicy.js`, `src/intent.js` and `src/language.js`, and the gate moved with them:
+
+```
+node scripts/auditClaimGates.js   BEFORE: exit=2  27 conflicts (40.9%)  en 9 · ar 10 · el 8
+                                  AFTER:  exit=0  25 conflicts (37.9%)  en 8 · ar  9 · el 8
+RESULT: PASS — no unregistered conflict, no safety leak
+```
+
+| ID | Fix | Evidence it closed |
+| --- | --- | --- |
+| **BLK-14** | The fixed noun-adjective pairs were replaced by a *construction* match: any profit noun (`عائد`, `عوائد`, `عائدات`, `ربح`, `أرباح`, `مردود`) crossed against any guarantee qualifier (`مضمون`, `مؤكد`, `متوقع`), with an optional `ال` and up to two intervening words. | `عائد مضمون`, `أرباح مضمونة` and `عائد سنوي مؤكد` now all return `risks=[investment]`. The leak line `MBC-903 ar BLOCK->PASS via none` is gone from the audit. |
+| **BLK-15** | `vat` → `\bvat\b`. | `private`, `innovative`, `renovation`, `activate` no longer classify as tax. **MBC-013 is no longer a conflict** — the GESY fact passes in English. The standalone term still blocks. |
+| **BLK-16** | `foldArabicLetters` folds alef variants, alef maqsura and ta marbuta. Applied to the incoming text **and** to the `.source` of every rule pattern, so rules stay authored in pointed Arabic while matching bare spellings. Both the safety classifier and intent detection use it. | `الاقامة` and `الإقامة` now reach the same verdict, as do `ساحصل`/`سأحصل` and `تاسيس`/`تأسيس`. The orthography defect moved REPRODUCED → ALREADY-FIXED. |
+
+Regression guards live in `src/safetyPolicy.test.js` (5 tests, including a cross-language symmetry test so the BLK-13 asymmetry cannot silently return). Full suite **675/675, exit=0**.
+
+**BLK-13 is NOT closed by this.** The language asymmetry it describes is broader than the guarantee construction BLK-14 covered, and the remaining 25 conflicts still split unevenly (en 8 · ar 9 · el 8). It stays owned by M2 (P2.2) with its parity test in P2.6.
+
+**The ordering constraint still stands.** BLK-14 and BLK-16 were the two fail-opens that had to ship before or with the P2.2 loosening. They have now shipped *first*, which satisfies the constraint rather than removing it: P2.2 may now proceed without re-opening a fail-open.
 
 ---
 

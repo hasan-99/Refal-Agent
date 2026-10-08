@@ -1,4 +1,4 @@
-const { detectMessageLanguage } = require("./language");
+const { detectMessageLanguage, foldArabicLetters, foldRulePatterns } = require("./language");
 
 const INTENTS = Object.freeze({
   GREETING: "greeting",
@@ -55,7 +55,10 @@ const INTENTS = Object.freeze({
   UNKNOWN: "unknown"
 });
 
-const patterns = [
+// BLK-16, second half. The safety classifier was fixed first because its gap was
+// a fail-open; this one is a missed intent, so a bare-alef speller got a worse
+// answer rather than an unsafe one. Both halves now share one fold.
+const rawPatterns = [
   [INTENTS.PROMPT_INJECTION, /ignore|disregard|override|forget|reveal|show me|system prompt|developer message|تعليمات|التعليمات|تجاهل|تخطى|اكشف|أظهر|كشف|تعليمات النظام|αγνόησε|παράβλεψε|παρακάμψε|αποκάλυψε|εμφάνισε|οδηγίες συστήματος/iu],
   [INTENTS.COMPLAINT, /complaint|complain|unhappy|bad service|refund|\bstill upset\b|\bupset about\b|\bfrustrated with\b|شكوى|اشتك|غير راض|سيء|استرداد|لسا زعلان|لسا متضايق|مو راضي|مو راضية|παράπονο|καταγγελία|δυσαρεστη|ακόμα αναστατωμ/iu],
   // Route only a real account/case support request into verification. A
@@ -117,8 +120,12 @@ const patterns = [
 
 const PRIORITY = [INTENTS.PROMPT_INJECTION, INTENTS.COMPLAINT, INTENTS.EXISTING_CLIENT, INTENTS.LEGAL, INTENTS.TAX, INTENTS.IMMIGRATION, INTENTS.BANKING, INTENTS.PERMIT, INTENTS.APPROVAL, INTENTS.COMPANY_FORMATION, INTENTS.INVESTMENT, INTENTS.PRICING, INTENTS.APPOINTMENT, INTENTS.PARTNERSHIP, INTENTS.PROJECT_ENQUIRY, INTENTS.CONSTRUCTION, INTENTS.LAND_DEVELOPMENT, INTENTS.REAL_ESTATE, INTENTS.CORPORATE_SERVICES, INTENTS.BUSINESS_AREAS, INTENTS.AGENT_IDENTITY, INTENTS.SERVICES, INTENTS.CONTACT, INTENTS.COMPANY_INFO, INTENTS.SMALL_TALK, INTENTS.GREETING];
 
+const patterns = foldRulePatterns(rawPatterns);
+
 function normalizeIntentText(text) {
-  return String(text || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, "").replace(/\s+/gu, " ").trim();
+  return foldArabicLetters(
+    String(text || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, "").replace(/\s+/gu, " ").trim()
+  );
 }
 
 function detectIntents(text) {
@@ -131,8 +138,13 @@ function detectIntents(text) {
   return [...new Set(intents)];
 }
 
+// Folded for the same reason as `patterns`: this runs against already-folded
+// text, so its Arabic literals (`حابة`, `بدي`) would stop matching otherwise.
+const [, DECLINES_MEETING] = foldRulePatterns([["declines",
+  /(?:\b(?:do not|don't|dont|not ready(?: yet)?|not currently|not now|no|without|rather not)\b.{0,45}\b(?:book|schedule|meeting|call|appointment)\b|\b(?:meeting|call|appointment)\b.{0,25}\b(?:not now|not yet|not currently)\b|ما\s+بدي.{0,45}(?:احجز|حجز|موعد|اجتماع)|لا.{0,30}(?:موعد|اجتماع|احجز|حجز)|مو\s+حابة.{0,30}(?:موعد|اجتماع)|δεν\s+(?:θέλω|χρειάζομαι|επιθυμώ).{0,45}(?:ραντεβού|συνάντηση|κλήση))/iu]])[0];
+
 function explicitlyDeclinesMeeting(text) {
-  return /(?:\b(?:do not|don't|dont|not ready(?: yet)?|not currently|not now|no|without|rather not)\b.{0,45}\b(?:book|schedule|meeting|call|appointment)\b|\b(?:meeting|call|appointment)\b.{0,25}\b(?:not now|not yet|not currently)\b|ما\s+بدي.{0,45}(?:احجز|حجز|موعد|اجتماع)|لا.{0,30}(?:موعد|اجتماع|احجز|حجز)|مو\s+حابة.{0,30}(?:موعد|اجتماع)|δεν\s+(?:θέλω|χρειάζομαι|επιθυμώ).{0,45}(?:ραντεβού|συνάντηση|κλήση))/iu.test(text);
+  return DECLINES_MEETING.test(text);
 }
 
 function detectIntent(text) {

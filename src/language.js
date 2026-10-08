@@ -53,4 +53,34 @@ function localizedLanguage(language, replies) {
   return replies[language] || replies.english;
 }
 
-module.exports = { detectMessageLanguage, detectExplicitLanguageRequest, languageInstruction, localizedLanguage };
+// BLK-16. Arabic writes the same word several interchangeable ways: `الإقامة`
+// and `الاقامة` differ only by the hamza on the alef, and a phone keyboard
+// produces either. Matchers that only knew the pointed spelling silently missed
+// the bare one — in the safety classifier that was a fail-open, in intent
+// detection it is a missed intent.
+//
+// This lives here, in the leaf language module, because both `safetyPolicy` and
+// `intent` need it and neither should depend on the other. It must be applied to
+// BOTH sides of a match: to the incoming text, and to the SOURCE of each rule
+// pattern. Folding only the text would break every pointed Arabic literal in
+// those patterns. The fold rewrites Arabic letters only, never regex syntax, so
+// applying it to a pattern source is safe.
+const ARABIC_LETTER_FOLDS = Object.freeze([
+  [/[أإآٱ]/gu, "ا"], // hamza-carrying and madda alef -> bare alef
+  [/ى/gu, "ي"],                     // alef maqsura -> ya
+  [/ة/gu, "ه"]                      // ta marbuta -> ha
+]);
+
+function foldArabicLetters(text) {
+  let value = String(text || "");
+  for (const [pattern, replacement] of ARABIC_LETTER_FOLDS) value = value.replace(pattern, replacement);
+  return value;
+}
+
+// Rebuilds a [key, RegExp] rule table with every pattern source folded, so rules
+// stay authored in readable pointed Arabic while matching folded text.
+function foldRulePatterns(rules) {
+  return rules.map(([key, pattern]) => [key, new RegExp(foldArabicLetters(pattern.source), pattern.flags)]);
+}
+
+module.exports = { detectMessageLanguage, detectExplicitLanguageRequest, languageInstruction, localizedLanguage, foldArabicLetters, foldRulePatterns };

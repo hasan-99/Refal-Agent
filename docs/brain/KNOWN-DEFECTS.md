@@ -15,6 +15,8 @@ Every row below was **executed**, not reasoned about. Nothing here is a code-rea
 
 ## Result
 
+As first measured on 2026-10-08:
+
 | Status | Count | Meaning |
 | --- | --- | --- |
 | **REPRODUCED** | **3** | the defect still happens on this code today |
@@ -22,7 +24,23 @@ Every row below was **executed**, not reasoned about. Nothing here is a code-rea
 | **NOT-TESTABLE here** | **6** | needs live Supabase / corpus / model |
 | **Total** | **14** | 13 CX defects + 1 new defect found while reproducing |
 
-**The CX claim holds.** All 13 have an owning repair phase. Nothing is unassigned.
+**Revised the same day**, after the W0.1.3 database baseline was executed and the BLK-14/15/16 fixes landed:
+
+| Status | Count | Change | Meaning |
+| --- | --- | --- | --- |
+| **REPRODUCED** | **2** | ▼ 1 | still happens today: FIX-1 and FIX-6 only |
+| **ALREADY-FIXED** | **6** | ▲ 1 | the orthography defect was repaired, see below |
+| **ROOT-CAUSED** | **2** | ▲ 2 | FIX-7 and FIX-8: cause identified, repair owned by M3 |
+| **NOT-TESTABLE here** | **4** | ▼ 2 | each now states its own blocker, not a shared premise |
+| **Total** | **14** | — | unchanged |
+
+Three things moved, and each for a different reason:
+
+- **The orthography defect is fixed.** Both halves of BLK-16 are closed: `foldArabicLetters` in `src/language.js` is applied to the incoming text *and* to the source of every rule pattern in `src/safetyPolicy.js` and `src/intent.js`. `الإقامة الدائمة` and `الاقامة الدائمة` now return identical intent **and** safety verdicts.
+- **FIX-7 and FIX-8 are ROOT-CAUSED, not merely untestable.** The W0.1.3 baseline found the knowledge corpus completely empty: 0 sources, 0 documents, 0 chunks against a target of 87. Retrieval returns zero in *every* language, so these were never retrieval-quality defects. They are a content gap owned by M3, and no retrieval tuning could have repaired them.
+- **The remaining four "not testable" verdicts had shared one premise**, *"no live DB from the agent session"*, which the baseline run disproved. Each now carries its real blocker: FIX-10 is waiting on an OpenRouter key, not the database; FIX-9, FIX-11 and FIX-12 need test data *written* to application tables, which needs BOSS's authorization.
+
+**The CX claim still holds.** All 13 have an owning repair phase. Nothing is unassigned.
 
 ---
 
@@ -135,7 +153,13 @@ Not run, and stated as not run. Per BOSS's protocol of 2026-10-08, the agent ses
 | **FIX-11** | Specialist offer not persisted, so it repeats | live store across turns | P5.4 |
 | **FIX-12** | Phone metadata treated as consent | live store consent source field | P9.1 |
 
-### A likely contributing cause for FIX-7 and FIX-8
+### ⚠ Superseded 2026-10-08 — the actual cause of FIX-7 and FIX-8 is an empty corpus
+
+**The hypothesis below was wrong about the primary cause.** The W0.1.3 database baseline measured the knowledge corpus directly: **0 sources, 0 documents, 0 chunks** against a target of 87. Retrieval returns zero in English and Greek too, not only Arabic, so language handling cannot be the explanation. FIX-7 and FIX-8 are a **content gap owned by M3**, and tuning retrieval would have produced nothing.
+
+The three mechanisms described below are still **real defects** and still worth fixing. Two of them now are: BLK-16 is closed, and BLK-15 turned out to be why the English GESY fact was refused. What changes is their *status in this analysis*: they are contributing factors to multilingual quality, not the cause of zero retrieval. Re-measure FIX-7 and FIX-8 after M3 ingestion, not before.
+
+### The original hypothesis, kept for the record
 
 The two reproduced defects above are both **Arabic/Greek language-handling** faults, and `CONFLICT-REGISTER.md` BLK-13 shows a third: the safety rules restrict on a **bare noun** in Arabic and Greek but require a **phrase** in English.
 

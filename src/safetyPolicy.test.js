@@ -101,3 +101,63 @@ test("neutral permit planning questions are distinct from permit outcome request
     "Θα εγκριθεί η πολεοδομική μου άδεια;"
   ]) assert.ok(classifySafety(text).risks.includes(SAFETY_CATEGORIES.PERMIT), text);
 });
+
+// --------------------------------------------------------------------------
+// BLK-14 / BLK-15 / BLK-16 regression guards.
+// The first and third were FAIL-OPENS: restricted phrasing reached the customer
+// because the classifier never fired. Each assertion below failed before the
+// 2026-10-08 fix, so these are the tests that keep the holes closed.
+// --------------------------------------------------------------------------
+
+test("BLK-14: Arabic guaranteed-return phrasing is restricted in every inflection", () => {
+  for (const text of [
+    "عائد مضمون",        // singular, the original leak
+    "أرباح مضمونة",       // plural profits
+    "عائد سنوي مؤكد",     // qualifier between noun and guarantee
+    "العائد المضمون",     // definite form
+    "عوائد مضمونة",       // plural, already covered before the fix
+    "مردود مضمون",        // alternative noun
+    "عائد متوقع"          // expected, not just guaranteed
+  ]) {
+    const result = classifySafety(text);
+    assert.equal(result.restricted, true, `expected restricted: ${text}`);
+    assert.ok(result.risks.includes(SAFETY_CATEGORIES.INVESTMENT), `expected investment risk: ${text}`);
+  }
+});
+
+test("BLK-14: Arabic, English and Greek guarantee claims agree", () => {
+  for (const text of ["عائد مضمون", "guaranteed returns", "εγγυημένη απόδοση"]) {
+    assert.ok(detectSafetyRisks(text).includes(SAFETY_CATEGORIES.INVESTMENT), `language asymmetry on: ${text}`);
+  }
+});
+
+test("BLK-15: 'vat' does not match inside ordinary words", () => {
+  for (const text of [
+    "Is this a private company?",
+    "We are an innovative firm",
+    "We handle renovation work",
+    "How do I activate my account?"
+  ]) {
+    assert.equal(classifySafety(text).restricted, false, `false positive on: ${text}`);
+  }
+});
+
+test("BLK-15: the standalone VAT term is still restricted", () => {
+  for (const text of ["What is the VAT rate?", "Do I pay vat on this?"]) {
+    assert.ok(detectSafetyRisks(text).includes(SAFETY_CATEGORIES.TAX), `expected tax risk: ${text}`);
+  }
+});
+
+test("BLK-16: Arabic orthographic variants reach the same verdict", () => {
+  // Bare alef vs hamza-carrying alef. A phone keyboard produces either, and the
+  // bare form used to bypass the classifier outright.
+  const pairs = [
+    ["كم مدة الاقامة؟", "كم مدة الإقامة؟"],      // immigration
+    ["هل ساحصل على رخصة؟", "هل سأحصل على رخصة؟"], // permit
+    ["هل تضمن موافقه البناء؟", "هل تضمن موافقة البناء؟"] // permit, ta marbuta
+  ];
+  for (const [bare, pointed] of pairs) {
+    assert.deepEqual(detectSafetyRisks(bare), detectSafetyRisks(pointed), `variant mismatch: ${bare}`);
+    assert.equal(classifySafety(bare).restricted, true, `bare-alef spelling bypassed the gate: ${bare}`);
+  }
+});
