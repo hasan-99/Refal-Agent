@@ -180,7 +180,7 @@ test("consented handover shares only the linked inquiry, stated name, and WhatsA
       id: "linked-inquiry-turn",
       at: offerAt,
       message: "I’m exploring a mixed-use development in Cyprus and would like an initial specialist discussion.",
-      response: "Would you like me to ask a the business specialist to follow up?",
+      response: "Would you like me to ask a Refalco Group specialist to follow up?",
       metadata: { intent: { primary: "development", intents: ["development", "investment", "real_estate"], language: "english" }, specialistOffer: { consentRequired: true, offeredAt: offerAt } }
     }]
   };
@@ -394,11 +394,11 @@ test("identity questions in English, Greek, and Arabic receive REFAL's local int
   }
 });
 
-test("mentioning the business in a services question does not trigger the identity introduction", async () => {
+test("mentioning Refalco Group in a services question does not trigger the identity introduction", async () => {
   const user = { id: "services-not-identity", profile: {}, history: [] };
   const result = await routeMessageResult({
     userId: user.id,
-    text: "What services does the business offer?",
+    text: "What services does Refalco Group offer?",
     store: integrationStore(user)
   });
 
@@ -446,7 +446,7 @@ test("a stored no-pressure preference does not suppress a direct Greek timeline 
     store: integrationStore(user), existingUser: user
   });
   assert.equal(result.shouldUseAi, true);
-  assert.equal(result.response, "Ελέγχω τις εγκεκριμένες πληροφορίες της the business για εσάς.");
+  assert.equal(result.response, "Ελέγχω τις εγκεκριμένες πληροφορίες της Refalco Group για εσάς.");
 });
 
 test("a hypothetical result for a new customer's case does not trigger existing-client escalation", async () => {
@@ -497,15 +497,15 @@ test("worker can reuse inbound preparation instead of persisting route state twi
   const store = integrationStore(user);
   const updateUser = store.updateUser;
   store.updateUser = async (...args) => { stateWrites += 1; return updateUser(...args); };
-  const preparedInbound = await prepareInboundMessage({ userId: user.id, incoming: "What services does the business offer?", user, store });
-  const result = await routeMessageResult({ userId: user.id, text: "What services does the business offer?", store, existingUser: user, preparedInbound });
+  const preparedInbound = await prepareInboundMessage({ userId: user.id, incoming: "What services does Refalco Group offer?", user, store });
+  const result = await routeMessageResult({ userId: user.id, text: "What services does Refalco Group offer?", store, existingUser: user, preparedInbound });
   assert.equal(result.shouldUseAi, true);
   assert.equal(stateWrites, 1);
 });
 
 test("unrelated turns do not advance or re-emit a stale opportunity intake", async () => {
   const legacyIntake = { type: "company_formation", status: "in_progress", data: { businessActivity: "old context" } };
-  for (const text of ["Hi", "مرحبا، شو خدماتكم؟", "What is the business?"]) {
+  for (const text of ["Hi", "مرحبا، شو خدماتكم؟", "What is Refalco Group?"]) {
     const user = { id: `stale-intake-${Math.random()}`, profile: { opportunityIntake: structuredClone(legacyIntake) }, history: [] };
     const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store: integrationStore(user) });
     assert.equal(prepared.metadata.opportunityIntake, null, text);
@@ -777,8 +777,8 @@ test("an explicit optional AI offer is tracked for the next turn and only then a
 test("a complete direct contact request is handled without asking permission again", async () => {
   for (const text of [
     "Please have a specialist contact me about this company setup",
-    "I request a specialist to contact me and agree to share this inquiry with the business",
-    "Yes, I request a specialist contact me and agree to share this inquiry with the business"
+    "I request a specialist to contact me and agree to share this inquiry with Refalco Group",
+    "Yes, I request a specialist contact me and agree to share this inquiry with Refalco Group"
   ]) {
     const user = { id: `direct-contact-consent-${Math.random()}`, profile: {}, history: [] };
     const result = await routeMessageResult({ userId: user.id, text, store: integrationStore(user) });
@@ -949,7 +949,7 @@ test("routeMessageResult handles a regulated Greek request locally and never fal
   const user = { id: "35799123456@s.whatsapp.net", phone: "35799123456", profile: {}, history: [] };
   const result = await routeMessageResult({ userId: user.id, text: "Μπορεί η τράπεζα να εγκρίνει σίγουρα το δάνειο;", store: integrationStore(user) });
   assert.equal(result.shouldUseAi, false);
-  assert.match(result.response, /Δεν μπορώ|the business/i);
+  assert.match(result.response, /Δεν μπορώ|Refalco Group/i);
   assert.doesNotMatch(result.response, /I can’t|I cannot|Before we continue/i);
   assert.ok(result.metadata.safety.risks.includes("banking"));
 });

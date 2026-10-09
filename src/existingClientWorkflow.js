@@ -22,7 +22,7 @@ function transitionExistingClientState(current = initialExistingClientState(), e
 
 function existingClientCustomerMessage(state) {
   if (state.state === STATES.authenticated) return "Your identity has been verified. I can now help with account-specific information.";
-  if (state.state === STATES.locked) return "I couldn’t verify the details after several attempts. For your security, please contact the business team through an approved channel.";
+  if (state.state === STATES.locked) return "I couldn’t verify the details after several attempts. For your security, please contact Refalco Group team through an approved channel.";
   return "To protect your privacy, please provide the approved identifier or verification detail for your existing client account. I can’t disclose account-specific information before verification.";
 }
 

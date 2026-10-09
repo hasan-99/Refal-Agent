@@ -91,9 +91,9 @@ test("IBAN, one-time codes, and identity/account numbers route as privacy risks 
 
 test("neutral permit planning questions are distinct from permit outcome requests", () => {
   for (const text of [
-    "Does the business help with planning permits?",
+    "Does Refalco Group help with planning permits?",
     "هل تساعد الشركة بإجراءات الترخيص؟",
-    "Η the business βοηθά με τη διαδικασία πολεοδομικής άδειας;"
+    "Η Refalco Group βοηθά με τη διαδικασία πολεοδομικής άδειας;"
   ]) assert.equal(classifySafety(text).restricted, false, text);
   for (const text of [
     "Will my planning permit be approved?",

@@ -37,7 +37,7 @@ function inferFacts(type, text) {
   const value = clean(text);
   if (!type || !value) return {};
   const facts = {};
-  const locationMatch = value.match(/\b(?:in|at|located in)\s+([A-Za-z][\w -]{2,50}?)(?=\s+(?:with|for|and|where)\b|[,.]|$)/i) || value.match(/(?:في|بمدينة|في مدينة)\s+([\u0600-\u06ffA-Za-z][\u0600-\u06ffA-Za-z -]{1,50}?)(?=\s+(?:مع|و|بميزانية)\b|[،,.]|$)/iu) || value.match(/(?:στη|σε|στην)\s+([\u0370-\u03ffA-Za-z][\u0370-\u03ffA-Za-z -]{1,50}?)(?=\s+(?:με|και)\b|[,.]|$)/iu);
+  const locationMatch = value.match(/\b(?:in|at|located in)\s+([A-Za-z][\w -]{2,50}?)(?=\s+(?:with|for|and|where)\b|[,.]|$)/i) || value.match(/(?:في|بمدينة|في مدينة)\s+([\u0600-\u06ffA-Za-z][\u0600-\u06ffA-Za-z -]{1,50}?)(?=\s+(?:مع|و|بميزانية)|[،,.]|$)/iu) || value.match(/(?:στη|σε|στην)\s+([\u0370-\u03ffA-Za-z][\u0370-\u03ffA-Za-z -]{1,50}?)(?=\s+(?:με|και)(?=\s|$)|[,.]|$)/iu);
   if (locationMatch) facts.location = clean(locationMatch[1], 100);
   if (/\b(?:budget|worth|value|capital)\s*(?:is|of|:)?\s*([$€£]?\s?[\d,.]+\s*(?:m|million|k|thousand)?)\b/i.test(value)) facts.budget = clean(value.match(/\b(?:budget|worth|value|capital)\s*(?:is|of|:)?\s*([$€£]?\s?[\d,.]+\s*(?:m|million|k|thousand)?)\b/i)[1], 80);
   if (!facts.budget && /([$€£]\s?[\d,.]+\s*(?:m|million|k|thousand)?)\s+(?:value|budget|capital)\b/i.test(value)) facts.budget = clean(value.match(/([$€£]\s?[\d,.]+\s*(?:m|million|k|thousand)?)\s+(?:value|budget|capital)\b/i)[1], 80);

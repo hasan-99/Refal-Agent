@@ -98,7 +98,7 @@ assert.match(firstGreeting, /digital assistant/i);
 const rafaQuestion = await routeMessageResult({ userId, text: "Could you tell me about a project for families?", store });
 assert.equal(rafaQuestion.shouldUseAi, true);
 assert.match(await routeMessage({ userId, text: "profile", store }), /Name: not set/);
-assert.match(await routeMessage({ userId, text: "menu", store }), /approved the business information/i);
+assert.match(await routeMessage({ userId, text: "menu", store }), /approved Refalco Group information/i);
 
 const firstQuestionStore = new MemoryStore();
 const firstQuestionResponse = await routeMessage({
@@ -107,7 +107,7 @@ const firstQuestionResponse = await routeMessage({
   store: firstQuestionStore,
   company
 });
-assert.match(firstQuestionResponse, /approved the business information/i);
+assert.match(firstQuestionResponse, /approved Refalco Group information/i);
 
 const invalidStore = new MemoryStore();
 assert.equal((await routeMessageResult({ userId: "35799111444@c.us", text: "?", store: invalidStore })).shouldUseAi, true);
@@ -126,7 +126,7 @@ assert.equal(store.deleteUser(userId), true);
 assert.equal(store.getUser(userId), null);
 assert.match(await routeMessage({ userId, text: "hello", store }), /digital assistant/i);
 
-assert.equal(detectMessageLanguage("Tell me about the business projects"), "english");
+assert.equal(detectMessageLanguage("Tell me about Refalco Group projects"), "english");
 assert.equal(detectMessageLanguage("شو مشاريع الشركة؟"), "arabic");
 assert.match(languageInstruction("arabic"), /Reply in Arabic/);
 assert.match(languageInstruction("english"), /Reply in English/);

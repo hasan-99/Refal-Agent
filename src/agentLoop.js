@@ -15,6 +15,13 @@ const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIF
 // rejection reason/path is untouched; this can only add a NEW rejection
 // reason, never remove one.
 const { validateFactualGrounding, collectApprovedKnowledgeEvidence } = require("./groundingPolicy");
+// M1 close — the three output gates the Agent path was missing. Each had
+// exactly one caller in the repo (src/ai.js), so flipping the Agent flag
+// silently dropped every M1 guard while their unit tests stayed green.
+const { resolveHumourLevel, assertHumourCompliance } = require("./humourEngine");
+const { detectAntiPatterns } = require("./antiPatterns");
+const { detectIntents } = require("./intent");
+const { detectMessageLanguage } = require("./language");
 // REFAL-AGENT-026: ports the legacy ai.js wrong-language check (`answer.length
 // > 8 && detectMessageLanguage(answer) !== language`) into the Agent path.
 // Reuses agentObservability.js's existing languageSignalsFrom — the SAME
@@ -127,7 +134,7 @@ function checkLanguageEquivalence(text, locale) {
 // grounding nor a language-mismatch reason ever equals "too_many_questions",
 // so neither is ever mistaken for one the mechanical correction knows how to
 // fix — both only ever go through retry-then-fallback, never a silent text edit.
-function checkDraftPolicy(text, thresholds, observations, locale) {
+function checkDraftPolicy(text, thresholds, observations, locale, context = {}) {
   const policy = validateResponse(text, thresholds);
   if (!policy.valid) return policy;
   const evidenceItems = collectApprovedKnowledgeEvidence(observations);
@@ -135,7 +142,51 @@ function checkDraftPolicy(text, thresholds, observations, locale) {
   if (!grounding.valid) return { ...policy, valid: false, reasons: grounding.reasons };
   const language = checkLanguageEquivalence(text, locale);
   if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };
-  return policy;
+
+  // M1 close — the Agent path was running THREE fewer output gates than the
+  // legacy path. detectAntiPatterns, assertHumourCompliance and
+  // assertModelKnowledgeIsGeneral each had exactly one caller in the repo,
+  // src/ai.js, which this path does not traverse. So every M1 guard silently
+  // disappeared the moment REFAL_AGENT_LIVE_ENABLED was flipped, while
+  // antiPatterns.test.js and humourEngine.test.js stayed green. Two of the
+  // three are wired here, at the single composition point, so they fold into
+  // the same {valid, reasons} shape the retry/fallback branching already
+  // handles and need no special-casing.
+  //
+  // assertModelKnowledgeIsGeneral is deliberately NOT wired: it keys off a
+  // MODEL_KNOWLEDGE source level that cannot arise here any more than it can
+  // in ai.js, so adding it would create a second dead gate rather than a
+  // second real one. Recorded as W1.6.3 PARTIAL in the plan instead.
+  const message = String(context.currentMessage || "");
+  const history = Array.isArray(context.recentConversation) ? context.recentConversation : [];
+
+  const humourLevel = resolveHumourLevel({
+    message,
+    history,
+    intents: detectIntents(message),
+    language: detectMessageLanguage(message)
+  }).level;
+  const humour = assertHumourCompliance(text, humourLevel);
+  // A joke next to a bereavement is regenerated, never silently edited; a
+  // disallowed emoji is stripped in place. Same split as src/ai.js.
+  if (humour.rejected) {
+    return { ...policy, valid: false, reasons: ["humour_above_level"] };
+  }
+  const cleaned = humour.ok ? policy.text : humour.sanitized;
+
+  const antiPatterns = detectAntiPatterns({
+    answer: cleaned,
+    customerMessage: message,
+    history,
+    leadTier: context.leadTier || "",
+    deliveredApprovedFact: evidenceItems.length > 0,
+    evidenceText: evidenceItems.map((item) => String(item?.content || "")).join("\n")
+  });
+  if (antiPatterns.length) {
+    return { ...policy, valid: false, reasons: antiPatterns.map((violation) => `anti_pattern:${violation.id}`) };
+  }
+
+  return { ...policy, text: cleaned };
 }
 
 // deps:
@@ -192,7 +243,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
 
     if (validated.type === "respond") {
       const thresholds = MODEL_DRAFT_THRESHOLDS;
-      const policy = checkDraftPolicy(validated.text, thresholds, observations, context?.locale);
+      const policy = checkDraftPolicy(validated.text, thresholds, observations, context?.locale, context);
       if (!policy.valid) {
         const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds);
         if (corrected) {
@@ -218,7 +269,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     // clarify: at most one question, no minimum length requirement — a short
     // single clarifying question is exactly what this path is for.
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
-    const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale);
+    const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context);
     if (!policy.valid) {
       const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds);
       if (corrected) {

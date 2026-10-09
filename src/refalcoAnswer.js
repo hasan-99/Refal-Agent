@@ -4,7 +4,7 @@ const { SAFETY_CATEGORIES, classifySafety, safeLocalizedFallback } = require("./
 function answerFromEvidence(evidence, { allowPricing = false, customerQuestion = "" } = {}) {
   if (!Array.isArray(evidence) || evidence.length === 0) return null;
   const asksWhetherPriceIsCurrent = /\b(?:still\s+(?:the\s+)?current|currently\s+(?:valid|accurate)|is\s+(?:this|that|the\s+price)\s+still|up[- ]to[- ]date|current\s+(?:price|fee|package))\b|(?:لسا|ما زال|هل السعر الحالي|السعر لسا|صالح لحد الآن)|(?:ισχύει ακόμη|είναι ακόμη σε ισχύ|τρέχουσα τιμή)/iu.test(customerQuestion);
-  const isPriceEvidence = (item) => /(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|\b[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|(?:fee|price|package|باقة|السعر|رسوم).{0,40}[\d٠-٩])/iu.test(String(item?.content || ""));
+  const isPriceEvidence = (item) => /(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|(?<![\p{L}\p{N}])[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|(?:fee|price|package|باقة|السعر|رسوم).{0,40}[\d٠-٩])/iu.test(String(item?.content || ""));
   const priceEvidence = evidence.filter(isPriceEvidence);
   if (((asksWhetherPriceIsCurrent || allowPricing) && !priceEvidence.length) || ((asksWhetherPriceIsCurrent || allowPricing) && priceEvidence.some((item) => !item?.valid_until || Date.parse(item.valid_until) <= Date.now() || item.review_status !== "approved"))) return null;
   const selectedPrice = asksWhetherPriceIsCurrent || allowPricing
@@ -25,7 +25,7 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
     !/(?:what services does|what does business offer|شو خدمات الشركة|ما هي الخدمات التي تقدمها|بدي اسجل شركة|طلب عن تأسيس الشركة|retrieval\s+query|search\s+query|customer\s+question|user\s+query)/iu.test(sentence)
   );
   const excerpt = sentences
-    .filter((sentence) => allowPricing || !/(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|\b[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|(?:fee|price|package|باقة|السعر|رسوم(?:\s+التأسيس)?).{0,40}[\d٠-٩]|[\d٠-٩].{0,25}(?:يورو|دولار|جنيه))/iu.test(sentence))
+    .filter((sentence) => allowPricing || !/(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|(?<![\p{L}\p{N}])[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|(?:fee|price|package|باقة|السعر|رسوم(?:\s+التأسيس)?).{0,40}[\d٠-٩]|[\d٠-٩].{0,25}(?:يورو|دولار|جنيه))/iu.test(sentence))
     .join(" ").trim();
   if (!excerpt || containsProhibitedClaim(excerpt) || containsPromptInjection(excerpt)) return null;
   if (customerQuestion) {
@@ -50,8 +50,12 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
 
 function selectPricePassage(content) {
   const blocks = String(content || "").split(/\n\s*\n/gu).map((block) => block.replace(/\s+/gu, " ").trim()).filter(Boolean);
-  const priceClaim = /(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|\b[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?|يورو|دولار|جنيه)\b)/iu;
-  const unsafeExample = /^(?:❌|wrong\b|incorrect\b|خطأ\b)|(?:لا تقول|do not say|don['’]t say|μην πείτε)/iu;
+  // The trailing \b made the Arabic currency words unreachable: \b is ASCII-only
+  // in JavaScript, so "999 يورو" did NOT register as a price claim while
+  // "999 EUR" did. Verified 2026-10-09. The Latin currency names keep their \b;
+  // the Arabic ones are matched without it.
+  const priceClaim = /(?:[$€£]\s?[\d٠-٩]|\b(?:EUR|USD|GBP)\s?[\d٠-٩]|(?<![\p{L}\p{N}])[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b|[\d٠-٩][\d٠-٩,.]*\s?(?:يورو|دولار|جنيه))/iu;
+  const unsafeExample = /^(?:❌|wrong\b|incorrect\b|خطأ)|(?:لا تقول|do not say|don['’]t say|μην πείτε)/iu;
   const candidates = [];
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index];
@@ -153,7 +157,16 @@ function containsProhibitedClaim(text) {
   const answerText = String(text || "").replace(/https?:\/\/\S+/giu, "[source]");
   const claimText = removeSafeDisclaimerClauses(answerText);
   const unsupportedSuitability = /\b(?:straightforward|standard|ordinary|simple)\s+(?:business\s+)?activity\b.{0,70}\b(?:suitable|eligible|approved|should fit|will fit|is allowed|can proceed)\b|\b(?:activity|business activity|industry)\b.{0,60}\b(?:is suitable|is eligible|is approved|should fit|will fit|is allowed)\b|(?:نشاط|النشاط).{0,50}(?:مناسب|مقبول|مؤهل|معتمد|ما في مشكلة|يمكن البدء)|(?:δραστηριότητα|κλάδος).{0,50}(?:κατάλληλη|επιλέξιμη|εγκρίνεται|μπορεί να προχωρήσει)/iu;
-  return unsupportedSuitability.test(claimText) || /\b(?:investment\s+(?:returns?|roi|irr|yield|advice|recommendations?)|(?:returns?|roi|irr|yield|profits?)\b.{0,60}\binvest\w*|(?:returns?|roi|irr|yield)\s+(?:on|from)\s+(?:an?\s+)?investment|financial advice|(?:is|are|was|were|has been|have been)\s+(?:[\p{L}0-9'&.-]+\s+){0,4}(?:legally\s+)?registered|registration number|company number|legal status|legal entity|legal advice|tax advice|immigration advice|visa|residency|bank approval|loan approval|mortgage approval|permit|licen[cs]e|government approval|company approval)\b|(?:عوائد|عائد|ربح|أرباح)\s+(?:الاستثمار|استثماري)|(?:استثمار|استثماري)\s+(?:بعائد|بعوائد|مربح|مضمون)|استشارة استثمارية|الشركة\s+(?:مسجلة|مسجل)\s+(?:في|بقبرص)|السجل التجاري|الوضع القانوني|كيان قانوني|استشارة قانونية|استشارة ضريبية|معدل الضريبة|نسبة الضريبة|هجرة|تأشيرة|إقامة|موافقة البنك|قرض|رهن|رخصة|ترخيص|موافقة حكومية|(?:ستحصل|سيحصل|سيتم منحك).{0,35}(?:الموافقة|موافقة|رخصة|ترخيص)|επενδυτικ(?:ές|ή)\s+αποδόσεις|απόδοση\s+(?:επένδυσης|επενδυτική)|επενδυτική\s+συμβουλή|νομική συμβουλή|φορολογική συμβουλή|εταιρεία\s+(?:είναι\s+)?εγγεγραμμένη|νομική οντότητα|βίζα|διαμονή|έγκριση τράπεζας|δάνειο|άδεια|κρατική έγκριση|θα εγκριθεί.{0,40}(?:άδεια|έγκριση)|θα (?:πάρω|λάβω).{0,40}(?:άδεια|έγκριση)/iu.test(claimText);
+  // Absolute-certainty claims. Deliberately NOT a blanket ban on "100%":
+  // "a non-resident can own 100% of a Cyprus company" is a correct and useful
+  // fact, and blocking it would push REFAL into vagueness about ownership. Only
+  // 100% paired with an OUTCOME word is a prohibited guarantee.
+  // No \b after `%`: the percent sign is not a word character, so `100\s*%\b`
+  // can never match. The same trap that killed the original pattern.
+  const absoluteCertainty = /\b100\s*(?:%|percent)[^.!?]{0,40}\b(?:success|approval|approved|guaranteed|certain|sure|accept\w*)\b|\b(?:success|approval|guarantee\w*|certain)\b[^.!?]{0,40}\b100\s*(?:%|percent)|(?:100\s*٪|مئة بالمئة|مائة بالمائة)[^.؟!]{0,40}(?:نجاح|موافقة|ضمان|مضمون)|(?:نجاح|موافقة|ضمان|مضمون)[^.؟!]{0,40}(?:100\s*٪|مئة بالمئة)|(?:100\s*%|εκατό τοις εκατό)[^.;!]{0,40}(?:επιτυχία|έγκριση|εγγύηση)/iu;
+  if (absoluteCertainty.test(claimText)) return true;
+
+  return unsupportedSuitability.test(claimText) || /\b(?:investment\s+(?:returns?|roi|irr|yield|advice|recommendations?)|(?:returns?|roi|irr|yield|profits?)\b.{0,60}\binvest\w*|(?:returns?|roi|irr|yield)\s+(?:on|from)\s+(?:an?\s+)?investment|financial advice|(?:is|are|was|were|has been|have been)\s+(?:[\p{L}0-9'&.-]+\s+){0,4}(?:legally\s+)?registered|registration number|company number|legal status|legal entity|legal advice|tax advice|immigration advice|visa|residency|bank approval|loan approval|mortgage approval|permit|licen[cs]e|government approval|company approval)\b|(?:عوائد|عائد|ربح|أرباح)\s+(?:الاستثمار|استثماري)|(?:استثمار|استثماري)\s+(?:بعائد|بعوائد|مربح|مضمون)|استشارة استثمارية|موافقة مضمونة|ضمان الموافقة|الموافقة مضمونة|عائد مضمون|عوائد مضمونة|أرباح مضمونة|ربح مضمون|الشركة\s+(?:مسجلة|مسجل)\s+(?:في|بقبرص)|السجل التجاري|الوضع القانوني|كيان قانوني|استشارة قانونية|استشارة ضريبية|معدل الضريبة|نسبة الضريبة|هجرة|تأشيرة|إقامة|موافقة البنك|قرض|رهن|رخصة|ترخيص|موافقة حكومية|(?:ستحصل|سيحصل|سيتم منحك).{0,35}(?:الموافقة|موافقة|رخصة|ترخيص)|επενδυτικ(?:ές|ή)\s+αποδόσεις|απόδοση\s+(?:επένδυσης|επενδυτική)|επενδυτική\s+συμβουλή|σίγουρη έγκριση|εγγυημένη έγκριση|εγγυημένη απόδοση|νομική συμβουλή|φορολογική συμβουλή|εταιρεία\s+(?:είναι\s+)?εγγεγραμμένη|νομική οντότητα|βίζα|διαμονή|έγκριση τράπεζας|δάνειο|άδεια|κρατική έγκριση|θα εγκριθεί.{0,40}(?:άδεια|έγκριση)|θα (?:πάρω|λάβω).{0,40}(?:άδεια|έγκριση)/iu.test(claimText);
 }
 
 // Exempt only complete, narrowly worded disclaimer clauses. Splitting at
@@ -185,12 +198,12 @@ function restrictedRefalcoReply(text) {
   const legal = /\b(?:is|are|was|were|has been|have been)\s+(?:[\p{L}0-9'&.-]+\s+){0,4}(?:legally\s+)?registered\b|\b(?:registration number|company number|legal entity|company status|legal status|he\s*382352)\b|مسجل|مسجلة|السجل التجاري|كيان قانوني|الوضع القانوني|حالة الشركة|εγγεγραμ|νομική οντότητα/iu.test(text);
   if (investment) return arabic
     ? "لا أستطيع تقديم معلومات عن الاستثمارات أو العوائد المالية أو النصائح المالية. يمكنني المساعدة بمعلومات أخرى معتمدة عن الشركة."
-    : language === "greek" ? "Η REFAL δεν παρέχει επενδυτικές πληροφορίες, οικονομικές αποδόσεις ή οικονομικές συμβουλές. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της the business."
-      : "REFAL cannot provide investment, financial-return, or financial-advice information. I can help with other approved the business information.";
+    : language === "greek" ? "Η REFAL δεν παρέχει επενδυτικές πληροφορίες, οικονομικές αποδόσεις ή οικονομικές συμβουλές. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της Refalco Group."
+      : "REFAL cannot provide investment, financial-return, or financial-advice information. I can help with other approved Refalco Group information.";
   if (legal) return arabic
     ? "لا أقدم معلومات عن تسجيل الشركات أو الوضع القانوني لها. يمكنني المساعدة بمعلومات أخرى معتمدة عن الشركة."
-    : language === "greek" ? "Η REFAL δεν παρέχει πληροφορίες για την εγγραφή ή το νομικό καθεστώς εταιρειών. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της the business."
-      : "REFAL does not provide company registration or legal-status information. I can help with other approved the business information.";
+    : language === "greek" ? "Η REFAL δεν παρέχει πληροφορίες για την εγγραφή ή το νομικό καθεστώς εταιρειών. Μπορώ να βοηθήσω με άλλες εγκεκριμένες πληροφορίες της Refalco Group."
+      : "REFAL does not provide company registration or legal-status information. I can help with other approved Refalco Group information.";
   const safety = classifySafety(text);
   return safety.restricted ? safeLocalizedFallback(text, language) : null;
 }

@@ -13,7 +13,13 @@ function isFollowUpEnabled() {
 }
 
 function isNaturalConversationEnd(text) {
-  return /\b(bye|goodbye|thanks|thank you|thx|شكرا|شكراً|يعطيك العافية|مع السلامة|سلام)\b/i.test(String(text || ""));
+  // REFAL-AGENT-023. The Arabic branch here was unreachable, not merely
+  // incomplete: \b is ASCII-only in JavaScript, so `شكرا\b` can never match and
+  // Arabic goodbyes were never detected at all. Greek was missing entirely.
+  const value = String(text || "");
+  return /\b(?:bye|goodbye|thanks|thank you|thx)\b/i.test(value)
+    || /(?:شكرا|شكراً|يعطيك العافية|مع السلامة|سلام)/u.test(value)
+    || /(?:ευχαριστώ|αντίο|γεια σας|καλή συνέχεια)/iu.test(value);
 }
 
 function lastHistoryEntry(user) {

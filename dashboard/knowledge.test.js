@@ -118,13 +118,13 @@ test("source URLs accept only explicitly configured HTTPS hosts and strip fragme
 });
 
 test("extractor omits navigation and scripts while preserving page headings", () => {
-  const html = `<html><head><title>the business profile</title><script>internal noise</script></head><body>
+  const html = `<html><head><title>Refalco Group profile</title><script>internal noise</script></head><body>
     <nav>Navigation content that should never reach customers</nav><main><h1>Company overview</h1>
-    <p>the business develops and operates long-term projects across multiple company operating areas and markets.</p>
+    <p>Refalco Group develops and operates long-term projects across multiple company operating areas and markets.</p>
     <h2>Approach</h2><p>The company describes an integrated operating platform and a long-horizon approach for its projects.</p>
     </main><footer>Footer content excluded from the imported knowledge.</footer></body></html>`;
   const result = extractKnowledgeText(html, "https://example.invalid/about");
-  assert.equal(result.title, "the business profile");
+  assert.equal(result.title, "Refalco Group profile");
   assert.match(result.content, /Company overview/);
   assert.match(result.content, /Approach/);
   assert.doesNotMatch(result.content, /Navigation content|Footer content|internal noise/);
@@ -142,32 +142,32 @@ test("chunker emits ordered bounded chunks for long paragraphs", () => {
 // URL-scraper path tested above.
 
 test("TXT upload preserves English, Arabic, and Greek Unicode unchanged", async () => {
-  const text = "the business offers investment services.\nالشركة تقدم خدمات استثمارية في قبرص وخارجها.\nΗ the business προσφέρει επενδυτικές υπηρεσίες σε πολλές χώρες.";
+  const text = "Refalco Group offers investment services.\nالشركة تقدم خدمات استثمارية في قبرص وخارجها.\nΗ Refalco Group προσφέρει επενδυτικές υπηρεσίες σε πολλές χώρες.";
   const result = await extractUploadedDocument({ buffer: Buffer.from(text, "utf8"), mimeType: "text/plain", filename: "notes.txt" });
-  assert.match(result.content, /the business offers investment services\./);
+  assert.match(result.content, /Refalco Group offers investment services\./);
   assert.match(result.content, /الشركة تقدم خدمات استثمارية/);
-  assert.match(result.content, /Η the business προσφέρει επενδυτικές υπηρεσίες/);
+  assert.match(result.content, /Η Refalco Group προσφέρει επενδυτικές υπηρεσίες/);
   assert.equal(result.sourceFileType, "txt");
   assert.ok(result.chunks.length > 0);
 });
 
 test("PDF upload extracts real text content (English only — pdfkit's base-14 fonts cannot encode Arabic/Greek without an embedded font, so that is out of scope for this generated fixture)", async () => {
-  const buffer = await buildTestPdfBuffer("the business provides company formation and investment advisory services across Cyprus.");
+  const buffer = await buildTestPdfBuffer("Refalco Group provides company formation and investment advisory services across Cyprus.");
   const result = await extractUploadedDocument({ buffer, mimeType: "application/pdf", filename: "brochure.pdf" });
-  assert.match(result.content, /the business provides company formation/);
+  assert.match(result.content, /Refalco Group provides company formation/);
   assert.equal(result.sourceFileType, "pdf");
   assert.ok(result.chunks.length > 0);
 });
 
 test("DOCX upload extracts real text content from a hand-built, well-formed long document", async () => {
-  const paragraph = "the business DOCX knowledge ingestion test paragraph with enough length to clear the minimum extracted-text floor. ".repeat(2);
+  const paragraph = "Refalco Group DOCX knowledge ingestion test paragraph with enough length to clear the minimum extracted-text floor. ".repeat(2);
   const buffer = buildMinimalDocx(paragraph);
   const result = await extractUploadedDocument({
     buffer,
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     filename: "brief.docx"
   });
-  assert.match(result.content, /the business DOCX knowledge ingestion test paragraph/);
+  assert.match(result.content, /Refalco Group DOCX knowledge ingestion test paragraph/);
   assert.equal(result.sourceFileType, "docx");
   assert.ok(result.chunks.length > 0);
 });

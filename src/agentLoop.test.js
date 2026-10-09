@@ -112,7 +112,7 @@ test("a respond draft with too many questions is mechanically corrected to the f
 });
 
 test("a rejection that can't be mechanically corrected (e.g. too long) gets one retried decision instead of an immediate generic fallback", async () => {
-  const overlong = `This is a single overlong sentence without any question mark that just keeps going on and on ${"and on ".repeat(70)}until it exceeds the character limit the deterministic response policy enforces.`;
+  const overlong = `This is a single overlong sentence without any question mark that just keeps going on and on ${"and on ".repeat(110)}until it exceeds the character limit the deterministic response policy enforces.`;
   // REFAL-AGENT-028: this second draft is deliberately a claim-free
   // sentence (no price/numeric/brand claim) — this test has no tool call and
   // no evidence anywhere, so it is proving retry-after-too-long recovery,
@@ -133,7 +133,7 @@ test("a rejection that can't be mechanically corrected (e.g. too long) gets one 
 });
 
 test("a rejection that never becomes compliant exhausts the step budget and falls back to the generic safe reply, not silence", async () => {
-  const overlong = `This is a single overlong sentence without any question mark that just keeps going on and on ${"and on ".repeat(70)}until it exceeds the character limit the deterministic response policy enforces.`;
+  const overlong = `This is a single overlong sentence without any question mark that just keeps going on and on ${"and on ".repeat(110)}until it exceeds the character limit the deterministic response policy enforces.`;
   const decide = async () => ({ type: "respond", text: overlong });
   const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 2 });
   assert.equal(result.outcome, "response_rejected");
@@ -235,8 +235,8 @@ test("a clarify draft in the wrong language is rejected the same way a respond d
   assert.match(result.reason, /language_mismatch/);
 });
 
-test("Latin brand/product names (the business, OpenRouter) inside an Arabic reply never false-positive the language gate", async () => {
-  const decide = scriptedDecider([{ type: "respond", text: "إحنا الشركة (the business)، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية. يسعدني ساعدك بأي سؤال." }]);
+test("Latin brand/product names (Refalco Group, OpenRouter) inside an Arabic reply never false-positive the language gate", async () => {
+  const decide = scriptedDecider([{ type: "respond", text: "إحنا الشركة (Refalco Group)، وبنستخدم OpenRouter لدعم بعض الأدوات الداخلية. يسعدني ساعدك بأي سؤال." }]);
   const result = await runAgentTurn(AR_CONTEXT, { decideNextStep: decide, tools: {} });
   assert.equal(result.outcome, "responded", "an Arabic-dominant reply must not be rejected just for containing a Latin brand/product name");
 });
@@ -292,4 +292,58 @@ test("a wrong-language draft that never corrects exhausts the step budget and fa
   assert.equal(result.outcome, "response_rejected");
   assert.match(result.reason, /language_mismatch/);
   assert.equal(result.stepCount, 2);
+});
+
+// --- M1 close: the Agent path must run the same output gates as legacy -----
+//
+// detectAntiPatterns, assertHumourCompliance and assertModelKnowledgeIsGeneral
+// each had exactly ONE caller in the repo, src/ai.js. The Agent path does not
+// traverse that file, so flipping REFAL_AGENT_LIVE_ENABLED silently dropped
+// every M1 output guard while antiPatterns.test.js and humourEngine.test.js
+// stayed green. These tests assert through runAgentTurn, the real entry point,
+// not against the gate modules in isolation — asserting the component is what
+// let this hide in the first place.
+
+test("Agent path rejects a joke when a hard ban forced humour level 0", async () => {
+  const context = buildAgentContext({
+    currentMessage: "My father passed away last month, so I need to pause the setup.",
+    locale: "english"
+  });
+  const joke = "I am sorry to hear that, haha just kidding, let me pull up your file now.";
+  const result = await runAgentTurn(context, {
+    decideNextStep: scriptedDecider([{ type: "respond", text: joke }]),
+    tools: {}
+  });
+  assert.notEqual(result.response, joke, "a joke next to a bereavement reached the customer");
+});
+
+test("Agent path rejects an unrequested meeting push (AP-6)", async () => {
+  const context = buildAgentContext({
+    currentMessage: "What documents do I need for a Cyprus company?",
+    locale: "english"
+  });
+  // Purely informational request, no tier, no signal: offering a meeting here
+  // is MB-AP5/CX R-04, and the legacy path has always blocked it.
+  const push = "You need a passport and proof of address. Shall I book you a call with an adviser this week?";
+  const result = await runAgentTurn(context, {
+    decideNextStep: scriptedDecider([{ type: "respond", text: push }]),
+    tools: {}
+  });
+  assert.notEqual(result.response, push, "an unrequested meeting push reached the customer");
+});
+
+test("Agent path still passes a clean, compliant answer through untouched", async () => {
+  // The gates must not become a blanket rejection: a correct answer has to
+  // survive, or the Agent path fails closed on everything and the tests above
+  // would pass for the wrong reason.
+  const context = buildAgentContext({
+    currentMessage: "Which cities do you have offices in?",
+    locale: "english"
+  });
+  const clean = "We have offices in Limassol, Larnaca, Paphos and Nicosia.";
+  const result = await runAgentTurn(context, {
+    decideNextStep: scriptedDecider([{ type: "respond", text: clean }]),
+    tools: {}
+  });
+  assert.equal(result.response, clean, "a clean compliant answer was rejected by the new gates");
 });

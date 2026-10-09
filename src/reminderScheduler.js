@@ -9,7 +9,7 @@ function reminderText(appointment, job = {}) {
   const base = `Reminder: your meeting is scheduled for ${start} (${appointment.timezone || "Europe/Nicosia"}).`;
   if (job.reminder_kind === "meet_link_1h") return appointment.google_meet_url
     ? `${base}\nGoogle Meet: ${appointment.google_meet_url}`
-    : `${base}\nThe meeting link is not available yet. Please contact the business if you need help.`;
+    : `${base}\nThe meeting link is not available yet. Please contact Refalco Group if you need help.`;
   return base;
 }
 

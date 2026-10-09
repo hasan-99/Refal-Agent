@@ -123,20 +123,24 @@ These stay in the register with their evidence so nobody "re-fixes" them, and so
 | **FIX-5** | Formation vs investment misclassification | `بدي أسجل شركة استثمارية` → `[company_formation, investment]`. `detectIntents` is multi-label, so it returns **both**, which is what MB requires. | `intent.js:124` |
 | **FIX-13** | Agent identity answered wrongly | `agent_identity` intent detected in **all three** languages (`من أنت؟`, `what are you?`, `Ποιος είσαι;`). | `intent.js` AGENT_IDENTITY |
 
-### ⚠ FIX-13 is only half fixed
+### ⚠ FIX-13 was only half fixed — ✅ now CLOSED (2026-10-09, P1.1)
 
-Detection is green. **The answer is not.** The reply still contains the literal placeholder `the business` (BLK-3 / CR-009, **222 occurrences**), producing ungrammatical customer-facing text such as:
+Detection was green. **The answer was not.** The reply still contained the literal placeholder `the business` (BLK-3 / CR-009, **222 occurrences**), producing ungrammatical customer-facing text such as:
 
 > "I can help with other approved **the business** information."
 
-So FIX-13 splits into two:
+So FIX-13 split into two:
 
-| Part | Status | Owner |
-| --- | --- | --- |
-| Identity **detection** | ALREADY-FIXED | — |
-| Identity **answer** | still broken | **P1.1** (remove BLK-3) |
+| Part | Status | Owner | Evidence |
+| --- | --- | --- | --- |
+| Identity **detection** | ALREADY-FIXED | — | `intent.js` AGENT_IDENTITY, all three languages |
+| Identity **answer** | ✅ **FIXED 2026-10-09** | **P1.1** | `grep -rn "the business" src/ dashboard/ config/ supabase/` → **0**. The sweep touched **275 occurrences across 49 files**, more than the 222 recorded here, because the register counted only the non-test source files. |
 
-Do not close FIX-13 on the detection evidence alone.
+**Why the count differs from CR-009.** CR-009 recorded 222 in 15 non-test source files. The real sweep had to include the test files that assert those exact strings, or the suite would have gone red against correct code. Hence 275 / 49.
+
+**Second form of the same corruption, not in the original register.** Beyond the literal `the business`, the bare word `business` was standing in for the company name inside six detection patterns in `src/intent.js` and `src/conversationRecap.js` (`τι είναι η business`, `work for business`). Those were fixed by **adding** `refal(?:co)?(?:\s+group)?` alongside `business`, never replacing it, so phrasings real customers already use keep matching.
+
+The guard that stops it returning: `src/companyProfile.js` rejects any profile containing the placeholder, and `src/companyProfile.test.js` asserts it.
 
 ---
 

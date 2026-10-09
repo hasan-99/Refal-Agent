@@ -87,6 +87,27 @@ Regression guards live in `src/safetyPolicy.test.js` (5 tests, including a cross
 
 ---
 
+### ✅ RESOLVED 2026-10-09 — M1 closes BLK-3, BLK-4, BLK-5, BLK-6 and BLK-7
+
+| ID | Register entry | Fix | Evidence it closed |
+| --- | --- | --- | --- |
+| **BLK-3** | CR-008, CR-009 | Identity became configuration: `config/company-profile.json` + `src/companyProfile.js` (a missing or placeholder-bearing profile is a **startup error**). The blanket denial was removed from `AGENTS.md`, `src/ai.js`, `dashboard/server.js` and the edge function. Company **facts** stay evidence-gated, which is the distinction that keeps Rule 2 intact. | `grep -rn '"the business"' src/ dashboard/ config/ supabase/` → **0**. 275 occurrences across 49 files swept. `src/companyProfile.test.js` 10/10. The old assertion in `src/ragPolicy.test.js` that pinned the denial has been inverted. |
+| **BLK-4** | the 3-sentence / 500-char cap | Only half of the register entry was real, as the P0.2 correction above already noted: `DEFAULT_MAX_SENTENCES` was already 5. The genuine conflict was the 500-character cap against a 5-sentence ceiling, which is unreachable, and worse in Arabic and Greek where the same content runs longer. `ORDINARY` is now `{ minSentences: 2, maxSentences: 5, maxChars: 700 }`, `EXPANDED` is `{ maxSentences: 20, maxChars: 1800 }`. | `src/goldenFormula.js`. A test pins the validator's ceiling to `ORDINARY` so the two cannot drift apart again, which is exactly how this conflict was created. |
+| **BLK-5** | blanket ban on volunteering prices/services | Replaced by a conditional rule: *answer first, then at most ONE relevant cross-sell hook when its trigger fires and evidence supports it, never detail unrelated to the customer's goal.* | `src/brainPrompt.js` `crossSellBlock()` and the rewritten clause in `operationalBlock()`. Asserted on the live system prompt in `src/ragPolicy.test.js`. |
+| **BLK-6** | blanket ban on offering a call | Replaced by a tier-aware rule in `bookingOfferBlock(leadTier)`: no offer at cold or unclassified, flexible at warm, move to booking with consent at hot. | `src/promptParity.test.js` asserts the ban is absent from the **assembled** prompt for every variant × tier, and `src/ragPolicy.test.js` asserts the tier reaches the live system prompt. |
+| **BLK-7** | no humour calibration | `src/humourEngine.js`: four levels, default 2, six hard bans MB-HB1..HB6 forcing level 0, directives authored natively per language, an emoji allowlist per level, and `assertHumourCompliance` as an output gate beside `validateResponse`. | `src/humourEngine.test.js` **70 pass**, covering all six bans in Arabic, English and Greek. Live gate at `src/ai.js`. |
+
+**Two traps worth recording, because both made a "fixed" blocker look fixed while it was still live.**
+
+1. **BLK-6 survived inside the shared prompt module.** The blanket ban was lifted verbatim out of `src/ai.js` into `operationalBlock()`, so it reached the model **beside** the new tier-aware rule. Two contradictory instructions in one prompt. The W1.7.7 test passed throughout because it asserted on `bookingOfferBlock()` in isolation, never on the assembled prompt.
+2. **The tier was hardcoded.** `src/ai.js` passed `leadTier: ""` into a correctly tier-aware builder, so only the protective default could ever be emitted. Tier-aware in the unit test, BLK-6 in production.
+
+Both are now asserted against the finished prompt rather than the component.
+
+**Still open and NOT closed by M1:** BLK-1, BLK-2, BLK-8 and BLK-13 remain owned by M2 (P2.2). The 25 remaining conflicts are theirs. **BLK-3 also survives on a fifth surface the plan never listed**, `src/agentDecision.js`, which is the bounded Agent loop behind `REFAL_AGENT_LIVE_ENABLED` (default off); see section 16 of the master plan.
+
+---
+
 ## W0.2.1 — Guardrail conflicts
 
 Grouped by root cause. Every row is reproducible with the commands above.

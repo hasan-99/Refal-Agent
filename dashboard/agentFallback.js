@@ -23,7 +23,7 @@ function dashboardFailureReply({ text, evidence = [], error }) {
     if (grounded && !containsProhibitedClaim(grounded.answer)) {
       const lead = language === "arabic"
         ? "تم بلوغ الحد اليومي للنموذج المجاني. هذا مقتطف من مصدر الشركة المعتمد:"
-        : "The free model has reached its daily limit. Here is an approved the business source excerpt:";
+        : "The free model has reached its daily limit. Here is an approved Refalco Group source excerpt:";
       const sourceUrl = grounded.citations?.[0]?.url;
       const citation = typeof sourceUrl === "string" && /^https:\/\//iu.test(sourceUrl) ? `\n\n${language === "arabic" ? "المصدر" : "Source"}: ${sourceUrl}` : "";
       return `${lead}\n\n${grounded.answer}${citation}`;

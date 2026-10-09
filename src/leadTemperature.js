@@ -19,4 +19,15 @@ function classifyLeadTemperature({ history = [], booking = null } = {}) {
   return { status: "unclassified", reason: "no_clear_signal" };
 }
 
-module.exports = { classifyLeadTemperature };
+// The canonical tier vocabulary. Exported so P1.3 (humour) and P1.5/P1.7
+// (booking offers) reference the tiers this function actually emits, instead of
+// inventing their own. Note COLD means an EXPLICIT DECLINE, not merely "not
+// interested yet" — that distinction decides whether a booking offer is allowed.
+const LEAD_TIERS = Object.freeze({
+  HOT: "hot",
+  WARM: "warm",
+  COLD: "cold",
+  UNCLASSIFIED: "unclassified"
+});
+
+module.exports = { classifyLeadTemperature, LEAD_TIERS };

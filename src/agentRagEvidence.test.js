@@ -19,9 +19,9 @@ const { buildAgentContext } = require("./agentContext");
 test("IMPORTANT: after a RAG tool call, the real decision model's next prompt contains the actual approved chunk content, not just the document heading", async () => {
   const store = {
     searchKnowledge: async () => [{
-      document_title: "the business Services",
+      document_title: "Refalco Group Services",
       heading: "Overview",
-      content: "the business provides Company Formation, Accounting, VAT Registration and Payroll services.",
+      content: "Refalco Group provides Company Formation, Accounting, VAT Registration and Payroll services.",
       chunk_id: "chunk-services-1"
     }]
   };
@@ -30,12 +30,12 @@ test("IMPORTANT: after a RAG tool call, the real decision model's next prompt co
   const callModel = async (messages) => {
     callModelCalls.push(messages);
     if (callModelCalls.length === 1) {
-      return JSON.stringify({ type: "tool", tool: "searchApprovedKnowledge", args: { query: "the business services" } });
+      return JSON.stringify({ type: "tool", tool: "searchApprovedKnowledge", args: { query: "Refalco Group services" } });
     }
-    return JSON.stringify({ type: "respond", text: "the business provides company formation, accounting, VAT registration, and payroll services." });
+    return JSON.stringify({ type: "respond", text: "Refalco Group provides company formation, accounting, VAT registration, and payroll services." });
   };
 
-  const context = buildAgentContext({ currentMessage: "What services does the business provide?", locale: "english" });
+  const context = buildAgentContext({ currentMessage: "What services does Refalco Group provide?", locale: "english" });
   const toolContext = { store, embedText: async () => null, embeddingModel: "test-model", matchCount: 6 };
 
   const result = await runAgentTurn(context, {
@@ -57,7 +57,7 @@ test("IMPORTANT: after a RAG tool call, the real decision model's next prompt co
     );
   }
   // Not just the heading: the pre-fix behavior only ever surfaced
-  // result.userSafeSummary (here, "Overview"/"the business Services"), never the
+  // result.userSafeSummary (here, "Overview"/"Refalco Group Services"), never the
   // chunk content itself.
   assert.ok(secondDecisionUserMessage.length > 0);
 });

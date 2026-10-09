@@ -54,7 +54,7 @@ function inferDimensions({ history = [], profile = {}, booking = null, dimension
 
   const setAtLeast = (name, value) => { result[name] = Math.max(result[name], value); };
   if (/\b(interested|need|looking for|information|tell me more|price|pricing|cost|property|project|service)\b|مهتم|أحتاج|معلومات|السعر|مشروع|عقار|υπηρεσία|ενδιαφέρ/i.test(lower)) setAtLeast("need", 3);
-  if (/\b(invest|budget|€|eur|million|portfolio|large|commercial|corporate)\b|استثمار|ميزانية|مليون|محفظة|تجاري|شركة|επένδυση|προϋπολογισ/i.test(lower)) setAtLeast("value", 3);
+  if (/\b(invest|budget|eur|million|portfolio|large|commercial|corporate)\b|[€$£]\s?[\d٠-٩]|استثمار|ميزانية|مليون|محفظة|تجاري|شركة|επένδυση|προϋπολογισ/i.test(lower)) setAtLeast("value", 3);
   if (/\b(today|tomorrow|this week|urgent|asap|deadline|soon|now)\b|اليوم|غدا|بكرة|عاجل|قريب|موعد نهائي|άμεσα|επείγον|αυτή την εβδομάδα/i.test(lower)) setAtLeast("timing", 4);
   if (/\b(i am the|i'm the|owner|director|decision maker|representing|company owner|founder|principal)\b|أنا المالك|مالك الشركة|صاحب الشركة|مؤسس الشركة|المدير|صاحب القرار|أمثل|ιδιοκτήτης|διευθυντής|εκπροσωπώ/i.test(lower)) setAtLeast("authority", 3);
   if (/\b(book|booking|appointment|schedule|meeting|call|next step|send details|how do we proceed)\b|حجز|موعد|اجتماع|مكالمة|الخطوة التالية|كيف نبدأ|ραντεβού|συνάντηση|επόμενο βήμα/i.test(lower) || ["booked", "confirmed"].includes(String(booking?.status || "").toLowerCase())) setAtLeast("readiness", 4);

@@ -21,7 +21,17 @@ const { containsRawSecretValue } = require("./sensitiveData");
 // of these presets — they always run, which is what makes the legacy and
 // Agent paths enforce identical safety behavior even though they differ in
 // how long or how terse a reply may be.
-const MODEL_DRAFT_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 500 });
+// W1.4.3 — the ORDINARY budget. This was `maxChars: 500` alongside
+// `maxSentences: 5`, which is self-contradictory: five well-formed sentences do
+// not fit in 500 characters, and the mismatch is worse in Arabic and Greek where
+// the same content runs longer than English. The practical effect was that a
+// correct, compliant five-sentence reply got rejected as "too_long" and the
+// model was retried until it produced something thinner than the rules asked
+// for. 700 makes the sentence ceiling actually reachable.
+//
+// Deliberately NOT raised further: the point of the budget is brevity, and
+// EXPANDED (1800) already exists for an explicit request for detail.
+const MODEL_DRAFT_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 700 });
 const AGENT_CLARIFY_THRESHOLDS = Object.freeze({ minSentences: 0, maxSentences: 2, maxQuestions: 1, maxChars: 300 });
 // Legacy deterministic replies (messageRouter.js) are allowed more room: many
 // are multi-part (e.g. an existing-client notice plus a follow-up question)
@@ -58,15 +68,32 @@ const INTERNAL_REASONING_PATTERNS = Object.freeze([
 const PROHIBITED_CLAIM_PATTERNS = Object.freeze([
   /\b(?:guarantee|guaranteed|certain approval|approved by the bank|will be approved|risk[- ]free|no risk)\b/i,
   /\b(?:we can secure|we will obtain|we can obtain)\b.{0,50}\b(?:permit|visa|residency|loan|approval|return|profit)\b/i,
-  /\b(?:guarante|garanti|مضمون|ضمان|موافقة مضمونة|εγγυώμαι|σίγουρη έγκριση)\b/i,
-  /\b(?:100\s*%|مئة بالمئة|100٪)\b/i,
+  // ⚠ THIS ARRAY DOES NOT MATCH ANYTHING. Verified 2026-10-09.
+  //
+  // `validateResponse` below calls refalcoAnswer's `containsProhibitedClaim` and
+  // uses `PROHIBITED_CLAIM_PATTERNS[0]` only as a LABEL for the failure reason.
+  // No element of this array is ever tested against a response. The live
+  // enforcement — including the Arabic and Greek guarantee terms — lives in
+  // `containsProhibitedClaim` in refalcoAnswer.js, and that is where a new
+  // prohibited claim must be added.
+  //
+  // The array is kept rather than deleted because it documents the intended
+  // claim taxonomy and something outside this repo may import it (it is
+  // exported). The \b placement below was also fixed in passing so it is not
+  // copied as a template: \b is ASCII-only in JavaScript, so the original
+  // `\b(?:guarante|…|مضمون|…)\b` could not have matched even if it were wired
+  // up, and `100\s*%\b` could never match in any language because `%` is not a
+  // word character.
+  /\b(?:guarante|garanti)/i,
+  /(?:مضمون|ضمان|موافقة مضمونة|εγγυώμαι|σίγουρη έγκριση)/iu,
+  /\b100\s*(?:%|٪)|(?:مئة بالمئة|مائة بالمائة|εκατό τοις εκατό)/iu,
   /\b(?:straightforward|standard|ordinary|simple)\s+(?:business\s+)?activity\b.{0,70}\b(?:suitable|eligible|approved|should fit|will fit|is allowed|can proceed)\b/i,
   /\b(?:activity|business activity|industry)\b.{0,60}\b(?:is suitable|is eligible|is approved|should fit|will fit|is allowed)\b/i,
   /(?:نشاط|النشاط).{0,50}(?:مناسب|مقبول|معتمد|ما في مشكلة|يمكن البدء)|(?:δραστηριότητα|κλάδος).{0,50}(?:κατάλληλη|επιλέξιμη|εγκρίνεται|μπορεί να προχωρήσει)/iu
 ]);
 
 const UNCONSENTED_CONTACT_COMMITMENT = /\b(?:i|we)\s+(?:will|shall|are going to)\s+(?:contact|call|follow up|reach out|send|share)\b|\b(?:you(?:'ll|\s+will)\s+be\s+notified|we(?:'ll|\s+will)\s+(?:notify|let you know)|you\s+will\s+hear\s+back)\b|\b(?:i|we)\s+(?:have\s+)?(?:asked|requested|sent)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b|\b(?:i|we)(?:'|’|’)ve\s+(?:asked|requested|sent)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b|\b(?:they|he|she|the\s+team|the\s+specialist|a\s+specialist|someone)\s+will\s+(?:contact|call|follow up|reach out)\s+you\b|\b(?:i|we)\s+can\s+(?:pass|forward|send|share|arrange)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b|(?:الفريق|المختص|المختصين|حدا|شخص).{0,20}(?:رح|سوف|سيقوم|ستقوم)\s*(?:يتواصل|يتابع|يتصل)|(?:رح|سوف|سيقوم|ستقوم)\s*(?:الفريق|المختص|المختصين|حدا|شخص)?\s*(?:يتواصل|يتابع|يتصل)|(?:رح|سوف|سيتم|سنقوم|سنبلغك).{0,24}(?:إبلاغك|إعلامك|نخبرك|نبلغك)|(?:η ομάδα|ο ειδικός|θα)\s*(?:θα\s*)?(?:επικοινωνήσει|καλέσει|αναλάβει)|(?:θα επικοινωνήσει|θα σας καλέσει|θα αναλάβει|θα ενημερωθείτε|θα σας ενημερώσουμε|θα λάβετε ενημέρωση|θα μάθετε)|(?:ζητώ|ζήτησα|έχω ζητήσει|υπέβαλα αίτημα).{0,80}(?:ειδικ|ομάδα)/iu;
-const HANDOVER_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)ll\s+(?:pass|forward|log|record|note|submit|send|share|arrange|request)\b.{0,100}\b(?:specialist|team|contact|follow.?up|request|interest|review|inquiry)\b|\b(?:i|we)(?:'|’|’)ve\s+(?:logged|recorded|noted|submitted)\b.{0,100}\b(?:request|interest|specialist|team|contact|follow.?up|review)\b|\b(?:i|we)\s+(?:have\s+)?(?:logged|recorded|noted|submitted)\b.{0,100}\b(?:request|interest|specialist|team|contact|follow.?up|review)\b|\b(?:your|the)\s+(?:specialist(?:[- ]review)?|team|follow.?up|contact)\s+(?:request\s+)?(?:is|has been)\s+(?:already\s+)?(?:logged|recorded|noted|submitted|sent|arranged)\b|(?:رح|سوف|سنقوم).{0,30}(?:تسجيل|تدوين|إرسال|تحويل).{0,50}(?:طلب|مختص|متابعة)|(?:طلبك|طلب المتابعة|طلب المختص).{0,50}(?:تسجل|انرسل|تم تسجيل|تم إرساله)|(?:το αίτημά σας|το αίτημα παρακολούθησης).{0,60}(?:καταγράφηκε|στάλθηκε|προωθήθηκε|ανατέθηκε)|\bθα\s+(?:σημειώσω|καταγράψω|προωθήσω|στείλω)\b.{0,80}\b(?:ειδικό|ομάδα|αίτημα|ενδιαφέρον)\b/iu;
+const HANDOVER_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)ll\s+(?:pass|forward|log|record|note|submit|send|share|arrange|request)\b.{0,100}\b(?:specialist|team|contact|follow.?up|request|interest|review|inquiry)\b|\b(?:i|we)(?:'|’|’)ve\s+(?:logged|recorded|noted|submitted)\b.{0,100}\b(?:request|interest|specialist|team|contact|follow.?up|review)\b|\b(?:i|we)\s+(?:have\s+)?(?:logged|recorded|noted|submitted)\b.{0,100}\b(?:request|interest|specialist|team|contact|follow.?up|review)\b|\b(?:your|the)\s+(?:specialist(?:[- ]review)?|team|follow.?up|contact)\s+(?:request\s+)?(?:is|has been)\s+(?:already\s+)?(?:logged|recorded|noted|submitted|sent|arranged)\b|(?:رح|سوف|سنقوم).{0,30}(?:تسجيل|تدوين|إرسال|تحويل).{0,50}(?:طلب|مختص|متابعة)|(?:طلبك|طلب المتابعة|طلب المختص).{0,50}(?:تسجل|انرسل|تم تسجيل|تم إرساله)|(?:το αίτημά σας|το αίτημα παρακολούθησης).{0,60}(?:καταγράφηκε|στάλθηκε|προωθήθηκε|ανατέθηκε)|θα\s+(?:σημειώσω|καταγράψω|προωθήσω|στείλω).{0,80}(?:ειδικό|ομάδα|αίτημα|ενδιαφέρον)/iu;
 // REFAL-AGENT-009. Same shape and placement as HANDOVER_ACTION_CLAIM, for the
 // booking equivalent: any claim that a meeting has actually been booked,
 // confirmed or scheduled. Gated by options.allowVerifiedBookingClaim, which is
@@ -78,7 +105,7 @@ const HANDOVER_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)ll\s+(?:pass|forward|log|r
 // first-person-only pattern is not enough.
 const BOOKING_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)(?:ll|ve)\s+(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arrange|arranged|set\s+up)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking|time)\b|\b(?:i|we)\s+(?:will|have|had)?\s*(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arranged)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking)\b|\b(?:your|the|this|that)\s+(?:appointment|meeting|booking|slot|call|session)\b[^.?!؟]{0,40}?\b(?:is|are|was|has\s+been|have\s+been)\s+(?:now\s+)?(?:booked|confirmed|scheduled|reserved|arranged|set|locked\s+in)\b|\byou(?:'|’|’)re\s+(?:all\s+set|confirmed|booked|scheduled)\b|\byou\s+are\s+(?:all\s+set|confirmed|booked|scheduled)\b|\b(?:it|that|this)(?:'|’|’)s\s+(?:now\s+)?(?:confirmed|booked|scheduled|reserved)\b|\b(?:booked|confirmed|scheduled)\s+you\s+(?:in|for)\b|(?:تم|تمّ)\s*(?:تأكيد|حجز|تثبيت|ترتيب)\s*(?:ال)?(?:موعد|موعدك|اجتماع|اجتماعك|الموعد|الاجتماع)|(?:موعدك|الموعد|اجتماعك|الاجتماع)\s*(?:مؤكد|محجوز|مثبّت|مثبت|تأكد|انحجز)|(?:حجزت|حجزنا|أكدت|اكدت|ثبتت|ثبّت)\s*(?:لك|لكم)?\s*(?:ال)?(?:موعد|اجتماع)|(?:رح|سوف|سأ|سن)\s*(?:أحجز|احجز|نحجز|حجز|أؤكد|اؤكد|نؤكد|ؤكد|أثبت|اثبت)|(?:το\s+)?ραντεβού\s*(?:σας)?\s*(?:έχει\s+)?(?:επιβεβαιώθηκε|επιβεβαιωθεί|επιβεβαιωμένο|κλείστηκε|κλειστεί|κλεισμένο|προγραμματίστηκε|προγραμματιστεί|οριστικοποιήθηκε|οριστικοποιηθεί)|(?:έκλεισα|κλείσαμε|επιβεβαίωσα|επιβεβαιώσαμε|έχω κλείσει)\s+(?:το\s+)?ραντεβού|θα\s+(?:κλείσω|κλείσουμε|επιβεβαιώσω|επιβεβαιώσουμε)\s+(?:το\s+)?ραντεβού/iu;
 const CONTACT_CAPABILITY_OFFER = /\b(?:i|we)\s+can\s+(?:pass|forward|send|share|arrange)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b/iu;
-const EXPLICIT_PERMISSION_QUESTION = /(?:\b(?:would you like|do you want|shall i|should i)\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|that|this)\b|\bif you(?:'d| would) like\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|arrange)\b|\b(?:تحب|إذا بتحب|إذا بدك|هل ترغب|هل تود)\b.{0,80}(?:تواصل|اتصال|موعد|المختص|فريق|رتب|رتّب)|\b(?:θα θέλατε|αν θέλετε|θέλετε)\b.{0,80}(?:επικοινων|κλήση|ειδικό|ραντεβού|κανονίσ))/iu;
+const EXPLICIT_PERMISSION_QUESTION = /(?:\b(?:would you like|do you want|shall i|should i)\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|that|this)\b|\bif you(?:'d| would) like\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|arrange)\b|(?:تحب|إذا بتحب|إذا بدك|هل ترغب|هل تود).{0,80}(?:تواصل|اتصال|موعد|المختص|فريق|رتب|رتّب)|(?:θα θέλατε|αν θέλετε|θέλετε).{0,80}(?:επικοινων|κλήση|ειδικό|ραντεβού|κανονίσ))/iu;
 
 function containsUnconsentedContactCommitment(text) {
   const value = String(text || "");
@@ -95,6 +122,51 @@ function sentenceCount(text) {
 function questionCount(text) {
   const value = String(text || "");
   return (value.match(/[?؟]/gu) || []).length + (value.match(/(?<=\p{Script=Greek});/gu) || []).length;
+}
+
+/**
+ * W1.4.2 — are the two questions in this text tightly coupled?
+ *
+ * Lives here rather than in goldenFormula.js to avoid a require cycle:
+ * goldenFormula already depends on this module for sentence/question counting,
+ * so the dependency may only run one way.
+ */
+function questionsAreCoupled(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (questionCount(value) !== 2) return false;
+
+  const firstMark = value.search(/[?؟]|(?<=\p{Script=Greek});/u);
+  if (firstMark === -1) return false;
+  const second = value.slice(firstMark + 1).trim();
+  if (!second) return false;
+
+  // The Greek branch uses a whitespace lookahead, NOT \b: \b is ASCII-only in
+  // JavaScript, so `/^(?:και|ή)\b/` can never match.
+  const conjunctionLed = /^(?:and|or)\b/iu.test(second)
+    || /^(?:و|أو)/u.test(second)
+    || /^(?:και|ή)(?=\s|$)/iu.test(second);
+  if (!conjunctionLed) return false;
+
+  // Being conjunction-led is NOT enough on its own, and assuming it was made
+  // this rule fail open in Arabic specifically: Arabic writes the conjunction
+  // attached to the following word (وامتى = "and when"), so almost any second
+  // Arabic question looks conjunction-led. "What is your budget? And when do you
+  // start?" would have slipped through as "coupled" in Arabic while being
+  // correctly rejected in English — the exact language asymmetry this codebase
+  // keeps getting bitten by.
+  //
+  // Genuine coupling narrows ONE decision, which in practice means the second
+  // question offers alternatives to choose between ("...residential or
+  // commercial?"). A second question that introduces a new subject is a second
+  // topic, however it is introduced.
+  const offersAlternatives = /\bor\b/iu.test(second)
+    || /(?:^|\s)(?:أو|او)(?:\s|$)/u.test(second)
+    || /(?:^|\s)ή(?:\s|$)/iu.test(second);
+  if (!offersAlternatives) return false;
+
+  // A long second question is a second topic however it is introduced.
+  return second.length <= 70;
 }
 
 function findPattern(text, patterns) {
@@ -120,7 +192,21 @@ function validateResponse(response, options = {}) {
   if (text.length > maxChars) reasons.push("too_long");
   if (sentences < minSentences) reasons.push("too_few_sentences");
   if (sentences > maxSentences) reasons.push("too_many_sentences");
-  if (questions > maxQuestions) reasons.push("too_many_questions");
+  // W1.4.2 — the One Question Rule, with the coupling exception.
+  //
+  // Two questions are permitted ONLY when the second is a short, conjunction-led
+  // follow-on that narrows the same decision ("Which city? And is it
+  // residential or commercial?"). A second topic is an interrogation however it
+  // is phrased, and three questions never qualify.
+  //
+  // This is a REJECTION, not a warning: "too_many_questions" already fails the
+  // response, and the exception only ever widens the allowance from one to two.
+  // Note a single question mark joining two interrogatives ("Which city, and is
+  // it residential?") counts as ONE question and never needs the exception.
+  if (questions > maxQuestions) {
+    const coupledAllowed = maxQuestions === 1 && questions === 2 && questionsAreCoupled(text);
+    if (!coupledAllowed) reasons.push("too_many_questions");
+  }
   if (internalReasoning) reasons.push("internal_reasoning");
   if (prohibitedClaim) reasons.push("prohibited_claim");
   if (unconsentedContactCommitment) reasons.push("unconsented_contact_commitment");
@@ -225,6 +311,7 @@ module.exports = {
   containsUnconsentedContactCommitment,
   sentenceCount,
   questionCount,
+  questionsAreCoupled,
   validateResponse,
   validateGeneratedResponse: validateResponse,
   safeFallbackData,

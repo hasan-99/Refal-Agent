@@ -203,7 +203,7 @@ export default function Performance({ isAdmin = false }) {
             <span className={`performance-status ${status}`}>{TEMPERATURE_LABELS[status]}</span>
             <span className="performance-workflow-inline">{workflow.intent !== "unknown" ? workflow.intent : workflow.classification}{workflow.handoverRequired ? " · handover" : ""}</span>
             <span className="performance-lead-activity">{Number(lead.conversationCount || 0).toLocaleString()} conversations</span>
-            <span className="performance-read-only">{workflow.complaint ? "Complaint review" : workflow.existingClient ? "Existing-client verification" : lead.leadTemperatureReason === "appointment_booked" ? "Appointment booked" : lead.leadTemperatureReason === "appointment_interest" ? "Asked about an appointment" : lead.leadTemperatureReason === "refalco_interest" ? "Interested in the business" : lead.leadTemperatureReason === "explicit_decline" ? "Declined further contact" : "No clear signal yet"}</span>
+            <span className="performance-read-only">{workflow.complaint ? "Complaint review" : workflow.existingClient ? "Existing-client verification" : lead.leadTemperatureReason === "appointment_booked" ? "Appointment booked" : lead.leadTemperatureReason === "appointment_interest" ? "Asked about an appointment" : lead.leadTemperatureReason === "refalco_interest" ? "Interested in Refalco Group" : lead.leadTemperatureReason === "explicit_decline" ? "Declined further contact" : "No clear signal yet"}</span>
           </article>;
         })}
       </div> : <p className="performance-state">{leads.length ? "No leads match this search." : "No lead records yet."}</p>}

@@ -163,7 +163,7 @@ function normalizeDigits(value) {
 // Arabic/Greek currency-word alternative is therefore its own branch with NO
 // trailing `\b`, while the English/symbol branches keep theirs (safe:
 // Latin script is ASCII-\w).
-const CURRENCY_NUMBER_RE = /(?:[$€£]\s?([\d٠-٩][\d٠-٩,.]*))|(?:\b(?:EUR|USD|GBP)\s?([\d٠-٩][\d٠-٩,.]*))|(?:\b([\d٠-٩][\d٠-٩,.]*)\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)\b)|(?:([\d٠-٩][\d٠-٩,.]*)\s?(?:يورو|دولار|جنيه|ευρώ))/giu;
+const CURRENCY_NUMBER_RE = /(?:[$€£]\s?([\d٠-٩][\d٠-٩,.]*))|(?:\b(?:EUR|USD|GBP)\s?([\d٠-٩][\d٠-٩,.]*))|(?:(?<![\p{L}\p{N}])([\d٠-٩][\d٠-٩,.]*)\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?)(?![\p{L}\p{N}]))|(?:([\d٠-٩][\d٠-٩,.]*)\s?(?:يورو|دولار|جنيه|ευρώ))/giu;
 
 function extractPriceValues(text) {
   const values = [];
@@ -190,7 +190,7 @@ function containsUnsupportedPriceValueClaim(text, evidenceItems = []) {
 // A price clause ("for EUR 1500") is stripped out of a captured offer-list
 // fragment before splitting on commas/"and" so the price itself (already
 // checked separately above) doesn't get misread as one of the listed items.
-const PRICE_CLAUSE_RE = /\b(?:for|at)\s+(?:[$€£]\s?[\d٠-٩][\d٠-٩,.]*|(?:EUR|USD|GBP)\s?[\d٠-٩][\d٠-٩,.]*|[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?))\b/giu;
+const PRICE_CLAUSE_RE = /\b(?:for|at)\s+(?:[$€£]\s?[\d٠-٩][\d٠-٩,.]*|(?:EUR|USD|GBP)\s?[\d٠-٩][\d٠-٩,.]*|[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?))(?![\p{L}\p{N}])/giu;
 const OFFER_LIST_VERB_RE = /\b(?:offers?|provides?)\b\s+([^.!?؟]+)/giu;
 const LIST_SPLIT_RE = /,|\band\b|&/giu;
 // Deliberately English-only (see the ticket's "avoid universal semantic
@@ -293,7 +293,11 @@ function containsUnsupportedBrandHistoryClaim(text, evidenceItems = []) {
   return false;
 }
 
-const PERCENTAGE_RE = /\b(\d+(?:\.\d+)?)\s?%|\b(\d+(?:\.\d+)?)\s*(?:بالمئة|بالمائة)|\b(\d+(?:\.\d+)?)\s*(?:τοις\s*εκατό)/giu;
+// `\d` is ASCII-only and `` cannot match before an Arabic-Indic digit, so
+// a yield written "١٢٪" — or even "12٪" with the Arabic percent sign —
+// bypassed the grounding percentage check completely. Both the digit class and
+// the percent sign now cover Arabic, and the boundary is Unicode-aware.
+const PERCENTAGE_RE = /(?<![\p{L}\p{N}])([\d٠-٩]+(?:[.٫][\d٠-٩]+)?)\s?[%٪]|(?<![\p{L}\p{N}])([\d٠-٩]+(?:[.٫][\d٠-٩]+)?)\s*(?:بالمئة|بالمائة)|(?<![\p{L}\p{N}])([\d٠-٩]+(?:\.[\d٠-٩]+)?)\s*(?:τοις\s*εκατό)/giu;
 // Same \b-vs-non-Latin-script fix as CURRENCY_NUMBER_RE above: no trailing
 // \b after the Arabic/Greek unit words.
 const DURATION_RE = /\b(\d+)\s*(?:business\s+)?(?:days?|weeks?|months?|years?)\b|\b(\d+)\s*(?:يوم|أيام|أسبوع|أسابيع|شهر|أشهر|سنة|سنوات)|\b(\d+)\s*(?:ημέρ\w*|εβδομάδ\w*|μήν\w*|μήνες|χρόν\w*)/giu;

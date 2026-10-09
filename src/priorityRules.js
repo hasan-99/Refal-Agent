@@ -1,7 +1,7 @@
 // Several English alternatives below ("media", "press", "land", "my account",
 // "my contract") used to be bare words/phrases that matched any mention,
 // not just the complaint/account/development context they were meant to
-// detect (e.g. "What social media accounts does the business have?" falsely
+// detect (e.g. "What social media accounts does Refalco Group have?" falsely
 // triggered an urgent severe_complaint). Each now requires the qualifying
 // context it was actually meant to catch.
 const TRIGGERS = Object.freeze({

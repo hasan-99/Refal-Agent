@@ -19,7 +19,7 @@ const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./oppor
 const { assessRedFlags } = require("./redFlagRules");
 const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
 
-const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|\b(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ)\b.{0,100}\b(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω)\b.{0,40}\b(?:αργότερα|μετά)\b/iu;
+const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
 const GREEKLISH_CLOSURE = /^(?=.*\bden\s+(?:exo|eho)\s+kati\s+allo\b)(?=.*\b(?:xreiaso|xreiazomai)\s+kati\b)(?=.*\btha\s+to\s+zit(?:iso|so)\b).{1,260}$/iu;
 
 const HELP = [
@@ -27,7 +27,7 @@ const HELP = [
   "Commands:",
   "profile - show your saved details",
   "reset - clear your saved details",
-  "Ask a the business question or request a meeting."
+  "Ask a Refalco Group question or request a meeting."
 ].join("\n");
 
 async function recordHistory(store, userId, message, response, extra) {
@@ -205,7 +205,7 @@ function helpText(language) {
   if (language === "greek") return [
     "Η RAFA απαντά στο WhatsApp από τον συνδεδεμένο εταιρικό αριθμό.", "Εντολές:",
     "profile - εμφάνιση των αποθηκευμένων στοιχείων σας", "reset - διαγραφή των αποθηκευμένων στοιχείων σας",
-    "Ρωτήστε για τη the business ή ζητήστε μια συνάντηση."
+    "Ρωτήστε για τη Refalco Group ή ζητήστε μια συνάντηση."
   ].join("\n");
   return HELP;
 }
@@ -351,7 +351,7 @@ function resultWithHistory({ response, user, metadata, handover, history }) {
 function existingClientReply(language, state) {
   if (language === "greek") {
     if (state.state === "authenticated") return "Η ταυτότητά σας επαληθεύτηκε. Μπορώ πλέον να βοηθήσω με πληροφορίες που αφορούν τον λογαριασμό σας.";
-    if (state.state === "locked") return "Δεν ήταν δυνατή η επαλήθευση. Για την ασφάλειά σας, επικοινωνήστε με την ομάδα της the business μέσω εγκεκριμένου καναλιού.";
+    if (state.state === "locked") return "Δεν ήταν δυνατή η επαλήθευση. Για την ασφάλειά σας, επικοινωνήστε με την ομάδα της Refalco Group μέσω εγκεκριμένου καναλιού.";
     return "Για την προστασία του απορρήτου σας, παρακαλώ δώστε το εγκεκριμένο αναγνωριστικό ή στοιχείο επαλήθευσης του λογαριασμού σας. Δεν μπορώ να αποκαλύψω στοιχεία πριν από την επαλήθευση.";
   }
   if (language === "arabic") {
@@ -368,9 +368,9 @@ function isSafeProfileUpdateChannelQuestion(text) {
 
 function safeProfileUpdateChannelReply(language) {
   return localized(language, {
-    english: "I can’t confirm a specific secure update channel from here. Use the business’s official published contact route and ask for a written profile update; please don’t send sensitive details in this chat.",
+    english: "I can’t confirm a specific secure update channel from here. Use Refalco Group’s official published contact route and ask for a written profile update; please don’t send sensitive details in this chat.",
     arabic: "ما عندي معلومة مؤكدة عن قناة آمنة محددة لتحديث ملفك. استخدم وسيلة التواصل الرسمية المنشورة لدى الشركة واطلب التحديث كتابةً، ولا تبعت بيانات حساسة هون.",
-    greek: "Δεν μπορώ να επιβεβαιώσω συγκεκριμένο ασφαλές κανάλι ενημέρωσης από εδώ. Χρησιμοποιήστε τα επίσημα δημοσιευμένα στοιχεία επικοινωνίας της the business και ζητήστε γραπτή ενημέρωση· μην στείλετε ευαίσθητα στοιχεία σε αυτή τη συνομιλία."
+    greek: "Δεν μπορώ να επιβεβαιώσω συγκεκριμένο ασφαλές κανάλι ενημέρωσης από εδώ. Χρησιμοποιήστε τα επίσημα δημοσιευμένα στοιχεία επικοινωνίας της Refalco Group και ζητήστε γραπτή ενημέρωση· μην στείλετε ευαίσθητα στοιχεία σε αυτή τη συνομιλία."
   });
 }
 
@@ -619,9 +619,9 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
 
   if (classification.intents.includes(INTENTS.PROJECT_ENQUIRY)) {
     response = localized(language, {
-      english: "I can help you explore whether the project may fit the business’s areas of work, though suitability needs a specialist review. What kind of project are you considering?",
+      english: "I can help you explore whether the project may fit Refalco Group’s areas of work, though suitability needs a specialist review. What kind of project are you considering?",
       arabic: "أستطيع مساعدتك في استكشاف مدى ارتباط الفكرة بمجالات عمل الشركة، أما ملاءمتها فتحتاج إلى مراجعة مختص. ما نوع المشروع الذي تفكر فيه؟",
-      greek: "Μπορώ να βοηθήσω να εξετάσουμε αν το έργο σχετίζεται με τους τομείς δραστηριότητας της the business· η καταλληλότητα χρειάζεται αξιολόγηση ειδικού. Τι είδους έργο σκέφτεστε;"
+      greek: "Μπορώ να βοηθήσω να εξετάσουμε αν το έργο σχετίζεται με τους τομείς δραστηριότητας της Refalco Group· η καταλληλότητα χρειάζεται αξιολόγηση ειδικού. Τι είδους έργο σκέφτεστε;"
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
@@ -812,9 +812,9 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const followUpDeclined = storedConsentState === "denied" || storedConsentState === "revoked";
   if (priority.handoverRequired && !followUpDeclined && !user.profile?.conversationPreferences?.noProactiveBookingOrContact && !classification.intents.includes(INTENTS.COMPANY_FORMATION)) {
     response = localized(language, {
-      english: "This sounds like a substantial business matter. I can help with the basics here, or—with your permission—ask a the business specialist to follow up. Which would you prefer?",
+      english: "This sounds like a substantial business matter. I can help with the basics here, or—with your permission—ask a Refalco Group specialist to follow up. Which would you prefer?",
       arabic: "واضح إن الموضوع مهم. فيني ساعدك بالمعلومات الأساسية هون، أو إذا بتحب أطلب من مختصّ من الشركة يتابع معك. شو بتفضّل؟",
-      greek: "Ακούγεται σημαντικό επιχειρηματικό θέμα. Μπορώ να σας δώσω βασικές πληροφορίες εδώ ή, αν θέλετε, να ζητήσω επικοινωνία από ειδικό της the business. Τι προτιμάτε;"
+      greek: "Ακούγεται σημαντικό επιχειρηματικό θέμα. Μπορώ να σας δώσω βασικές πληροφορίες εδώ ή, αν θέλετε, να ζητήσω επικοινωνία από ειδικό της Refalco Group. Τι προτιμάτε;"
     });
     const metadata = { ...prepared.metadata, specialistOffer: { offered: true, consentRequired: true, offeredAt: new Date().toISOString() } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
@@ -863,7 +863,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
   }
 
-  return { response: localized(language, { english: "I’m checking the approved the business information for you.", arabic: "أتحقق لك من معلومات الشركة المعتمدة.", greek: "Ελέγχω τις εγκεκριμένες πληροφορίες της the business για εσάς." }), shouldUseAi: true, user, metadata: prepared.metadata };
+  return { response: localized(language, { english: "I’m checking the approved Refalco Group information for you.", arabic: "أتحقق لك من معلومات الشركة المعتمدة.", greek: "Ελέγχω τις εγκεκριμένες πληροφορίες της Refalco Group για εσάς." }), shouldUseAi: true, user, metadata: prepared.metadata };
 }
 
 async function routeMessage({ userId, text, store }) {

@@ -17,7 +17,7 @@ const SOURCE_TICKET = "REFAL-AGENT-015";
 
 const BENCHMARK_SCENARIOS = [
   // --- Group A: information / RAG ---
-  { id: "A01", sourceId: "A01", locale: "english", category: "information", featureTags: ["rag"], message: "What services does the business provide?" },
+  { id: "A01", sourceId: "A01", locale: "english", category: "information", featureTags: ["rag"], message: "What services does Refalco Group provide?" },
   { id: "A02", sourceId: "A02", locale: "arabic", category: "information", featureTags: ["rag"], message: "قديش تكلفة تأسيس الشركة؟" },
   { id: "A03", sourceId: "A03", locale: "greek", category: "information", featureTags: ["rag", "no_evidence"], message: "Προσφέρετε υπηρεσίες φύλαξης κρυπτονομισμάτων;" },
   { id: "A04", sourceId: "A04", locale: "english", category: "information", featureTags: ["rag"], message: "What is the price and how long does company formation take?" },
@@ -45,7 +45,7 @@ const BENCHMARK_SCENARIOS = [
   ] },
 
   // --- Group E: booking ---
-  { id: "E01", sourceId: "E01", locale: "english", category: "booking", featureTags: ["booking"], message: "Can we meet Monday at 10:00 to discuss the business services?" },
+  { id: "E01", sourceId: "E01", locale: "english", category: "booking", featureTags: ["booking"], message: "Can we meet Monday at 10:00 to discuss Refalco Group services?" },
   { id: "E02", sourceId: "E02", locale: "arabic", category: "booking", featureTags: ["booking"], message: "ممكن نحجز اجتماع الاثنين الساعة 10:00؟", bookingBusy: true },
   { id: "E06", sourceId: "E06", locale: "english", category: "booking", featureTags: ["booking"], message: "I work in bookkeeping and I want to recall a detail from a textbook." },
 

@@ -20,7 +20,7 @@ test("owner review email is an admin-facing dashboard notice and never claims th
   assert.match(body, /waiting for admin review/);
   assert.match(body, /not confirmed/);
   assert.match(body, /dashboard\.example\.test/);
-  assert.doesNotMatch(body, /Sources:|the business\.com/);
+  assert.doesNotMatch(body, /Sources:|Refalco Group\.com/);
 });
 
 test("durable outbox sends owner email and records its message ID", async () => {

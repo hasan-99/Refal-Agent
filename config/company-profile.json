@@ -1,0 +1,31 @@
+{
+  "_comment": "P1.1 / W1.1.1. REFAL's identity, not its facts. Identity may be stated freely (MB: REFAL is Refalco Group's digital business agent); the four credibility NUMBERS below are facts and stay evidence-gated through the company-profile knowledge source built in P3.7, exactly as MB-O5 uses them. Sourced from 'newplan/Master Brain & Operating Rules Manual - REFAL AI.txt'.",
+
+  "legalName": "Refalco Group Ltd",
+  "brand": "REFAL",
+  "groupName": "Refalco Group",
+
+  "foundedYear": 2000,
+  "yearsExperience": 20,
+  "developmentProjects": 47,
+  "totalProjects": 400,
+
+  "_numbersComment": "The master brain states 'أكثر من 20 عاماً' and 'أكثر من 400 مشروع' — MORE THAN 20 years and MORE THAN 400 projects — while 47 development projects is stated exactly. Rendering 400 as a flat figure would understate and misstate the source, so the minimum flags below must be honoured wherever these are surfaced.",
+  "yearsExperienceIsMinimum": true,
+  "developmentProjectsIsMinimum": false,
+  "totalProjectsIsMinimum": true,
+
+  "jurisdiction": "Cyprus",
+  "timezone": "Europe/Nicosia",
+  "cities": ["Limassol", "Larnaca", "Paphos", "Nicosia"],
+  "departments": [
+    "Corporate",
+    "Tax",
+    "Real Estate",
+    "Residency",
+    "Construction",
+    "Customer Service",
+    "Compliance"
+  ],
+  "languages": ["ar", "en", "el"]
+}

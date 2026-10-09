@@ -96,9 +96,9 @@ function resetCalendarEnv(t, configured) {
 
 test("[014-1] simple information request: RAG used, no booking/handover, <=1 question, EN/AR/EL", async () => {
   const CASES = {
-    english: { msg: "What services does the business provide?", answer: "the business provides company formation, accounting, and tax filing services in Cyprus." },
+    english: { msg: "What services does Refalco Group provide?", answer: "Refalco Group provides company formation, accounting, and tax filing services in Cyprus." },
     arabic: { msg: "شو الخدمات يلي بتقدمها الشركة؟", answer: "الشركة بتقدم خدمات تأسيس الشركات والمحاسبة وتقديم الإقرارات الضريبية في قبرص." },
-    greek: { msg: "Ποιες υπηρεσίες προσφέρει η the business;", answer: "Η the business προσφέρει υπηρεσίες σύστασης εταιρειών, λογιστικής και φορολογικών δηλώσεων στην Κύπρο." }
+    greek: { msg: "Ποιες υπηρεσίες προσφέρει η Refalco Group;", answer: "Η Refalco Group προσφέρει υπηρεσίες σύστασης εταιρειών, λογιστικής και φορολογικών δηλώσεων στην Κύπρο." }
   };
   for (const [locale, { msg, answer }] of Object.entries(CASES)) {
     // REFAL-AGENT-028: the new factual-grounding gate reads ONLY
@@ -280,13 +280,13 @@ test("[014-10] a booking request flows to pending-review in the customer's own l
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss the business services", confirm: "yes", expect: /appointment request has been sent for review/i },
+    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss Refalco Group services", confirm: "yes", expect: /appointment request has been sent for review/i },
     arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات الشركة", confirm: "نعم", expect: /طلب الموعد للمراجعة/ },
     // normalizeArabicBookingText translates Arabic weekday words before
     // chrono parsing; no equivalent Greek word-normalizer exists yet (a
     // real, separate gap documented in the progress doc, not fixed here),
     // so the Greek fixture uses an explicit date chrono can parse directly.
-    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της the business", confirm: "ναι", expect: /αίτημα ραντεβού σας στάλθηκε για έλεγχο/ }
+    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της Refalco Group", confirm: "ναι", expect: /αίτημα ραντεβού σας στάλθηκε για έλεγχο/ }
   };
   for (const [locale, { start, details, confirm, expect }] of Object.entries(CASES)) {
     const user = { id: `booking-${locale}`, phone: "35799000000", profile: { name: "Test" }, booking: null };
@@ -320,7 +320,7 @@ test("[014-11] a calendar access failure never claims success, in the customer's
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { text: "I'd like to book a meeting", expect: /cannot currently access the business's calendar/i },
+    english: { text: "I'd like to book a meeting", expect: /cannot currently access Refalco Group's calendar/i },
     arabic: { text: "أريد حجز اجتماع", expect: /تعذر الوصول إلى تقويم الشركة/ },
     greek: { text: "Θέλω να κλείσω ραντεβού", expect: /Δεν είναι δυνατή αυτή τη στιγμή η πρόσβαση στο ημερολόγιο/ }
   };
@@ -493,17 +493,20 @@ test("[014-21/22/23] a short farewell reply needs no follow-up question and pass
   }
 });
 
-test("[014-21/22/23] KNOWN BUG (deferred, not fixed in this ticket): the cron-level goodbye detector only reliably works for English — Arabic is also silently broken, Greek is entirely unsupported", () => {
+test("[014-21/22/23] FIXED 2026-10-09: the goodbye detector now works in all three languages", () => {
+  // This test previously asserted the BUG: isNaturalConversationEnd wrapped
+  // every alternative in \b, and \b is ASCII-only in JavaScript, so the Arabic
+  // terms were unreachable dead patterns rather than a working EN/AR detector.
+  // Greek was absent entirely. REFAL-AGENT-023 is now closed: the Latin half
+  // keeps \b, the Arabic half drops it, and Greek was added.
   assert.equal(isNaturalConversationEnd("Thanks, bye!"), true);
-  // isNaturalConversationEnd's regex wraps every alternative in \b without
-  // the 'u' flag. In non-unicode mode \b only fires at a transition between
-  // an ASCII \w character and a non-\w character; Arabic letters are never
-  // \w in that mode, so \b can never match adjacent to Arabic script at all
-  // — the Arabic terms in this regex are unreachable dead patterns, not a
-  // working EN/AR detector. This is a deeper bug than "Greek is missing".
-  assert.equal(isNaturalConversationEnd("شكراً، مع السلامة"), false);
-  // Greek terms are not present in the pattern at all (a separate gap).
-  assert.equal(isNaturalConversationEnd("Ευχαριστώ, αντίο"), false);
+  assert.equal(isNaturalConversationEnd("شكراً، مع السلامة"), true);
+  assert.equal(isNaturalConversationEnd("Ευχαριστώ, αντίο"), true);
+
+  // And it must still NOT fire on an ordinary in-conversation message.
+  assert.equal(isNaturalConversationEnd("Can you tell me the price?"), false);
+  assert.equal(isNaturalConversationEnd("بدي أعرف السعر"), false);
+  assert.equal(isNaturalConversationEnd("Θέλω να μάθω την τιμή"), false);
 });
 
 // --- 24. Language switch mid-conversation ---------------------------------------------------
@@ -532,7 +535,7 @@ test("[014-24] the current message's language is authoritative each turn: EN->AR
 
 test("[014-25] a brand/technical English term inside a normal Arabic/Greek sentence does not flip detected language", () => {
   assert.equal(detectMessageLanguage("الشركة بتقدم خدمات تأسيس الشركات في قبرص عبر OpenRouter."), "arabic");
-  assert.equal(detectMessageLanguage("Η the business βρίσκεται στην Κύπρο και χρησιμοποιεί OpenRouter."), "greek");
+  assert.equal(detectMessageLanguage("Η Refalco Group βρίσκεται στην Κύπρο και χρησιμοποιεί OpenRouter."), "greek");
   // Documented limitation (not fixed here): a short reply DOMINATED by an
   // English clause/URL (more Latin script than Arabic/Greek script) can
   // still flip the majority-script vote — this is a known edge case flagged
@@ -564,10 +567,10 @@ test("[014-26] KNOWN BUG (deferred, not fixed in this ticket): complaint recap r
 
 test("[014-27] bare 'media'/'press'/'land'/'account' words do not force urgent/high priority, EN/AR/EL", () => {
   for (const text of [
-    "What social media accounts does the business have?",
+    "What social media accounts does Refalco Group have?",
     "Is land available near Limassol?",
     "شو حسابات السوشال ميديا تبع الشركة؟",
-    "Ποιοι λογαριασμοί μέσων κοινωνικής δικτύωσης έχει η the business;"
+    "Ποιοι λογαριασμοί μέσων κοινωνικής δικτύωσης έχει η Refalco Group;"
   ]) {
     const result = assessPriority({ text });
     assert.equal(result.level, "normal", text);
@@ -661,7 +664,7 @@ test("[014-telemetry] questionSignalsFrom emits raw counts, not a semantic 'unne
 // --- handover default-message localization (small fix made in this ticket) ------------------------
 
 test("[014-fix] proposeHandover's default customer message is localized, not English-only, EN/AR/EL", () => {
-  for (const [language, expect] of [["arabic", /شاركت هذا مع فريق الشركة/], ["greek", /μοιράστηκα με την αρμόδια ομάδα/], ["english", /shared this with the appropriate the business team/]]) {
+  for (const [language, expect] of [["arabic", /شاركت هذا مع فريق الشركة/], ["greek", /μοιράστηκα με την αρμόδια ομάδα/], ["english", /shared this with the appropriate Refalco Group team/]]) {
     const handover = createHandover({ input: "please connect me to a specialist", language });
     assert.match(handover.messages.customerMessage, expect, language);
   }

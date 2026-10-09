@@ -185,16 +185,16 @@ SCENARIOS.push({
   description: "Basic company-information question is answered via RAG with no booking/handover and no unnecessary question.",
   featureTags: ["rag"],
   run: () => runInfo({
-    message: "What services does the business provide?",
+    message: "What services does Refalco Group provide?",
     locale: "english",
     decisions: [
-      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "the business services" } },
-      { type: "respond", text: "the business provides company formation, accounting, and tax filing services in Cyprus." }
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "Refalco Group services" } },
+      { type: "respond", text: "Refalco Group provides company formation, accounting, and tax filing services in Cyprus." }
     ],
     // REFAL-AGENT-028: real matching content (not a bare placeholder) — the
     // new factual-grounding gate in agentLoop.js checks the scripted
     // "respond" text's claimed services against this evidence.
-    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "the business provides company formation, accounting, and tax filing services in Cyprus." }] } }
+    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "Refalco Group provides company formation, accounting, and tax filing services in Cyprus." }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["proposeHandover", "requestBookingAction"], ragUsed: true, maxQuestions: 0, fallbackUsed: false, languageMismatch: false }
 });
@@ -324,7 +324,7 @@ SCENARIOS.push({
     locale: "english",
     decisions: [
       { type: "tool", tool: "saveCustomerFact", args: { field: "businessActivity", value: "sells handmade furniture online", provenance: "customer_message" } },
-      { type: "respond", text: "Got it, noted the business activity. Here is what happens next." }
+      { type: "respond", text: "Got it, noted Refalco Group activity. Here is what happens next." }
     ],
     toolContext: { user: { id: "u1", profile: {} }, userId: "u1", store: { updateUser: async (_id, update) => update({ profile: {} }) } }
   }),
@@ -510,10 +510,10 @@ SCENARIOS.push({
   run: () => withCalendarEnv({ busy: [] }, async () => {
     const store = confirmingStore();
     const result = await runWithTools({
-      message: "Can we meet Monday at 10:00 to discuss the business services?",
+      message: "Can we meet Monday at 10:00 to discuss Refalco Group services?",
       locale: "english",
       decisions: [
-        { type: "tool", tool: "requestBookingAction", args: { ...SLOT, purpose: "Discuss the business services" } },
+        { type: "tool", tool: "requestBookingAction", args: { ...SLOT, purpose: "Discuss Refalco Group services" } },
         { type: "respond", text: "Your meeting request has been received; I will confirm the details once everything is finalized." }
       ],
       toolContext: bookingToolContext(store)
@@ -758,7 +758,7 @@ SCENARIOS.push({
 
 SCENARIOS.push({
   id: "G05", category: "language", locale: "arabic",
-  description: "A reply containing English brand/technical terms (the business, OpenRouter) inside an Arabic sentence is not a false language mismatch.",
+  description: "A reply containing English brand/technical terms (Refalco Group, OpenRouter) inside an Arabic sentence is not a false language mismatch.",
   featureTags: ["language"],
   run: () => runInfo({
     message: "مين انتو وشو بتستخدموا؟",

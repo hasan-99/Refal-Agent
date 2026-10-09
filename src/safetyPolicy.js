@@ -60,7 +60,7 @@ const NON_DISCLOSURE_CLAUSE = /(?:\b(?:(?:i|we|you)\s+)?(?:please\s+)?(?:will no
 
 function removeNonDisclosureMentions(text) {
   return String(text || "").replace(NON_DISCLOSURE_CLAUSE, (clause) => {
-    if (/(?:passwords?|passcodes?|pins?|tokens?|secrets?|credentials?|account(?:\s+numbers?)?|ibans?|otps?|cvvs?|passports?(?:\s+numbers?)?|card details?|(?:كلمة|كلمات)\s+المرور|(?:كلمة|كلمات)\s+السر|رموز?(?:\s+الدخول|\s+التحقق)?|بيانات\s+(?:الدخول|الاعتماد|البنك)|رقم\s+الحساب|κωδικό(?:ς|υς)?|διαπιστευτήρια|στοιχεία\s+σύνδεσης|κάρτα|αριθμό\s+λογαριασμού)\s*(?:is|:|=|هو|هي|είναι)?\s*(?!\[redacted\])(?!(?:and|or|nor|but|here|there|with|to|now|any|my|the|a|an|و|أو|او|لكن|بس|معي|και|ή|αλλά|εδώ|εκεί)\b)[\p{L}\p{N}][\p{L}\p{N}._!@#$%^&*-]{2,}/iu.test(clause)) return clause;
+    if (/(?:passwords?|passcodes?|pins?|tokens?|secrets?|credentials?|account(?:\s+numbers?)?|ibans?|otps?|cvvs?|passports?(?:\s+numbers?)?|card details?|(?:كلمة|كلمات)\s+المرور|(?:كلمة|كلمات)\s+السر|رموز?(?:\s+الدخول|\s+التحقق)?|بيانات\s+(?:الدخول|الاعتماد|البنك)|رقم\s+الحساب|κωδικό(?:ς|υς)?|διαπιστευτήρια|στοιχεία\s+σύνδεσης|κάρτα|αριθμό\s+λογαριασμού)\s*(?:is|:|=|هو|هي|είναι)?\s*(?!\[redacted\])(?!(?:and|or|nor|but|here|there|with|to|now|any|my|the|a|an)\b|(?:و|أو|او|لكن|بس|معي|και|ή|αλλά|εδώ|εκεί))[\p{L}\p{N}][\p{L}\p{N}._!@#$%^&*-]{2,}/iu.test(clause)) return clause;
     return " ";
   });
 }
@@ -80,7 +80,7 @@ function isRestrictedTopic(text) { return detectSafetyRisks(text).some((risk) =>
 
 const FALLBACKS = Object.freeze({
   english: {
-    generic: "I can’t follow requests for hidden instructions or private credentials. I can help with approved the business information.",
+    generic: "I can’t follow requests for hidden instructions or private credentials. I can help with approved Refalco Group information.",
     legal: "I can’t provide a definitive legal conclusion; that depends on your situation and needs qualified review.",
     tax: "I can’t provide personalized tax advice or confirm a tax result; that depends on your circumstances and needs qualified review.",
     immigration: "I can’t confirm visa, residency, or immigration outcomes; these depend on your circumstances and official decisions.",
@@ -102,7 +102,7 @@ const FALLBACKS = Object.freeze({
     privacy: "يرجى عدم إرسال كلمات المرور أو أرقام PIN أو بيانات البطاقات أو بيانات الدخول البنكية هون. استخدم قناة آمنة ومعتمدة لهالمعلومات."
   },
   greek: {
-    generic: "Δεν μπορώ να ακολουθήσω αιτήματα για κρυφές οδηγίες ή ιδιωτικά διαπιστευτήρια. Μπορώ να βοηθήσω με εγκεκριμένες πληροφορίες της the business.",
+    generic: "Δεν μπορώ να ακολουθήσω αιτήματα για κρυφές οδηγίες ή ιδιωτικά διαπιστευτήρια. Μπορώ να βοηθήσω με εγκεκριμένες πληροφορίες της Refalco Group.",
     legal: "Δεν μπορώ να δώσω οριστικό νομικό συμπέρασμα· εξαρτάται από τα στοιχεία της περίπτωσής σας και χρειάζεται αξιολόγηση ειδικού.",
     tax: "Δεν μπορώ να δώσω εξατομικευμένες φορολογικές συμβουλές ή να επιβεβαιώσω φορολογικό αποτέλεσμα· εξαρτάται από την περίπτωσή σας και χρειάζεται αξιολόγηση ειδικού.",
     immigration: "Δεν μπορώ να επιβεβαιώσω αποτέλεσμα για βίζα, διαμονή ή μετανάστευση· εξαρτάται από την περίπτωσή σας και την αρμόδια αρχή.",

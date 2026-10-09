@@ -70,7 +70,7 @@ test("Arabic recap paraphrases a customer's licensing question and preserves the
 test("a recap only adds approved company facts when retrieved evidence matches the stated request", () => {
   const history = [{ message: "We want remote company setup in Cyprus." }, { message: "It will be a software consultancy." }];
   const evidence = [{
-    source_name: "the business Services",
+    source_name: "Refalco Group Services",
     source_url: "https://example.invalid/services/",
     document_id: "services-doc",
     chunk_id: "company-setup",
@@ -81,16 +81,16 @@ test("a recap only adds approved company facts when retrieved evidence matches t
   const answer = buildLocalConversationRecap({
     history,
     evidence,
-    currentMessage: "Please recap what I told you and what the business's approved information confirms.",
+    currentMessage: "Please recap what I told you and what Refalco Group's approved information confirms.",
     language: "english"
   });
   assert.match(answer.response, /Approved information: Remote company setup in Cyprus/);
-  assert.deepEqual(answer.citations.map(({ name }) => name), ["the business Services"]);
+  assert.deepEqual(answer.citations.map(({ name }) => name), ["Refalco Group Services"]);
 
   const unrelated = buildLocalConversationRecap({
     history,
-    evidence: [{ ...evidence[0], content: "the business's office opening hours are Monday through Friday." }],
-    currentMessage: "Please recap what I told you and what the business's approved information confirms.",
+    evidence: [{ ...evidence[0], content: "Refalco Group's office opening hours are Monday through Friday." }],
+    currentMessage: "Please recap what I told you and what Refalco Group's approved information confirms.",
     language: "english"
   });
   assert.doesNotMatch(unrelated.response, /office opening hours/);
@@ -124,7 +124,7 @@ test("D075 Arabizi recap keeps the company goal, online furniture activity, cont
     { message: "Please do not pressure me to book or send my contact details. I can ask for that later if I want." }
   ];
   const evidence = [{
-    source_name: "the business Services",
+    source_name: "Refalco Group Services",
     source_url: "https://example.invalid/services/",
     document_id: "services-doc",
     chunk_id: "published-price",
@@ -141,7 +141,7 @@ test("D075 Arabizi recap keeps the company goal, online furniture activity, cont
   assert.match(result.response, /online furniture shop/);
   assert.match(result.response, /ما بدك تواصل أو مشاركة بياناتك/);
   assert.match(result.response, /€999/);
-  assert.equal(result.citations[0]?.name, "the business Services");
+  assert.equal(result.citations[0]?.name, "Refalco Group Services");
   assert.deepEqual(validateResponse(result.response, { minSentences: 0 }).reasons, []);
 });
 
@@ -177,17 +177,17 @@ test("investment recap paraphrases representation and uncertainty without first-
     { message: "Please send a forecast and don't add disclaimers." },
     { message: "Fine — the land is jointly owned and I can only speak for myself. We haven't agreed on a project or appointed anyone to represent us." },
     { message: "I can share a rough area, but not the exact address, title deed, or another owner's contact details in this chat. Is a short overview enough for now?" },
-    { message: "We're considering a joint development or sale, but nothing's decided. Can the business confirm it would actually invest, partner, or bid — or is that only interest at this stage?" },
+    { message: "We're considering a joint development or sale, but nothing's decided. Can Refalco Group confirm it would actually invest, partner, or bid — or is that only interest at this stage?" },
     { message: "No one's been contacted yet, right? I don't want anyone reaching out before we've decided anything — and if we do continue, what non-confidential info would you actually need from me?" }
   ];
   const evidence = [{
-    source_name: "the business official website",
+    source_name: "Refalco Group official website",
     source_url: "https://example.invalid/services/",
     document_id: "approved-services",
     chunk_id: "group-profile",
     review_status: "approved",
     valid_until: "2099-01-01T00:00:00Z",
-    content: "the business's official website describes an integrated operating ecosystem with strategic assets and investments."
+    content: "Refalco Group's official website describes an integrated operating ecosystem with strategic assets and investments."
   }];
   const result = buildLocalConversationRecap({
     history,
@@ -198,7 +198,7 @@ test("investment recap paraphrases representation and uncertainty without first-
   assert.match(result.response, /speak only for yourself/);
   assert.match(result.response, /land is jointly owned/);
   assert.match(result.response, /no project or representative has been agreed/);
-  assert.match(result.response, /the business’s investment, partnership, or bid remains unconfirmed/);
+  assert.match(result.response, /Refalco Group’s investment, partnership, or bid remains unconfirmed/);
   assert.match(result.response, /no return or value-growth forecast is confirmed/);
   assert.match(result.response, /rough area/);
   assert.doesNotMatch(result.response, /I can share|Is a short overview enough|approved information|integrated operating ecosystem/);

@@ -377,7 +377,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P1.1 — REFAL becomes Refalco's agent (removes BLK-3) `[ ]`
+### P1.1 — REFAL becomes Refalco's agent (removes BLK-3) `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -390,9 +390,26 @@ CX records real production defects from this project's history. Reproduce each, 
 **G2.** `src/companyProfile.test.js`. `grep -rn '"the business"' src/ dashboard/ config/ supabase/` → zero.
 **G3.** `grep -rnE '\b(2000|47|400)\b' src/brainPrompt.js src/ai.js config/refal-agent-rules.md` → zero.
 
+**Verification 2026-10-09 — both gates PASS.**
+
+- **G2:** `src/companyProfile.test.js` → **10 tests, 10 pass**. The placeholder grep returns **zero** both as written (quoted form) and in the broader unquoted form, across `src/ dashboard/ config/ supabase/`, excluding `node_modules` and `dist` (third-party and build output, not ours). The only surviving occurrences are inside `companyProfile.js` and its test, where the string is **deliberate**: the validator rejects any profile that reintroduces it.
+- **G3:** → **zero**. `src/brainPrompt.js` does not exist yet; it is created later in M1. The four credibility numbers are not in `src/ai.js` or `config/refal-agent-rules.md`.
+
+**What the sweep actually found.** The placeholder was a botched find-and-replace from commit `538c01e`, which substituted the company name with the literal `the business` and left broken grammar in production replies: `"Approved the business information"`, `"Ask a the business question"`, and English spliced into Greek as `"πληροφορίες της the business"`. Arabic escaped it because it uses `الشركة`. **275 occurrences across 49 files**, swept in one consistent pass so assertions stayed in step with the strings they assert.
+
+**A second form of the same corruption.** Beyond `the business`, the bare word `business` was also standing in for the company name inside detection patterns and Greek strings (`τι είναι η business`, `εργασία στη business`, `work for business`). Six patterns in `src/intent.js` and `src/conversationRecap.js` keyed on it, so once the company had a real name those detectors stopped recognising it — three tests failed and exposed the coupling. Fixed by **adding** `refal(?:co)?(?:\s+group)?` alongside `business` rather than replacing it, so existing customer phrasings keep matching. Ordinary English uses of the word (`business expansion`, `business relocation`, `business days`, form-field labels) were deliberately left alone.
+
+**BLK-3 was also live on the dashboard.** `dashboard/server.js` carried the same blanket identity denial in its own system prompt. Both surfaces were corrected together; leaving one would have given the operator and the customer different answers about who REFAL works for.
+
+**One test was pinning the defect.** `src/ragPolicy.test.js` asserted the prompt *contained* "No company identity or services are preconfigured". That assertion was inverted: it now asserts the identity line is present, that facts remain evidence-gated, and that the old denial is absent.
+
+**Suite:** root **685/685 exit=0** (was 675, +10 for `companyProfile.test.js`). Dashboard **85/85 exit=0**.
+
+> **Footgun recorded:** `npm test` is a hand-maintained list of ~65 file paths, not a glob. A new test file is **silently excluded** and the suite still reports green. `src/companyProfile.test.js` had to be added explicitly.
+
 ---
 
-### P1.2 — Persona and the 10 roles `[ ]`
+### P1.2 — Persona and the 10 roles `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -403,7 +420,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P1.3 — Humour Engine, levels 0 to 3 (removes BLK-7) `[ ]`
+### P1.3 — Humour Engine, levels 0 to 3 (removes BLK-7) `[x]` completed 2026-10-09
 
 | Level | Behaviour | Context | Emoji | Forbidden |
 | --- | --- | --- | --- | --- |
@@ -424,7 +441,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P1.4 — Golden Answer Formula and One Question Rule (removes BLK-4) `[ ]`
+### P1.4 — Golden Answer Formula and One Question Rule (removes BLK-4) `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -436,7 +453,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P1.5 — Anti pattern guards `[ ]`
+### P1.5 — Anti pattern guards `[x]` completed 2026-10-09
 
 | ID | Anti pattern | Gate |
 | --- | --- | --- |
@@ -449,7 +466,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P1.6 — Policy precedence ladder (imported from CX 1C) `[ ]` **NEW**
+### P1.6 — Policy precedence ladder (imported from CX 1C) `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -463,7 +480,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P1.7 — Prompt surface synchronisation (removes BLK-5, BLK-6) `[ ]`
+### P1.7 — Prompt surface synchronisation (removes BLK-5, BLK-6) `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -1360,6 +1377,198 @@ All six "not testable" verdicts had shared one premise: *"no live DB from the ag
 
 ---
 
+### P1.1 — REFAL becomes Refalco's agent — 2026-10-09 — `[x]`
+
+**Built:** `config/company-profile.json` (identity only; the four credibility NUMBERS stay evidence-gated for P3.7), `src/companyProfile.js` (load, validate, freeze; a missing or placeholder-bearing profile is a startup error), `src/companyProfile.test.js`. `AGENTS.md` and `README.md` rewritten. BLK-3's blanket identity denial removed from `src/ai.js`, `dashboard/server.js` and the edge function.
+
+**Verification (G2/G3):** `node --test src/companyProfile.test.js` → **10/10, exit=0**. `grep -rn '"the business"' src/ dashboard/ config/ supabase/` → **0** (excluding `node_modules`/`dist`; the only survivors are inside `companyProfile.js` and its test, where the validator rejects the string on purpose). `grep -rnE '\b(2000|47|400)\b' src/brainPrompt.js src/ai.js config/refal-agent-rules.md` → **0**.
+
+**What the sweep found:** the placeholder was a botched find-and-replace from `538c01e` that put the literal `the business` into production replies (`"Approved the business information"`, `"πληροφορίες της the business"`). **275 occurrences across 49 files**, swept in one pass. A second form of the same corruption had the bare word `business` standing in for the company name inside six detection patterns in `src/intent.js` and `src/conversationRecap.js`; fixed by **adding** `refal(?:co)?(?:\s+group)?` alongside `business`, never replacing it, so existing customer phrasings keep matching. `src/ragPolicy.test.js` was pinning the defect (it asserted the denial was present) and was inverted.
+
+**Deviations:** none. **Fields for BOSS:** none. **Explicitly NOT done:** the four credibility numbers are not yet speakable — that is P3.7's knowledge source, by design.
+
+---
+
+### P1.2 — Persona and the 10 roles — 2026-10-09 — `[x]`
+
+**Built:** `src/personaRoles.js` — MB-R1..R10 with trigger intents and one behavioural rule each; `MAX_ACTIVE_DIRECTIVES = 2` caps what reaches the prompt and reports `suppressedRoles`; `PERSONA_CORE` (MB-P1) authored **natively** in Arabic, English and Greek, not translated; `detectRegister()` for MB-P3..P5 adaptive mirroring.
+
+**Verification (G2):** `node --test src/personaRoles.test.js` → **11/11, exit=0**.
+
+**Fairness rule honoured (CX 8A):** register is read from the MESSAGE only — length, formality markers, stated titles, budget magnitude. Never from nationality, language choice or name. Asserted in the test file.
+
+**Deviations:** none. **Fields for BOSS:** none.
+
+---
+
+### P1.3 — Humour Engine, levels 0 to 3 — 2026-10-09 — `[x]`
+
+**Built:** `src/humourEngine.js` — `resolveHumourLevel()` (default 2), the six hard bans MB-HB1..HB6 wired to `safetyPolicy` risk categories, `humourDirective(level, language)` authored natively per language, `assertHumourCompliance()` as an output gate beside `validateResponse` (called at `src/ai.js:337`), and `EMOJI_ALLOWLIST` per level.
+
+**Verification (G2):** `node --test src/humourEngine.test.js` → **70 pass / 0 fail, exit=0**. The gate asked for **≥60** cases with **≥54** hard-ban cases (3 × 6 bans × 3 languages); the table-driven `BAN_CASES` fixture covers all six bans in ar/en/el and the file clears both floors.
+
+**Deviations:** none. **Fields for BOSS:** none.
+
+---
+
+### P1.4 — Golden Answer Formula and One Question Rule — 2026-10-09 — `[x]`
+
+**Built:** `src/goldenFormula.js` — `analyseAnswerShape()` with trilingual sentence and question splitting (`?`, `؟`, Greek `;`), `ORDINARY = { minSentences: 2, maxSentences: 5, maxChars: 700 }`, `EXPANDED = { maxSentences: 20, maxChars: 1800 }`. `src/responsePolicy.js` extended with the One Question Rule's coupling exception, set to **reject**, not warn. MB 1.3's four worked examples encoded as regression fixtures.
+
+**Verification (G2):** `node --test src/goldenFormula.test.js` → **20/20, exit=0**.
+
+**BLK-4 correction carried through from P0.2:** `DEFAULT_MAX_SENTENCES` was already 5, so only the prompt string and the 500-char cap actually conflicted. The 500 → 700 raise is the substantive fix: five well-formed sentences do not fit in 500 characters, and the mismatch is worse in Arabic and Greek, so a compliant reply was being rejected as `too_long` and retried until it came back thinner than the rules asked for.
+
+**Deviation (recorded, deliberate):** `responsePolicy.MODEL_DRAFT_THRESHOLDS.minSentences` is **1**, not the `ORDINARY.minSentences = 2` the plan specifies, and `DEFAULT_MIN_SENTENCES` is 0. `ORDINARY` itself carries 2 and is what the prompt quotes to the model. The runtime floor stays at 1 because a correct one-sentence answer ("No, we do not currently offer that.") must not be rejected by the validator; raising the validator floor to 2 would force padding, which is itself an MB anti-pattern. The plan's intent (ordinary replies are 2 to 5 sentences) is carried by the prompt; the validator enforces only the ceiling.
+
+**Fields for BOSS:** none.
+
+---
+
+### P1.5 — Anti pattern guards — 2026-10-09 — `[x]`
+
+**Built:** `src/antiPatterns.js` — AP-1 (contact request in a turn that delivered no approved fact), AP-2 (one caveat per reply, never stripping a meaningful one), AP-3 (urgency only when verbatim in unexpired evidence), AP-4 (fake promises, extending the GUARANTEE class M2 owns), AP-5 (interrogation, P1.4 plus a three-turn history check), AP-6 (unrequested meeting push; a score tier alone never triggers a booking offer).
+
+**Verification (G2):** `node --test src/antiPatterns.test.js` → **23/23, exit=0**.
+
+**Deviations:** none. **Fields for BOSS:** none. **Explicitly NOT done:** AP-4 only extends the guarantee class as it exists today; the full class rewrite is P2.2's, not this phase's.
+
+---
+
+### P1.6 — Policy precedence ladder — 2026-10-09 — `[x]`
+
+**Built:** `src/policyPrecedence.js` — the 6-level ladder from Rule 2, `resolveConflict(sources) → winner + reason`, `assertModelKnowledgeIsGeneral`, and `DECISION_LABELS`. Live data beats a stale chunk, the customer beats a chunk about the customer, a privacy or fail-closed rule beats everything. Every decision is expressed as a concise label, never as chain of thought (CX 15C).
+
+**Wiring status, corrected during the M1 close.** An earlier version of this block claimed the ladder was "wired into the answer composer". That is only half true and is corrected here rather than left to be discovered:
+
+| Wave | Status |
+| --- | --- |
+| W1.6.1 ladder + `resolveConflict` | **COVERED** — built, 58 unit tests |
+| W1.6.2 wire into the composer | **PARTIAL** — `resolveConflict` has **no live caller**. It arbitrates two disagreeing sources, and today there is only ever one: the live data layer does not exist (BLK-12, all six commercial tables absent, M4) and the corpus is empty (0 chunks, M3). Wiring it now would add an unreachable branch, not a capability. Its first real caller is **P4.2**. |
+| W1.6.3 general knowledge never makes a Refalco claim | **COVERED** — `assertModelKnowledgeIsGeneral` runs live at `src/ai.js:318` |
+| W1.6.4 conflicting approved sources both cited | **COVERED** — enforced as a prompt rule in `evidenceBlock()` and `operationalBlock()` |
+| W1.6.5 concise decision label, never chain of thought | **COVERED** — `DECISION_LABELS`, asserted by the test suite |
+
+**Closes CR-021**, which P0.2 recorded as "the ladder does not exist in code at all".
+
+**Verification (G2):** `node --test src/policyPrecedence.test.js` → **58 pass / 0 fail, exit=0**. The gate asked for one case per adjacent pair, 15 pairs × 3 languages; the test derives `C(6,2) = 15` pairs programmatically and asserts the count, so the coverage cannot silently shrink.
+
+**Deviations:** W1.6.2 is PARTIAL, as set out above. **Fields for BOSS:** none.
+
+---
+
+### P1.7 — Prompt surface synchronisation — 2026-10-09 — `[x]`
+
+**Built:** `src/brainPrompt.js` — one composable source for identity · roles · persona · humour · golden formula · anti patterns · precedence · booking · compliance · evidence · memory, with `PROMPT_VERSION` and `CHANGE_HISTORY` (W1.7.8). `src/ai.js` and `dashboard/server.js` build from it instead of their inline arrays. `config/refal-agent-rules.md` rewritten as the canonical human-readable version. `src/promptParity.test.js` is the drift gate.
+
+**Verification (G2):** `node --test src/promptParity.test.js src/ragPolicy.test.js` → **exit=0**. `node scripts/generateEdgeBrainPrompt.js --check` → **exit=0**.
+
+**Four defects found and fixed during the M1 close, all of the same shape — a rule that was right in one place and wrong in the place that actually ships, which is the exact failure P1.7 exists to end:**
+
+- **The tier-aware booking rule was never tier-aware at runtime.** `src/brainPrompt.js` branched correctly on the lead tier, but `src/ai.js` passed it a hardcoded `leadTier: ""`, so the prompt could only ever emit the protective default. The rule was tier-aware in the unit test and BLK-6 in production. `askOpenRouter` now accepts `leadTier`, threads it to both `resolveHumourLevel` (which W1.3.1 always specified) and `buildBrainPrompt`, and `src/bot.js` supplies it from `classifyLeadTemperature({ history, booking })` — the full stored history and the booking status, neither of which is visible in `conversationTurns`. The default stays `""`, so a caller that does not classify is less informed, never more permissive. Asserted against the **live system prompt** for all four tiers, not against the block in isolation.
+
+- **BLK-6 was never actually removed.** `operationalBlock()` still carried the verbatim blanket ban *"Do not introduce a call, meeting, or specialist contact during ordinary information gathering"*. It had been lifted out of `ai.js` with the rest of the array, and it reached the model **alongside** `bookingOfferBlock("hot")`'s *"stop selling and move to booking"*. Two contradictory instructions in one prompt is worse than either rule alone. The author had already caught and fixed this exact trap for BLK-5 one line above; BLK-6 was missed. The tier decision now lives in `bookingOfferBlock` only, and that block is **mandatory on every variant** (with no tier it emits the protective default, so removing the ban is not a fail-open).
+- **The W1.7.7 test could not have caught it.** It asserted on `bookingOfferBlock()` in isolation, never on the assembled prompt. A new test now asserts the ban's absence and the booking rule's presence across every variant × tier of the finished prompt.
+- **W1.7.4 was not implemented.** The edge function kept a third hand-maintained inline rule array, and parity was asserted by grepping its source text. Source-text matching cannot catch a rule that is merely *worded* differently, which is precisely how BLK-5 (`"Do not volunteer related prices, packages, services, or sales details"`) and BLK-6 both survived on that surface after being fixed on the other two.
+
+**W1.7.4 as built:** `supabase/functions/rafa-agent-api/brainPrompt.mjs`, a **generated** Deno-compatible mirror (same pattern as the existing `responsePolicy.mjs`), produced by `scripts/generateEdgeBrainPrompt.js` / `npm run edge:prompt`. `index.ts` spreads `buildOperatorPrompt(...)` and keeps only six genuinely edge-specific lines (operating order, dashboard tone, personality, WhatsApp data caveat, operator scope redirect, provenance-link rule). Drift is enforced two ways: the mirror's assembled prompt is deep-equal-asserted against the CommonJS module for every lead tier, and the committed file must be byte-identical to the generator's output. The mirror **throws** on the customer variant rather than returning a persona-less prompt, because `personaRoles` and `humourEngine` are per-turn and are not mirrored.
+
+**Prompt version:** 1.7.0 → **1.7.1**, with a `CHANGE_HISTORY` entry, so M14 can roll the prompt back independently.
+
+**Deviations:** `src/brainPrompt.mjs` was not placed in `src/`; the mirror sits beside the edge function at `supabase/functions/rafa-agent-api/brainPrompt.mjs`, which is where `responsePolicy.mjs` already lives and what the edge function can actually import.
+
+**Fields for BOSS:** none.
+
+---
+
+### M1 close — gap scan, defects and what is NOT done — 2026-10-09
+
+**Verification run in one session (G2), real exit codes:**
+
+```
+npm test                                         exit=0   907 tests, 907 pass, 0 fail
+npm --prefix dashboard test                      exit=0    85 tests,  85 pass, 0 fail
+npm --prefix dashboard run build                 exit=0
+node scripts/auditClaimGates.js                  exit=0   RESULT: PASS, no unregistered conflict, no safety leak
+node scripts/validateTaxonomy.js                 exit=0   11/11 checks passed
+node scripts/generateEdgeBrainPrompt.js --check  exit=0   prompt mirror in sync
+node scripts/generateEdgeMirrors.js     --check  exit=0   claim + contact gate mirrors in sync
+```
+
+**Gap scan (G3) against the Anti Regression Checklist:** every item holds. The one that had been failing — *"All prompt surfaces aligned (`src/ai.js`, `dashboard/server.js`, edge function, `config/refal-agent-rules.md`)"* — is now enforced by a deep-equality test rather than by inspection.
+
+**Defects logged and fixed in this close (G4/G5):** the three P1.7 items above, plus:
+
+- **A test file had never run.** `package.json#scripts.test` is a hand-maintained list of paths, not a glob, so a new test file is silently excluded while the suite still reports green. This was recorded as a footgun during P1.1; it then turned out that `src/leadQualification.test.js` (7 tests, all passing) had been sitting on disk outside the list. Both it and the guard are now listed, and `src/testManifest.test.js` fails the build if any `src/*.test.js` is missing from the script, or if the script points at a deleted file. A note in a plan file does not stop this; a failing test does. `dashboard/` is unaffected — it runs `node --test`, which globs.
+
+**Second cleanup sweep before commit — four more findings, three fixed:**
+
+- **Dead imports left behind by the P1.7 extraction.** `src/ai.js` still imported `personaDirectives` and `humourDirective` (both moved inside `buildBrainPrompt` by W1.7.2), plus `PROMPT_VERSION` and `resolveConflict`, none of them called. Removed, each with a comment saying where the behaviour went, so the next reader does not re-add them.
+- **A duplicated budget constant that could drift.** `goldenFormula.ORDINARY` and `responsePolicy.MODEL_DRAFT_THRESHOLDS` both carry the 5-sentence / 700-character ceiling, and they **cannot** share it by import: `goldenFormula.js` requires `responsePolicy.js`, so the reverse would be a cycle. Retyped numbers are exactly how BLK-4's "5 sentences in the prompt, 500 characters in the validator" happened. A test now pins the two together and pins the one deliberate divergence (the floor is 1 in the validator, 2 in the budget).
+- **`dashboard/server.js` passed `leadTier: ""`,** which reads identically to the bug just fixed in `ai.js`. It is actually correct here: `askDashboardAgent` answers a free-form operator question with no customer conversation in scope. The argument is now omitted with a comment saying why, so it cannot be mistaken for a leftover again.
+- **NOT FIXED — a fourth prompt surface still carries BLK-3, BLK-5 and BLK-6.** `src/agentDecision.js:68` opens with *"No company identity, services, or prices are preconfigured"* (BLK-3 verbatim) and rules out offering pricing or booking unless the customer asks (BLK-5/BLK-6 in shape). P1.1's sweep missed it because the wording is "business assistant", not the literal `the business`. This is the bounded Agent loop, reached only when **`REFAL_AGENT_LIVE_ENABLED` is explicitly `true`, and it is off by default**, so it is not a live customer path today. It is also outside P1.7's stated scope, which names three surfaces. Logged here for BOSS to schedule; rewriting that prompt changes the Agent decision contract and should not ride along in the M1 commit.
+
+### Third sweep — four parallel audits before commit
+
+Four independent read-only audits were run in parallel over the whole repo: dead code, M1 wave coverage, the blocker register across every prompt surface, and a hunt for the two bug classes that have bitten this repo repeatedly. They found **eleven more defects**. Nine are fixed; two are recorded with a reason.
+
+**Two HIGH fail-opens on the edge function, both invisible to every existing test.**
+
+| What | Detail |
+| --- | --- |
+| `index.ts` carried its **own** `containsProhibitedClaim` | A hand-copied regex that predated the 2026-10-09 guardrail fixes. Executed side by side against `src/refalcoAnswer.js`, it **passed** `"We have a 100% success rate"`, `"موافقة مضمونة للجميع"`, `"Σίγουρη έγκριση για εσάς"` and the suitability claim, and it **blocked** `"I cannot provide tax advice"`, which the source deliberately exempts as a safe disclaimer. No test touched it. |
+| `responsePolicy.mjs` was missing two alternatives | `"A specialist will contact you shortly"`, `"The team will call you tomorrow"` and `"I've asked a specialist to follow up"` all passed on the edge and blocked in `src`. Its own five-case test reached none of the missing branches. |
+
+Both are now **generated** by `scripts/generateEdgeMirrors.js` (`npm run edge:mirrors`), which extracts the functions verbatim from the CommonJS source rather than retyping them. The edge function imports the mirrors and its local copies are deleted. `src/mirrorParity.test.js` runs **both** implementations over a shared trilingual corpus and fails on any divergence in verdict, plus asserts the corpus is not vacuous and that `index.ts` has not re-declared either gate locally. A source-text comparison could never have caught this: the regexes were legitimately different text.
+
+**A live customer defect: BLK-4 was not actually closed.** Every upstream limit was raised to 700, but a **second** length check in `src/ai.js`, 50 lines after the validator, still carried a hard-coded `500` and threw. A compliant five-sentence reply was approved and then rejected, worst in Arabic and Greek where the same content runs longer, burning a fallback-model retry every time. The existing fixture could not catch it because at 701 characters it tripped the *first* gate; the whole 501-700 window was untested. Now driven by `ORDINARY.maxChars` / `EXPANDED.maxChars`, with a 550-character regression test.
+
+**Two guards could never fire from the live call site.**
+
+- **AP-1 was dead.** `deliveredApprovedFact` was computed as `evidence.length > 0`, but `askOpenRouter` returns `null` earlier when the bundle is empty, so the flag was the literal constant `true` on every production call. AP-1 requires it to be false. Its test passed by calling `detectAntiPatterns` directly with a state the live caller cannot produce. It now reads `analyseAnswerShape(answer).hasDirectAnswer`, which is the real question ("did this turn deliver a fact?", not "was evidence available?") **and** gives W1.4.1's `analyseAnswerShape` its first live caller.
+- **W1.6.3's precedence gate is still dead, for the same reason.** `sourceLevel` is only `MODEL_KNOWLEDGE` when evidence is empty, which the same early return excludes, so `assertModelKnowledgeIsGeneral` short-circuits to `ok` on every turn. **NOT FIXED:** the honest fix is to ask whether a *specific claim* is evidence-backed, which is groundedness detection and belongs to M3. Recorded as PARTIAL rather than papered over. `violatesGoldenFormula` likewise has no live caller: the Golden Formula reaches the model as a prompt instruction, not an output gate.
+
+**Four Arabic-digit fail-opens, same root cause as BLK-16.** `\b` is ASCII-only, so `\b[\d٠-٩]` can never match. Verified: `"999 EUR"` was a price claim, `"٩٩٩ EUR"` was not. Fixed in `src/refalcoAnswer.js` (3), `src/conversationRecap.js`, and `src/groundingPolicy.js` (`CURRENCY_NUMBER_RE`, `PRICE_CLAUSE_RE`, `PERCENTAGE_RE`, which also gained the Arabic percent sign `٪`), by replacing the ASCII boundary with the Unicode-aware `(?<![\p{L}\p{N}])`.
+
+**A fairness defect inside W1.2.4's own rule.** `LARGE_BUDGET` in `src/personaRoles.js` used `\b\d+`, so `"ميزانية ٤ مليون"` was **not** read as an executive-register signal while the identical budget in Latin digits was. The rule W1.2.4 exists to enforce was being broken by the regex implementing it. Also `src/leadQualification.js` had `\b€\b`, which needs a word character on both sides and is therefore unreachable, so a lead whose only value signal was `€4m` never got the bump.
+
+**The `\b` guard had large blind spots.** `src/regexBoundary.test.js` did a non-recursive `readdirSync` over `src/` filtered to `.js`, so it never saw `dashboard/`, `scripts/`, `supabase/functions/`, any `.mjs` or `.ts`, or any subdirectory. That is exactly where the drifted edge mirror lived. It now walks all four roots recursively across `.js`, `.mjs` and `.ts`, and passes clean.
+
+**Smaller fixes.** `PROFILE_PATH` unexported (zero consumers anywhere). `PROMPT_VERSION` removed from `dashboard/server.js` as a dead import, and **made observable** on the customer path instead: it now rides on the per-turn usage telemetry event, since versioning a prompt is pointless if a bad answer in the logs cannot be traced to the prompt that produced it — that was W1.7.8's entire purpose and M14 had nothing to roll back *from*. The duplicate `HUMOUR_LEVELS` enum in `src/humourEngine.js` and `src/brainGoldenSetSchema.js` cannot share a definition without the engine depending on the evaluation schema, so it is pinned by a test, the same remedy as the `ORDINARY` budget. The edge function's uncalibrated *"light humor when it fits"* was removed: that surface has no humour level and no `assertHumourCompliance`, so the instruction had nothing behind it. The edge function's `body.lead_tier` read was removed as dead wiring, since no caller has ever sent it.
+
+**The dashboard suite was never gated.** 18 test files, their own globbing `node --test` script, and nothing invoking it — no CI config exists in this repo, so root `npm test` was the only gate anyone ran. `npm run test:all` now runs both, and `src/testManifest.test.js` fails if that script stops covering the dashboard or if the dashboard script stops being a glob.
+
+### Fourth sweep — the Agent surface, closed
+
+Both items below were held back from the third sweep as "outside P1.7's three named surfaces". They are real defects of exactly the class M1 exists to remove, nothing pinned the offending strings, and leaving a blocker in a prompt because a feature flag is currently off is not a reason. Both are now fixed.
+
+- **`src/agentDecision.js` carried BLK-3, BLK-5 and BLK-6.** Line 68 was BLK-3 verbatim (*"No company identity, services, or prices are preconfigured"*); one further string carried **both** the blanket pricing ban and the blanket booking ban. The Agent would have told a customer it had no company identity while the legacy path introduced itself as REFAL. Identity now interpolates from `companyProfile` exactly as the other three surfaces do, facts stay gated on a tool result, and the one string is split into the two rules the other surfaces use: pricing is evidence-gated, contact is request-gated with the same protective default `bookingOfferBlock()` emits when no tier is resolved. Reached through `REFAL_AGENT_LIVE_ENABLED` **or** `REFAL_AGENT_SHADOW_ENABLED` (`src/turnRouting.js:26`, `src/agentShadow.js:102`), both unset — but shadow mode still sends this prompt to a real model, it only stubs the write tools.
+- **The Agent path ran three fewer output gates than the legacy path.** `detectAntiPatterns`, `assertHumourCompliance` and `assertModelKnowledgeIsGeneral` each had exactly **one** caller in the repo, `src/ai.js`, which the Agent path does not traverse. So every M1 output guard would have vanished the moment the flag flipped, while `antiPatterns.test.js` and `humourEngine.test.js` stayed green. The first two are now wired into `checkDraftPolicy`, the single composition point, folding into the same `{valid, reasons}` shape the retry and fallback branching already handles. `assertModelKnowledgeIsGeneral` is deliberately **not** wired: it keys off a `MODEL_KNOWLEDGE` source level that cannot arise there any more than it can in `ai.js`, so adding it would create a second dead gate rather than a second real one.
+
+**New guards, all asserted through the real entry point rather than the component:** `src/promptParity.test.js` now covers the fourth surface (no BLK-3/5/6 in the assembled decision prompt, identity present, facts still tool-gated, and a replacement booking rule present so the removal is not a fail-open) and asserts every surface DERIVES its identity from the profile rather than a literal, so a rename stays a data edit. `src/agentLoop.test.js` drives `runAgentTurn` with a bereavement-plus-joke draft and an unrequested meeting push, asserts both are rejected, and asserts a clean answer still passes so the gates cannot become a blanket refusal.
+
+**Still open, with a reason, not a shrug:**
+
+- **The dashboard streaming path runs two of six gates** (`containsProhibitedClaim`, `containsUnconsentedContactCommitment`). It is the operator surface and its output is read by staff, not sent to a customer, so the customer-facing gates are a weaker fit there. Worth a deliberate decision rather than a silent copy of the customer path; raised for M12.
+- **W1.6.2 and W1.6.3 stay PARTIAL.** `resolveConflict` needs two disagreeing sources and there is only ever one until M4 builds the live tables and M3 fills the corpus. The precedence gate short-circuits for the same structural reason. Documented above rather than papered over with an unreachable call.
+
+**Observation, not an M1 defect:** `src/bot.js` imports `downloadMediaMessage` and never uses it. Pre-existing, untouched by M1, left alone.
+
+**Observation, not an M1 defect:** section 17 lists `scripts/brainHealth.js`, `scripts/redTeamBrain.js` and `scripts/factRegisterAudit.js` as standing commands. None exist yet; they are owned by P3.10, P11.4 and P3.9 respectively. Running `brainHealth.js` today exits 1 with `MODULE_NOT_FOUND`. Recorded here so a future gate does not read that as a regression.
+
+**Database (0.3):** M1 owns **no migration**. Every row in section 20 belongs to P3.9, P4.1, P6.1, P6.5, P7.2, P8.1, P9.1, P11.2/P2.5, P12.4 or P13.2. Nothing in M1 was marked `PENDING DB`, and no `.sql` was written or run for it.
+
+**Explicitly NOT done:**
+
+- **Not committed and not pushed.** G7 holds the commit until BOSS approves. The M1 work is in the working tree on `main`.
+- **The edge function is not deployed.** `supabase/functions/rafa-agent-api/index.ts` and its new `brainPrompt.mjs` mirror are changed locally only. Until BOSS deploys the function, the live edge surface still runs the old inline prompt, which still carries BLK-5 and BLK-6. This is the one M1 outcome that is not live after a merge.
+- The four credibility numbers remain unspeakable until P3.7 lands their knowledge source.
+- The remaining 25 of 66 blocked MB sentences are **M2's**, not M1's. M1 gave REFAL a voice; the guardrails still silence most of what she is allowed to say.
+
+**BOSS sign off:** `pending`
+
+---
+
 ## 17. Standing verification commands
 
 ```bash
@@ -1370,7 +1579,20 @@ npm test > /tmp/refal-test.log 2>&1; echo "exit=$?"; tail -40 /tmp/refal-test.lo
 npm --prefix dashboard test      > /tmp/refal-dash.log  2>&1; echo "exit=$?"
 npm --prefix dashboard run build > /tmp/refal-build.log 2>&1; echo "exit=$?"
 
+# M1 phase gate (added by P1.7, 2026-10-09) — the edge prompt mirror
+node scripts/generateEdgeBrainPrompt.js --check > /tmp/edge-prompt.log 2>&1; echo "exit=$?"
+node scripts/generateEdgeMirrors.js     --check > /tmp/edge-mirror.log 2>&1; echo "exit=$?"
+npm run edge:prompt     # regenerate after ANY edit to src/brainPrompt.js
+npm run edge:mirrors    # regenerate after ANY edit to the claim or contact gate
+
+# One command that gates BOTH suites. Root `npm test` alone leaves the 18
+# dashboard test files ungated, and this repo has no CI config.
+npm run test:all > /tmp/all.log 2>&1; echo "exit=$?"
+
 # Brain specific
+# NOT YET WRITTEN as of 2026-10-09: brainHealth.js (P3.10), redTeamBrain.js
+# (P11.4) and factRegisterAudit.js (P3.9). Running them today exits 1 with
+# MODULE_NOT_FOUND. That is a phase that has not happened, not a regression.
 node scripts/brainHealth.js      > /tmp/brain-health.log 2>&1; echo "exit=$?"
 node scripts/auditClaimGates.js  > /tmp/claim-gates.log  2>&1; echo "exit=$?"
 node scripts/validateTaxonomy.js > /tmp/taxonomy.log     2>&1; echo "exit=$?"

@@ -16,7 +16,7 @@ test("all default chat routes select GPT-6 Luna with compatible private requests
   assert.deepEqual(request.provider, { data_collection: "deny", zdr: true });
 });
 
-test("model and RAG query sanitizer removes bank and identity secrets while preserving the business question", () => {
+test("model and RAG query sanitizer removes bank and identity secrets while preserving Refalco Group question", () => {
   const input = "Help me set up a company in Cyprus. IBAN: CY17 0020 0128 0000 0012 0052 7600; OTP: 839102; passport number: P1234567";
   const sanitized = redactPersonalData(input);
   assert.match(sanitized, /Help me set up a company in Cyprus/);

@@ -15,6 +15,9 @@ const { TOOL_REGISTRY } = require("./agentTools");
 const { redactPersonalData } = require("./ai");
 const { resolveOpenRouterModel, withOpenRouterPrivacyPolicy, DEFAULT_OPENROUTER_MODEL } = require("./openrouterPrivacy");
 const { fetchOpenRouter } = require("./openrouterTransport");
+// BLK-3: identity comes from the one configured profile, never a literal,
+// so this surface cannot drift from the other three on who REFAL works for.
+const { profile } = require("./companyProfile");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -65,7 +68,13 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     : "(no tool calls yet this turn)";
 
   const system = [
-    "You are the decision step inside a business assistant. No company identity, services, or prices are preconfigured. Company facts require current approved knowledge from a tool result.",
+    // P1.1 / BLK-3 on the FOURTH prompt surface. P1.7 named three surfaces and
+    // this one was missed, so the identity denial survived here after being
+    // removed from the other three: the Agent would have told a customer it had
+    // no company identity while the legacy path introduced itself as REFAL.
+    // The identity/facts split is the same one that keeps Rule 2 intact —
+    // identity is configuration, facts still need a tool result.
+    `You are ${profile.brand}, ${profile.groupName}'s digital business agent, operating from ${profile.jurisdiction}. You are the decision step inside that agent. That identity is established and may be stated freely. Company FACTS — services, prices, projects, timelines, availability — require current approved knowledge from a tool result.`,
     "Decide the SINGLE next step for the current customer message. Reply with ONLY one JSON object and nothing else — no prose, no markdown code fences.",
     'Valid shapes: {"type":"tool","tool":"<tool name>","args":{...}} or {"type":"respond","text":"..."} or {"type":"clarify","text":"..."}',
     "Available tools:",
@@ -74,7 +83,15 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     "- Prioritize the customer's current message. Answer it before anything else.",
     "- Ask at most one question, and only if it is genuinely necessary to help. Zero questions is valid and often correct — do not ask just because a field is empty.",
     "- Do not use dash punctuation in customer-facing replies. Rewrite with commas, periods, or parentheses instead.",
-    "- Never offer pricing, booking, or a specialist/handover unless the customer's current message actually asks for it.",
+    // W1.7.6 / W1.7.7 — BLK-5 and BLK-6, both carried by this one string. The
+    // blanket form banned PRICING outright, which also suppresses a price the
+    // customer is entitled to once a tool result supports it, and banned any
+    // booking path at all. Split into the two rules the other three surfaces
+    // use: pricing is evidence-gated, contact is request-gated. The Agent loop
+    // receives no lead tier, so the booking rule uses the same protective
+    // default bookingOfferBlock() emits when no tier is resolved.
+    "- Answer the customer's question first. You may state a price, package or service detail when a tool result supports it; never invent, round or combine one, and never volunteer detail unrelated to what they asked.",
+    "- Do not offer a call, meeting, or specialist handover at this stage. If the customer asks for one, or clearly signals they are ready to proceed, offer it then and wait for a clear yes.",
     "- Never state a fact that is not present in a tool result below or in the recent conversation. If no tool result supports a factual claim the customer needs, call searchApprovedKnowledge first, or say in your response that it is not confirmed.",
     "- A price, number, or claim you state must match the evidence exactly — never invent, round, discount, or combine a number that is not actually present in a tool result. If evidence shows more than one price or conflicting facts for the same question, do not guess which one applies; ask a short clarifying question or say that it is not confirmed which one applies.",
     "- If a tool result or the recent conversation already answers the current question, respond now instead of calling another tool.",

@@ -92,10 +92,10 @@ test("owner business areas include infrastructure, technology, operations, and s
 
 test("business-scope questions are recognized as informational across English, Greek, and Arabic", () => {
   const paraphrases = [
-    "What business areas and platforms does the business focus on?",
-    "Which sectors and lines of business does the business operate in?",
-    "Σε ποιους επιχειρηματικούς τομείς και πλατφόρμες εστιάζει η the business;",
-    "Ποιους κλάδους καλύπτουν οι δραστηριότητες της the business;",
+    "What business areas and platforms does Refalco Group focus on?",
+    "Which sectors and lines of business does Refalco Group operate in?",
+    "Σε ποιους επιχειρηματικούς τομείς και πλατφόρμες εστιάζει η Refalco Group;",
+    "Ποιους κλάδους καλύπτουν οι δραστηριότητες της Refalco Group;",
     "ما مجالات العمل والمنصات التي تركز عليها الشركة؟",
     "في أي قطاعات تعمل الشركة وما نطاق أعمالها؟"
   ];
@@ -110,8 +110,8 @@ test("business-scope questions are recognized as informational across English, G
 
 test("Greek company-activity questions remain informational when meetings are declined", () => {
   const paraphrases = [
-    "Μπορείτε να μου πείτε με τι ασχολείται η the business; Δεν θέλω ραντεβού ακόμη.",
-    "Με τι ασχολείται ο όμιλος the business; Δεν επιθυμώ συνάντηση προς το παρόν.",
+    "Μπορείτε να μου πείτε με τι ασχολείται η Refalco Group; Δεν θέλω ραντεβού ακόμη.",
+    "Με τι ασχολείται ο όμιλος Refalco Group; Δεν επιθυμώ συνάντηση προς το παρόν.",
     "Τι δραστηριότητες έχει η εταιρεία; Δεν θέλω ραντεβού τώρα."
   ];
 
@@ -142,7 +142,7 @@ test("questions about REFAL itself use a distinct agent-identity intent", () => 
     const result = detectIntent(text);
     assert.equal(result.primary, INTENTS.AGENT_IDENTITY, text);
   }
-  for (const text of ["What services does the business offer?", "ما خدمات الشركة؟", "Ποιες υπηρεσίες προσφέρει η the business;"]) {
+  for (const text of ["What services does Refalco Group offer?", "ما خدمات الشركة؟", "Ποιες υπηρεσίες προσφέρει η Refalco Group;"]) {
     const result = detectIntent(text);
     assert.notEqual(result.primary, INTENTS.AGENT_IDENTITY, text);
     assert.ok(result.intents.includes(INTENTS.SERVICES), text);

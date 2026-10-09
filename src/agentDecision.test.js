@@ -103,15 +103,15 @@ test("buildDecisionMessages includes the model-safe RAG evidence content from a 
   const observations = [{
     step: 1,
     tool: "searchApprovedKnowledge",
-    args: { query: "the business services" },
+    args: { query: "Refalco Group services" },
     result: {
       ok: true,
       status: "found",
-      userSafeSummary: ["the business Services"],
+      userSafeSummary: ["Refalco Group Services"],
       modelObservation: {
         type: "approved_knowledge",
         status: "found",
-        evidence: [{ title: "the business Services", section: "Accounting", content: "the business provides Company Formation, Accounting, VAT Registration and Payroll services.", contentTruncated: false, sourceRef: "chunk-1" }],
+        evidence: [{ title: "Refalco Group Services", section: "Accounting", content: "Refalco Group provides Company Formation, Accounting, VAT Registration and Payroll services.", contentTruncated: false, sourceRef: "chunk-1" }],
         truncated: false
       }
     }

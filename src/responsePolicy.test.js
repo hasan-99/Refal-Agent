@@ -169,7 +169,7 @@ test("allows narrowly worded EN/AR/EL safety disclaimers", () => {
     "I can’t confirm a permit or licence outcome.",
     "I can't confirm whether the activity needs a licence or permit.",
     "We cannot guarantee bank approval; the bank decides.",
-    "the business does not provide company registration or legal-status information.",
+    "Refalco Group does not provide company registration or legal-status information.",
     "لا أستطيع تأكيد نتيجة الرخصة أو التصريح أو التخطيط.",
     "لا أستطيع تقديم نصيحة ضريبية شخصية.",
     "ما فيني أكد إذا النشاط بده ترخيص.",
@@ -290,7 +290,7 @@ test("completed-booking claims require a verified booking, in all three language
     "I found that time available: 6 Oct 2026, 10:30 for 30 minutes. Reply yes to confirm or no to choose another time.",
     "Your appointment request has been sent for review.",
     "That time is no longer available. Please choose another time.",
-    "Your the business appointment has been cancelled.",
+    "Your Refalco Group appointment has been cancelled.",
     "الموعد متاح: 6 أكتوبر 2026 لمدة 30 دقيقة. أجب بنعم للتأكيد أو لا لاختيار وقت آخر.",
     "تم إرسال طلب الموعد للمراجعة.",
     "تم إلغاء موعدك مع الشركة.",
@@ -302,7 +302,7 @@ test("completed-booking claims require a verified booking, in all three language
 test("request-recording claims require verified handover state", () => {
   for (const response of [
     "I’ll note your interest for a specialist follow-up.",
-    "Thanks — I’ll pass this along for a the business specialist to follow up with you.",
+    "Thanks — I’ll pass this along for a Refalco Group specialist to follow up with you.",
     "I’ve logged your request for specialist review.",
     "Your specialist-review request is already recorded."
   ]) {

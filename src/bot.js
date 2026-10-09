@@ -396,7 +396,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
       evidence = store.searchKnowledge ? await store.searchKnowledge(knowledgeSearchQuery, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
       stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
     } catch (error) {
-      console.error("the business knowledge search failed:", safeErrorDiagnostics(error));
+      console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
       logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
 
@@ -441,6 +441,12 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
           includeSources: false,
           conversationSummary: conversation.summary,
           conversationTurns: conversation.turns,
+          // W1.7.7 — without this the booking rule could never be tier-aware:
+          // the prompt builder always received an empty tier and therefore
+          // always emitted the "do not offer a call at this stage" default,
+          // which is BLK-6's behaviour under a new name. The classification is
+          // internal and never shown to the customer.
+          leadTier: classifyLeadTemperature({ history: routed.user?.history || [], booking: routed.user?.booking }).status,
           onUsage: async (usage) => {
             try {
               await logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
@@ -450,7 +456,11 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
                 promptTokens: usage.promptTokens,
                 completionTokens: usage.completionTokens,
                 totalTokens: usage.totalTokens,
-                costUsd: usage.costUsd
+                costUsd: usage.costUsd,
+                // W1.7.8 — so a bad answer in the logs can be traced to the
+                // exact prompt version that produced it. M14 rolls the prompt
+                // back independently of the code; that needs this field.
+                promptVersion: usage.promptVersion
               });
             } catch (error) {
               console.error("OpenRouter usage log failed:", safeErrorDiagnostics(error));
