@@ -627,7 +627,14 @@ async function generateAgentReply(body: Record<string, any>) {
   }
   const reply = String(result?.choices?.[0]?.message?.content || "").trim();
   if (!reply) throw new HttpError("OpenRouter returned an empty answer.", 502);
-  if (reply.length > 10000 || containsProhibitedClaim(reply) || containsUnconsentedContactCommitment(reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
+  // P2.2 — the gate gets the SAME approved evidence the model was grounded on.
+  // Passing none made this surface strictly stricter than src/refalcoAnswer.js,
+  // which is the same class of divergence the generated mirrors exist to end:
+  // a programme fact quoted straight out of an approved chunk was deleted here
+  // and allowed there. Unapproved and expired chunks are filtered by
+  // isApprovedEvidence inside the gate, so this can only ever unlock a fact the
+  // evidence actually carries.
+  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsUnconsentedContactCommitment(reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
   return {
     reply: reply.slice(0, 10000),
     usage: normalizeOpenRouterUsage(result, model)

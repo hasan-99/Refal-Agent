@@ -13,14 +13,17 @@ function isFreeQuotaError(error) {
 }
 
 function dashboardFailureReply({ text, evidence = [], error }) {
-  const refusal = restrictedRefalcoReply(text);
+  // P2.2/W2.2.3 — evidence is already in scope here, so a programme question
+  // backed by approved chunks gets the grounded excerpt below instead of a
+  // flat refusal (BLK-2).
+  const refusal = restrictedRefalcoReply(text, { evidence });
   if (refusal) return refusal;
 
   const language = detectMessageLanguage(text);
   const quota = isFreeQuotaError(error);
   if (quota && isCompanyKnowledgeQuestion(text)) {
     const grounded = answerFromEvidence(evidence);
-    if (grounded && !containsProhibitedClaim(grounded.answer)) {
+    if (grounded && !containsProhibitedClaim(grounded.answer, { evidence })) {
       const lead = language === "arabic"
         ? "تم بلوغ الحد اليومي للنموذج المجاني. هذا مقتطف من مصدر الشركة المعتمد:"
         : "The free model has reached its daily limit. Here is an approved Refalco Group source excerpt:";

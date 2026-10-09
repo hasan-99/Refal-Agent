@@ -182,7 +182,10 @@ function validateResponse(response, options = {}) {
   const sentences = sentenceCount(text);
   const questions = questionCount(text);
   const internalReasoning = findPattern(text, INTERNAL_REASONING_PATTERNS);
-  const prohibitedClaim = containsProhibitedClaim(text) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
+  // P2.2 — `options.evidence` is optional and defaults to the pre-M2 blanket
+  // behaviour, so every existing caller is unaffected. A caller that HAS the
+  // approved chunks passes them and an approved programme fact survives.
+  const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
   const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
   const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);

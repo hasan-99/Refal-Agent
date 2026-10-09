@@ -294,7 +294,11 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     }
     if (answer.length > 8 && detectMessageLanguage(answer) !== language) throw contentPolicyError("OpenRouter returned an answer in the wrong customer language.");
       if (containsLegacyBrandHistory(answer) && !customerAskedAboutLegacyBrand(text, conversationTurns)) throw contentPolicyError("OpenRouter introduced unrequested legacy brand history.");
-      if (containsProhibitedClaim(answer)) throw contentPolicyError("OpenRouter returned restricted legal or financial content.");
+      // P2.2/W2.2.2 — judged against the SAME approved evidence the model was
+      // given. With no evidence this is byte-identical to the pre-M2 blanket
+      // gate; with evidence an approved programme fact is no longer deleted
+      // just for mentioning residency, a permit or a tax rate (BLK-1).
+      if (containsProhibitedClaim(answer, { evidence: promptEvidence, language })) throw contentPolicyError("OpenRouter returned restricted legal or financial content.");
       if (containsPriceClaim(answer) && (!allowPricing || !promptEvidence.some((item) => containsPriceClaim(item?.content)))) {
         throw contentPolicyError("OpenRouter returned an unsolicited or unsupported price or package claim.");
       }

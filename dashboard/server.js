@@ -1829,7 +1829,9 @@ async function relevantAgentMemories(text) {
 }
 
 async function askDashboardAgent({ text, messages, model: sessionModel, memories, evidence, signal, onToken, onUsage }) {
-  const refusal = restrictedRefalcoReply(text);
+  // P2.2/W2.2.3 — the operator asking about a published programme gets the
+  // grounded answer when approved evidence was retrieved for it (BLK-2).
+  const refusal = restrictedRefalcoReply(text, { evidence });
   if (refusal) {
     onToken(refusal);
     return refusal;

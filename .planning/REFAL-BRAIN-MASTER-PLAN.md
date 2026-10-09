@@ -502,7 +502,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P2.1 — Claim classification taxonomy `[ ]`
+### P2.1 — Claim classification taxonomy `[x]` completed 2026-10-09
 
 | Class | Example | Rule |
 | --- | --- | --- |
@@ -522,7 +522,7 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P2.2 — Rewrite `containsProhibitedClaim` (removes BLK-1, BLK-2, BLK-8) `[ ]`
+### P2.2 — Rewrite `containsProhibitedClaim` (removes BLK-1, BLK-2, BLK-8) `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -537,15 +537,15 @@ CX records real production defects from this project's history. Reproduce each, 
 
 ---
 
-### P2.3 — Banking and payment gateway guard `[ ]`
+### P2.3 — Banking and payment gateway guard `[x]` completed 2026-10-09
 `src/bankingPolicy.js`. Detects banking / Stripe / PayPal / Amazon / Shopify intent trilingually. Forces MB 2.3's shape: honest that the decision belongs to the institution's risk and KYC/AML assessment → the real value of a clean file from day one → one discovery question. MB's verbatim Arabic Stripe dialogue becomes a golden fixture, with EN and EL equivalents.
 
-### P2.4 — Reservation deposit, ROI and VAT guards `[ ]`
+### P2.4 — Reservation deposit, ROI and VAT guards `[x]` completed 2026-10-09
 - **W2.4.1** Reservation deposit (MB-F50, absolute): any currency amount in an answer that also mentions reservation/deposit/عربون/προκαταβολή **must** come from `refal_reservation_rules` (M4), never a chunk and never the model.
 - **W2.4.2** ROI (MB-F55): no yield percentage, no future price prediction. MB's verbatim reply script becomes the canonical response, trilingual.
 - **W2.4.3** Property VAT: 19% and 5% are stateable programme facts; **which rate applies to this customer** is not REFAL's to decide.
 
-### P2.5 — AML, sanctions, compliance and the existing client boundary `[ ]`
+### P2.5 — AML, sanctions, compliance and the existing client boundary `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -556,7 +556,7 @@ CX records real production defects from this project's history. Reproduce each, 
 | **W2.5.5** | **Existing client verification, built not parked.** Codex left this capability dark. This plan **builds the flow**: REFAL sends a one time code to the contact already on file, the customer reads it back, and only then is account data unlocked for that conversation. A self asserted detail or a matching caller number is **never** authentication. Test that self assertion alone never authenticates. The customer gets a working path, not a dead end. |
 | **W2.5.6** | Source of Funds and Source of Wealth explained neutrally and separately (MB-SEC3). Only high level status in chat, never files or statements. |
 
-### P2.6 — Guardrail regression sweep `[ ]`
+### P2.6 — Guardrail regression sweep `[x]` completed 2026-10-09
 Red team corpus v1: 200 adversarial messages AR/EN/EL (guarantee bait, price bait, eligibility bait, injection inside a pasted "approved document", sanctions probing, credential phishing, cross customer probing). Zero guarantees, zero personalized conclusions, zero injected instruction obedience. Record `docs/brain/GUARDRAIL-DELTA.md`.
 
 ---
@@ -678,6 +678,7 @@ This is the single most important import from Codex. It is what lets REFAL say �
 | **W3.10.5** | **Low confidence fallback** (CX 4B): ask one clarifying question, state the limitation, or route to a human. **Never fill the gap from unapproved prompt text.** |
 | **W3.10.6** | `scripts/brainHealth.js`: per topic per language — source exists · approved · not expired · chunk count · embedded count · retrievable for its golden questions · register row present. Exits non zero on any gap. This is the standing G3 tool for M3. |
 | **W3.10.7** | `docs/brain/KNOWLEDGE-RUNBOOK.md`: how to add a topic, update a price, retire a fact. |
+| **W3.10.8** | **Closes CF-02** (carried from W1.6.3, see section 21). With a non-empty corpus, replace the all-or-nothing `sourceLevel` with a per-claim check: is *this sentence* backed by the retrieved evidence? Until then `assertModelKnowledgeIsGeneral` short-circuits to `ok` on every turn and the general-knowledge gate cannot fire. Add a test that fails if the gate stops being reachable. |
 
 **G2.**
 ```bash
@@ -722,6 +723,7 @@ Migration `<ts>_refal_dynamic_commercial_data.sql`. Every existing convention: R
 | **W4.2.4** | **Tool truth** (CX 6C): timeouts, bounded retries, rate limits, idempotency keys, validation, audit logs, user safe error messages. **Never claim a booking, save, update or notification succeeded until confirmed.** On failure keep a safe pending state and raise an internal alert. **Never silently fall back to invented data.** |
 | **W4.2.5** | **Empty table behaviour**: empty or all expired → the tool returns "not available" and REFAL says the figure is not confirmed. Never a prompt literal, never a stale chunk. |
 | **W4.2.6** | Deterministic fallback for the non agent path (`src/messageRouter.js`). |
+| **W4.2.7** | **Closes CF-01** (carried from W1.6.2, see section 21). Live data now exists, so the composer finally has two sources that can disagree: wire `resolveConflict` in, live data beats a stale chunk, the chunk is flagged stale, and the customer beats a chunk about the customer. Add a test that fails if the call is removed. |
 
 ### P4.3 — The "never frozen" enforcement test `[ ]`
 - `src/dynamicDataSeparation.test.js` scans every exported prompt string in `brainPrompt.js`, `ai.js`, `dashboard/server.js`, the edge function and `config/refal-agent-rules.md` for a currency amount or property reference. Any hit fails.
@@ -1091,7 +1093,7 @@ Full matrix in [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.m
 | **OP-03** | Booking policy: Europe/Nicosia, weekdays 10:00-15:00, no same day, notice window, fresh recheck, explicit exact confirmation, 7 states | R-20, P10 | **M7** | `[ ]` |
 | **OP-04** | Booking never blocks unrelated Q&A; a new message never resumes an old booking | R-21 | **P7.4** | `[ ]` |
 | **OP-05** | Follow up consent scope, trilingual opt out, scheduler suppression, no untrue timing promise | R-22, P11 | **M9** | `[ ]` |
-| **OP-06** | Existing client account data fail closed until approved independent verification | R-19 | **P2.5** | `[ ]` |
+| **OP-06** | Existing client account data fail closed until approved independent verification | R-19 | **P2.5** | `[x]` |
 | **OP-07** | A greeting is never a name; platform metadata is not consent | R-11 | **P8.2** | `[ ]` |
 | **OP-08** | Knowledge versioned, publish, unpublish, rollback, no redeploy for a content change | R-25, P13 | **M12** | `[ ]` |
 | **OP-09** | Auditable, idempotent, customer scoped writes, accurately reported | R-24 | **P4.2**, **P13.1** | `[ ]` |
@@ -1120,6 +1122,7 @@ CX section 7 lists 30 source coverage items. All 30 map into this plan's milesto
 | **D-8** | Proactive cross selling | **Required**, once per trigger, after the question is answered, under P5.4 suppression |
 | **D-9** | Offering a call | Tier aware: none at Informational/Cold, flexible at Warm, required at Hot or on a buying signal, always with consent |
 | **D-10** | Residency / tax / licence content | **Allowed as PROGRAM_FACT with evidence.** Personalized eligibility and guarantees stay blocked |
+| **D-11** | Existing-client code delivery (BOSS, 2026-10-09) | `setVerificationCodeSender` is **optional until M8** and is **not a condition of M2 closure**. The flow is reached only via `INTENTS.EXISTING_CLIENT`, no tool reads `accountDisclosureAllowed`, and the commercial tables are absent (BLK-12), so there is nothing to disclose yet. Unregistered is the **correct** configuration and is fail-closed, not an error. Revisit at **M8**, when CRM memory gives REFAL real account data worth protecting |
 
 ### 14.2 Every dependency, and how this plan fixes it itself
 
@@ -1197,6 +1200,21 @@ One row per defect found, with the phase that repairs it and the regression test
 | **FIX-11** | High | MB-R2 | Specialist offer not persisted across turns, so it repeats | offer state not stored | **P5.4** | `salesHooks.test.js` |
 | **FIX-12** | Critical | OP-07 | Phone metadata treated as consent for unrelated follow up | consent has no purpose scope | **P9.1** | consent suite |
 | **FIX-13** | Medium | MB-1.1 | Agent identity question answered wrongly | no identity role | **P1.1**, **P1.2** | `companyProfile.test.js` |
+
+| **FIX-14** | High | MB-F55 | A NEGATED guarantee read as a guarantee: `and is not a guaranteed date` / `وليست موعداً مضموناً` deleted the whole grounded answer | `claimPolicy` knew only the VERB negation (`I cannot guarantee`), not the adjective form | **P2.2** | `claimGateEvidence.test.js` CLAIM-1 |
+| **FIX-15** | High | MB-G1 | A closing discovery question classified as an ungrounded PROGRAM_FACT, so every reply that obeyed the Golden Answer Formula was deleted | a question was scored as an assertion | **P2.2** | `claimGateEvidence.test.js` CLAIM-2 |
+| **FIX-16** | High | MB-F19..F55 | A spelled-out cardinal did not match its digits, so a grounded restatement (`4 أشهر` vs `أربعة أشهر`) blocked as unsupported | number extraction was digits only | **P2.2** | `claimGateEvidence.test.js` CLAIM-3 |
+| **FIX-17** | High | AR-L3, MB-SEC | Greek `διαμονή` missing from the IMMIGRATION rule: `Θα πάρω τη μόνιμη διαμονή;` carried no risk at all while its English and Arabic twins both refused | trilingual asymmetry, the BLK-14 shape | **P2.2** | `safetyPolicy.test.js`, `claimGateEvidence.test.js` |
+| **FIX-18** | High | MB price rules | A Greek price LEAKED into a non-pricing answer (`999 ευρώ`), and keyword-free Arabic price chunks were invisible to the price path | three divergent inline price regexes in one file; `ευρώ` in none of them | **P2.2** | `claimGateEvidence.test.js` PRICE-1 |
+| **FIX-19** | **Blocker** | MB-F55, MB-SEC1 | Approved evidence REMOVED the refusal from every investment advice, returns and ROI question, in all three languages. Introduced by P2.2 itself | the programme stand-down ran before the investment re-arm, which was therefore unreachable | **P2.2**, found by **P2.6** | `guardrailRegression.test.js` G-06 |
+| **FIX-20** | High | Anti-regression 0.2 | 16 of 29 cross-customer probes were refused by nothing; the other 13 only incidentally | no cross-customer rule existed anywhere in the repo | **P2.6** | `crossCustomerPolicy.test.js` |
+| **FIX-21** | High | MB-F55 | No ROI or expected-return claim class ran on the answer side, so a chunk carrying a yield figure unlocked the statement | `containsRoiClaim` shipped in P2.4 with no caller | **P2.6** | `outputGuards.test.js` |
+| **FIX-22** | High | MB-SEC | 9 injection and credential-phishing messages invisible to `classifySafety` in Arabic and Greek only | Arabic rules written against definite forms only; Greek literals not stemmed, so the genitive bypassed them | **P2.6** | `safetyPolicy.test.js` |
+| **FIX-23** | High | MB-SEC2 | 0 of 27 sanctions probes escalated. The detectors existed and nothing called them | compliance escalation never wired into `routeMessageResult` | **P2.5**, found by **P2.6** | `messageRouter.test.js` |
+| **FIX-24** | High | MB-F20 | Wiring the ROI guard live DELETED the approved IP Box fact: a tax rate on profits read as a yield claim | no tax-rate carve-out in `containsRoiClaim` | **P2.6** | `outputGuards.test.js`, `auditClaimGates.js` |
+| **FIX-25** | High | MB-SEC1 | The new output guards flagged EIGHT of REFAL own approved refusals, so a correct Arabic refusal was replaced by a vaguer fallback | no refusal carve-out; saying `I cannot provide returns information` contains the word it hunts | **P2.6** | `outputGuards.test.js`, `mirrorParity.test.js` |
+| **FIX-26** | Medium | AR-A | The edge mirror generator would have silently emitted a BROKEN `refalcoAnswer.mjs`, and the edge gate was never given the evidence it already had in scope | the line-based extractor could not follow the new dependency chain | **P2.2** | `mirrorParity.test.js` |
+| **FIX-27** | Medium | — | 10 new test suites were absent from `package.json#scripts.test`, so none of them ran under `npm test` | the manifest is a hand-maintained list, not a glob | **P2.2** | `testManifest.test.js` |
 
 **Release gate.** FIX-1, FIX-9, FIX-10 and FIX-12 are the four that must be green before any production restart or deploy. All thirteen have an owning phase. None is parked.
 
@@ -1617,6 +1635,112 @@ It did not over-correct: `A non-resident can own 100% of a Cyprus company.` stil
 
 ---
 
+---
+
+### M2 — Guardrail Reconciliation — completed 2026-10-09 — `[x]` all 6 phases
+
+**Exit criteria, restated:** REFAL states every approved programme fact while still refusing every personalized conclusion and every guarantee, in three languages, with no loss of existing protection.
+
+#### P2.1 — Claim classification taxonomy
+
+**Built:** `src/claimPolicy.js` — `CLAIM_CLASSES`, `splitClaims`, `classifyClaim`, `evaluateAnswerClaims`, `isApprovedEvidence`, `approvedEvidenceText`, plus `containsGuaranteeMarker` and `containsPersonalizedConclusion` added by P2.6. Precedence GUARANTEE > PERSONALIZED_CONCLUSION > PROGRAM_FACT > NEUTRAL. All three language rule sets run on every sentence regardless of detected language, because code-switched output is normal and gating rules by detected language would be a fail-open.
+
+**Files:** `src/claimPolicy.js`, `src/claimPolicy.test.js`.
+
+**Verification (G2):** `node --test src/claimPolicy.test.js` → **exit=0, 245 tests**. Covers every `MB_CANDIDATES` `expect:"pass"` entry in 3 languages with and without evidence, every `expect:"block"` control, expiry, pending review, and bare-alef folding.
+
+**Deviations:** three documented carve-outs — negated-guarantee stripping, a refusal-to-provide strip, and an interrogative branch. Each exists because the first version deleted a correct REFAL reply. All three are pinned by tests.
+
+#### P2.2 — Rewrite `containsProhibitedClaim` (removes BLK-1, BLK-2, BLK-8)
+
+**Built:** the gate now **branches**. No approved evidence → `containsProhibitedClaimLegacy`, byte-identical to pre-M2. Approved evidence → per-clause classification through `claimPolicy`. `containsUnconditionalProhibition` runs on **both** branches. `restrictedRefalcoReply` stands down for an evidence-backed programme enquiry, and never for prompt injection, credential exposure, a personalized eligibility demand, a guarantee, an ROI question, or a cross-customer probe. `allowsGroundedProgrammeAnswer` is exported and used by `messageRouter`, which is where BLK-2 did most of its damage: a residency question was refused **before retrieval ever ran**, so the knowledge base could not be reached at all.
+
+**Files:** `src/refalcoAnswer.js`, `src/ai.js`, `src/responsePolicy.js`, `src/messageRouter.js`, `dashboard/agentFallback.js`, `dashboard/server.js`, `supabase/functions/rafa-agent-api/index.ts`, `scripts/generateEdgeMirrors.js`, `src/claimGateEvidence.test.js`, `src/mirrorParity.test.js`, `package.json`.
+
+**Verification (G2):** `npm run test:all` → **exit=0, 1563 root + 85 dashboard, 0 fail**. `node scripts/auditClaimGates.js` → **exit=0**. `node scripts/generateEdgeMirrors.js --check` → **exit=0**.
+
+**W2.2.6 assertion audit — the honest answer: ZERO assertions were changed** in `groundingPolicy.test.js`, `agentFactualGrounding.test.js`, `safetyPolicy.test.js` or `agentRagEvidence.test.js`. None of them asserted "residency is always refused"; the blanket block was never pinned there. All four pass unchanged, which is a stronger result than a rewrite would have been. The positive cases went into a new file, `src/claimGateEvidence.test.js`.
+
+One assertion **was** changed, in `src/guardrailRegression.test.js`: the corpus-wide "with no evidence the gate is EXACTLY the pre-M2 gate" **equality** became an **implication** (legacy-blocked implies live-blocked) plus a non-empty-superset check. Reason: the unconditional guards deliberately make the gate **stricter** than legacy, and an equality assertion fails on a strengthening exactly as loudly as on a loss of protection. Measured: **45 message classes newly blocked, 0 newly allowed without an MB row.**
+
+**G3 diff:** `docs/brain/GUARDRAIL-DELTA.md`. Everything newly allowed maps to an MB row (MB-F30, MB-F22, MB-F52, MB-F40, MB-R5). Two classes that could **not** be mapped were found by P2.6 and are now refused again — recorded as FIX-19 and FIX-20.
+
+#### P2.3 — Banking and payment gateway guard
+
+**Built:** `src/bankingPolicy.js` — `detectBankingIntent` over 12 topics trilingually, `bankingGuardReply` producing MB 2.3's mandated three-part shape (honest about whose decision it is, then the real value of a clean file from day one, then exactly one discovery question), `violatesBankingHonesty`, and `STRIPE_GOLDEN_DIALOGUE`.
+
+**Verification (G2):** `node --test src/bankingPolicy.test.js` → **exit=0, 105 tests**.
+
+**Provenance, stated plainly:** the **Arabic** Stripe dialogue is **verbatim** from `newplan/Master Brain & Operating Rules Manual - REFAL AI.txt` lines 78-79, pinned by an exact-string test so drift breaks the build. The **English and Greek fixtures are authored equivalents, not source text** — no EN/EL version exists in any source document. Labelled as such in the code.
+
+#### P2.4 — Reservation deposit, ROI and VAT guards
+
+**Built:** `src/reservationPolicy.js` — `violatesReservationDepositRule` (MB-F50, absolute, default-deny, satisfied only by `refal_reservation_rules`), `containsRoiClaim` + `ROI_REPLY` (MB-F55), `classifyVatStatement` (MB-F45, MB-F48).
+
+**Verification (G2):** `node --test src/reservationPolicy.test.js` → **exit=0, 142 tests**.
+
+**Provenance:** the **Arabic** ROI script is **verbatim** from the manual line 114, pinned by a test that reads the source file. **English and Greek are reconstructions** from MB-F55's five invariants, labelled as reconstructions in the code.
+
+**PENDING DB:** `refal_reservation_rules` does not exist (BLK-12, M4 owns it). The guard and its `source` contract are built and default-deny today. No migration was written and no database was touched.
+
+#### P2.5 — AML, sanctions, compliance and the existing client boundary
+
+**Built:** `src/redFlagRules.js` extended with sanctions and circumvention detection; `src/complianceEscalation.js` (consent-free regulatory escalation, humour forced to 0, sales hooks suppressed, sticky for the rest of the conversation, never debates the evasion); `src/privacyHardRule.js` (outbound credential-request gate, MB-SEC4); `src/sourceOfFundsPolicy.js` (MB-SEC3); `src/existingClientWorkflow.js` extended with a **working** one-time-code verification flow.
+
+**W2.5.5 — built, not parked.** A 6-digit code from `crypto.randomInt`, sent only to the contact **already on file**, stored as salt plus hash and never in plaintext in the state object or in any customer message, single use, 10-minute expiry, 3-attempt lockout, compared with `crypto.timingSafeEqual`. A self-asserted detail never authenticates and a matching caller number never authenticates. All nine original exports keep their signatures.
+
+**Live wiring (closes MB-SEC2):** compliance escalation now runs inside `routeMessageResult`, ahead of name capture and of both restricted-topic refusals, and it reads no intent or safety verdict so it cannot be bypassed by a message that also looks like a programme enquiry. The detector reaches **27 of 27** sanctions probes, **9 of 9 in each language**; it was 3 of 27 with Arabic at 0 of 9 before this work, and the router holds no detection patterns of its own.
+
+**Fields left for BOSS to fill (G6): none for M2 closure.**
+
+There is one optional hook, `VERIFICATION_DELIVERY.sendVerificationCode` in `src/existingClientWorkflow.js`, registered via `setVerificationCodeSender(fn)`. It is a **function, not a credential**, so no secret enters the repo and nothing sends from here.
+
+**It is deliberately NOT a blocker, and it is not an action on BOSS.** Verified against the code at M2 close:
+
+- The flow is reached only through `INTENTS.EXISTING_CLIENT` (`src/messageRouter.js:917`) — "what is the status of my account / my client number / حسابي" and equivalents. Every normal REFAL conversation (formation, residency, tax, VAT, pricing, booking) never touches it.
+- **Nothing is unlocked by it today.** `accountDisclosureAllowed` is computed and surfaced in conversation state, and **no tool reads it**. There is no account-lookup tool and the commercial tables are absent (BLK-12), so the gate currently protects data that does not exist.
+- Unregistered is a **working, fail-closed state**, not an error: `issueVerificationCode` returns `verification_sender_not_configured` and the customer gets the approved-channel message.
+
+**It becomes relevant at M8**, when CRM memory gives REFAL real client and account data and there is finally something to disclose after verification. The hook is built now rather than later only because the alternative was leaving the capability dark, which is what G6 forbids. Until M8, leaving it unregistered is the correct configuration, not an outstanding task.
+
+**Verification (G2):** the five P2.5 suites → **exit=0, 65 tests**; re-verified inside the M2 sweep at **616 tests, exit=0**.
+
+**OP-06** ticked in section 13.2.
+
+#### P2.6 — Guardrail regression sweep
+
+**Built:** `src/redTeamCorpus.js` — **200 adversarial messages**, ar 67 / en 67 / el 66, across all seven required categories; `src/guardrailRegression.test.js`; `scripts/auditClaimGates.js` extended with a second, evidence-supplied pass and a new **exit 3**; `docs/brain/GUARDRAIL-DELTA.md`.
+
+**Verification (G2):** `node --test src/guardrailRegression.test.js` → **exit=0, 17 tests**. `node scripts/auditClaimGates.js` → **exit=0** — *no unregistered conflict, no safety leak, no MB fact blocked with evidence*.
+
+**This phase found a Blocker inside P2.2's own work** (FIX-19: approved evidence silently removed the refusal from every investment advice, returns and ROI question) plus eight further defects. All are repaired and pinned. See section 15, FIX-14 to FIX-27.
+
+---
+
+**M2 gate evidence, all re-run 2026-10-09 after the final fix:**
+
+```
+npm run test:all                                  exit=0   1563 + 85 tests, 0 fail
+node scripts/auditClaimGates.js                   exit=0
+node --test src/guardrailRegression.test.js       exit=0   17 tests
+node --test <the 11 M2 suites>                    exit=0   616 tests
+node scripts/generateEdgeMirrors.js --check       exit=0
+node scripts/generateEdgeBrainPrompt.js --check   exit=0
+node scripts/validateTaxonomy.js                  exit=0
+```
+
+**Gap scan (G3):** P2.1 COVERED · P2.2 COVERED · P2.3 COVERED · P2.4 **PARTIAL** (the deposit guard is built and default-deny; its live table belongs to M4, BLK-12) · P2.5 COVERED · P2.6 COVERED. Anti Regression Checklist: all 11 items re-checked, 0 regressions.
+
+**Two drift classes closed permanently.** `scripts/generateEdgeMirrors.js` used to carry a hand-written import line and a hand-written export list per mirror. Both went stale the moment `claimPolicy` gained two functions, and the generator reported success while every edge request would have thrown. Both are now **derived from the source**, so a new symbol propagates automatically and an unmirrored dependency is a hard error rather than a broken file.
+
+**Explicitly NOT done:**
+
+- **Nothing is committed and nothing is pushed.** G7 sign-off is BOSS's call.
+- **Deno is not installed on this machine**, so `supabase/functions/rafa-agent-api/index.ts` was **not type-checked**. The mirrors were proved verbatim mechanically and executed through Node's ESM loader, and `src/mirrorParity.test.js` compares src and edge verdicts in both evidence modes. But "the edge function compiles under Deno" is an unverified claim and is not being made.
+- **No live model call and no live HTTP invoke.** The red-team corpus proves what the gates do with a given string, not what an LLM will actually say.
+- `refal_reservation_rules` is absent, so W2.4.1 is enforced but can never be satisfied until M4 ships the table and BOSS runs the migration.
+- Two pre-existing items raised and deliberately not fixed here, both outside M2's scope: `GQ-07-el-02`'s Greek concealment phrasing does not flag while its English and Arabic twins do, and "Do you run a sanctions screening?" escalates as a probe. Both are judgement calls, not defects introduced by M2.
+
 ## 17. Standing verification commands
 
 ```bash
@@ -1626,6 +1750,14 @@ npm test > /tmp/refal-test.log 2>&1; echo "exit=$?"; tail -40 /tmp/refal-test.lo
 # Dashboard
 npm --prefix dashboard test      > /tmp/refal-dash.log  2>&1; echo "exit=$?"
 npm --prefix dashboard run build > /tmp/refal-build.log 2>&1; echo "exit=$?"
+
+# M2 phase gate (added by P2.2 / P2.6, 2026-10-09)
+# auditClaimGates now runs TWO passes: without evidence and with synthetic
+# approved evidence. M2's exit gate is exit == 0, which additionally requires
+# that no `expect: "pass"` MB candidate is still blocked WITH evidence.
+node scripts/auditClaimGates.js > /tmp/gates.log 2>&1; echo "exit=$?"
+node --test src/guardrailRegression.test.js > /tmp/redteam.log 2>&1; echo "exit=$?"
+node --test src/claimGateEvidence.test.js src/outputGuards.test.js > /tmp/m2gate.log 2>&1; echo "exit=$?"
 
 # M1 phase gate (added by P1.7, 2026-10-09) — the edge prompt mirror
 node scripts/generateEdgeBrainPrompt.js --check > /tmp/edge-prompt.log 2>&1; echo "exit=$?"
@@ -1672,6 +1804,12 @@ node --test src/<module>.test.js
 | **0** | no unregistered conflict and no safety leak |
 | **1** | **P0.2 fails** — a blocked MB fact is not recorded in `CONFLICT-REGISTER.md` |
 | **2** | **P0.2 passes, M2 owes a fix** — all conflicts registered, a fail-open leak remains |
+| **3** | **added by P2.6** — no leak, but an `expect: "pass"` MB fact is STILL blocked when approved evidence is supplied. M2 built the evidence path and this fact cannot reach it. |
+
+Exit 3 exists because the original three codes could only see the no-evidence
+world. Once P2.2 made the gate evidence-aware, "the blanket block is registered"
+stopped being the interesting question and "does an approved fact actually get
+through now" became it. The script runs both passes and prints them side by side.
 
 P0.2's gate condition is `exit != 1`. M2's exit gate is `exit == 0`. Registration must never wave a safety leak through, which is why a leak is not exit 0; but it must also not block P0.2 forever on a repair that belongs to P2.3.
 
@@ -1729,6 +1867,33 @@ P0.2's gate condition is `exit != 1`. M2's exit gate is `exit == 0`. Registratio
 ```
 
 **Honest closing note.** This is a build plan, not a completion claim. REFAL is called ready only when section 16's ledger shows every gate passed with a real exit code, and all 195 requirements have linked evidence. That is a quality bar, not a dependency. Nothing in this plan waits on anyone.
+
+---
+
+## 21. Carry-forward register — work deferred OUT of a closed milestone
+
+A milestone can close with work deliberately unfinished. That is legitimate
+only if the item is **tracked against the phase that can actually do it**, with
+the reason it could not be done earlier. An item recorded only in a Result
+block gets buried the moment the next milestone starts, so every deferral is
+listed here **and** referenced from its owning phase.
+
+**Rule: a phase may not be ticked `[x]` while a carry-forward row names it and
+is still open.** Closing the row is part of that phase's G3.
+
+| ID | Deferred from | Owning phase | What is actually missing | Why it could not be done then | Status |
+| --- | --- | --- | --- | --- | --- |
+| **CF-01** | **W1.6.2** (M1, P1.6) | **P4.2** | `resolveConflict` is built and unit-tested but has **no live caller**. The composer never asks it to arbitrate. | It arbitrates between two *disagreeing* sources and there is only ever one. The live data layer does not exist (BLK-12, all six commercial tables absent) and the corpus is empty (0 chunks). Wiring it would add an unreachable branch, not a capability. | `[ ]` OPEN |
+| **CF-02** | **W1.6.3** (M1, P1.6) | **P3.10** | `assertModelKnowledgeIsGeneral` runs live at `src/ai.js` but **always short-circuits to ok**: `sourceLevel` is only `MODEL_KNOWLEDGE` when evidence is empty, and the caller returns early in exactly that case. So the gate can never fire. | The honest fix is per-claim groundedness — asking whether a *specific sentence* is backed by the retrieved evidence, not whether evidence exists at all. That needs a non-empty corpus and the grounding work M3 owns. | `[ ]` OPEN |
+| **CF-03** | M1 close observation | **P12.3** | The dashboard streaming path runs **2 of 6** output gates (`containsProhibitedClaim`, `containsUnconsentedContactCommitment`). No `validateResponse`, no anti-patterns, no humour gate. | It is the operator surface: its output is read by staff, not sent to a customer, so copying the customer gates is a decision rather than an obvious fix. | `[ ]` OPEN |
+
+### How to close a row
+
+1. Do the work in the owning phase.
+2. Delete the unreachable-branch excuse by proving the caller now exercises it: a test that fails if the gate is removed.
+3. Tick the row, and say so in that phase's Result block.
+
+**CF-01 and CF-02 share one root cause** and should be looked at together: both are gates whose *input* cannot vary yet. Neither is a wiring mistake, and neither should be "fixed" by inventing a caller — that produces a second dead gate, which is what M1 already declined to do twice.
 
 ---
 

@@ -1,5 +1,5 @@
 const { detectMessageLanguage, detectExplicitLanguageRequest } = require("./language");
-const { restrictedRefalcoReply } = require("./refalcoAnswer");
+const { restrictedRefalcoReply, allowsGroundedProgrammeAnswer } = require("./refalcoAnswer");
 const { detectIntent, INTENTS } = require("./intent");
 const { classifySafety, safeLocalizedFallback } = require("./safetyPolicy");
 const { qualifyLead, consentFromText, getConsentState } = require("./leadQualification");
@@ -17,6 +17,7 @@ const { safeFallbackData, validateResponse, hasVerifiedHandoverClaim, hasVerifie
 const { createCorrectionEvent } = require("./correctionWorkflow");
 const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./opportunityIntake");
 const { assessRedFlags } = require("./redFlagRules");
+const { detectComplianceEscalation, buildComplianceEscalation, applyComplianceLock, isComplianceLocked } = require("./complianceEscalation");
 const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
 
 const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
@@ -30,10 +31,55 @@ const HELP = [
   "Ask a Refalco Group question or request a meeting."
 ].join("\n");
 
+// ======================================================= MB-SEC2, live path
+// P2.5 / W2.5.2 + W2.5.3 wired into the inbound route.
+//
+// src/redFlagRules.js and src/complianceEscalation.js already decide WHAT a
+// compliance escalation is and WHAT it says. Nothing called them, so P2.6
+// measured 0 of 27 sanctions probes refused or escalated. This file now calls
+// them, and adds nothing to the customer-facing side: the acknowledgment, the
+// internal record, the no-consent rule and the sticky lock all come from
+// buildComplianceEscalation / applyComplianceLock, so there is exactly one
+// author of that text and one definition of the lock.
+//
+// P2.6 / W2.6.1 — the router-side BRIDGE table is GONE.
+//
+// It used to hold four sanctions shapes (`sanctions_exposure_disclosed`,
+// `register_concealment`, `source_of_funds_avoidance`,
+// `screening_answer_coaching`) that src/redFlagRules.js did not know. That made
+// the live path correct and the DETECTOR wrong: `assessRedFlags` saw 3 of the 27
+// `sanctions_probing` corpus messages and 0 of the 9 Arabic ones, so anything
+// that was not this file — the edge mirror, the regression harness, any future
+// batch scorer — got a different answer from the same input.
+//
+// The four shapes are now first-class rules in src/redFlagRules.js, trilingual
+// and fold-aware, and they are in COMPLIANCE_FLAGS, so
+// detectComplianceEscalation picks them up on its own. This file holds no
+// detection patterns at all; it only asks. Trigger ids are INTERNAL; they reach
+// the audit record and never a customer reply.
+
+/**
+ * Every compliance trigger this turn carries. An empty array means this turn is
+ * NOT a compliance escalation.
+ */
+function complianceTriggersFor(text, redFlags) {
+  return detectComplianceEscalation(text, { redFlags: redFlags || [] }).triggers;
+}
+
+function sameComplianceLock(previous, next) {
+  if (!previous || !next) return false;
+  return isComplianceLocked(previous) === isComplianceLocked(next) &&
+    previous.humourLevel === next.humourLevel &&
+    Boolean(previous.salesHooksSuppressed) === Boolean(next.salesHooksSuppressed) &&
+    (previous.complianceTriggers || []).join("|") === (next.complianceTriggers || []).join("|");
+}
+
 async function recordHistory(store, userId, message, response, extra) {
   const metadata = { ...(extra?.metadata || {}) };
   delete metadata.privacySafeQuestion;
-  if (!metadata.specialistOffer && isTrackedSpecialistOffer(response)) {
+  // W2.5.3. A locked conversation never tracks a new sales hook, so a later
+  // "yes" cannot be read as consent to an offer that should not have been made.
+  if (!metadata.specialistOffer && !metadata.complianceLock?.salesHooksSuppressed && isTrackedSpecialistOffer(response)) {
     metadata.specialistOffer = { offered: true, consentRequired: true, offeredAt: new Date().toISOString() };
   }
   const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
@@ -59,6 +105,7 @@ async function recordHistory(store, userId, message, response, extra) {
   // added one full Edge Function round-trip per record to every eligible turn.
   const writes = [];
   let handoverWrite = null;
+  let complianceAuditWrite = null;
   const qualification = metadata.qualification;
   if (!privacyTurn && qualification && typeof store.saveQualification === "function") {
     writes.push(store.saveQualification(userId, qualification.dimensions || {}, {
@@ -101,6 +148,23 @@ async function recordHistory(store, userId, message, response, extra) {
       sourceTurnId: turn?.id
     }));
   }
+  // MB-SEC2. The internal record goes through the same store surface the
+  // complaint, priority-alert and handover branches already use. The record
+  // itself carries triggers, language and a timestamp only, never the customer's
+  // words, so an AML audit row can never become a second copy of a message that
+  // the privacy rule redacted from the turn.
+  if (metadata.complianceEscalation?.record && typeof store.logAuditEvent === "function") {
+    complianceAuditWrite = store.logAuditEvent(userId, "compliance_escalation", { ...metadata.complianceEscalation.record, sourceTurnId: turn?.id || null }, "system");
+    writes.push(complianceAuditWrite);
+  }
+  if (metadata.complianceEscalation?.record && typeof store.createPriorityAlert === "function") {
+    writes.push(store.createPriorityAlert(userId, {
+      level: "urgent",
+      trigger: "safety_or_threat",
+      details: { source: "compliance_escalation", language: metadata.complianceEscalation.record.language },
+      sourceTurnId: turn?.id
+    }));
+  }
   if (metadata.existingClientVerification && typeof store.saveExistingClientVerification === "function") {
     const state = metadata.existingClientVerification;
     writes.push(store.saveExistingClientVerification(userId, {
@@ -121,6 +185,10 @@ async function recordHistory(store, userId, message, response, extra) {
     writes.push(store.logAuditEvent(userId, "red_flags_detected", metadata.redFlags, "system"));
   }
   await Promise.all(writes);
+  // Anti Regression Checklist, line 4: no action is claimed before the tool
+  // confirms it. `complianceRecorded` is derived from the row the store handed
+  // back, never from the fact that a write was attempted.
+  const complianceAuditRecord = complianceAuditWrite ? (await complianceAuditWrite) || null : null;
   if (handoverWrite) {
     const saved = await handoverWrite;
     if (saved?.id && typeof store.updateUser === "function") {
@@ -161,7 +229,13 @@ async function recordHistory(store, userId, message, response, extra) {
       }
     }
   }
-  return { turn, turnId: turn?.id || null };
+  return {
+    turn,
+    turnId: turn?.id || null,
+    ...(metadata.complianceEscalation?.record
+      ? { complianceRecorded: Boolean(complianceAuditRecord), complianceRecordId: complianceAuditRecord?.id || null }
+      : {})
+  };
 }
 
 function isTrackedSpecialistOffer(response) {
@@ -244,10 +318,15 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
   const classification = detectIntent(routingText);
   const priority = assessPriority({ text: routingText, intents: classification.intents });
   const redFlags = assessRedFlags(routingText, { profile: user.profile || {} });
+  // MB-SEC2. Resolved here, on the FULL incoming text rather than the privacy
+  // redacted routing text, so a probe cannot be hidden behind a credential. It
+  // is computed before name capture below on purpose: a sanctions probe must
+  // not also harvest a contact name into the stored profile.
+  const complianceTriggers = complianceTriggersFor(incoming, redFlags);
   const history = [...(user.history || []), { message: incoming }];
   const lastTurn = user.history?.[user.history.length - 1];
   const askedForName = wasNameRequested(lastTurn);
-  const capturedName = privacyRisk ? null : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
+  const capturedName = privacyRisk || complianceTriggers.length ? null : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
   if (user.profile?.name && !isPlausibleCustomerName(user.profile.name) && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
       draft.profile = { ...(draft.profile || {}) };
@@ -306,6 +385,7 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
     classification,
     safety,
     priority,
+    complianceTriggers,
     qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds },
     metadata: {
       intent: { primary: classification.primary, intents: classification.intents, isMultiIntent: classification.isMultiIntent, language: classification.language },
@@ -511,6 +591,66 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const user = existingUser || await store.ensureUser(userId);
   const prepared = preparedInbound || await prepareInboundMessage({ userId, incoming, user, store });
   const { classification, safety, priority } = prepared;
+
+  // ================================================== MB-SEC2, W2.5.2 + W2.5.3
+  // FIRST decision on the inbound path, ahead of the explicit-language reply,
+  // name capture, the greeting and project-enquiry replies, the complaint
+  // branch and BOTH restricted-topic refusals. Nothing below can be reached
+  // without passing here, and this block reads no intent at all, so a probe
+  // dressed as a programme enquiry cannot route around it: the programme
+  // stand-down (`allowsGroundedProgrammeAnswer`) is only consulted further
+  // down, on turns that already cleared compliance.
+  //
+  // It is also sticky. W2.5.3 says the humour level and the sales-hook
+  // suppression survive the triggering turn, so the lock is rebuilt from the
+  // stored profile on EVERY turn, including turns whose own text is innocuous.
+  const complianceTriggers = Array.isArray(prepared.complianceTriggers)
+    ? prepared.complianceTriggers
+    : complianceTriggersFor(incoming, prepared.metadata.redFlags);
+  const complianceEscalation = complianceTriggers.length
+    ? buildComplianceEscalation(incoming, {
+      language: classification.language,
+      conversationId: userId,
+      redFlags: prepared.metadata.redFlags,
+      triggers: complianceTriggers
+    })
+    : null;
+  const storedComplianceLock = user.profile?.complianceLock || null;
+  const complianceLock = applyComplianceLock(storedComplianceLock || {}, complianceEscalation);
+  const complianceLocked = isComplianceLocked(complianceLock);
+  if (complianceLocked) {
+    if (!sameComplianceLock(storedComplianceLock, complianceLock) && typeof store.updateUser === "function") {
+      await store.updateUser(userId, (draft) => { draft.profile = { ...(draft.profile || {}), complianceLock }; });
+    }
+    user.profile = { ...(user.profile || {}), complianceLock };
+    // Internal only. The customer is never told a lock exists, which rule fired,
+    // or that a level was set (Anti Regression Checklist: no internal score or
+    // label is ever exposed).
+    prepared.metadata.complianceLock = {
+      locked: true,
+      humourLevel: complianceLock.humourLevel,
+      salesHooksSuppressed: Boolean(complianceLock.salesHooksSuppressed),
+      triggers: [...(complianceLock.complianceTriggers || [])]
+    };
+  }
+  if (complianceEscalation) {
+    // No consent gate, by design. A regulatory escalation is an obligation, not
+    // a sales handover, so it never enters the follow-up consent path and never
+    // sets profile.handover (plan 0.2, the one documented exception).
+    response = complianceEscalation.customerMessage;
+    const metadata = {
+      ...prepared.metadata,
+      complianceEscalation: {
+        record: complianceEscalation.internalRecord,
+        requiresConsent: complianceEscalation.requiresConsent,
+        recorded: false
+      }
+    };
+    const history = await recordHistory(store, userId, incoming, response, { metadata });
+    metadata.complianceEscalation.recorded = history.complianceRecorded === true;
+    return resultWithHistory({ response, user, metadata, history });
+  }
+
   const statesNoProactivePreference = NO_PROACTIVE_CONTACT_OR_BOOKING.test(incoming);
   if (statesNoProactivePreference) {
     const conversationPreferences = { ...(user.profile?.conversationPreferences || {}), noProactiveBookingOrContact: true };
@@ -741,7 +881,17 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   }
 
   // Safety and escalation decisions happen before name capture or AI retrieval.
-  if (safety.restricted && !prepared.metadata.privacySafeQuestion) {
+  //
+  // P2.2 / BLK-2. This is where the blanket refusal did most of its damage: a
+  // question about the permanent residency programme classifies as an
+  // IMMIGRATION risk, so it was refused HERE, before retrieval ever ran, and
+  // the approved knowledge base could not be reached at all. A programme
+  // enquiry now falls through to the normal retrieval path, where the
+  // evidence-aware gate decides. If retrieval finds nothing, bot.js still ends
+  // at `noApprovedEvidenceReply`, so the answer is honest either way.
+  // `allowsGroundedProgrammeAnswer` never stands down for prompt injection or
+  // credential exposure, and never for a personalized eligibility demand.
+  if (safety.restricted && !prepared.metadata.privacySafeQuestion && !allowsGroundedProgrammeAnswer(incoming)) {
     response = restrictedRefalcoReply(incoming) || safeLocalizedFallback(safety.primary || incoming, language);
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
@@ -809,8 +959,11 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
 
   // Offer specialist follow-up for material non-formation cases only when the
   // customer has not declined it. Company setup stays in the answer-first flow.
+  // W2.5.3. Once the compliance lock is on, REFAL stops offering. A customer
+  // who asks for a specialist outright is still heard further up; what is
+  // suppressed is the proactive hook, for the rest of the conversation.
   const followUpDeclined = storedConsentState === "denied" || storedConsentState === "revoked";
-  if (priority.handoverRequired && !followUpDeclined && !user.profile?.conversationPreferences?.noProactiveBookingOrContact && !classification.intents.includes(INTENTS.COMPANY_FORMATION)) {
+  if (priority.handoverRequired && !followUpDeclined && !complianceLocked && !user.profile?.conversationPreferences?.noProactiveBookingOrContact && !classification.intents.includes(INTENTS.COMPANY_FORMATION)) {
     response = localized(language, {
       english: "This sounds like a substantial business matter. I can help with the basics here, or—with your permission—ask a Refalco Group specialist to follow up. Which would you prefer?",
       arabic: "واضح إن الموضوع مهم. فيني ساعدك بالمعلومات الأساسية هون، أو إذا بتحب أطلب من مختصّ من الشركة يتابع معك. شو بتفضّل؟",
@@ -848,7 +1001,8 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata: prepared.metadata, history });
   }
 
-  const restrictedReply = restrictedRefalcoReply(incoming);
+  // P2.2 / BLK-2, second gate on the same pre-retrieval path. Same rule.
+  const restrictedReply = allowsGroundedProgrammeAnswer(incoming) ? null : restrictedRefalcoReply(incoming);
   if (restrictedReply) {
     response = restrictedReply;
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });

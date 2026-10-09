@@ -1,4 +1,13 @@
-const { detectMessageLanguage, foldArabicLetters, foldRulePatterns } = require("./language");
+// GENERATED FILE — do not edit by hand.
+// Source: src/safetyPolicy.js
+// Generator: scripts/generateEdgeMirrors.js  (npm run edge:mirrors)
+//
+// The edge function is Deno and cannot require() CommonJS, so it imports this
+// verbatim ESM extract instead of keeping its own copy. Hand-maintained copies
+// of these exact checks drifted into fail-opens; src/mirrorParity.test.js now
+// runs both implementations over a shared corpus and fails on any divergence.
+
+import { detectMessageLanguage, foldArabicLetters, foldRulePatterns } from "./language.mjs";
 
 const SAFETY_CATEGORIES = Object.freeze({
   PROMPT_INJECTION: "prompt_injection",
@@ -172,4 +181,4 @@ function safeLocalizedFallback(textOrCategory, language) {
   return FALLBACKS[lang][key] || FALLBACKS[lang].generic;
 }
 
-module.exports = { SAFETY_CATEGORIES, normalizeSafetyText, detectSafetyRisks, classifySafety, isPromptInjection, isRestrictedTopic, safeLocalizedFallback, FALLBACKS };
+export { SAFETY_CATEGORIES, normalizeSafetyText, detectSafetyRisks, classifySafety, isPromptInjection, isRestrictedTopic, safeLocalizedFallback, FALLBACKS };
