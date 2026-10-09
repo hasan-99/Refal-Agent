@@ -5,7 +5,7 @@ const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const EMBEDDING_BATCH_SIZE = 8;
 const { detectMessageLanguage, languageInstruction } = require("./language");
 const { containsProhibitedClaim } = require("./refalcoAnswer");
-const { validateResponse, MODEL_DRAFT_THRESHOLDS } = require("./responsePolicy");
+const { validateResponse, MODEL_DRAFT_THRESHOLDS, lowConfidenceFallback } = require("./responsePolicy");
 const { detectIntent, detectIntents, INTENTS } = require("./intent");
 // personaDirectives and humourDirective are deliberately NOT imported here any
 // more: W1.7.2 moved both inside buildBrainPrompt, and leaving the imports
@@ -35,7 +35,10 @@ const {
   containsUnsupportedPackageInclusion,
   containsLegacyBrandHistory,
   customerAskedAboutLegacyBrand,
-  containsRawUrlClaim
+  containsRawUrlClaim,
+  // W3.10.8 — the per-claim groundedness check that gives
+  // assertModelKnowledgeIsGeneral an input that can actually vary (CF-02).
+  assessClaimGroundedness
 } = require("./groundingPolicy");
 
 let embeddingPipelinePromise;
@@ -335,6 +338,39 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
       throw contentPolicyError(precedenceGate.label);
     }
 
+    // P3.10 / W3.10.8 — the SAME ladder, asked per claim. CF-02, closed.
+    //
+    // The whole-answer gate above cannot fire from this call site and never
+    // could: `sourceLevel` is only MODEL_KNOWLEDGE when `evidence` is empty,
+    // and this function returns null for an empty evidence bundle before any
+    // model is called. It is kept exactly as it is — a future caller that
+    // reaches here without that early return still gets it — and the branch
+    // below is added BESIDE it, not in place of it.
+    //
+    // With a non-empty corpus the real failure is no longer "a turn with no
+    // evidence at all", it is a five-sentence answer where four sentences are
+    // grounded and the fifth is invented. `assessClaimGroundedness` asks the
+    // ladder question of each sentence separately, so an ungrounded sentence
+    // sits at MODEL_KNOWLEDGE (rank 6) even on a turn that retrieved plenty of
+    // evidence, and W1.6.3's rule — general explanation yes, Refalco-specific
+    // claim never — finally has something to judge.
+    //
+    // Judged against `promptEvidence`, the bundle the MODEL ACTUALLY SAW, not
+    // the raw `evidence` argument: when pricing is not allowed the price facts
+    // are stripped before the prompt is built, so grading against the unstripped
+    // set would mark a price the model could not have read as "supported".
+    const claimGate = assessClaimGroundedness(answer, { evidence: promptEvidence, language });
+    if (!claimGate.ok) {
+      // W1.6.5 again — a short stable label, never prose. The low-confidence
+      // marker rides along so the retry loop can answer with W3.10.5's
+      // deterministic fallback instead of giving up, once every model has had
+      // its one attempt at producing a grounded draft.
+      const ungroundedClaimError = contentPolicyError(claimGate.label);
+      ungroundedClaimError.lowConfidence = true;
+      ungroundedClaimError.lowConfidenceReason = "ungrounded_claim";
+      throw ungroundedClaimError;
+    }
+
     // P1.5 — anti-pattern guards. These REPORT rather than rewrite: silently
     // stripping a caveat to satisfy AP-2 is the exact failure CX 12B warns
     // about, so a violation forces a regeneration instead.
@@ -407,6 +443,23 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     } finally {
       clearTimeout(timeout);
     }
+  }
+  // P3.10 / W3.10.5 — the LOW CONFIDENCE fallback (CX 4B).
+  //
+  // Every configured model has now had its attempt and each one produced a
+  // sentence the retrieved evidence does not back. The three permitted moves
+  // are to ask one clarifying question, state the limitation, or route to a
+  // human; `lowConfidenceFallback` is all three in one deterministic sentence
+  // pair, per language, and it interpolates NOTHING — not the draft, not the
+  // customer's message, not the prompt text, not the evidence. That is the
+  // "never fill the gap from unapproved prompt text" half of the wave.
+  //
+  // Additive: only an error carrying the W3.10.8 marker takes this exit. Every
+  // other failure still throws exactly as before, and the caller's own safe
+  // reply (src/bot.js keeps the deterministic excerpt it selected before the
+  // model ran) is untouched.
+  if (lastError?.lowConfidence) {
+    return lowConfidenceFallback({ language, reason: lastError.lowConfidenceReason }).text;
   }
   throw lastError || new Error("OpenRouter could not produce an answer.");
 }

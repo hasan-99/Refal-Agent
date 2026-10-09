@@ -97,7 +97,22 @@ Merged from Claude G1-G5 and CX section 2.2. No phase starts until the previous 
 
 ### 0.3 Database change protocol — BOSS runs every migration
 
-**This environment has no Supabase access.** Confirmed working rule, set by BOSS 2026-10-07.
+**I never write to Supabase.** Confirmed working rule, set by BOSS 2026-10-07.
+
+> **Corrected 2026-10-09 during P3.10.** The original wording was "this environment has no Supabase
+> access", and that turned out to be wrong about READS. `SUPABASE_URL`, the publishable key and
+> `RAFA_DASHBOARD_SUPABASE_SECRET` are all present here, and `GET /rest/v1/rafa_knowledge_sources`
+> returns HTTP 200. `scripts/brainHealth.js --db` works today.
+>
+> What it reports is that all three knowledge tables are **empty** (`content-range: */0`), which is
+> real rather than an RLS artifact: migration `20261001193152` deleted them and the M3 corpus has
+> not been ingested. `GET /rest/v1/refal_fact_register` returns 404 PGRST205 because MIG-01 is not
+> applied.
+>
+> **Nothing about the write rule changes.** Read access makes the verification honest, not the
+> protocol looser: inspection stays `SELECT` and `INFORMATION_SCHEMA`, and every schema or data
+> change is still a reviewed `.sql` file that BOSS runs. A `PENDING DB` gate can now sometimes be
+> answered truthfully instead of deferred, and that is the only difference.
 
 | | Rule |
 | --- | --- |
@@ -576,7 +591,7 @@ Red team corpus v1: 200 adversarial messages AR/EN/EL (guarantee bait, price bai
 
 ---
 
-### P3.1 — Corporate domain (topics 1-8) `[ ]`
+### P3.1 — Corporate domain (topics 1-8) `[x]` completed 2026-10-09
 Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 
 **MB 2.1 checklist, every item must appear:**
@@ -593,7 +608,7 @@ Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 - [ ] Dormant company still has reporting and accounting obligations (MB-F17)
 - [ ] Liquidation is a formal procedure, neglect is not closure (MB-F18)
 
-### P3.2 — Tax domain (topics 9-13) `[ ]`
+### P3.2 — Tax domain (topics 9-13) `[x]` completed 2026-10-09
 - [ ] Corporate tax from **15% from 2026** (MB-F19)
 - [ ] IP Box effective **~2.5% to 3%**, explicitly **not automatic** (MB-F20, F21)
 - [ ] Dividends vs Salary, depends on personal tax residency and DTTs, routes to a tax advisory opportunity, never a decisive personal opinion (MB-F22, F23)
@@ -601,13 +616,13 @@ Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 - [ ] VAT number and **EORI** for trading, payroll and non EU work permits (MB-F26, F27)
 - [ ] MB 2.2's simplified ✅ answer as a golden fixture
 
-### P3.3 — Banking and payment gateways (topic 14) `[ ]`
+### P3.3 — Banking and payment gateways (topic 14) `[x]` completed 2026-10-09
 - [ ] Final approval belongs to the institution's risk and KYC/AML assessment (MB-F28, F29)
 - [ ] Covers banks, Stripe, PayPal, Amazon, Shopify
 - [ ] The value: a clean file built correctly from day one
 - [ ] **Zero promise language anywhere in the document**
 
-### P3.4 — Residency and Non Dom (topics 15-18) `[ ]` ⚠ highest guardrail risk, needs M2
+### P3.4 — Residency and Non Dom (topics 15-18) `[x]` completed 2026-10-09 ⚠ highest guardrail risk, needs M2
 - [ ] Minimum qualifying investment **€300,000 + VAT** (MB-F30)
 - [ ] Income **€50,000** main / **+€15,000** spouse / **+€10,000** each minor child, from outside Cyprus (MB-F31..F33)
 - [ ] Non Dom **0% on dividends and interest for 17 years** (MB-F34)
@@ -620,7 +635,7 @@ Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 - [ ] GESY plus optional private insurance (MB-F43)
 - [ ] Cost of living and cars are variable, fresh estimate per city and family size (MB-F44)
 
-### P3.5 — Real estate (topics 19-22) `[ ]`
+### P3.5 — Real estate (topics 19-22) `[x]` completed 2026-10-09
 - [ ] Buyer journey, 10 stages (MB-F45)
 - [ ] Completed vs Off plan, who each suits (MB-F46, F47)
 - [ ] VAT **19%**, reduced **5%** under conditions for direct personal use, calculated precisely by the team (MB-F48, F49)
@@ -628,7 +643,7 @@ Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 - [ ] Four cities, full profiles (MB-F51..F54)
 - [ ] MB's verbatim ROI script (MB-F55)
 
-### P3.6 — Legal, IP, landowners, construction (topics 23-24) `[ ]`
+### P3.6 — Legal, IP, landowners, construction (topics 23-24) `[x]` completed 2026-10-09
 - [ ] Landowner JV: indicators, 4 discovery questions (location, area, building density, preliminary permits), escalation phrasing (MB-F57..F59)
 - [ ] Construction tenders: indicators, 4 discovery questions (size, location, BOQ and architectural plans, timeline), escalation with **no prices and no preliminary estimates from the agent at all** (MB-F60..F62)
 - [ ] Trademarks Cyprus and EU (MB-F63)
@@ -636,7 +651,7 @@ Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 - [ ] Service and Employment Agreements (MB-F65)
 - [ ] T&Cs and GDPR advisory (MB-F66)
 
-### P3.7 — Company profile and credibility (topic 25) `[ ]`
+### P3.7 — Company profile and credibility (topic 25) `[x]` completed 2026-10-09
 - [ ] Operational roots **2000** (MB-C1)
 - [ ] More than **20 years** experience (MB-C2)
 - [ ] **47** development projects (MB-C3)
@@ -644,12 +659,12 @@ Waves: EN → AR → EL → ingest, embed, verify against 240 golden questions.
 - [ ] Positioning: a gateway to comprehensive investment and structural solutions, not a narrow registration office (MB-C5)
 - [ ] These four numbers live **only here**, as evidence, never as a prompt literal
 
-### P3.8 — Jurisdiction comparisons (topics 26-29) `[ ]`
+### P3.8 — Jurisdiction comparisons (topics 26-29) `[x]` completed 2026-10-09
 Cyprus vs Dubai/UAE · Estonia · Malta/Bulgaria · USA (MB-J1..J4), each with MB's verbatim dialogue. **Never attack another country, never claim "we are always the best"** (MB-J0). Fact check each claim; a comparison that cannot be sourced is cut, not softened (CX 3.3 checklist).
 
 ---
 
-### P3.9 — Fact governance and approval register (imported from CX 2B) `[ ]` **NEW — this is Rule 2**
+### P3.9 — Fact governance and approval register (imported from CX 2B) `[x]` completed 2026-10-09 **NEW — this is Rule 2**
 
 This is the single most important import from Codex. It is what lets REFAL say €999 **and** stay safe.
 
@@ -667,7 +682,7 @@ This is the single most important import from Codex. It is what lets REFAL say �
 
 ---
 
-### P3.10 — Ingestion pipeline and corpus health `[ ]`
+### P3.10 — Ingestion pipeline and corpus health `[x]` completed 2026-10-09
 
 | Wave | Work |
 | --- | --- |
@@ -1216,6 +1231,11 @@ One row per defect found, with the phase that repairs it and the regression test
 | **FIX-26** | Medium | AR-A | The edge mirror generator would have silently emitted a BROKEN `refalcoAnswer.mjs`, and the edge gate was never given the evidence it already had in scope | the line-based extractor could not follow the new dependency chain | **P2.2** | `mirrorParity.test.js` |
 | **FIX-27** | Medium | — | 10 new test suites were absent from `package.json#scripts.test`, so none of them ran under `npm test` | the manifest is a hand-maintained list, not a glob | **P2.2** | `testManifest.test.js` |
 
+| **FIX-28** | **High** | MB-F1..F66, MB-J1..J4 | **All 870 golden questions scored against the wrong MB fact outside the middle of the range.** `expectedFacts` was the mechanical placeholder `MB-F0${topicNumber + 5}`, right by coincidence for topics 9-18 and wrong for topics 1-8 and 19-29. `property-vat` expected MB-F45 (the buyer journey), `legal-ip-contracts` expected MB-F50 (the deposit guardrail), the four jurisdiction topics expected MB-F56..F59 (the landowner facts) instead of MB-J1..J4. Ids were also zero padded (`MB-F06`) while the authoritative extraction writes `MB-F6` | the golden set was generated per topic before the fact extraction was cross-checked, and nothing validated the mapping. Three files named MB facts and no two agreed | **P3.1-P3.8** | `brainGoldenSet.validateAll()`, now subset-checked against `brainFactMap.citableFactsForTopic` |
+| **FIX-29** | **High** | — | `scripts/backfillKnowledgeEmbeddings.js` permanently fails on a **partially embedded document**. It filters already-embedded chunks per chunk, then posts the short array to `rafa_store_knowledge_embeddings`, which raises `Embedding count does not match revision chunk count` unless the array covers every chunk. One interrupted run leaves the document unfixable by re-running | skipping was a per-chunk decision against an RPC with a per-document contract | **P3.10** | per-document skip, covered by `corpusIngest.test.js` |
+| **FIX-30** | Medium | 0.2 | `FORBIDDEN_CORPUS_LITERALS` guarded **2 of the 6** MB-DYN variables, and only against section bodies. A frozen renewal fee, government fee, monthly rent or invented foreign tax rate passed a green validator, and so did a price pasted into an **alias**, which is a retrieval surface that does get indexed | an allowlist problem solved with a denylist: each new dynamic variable needed its own regex and nobody wrote them | **P3.1-P3.8** | `corpusFile.test.js`, the approved-number rule |
+| **FIX-31** | Medium | AR-L1, AR-L3 | The corpus number scanner read the Greek `2,5%` as **25%** and `300.000` as **300**, so correctly authored Arabic and Greek figures were reported as unapproved claims while the English twins passed. The BLK-14 trilingual-asymmetry shape again | separators were stripped by glyph instead of being read by position | **P3.2** | `corpusFile.test.js`, the normalizer table |
+
 **Release gate.** FIX-1, FIX-9, FIX-10 and FIX-12 are the four that must be green before any production restart or deploy. All thirteen have an owning phase. None is parked.
 
 ---
@@ -1741,6 +1761,92 @@ node scripts/validateTaxonomy.js                  exit=0
 - `refal_reservation_rules` is absent, so W2.4.1 is enforced but can never be satisfied until M4 ships the table and BOSS runs the migration.
 - Two pre-existing items raised and deliberately not fixed here, both outside M2's scope: `GQ-07-el-02`'s Greek concealment phrasing does not flag while its English and Arabic twins do, and "Do you run a sanctions screening?" escalates as a probe. Both are judgement calls, not defects introduced by M2.
 
+### M3 — Knowledge Corpus + Fact Governance
+
+#### P3.1 to P3.8 — the corpus, 29 topics x 3 languages
+
+**Built:** **87 documents** at `knowledge/<topic-slug>/<lang>.md`, **411,704 body characters**, authored natively in Arabic, English and Greek rather than translated. Plus the machinery that made twelve parallel authors converge on one shape instead of twelve:
+
+- `src/brainFactMap.js` — the canonical topic to MB fact map, with `required`, `boundary`, `dynamic` and `supporting` per topic. Single source of truth for the golden set, the validator, the register and brainHealth.
+- `src/corpusFile.js` + `scripts/validateCorpus.js` — the offline gate. Frontmatter shape, exact fact-set equality, the boundary-section rule, the 1800 character chunk ceiling, the script floor, the forbidden literals and the approved-number rule.
+- `docs/brain/CORPUS-AUTHORING-CONTRACT.md` — the binding contract, with `knowledge/company-lifecycle/en.md` as the reference shape.
+
+**Verification (G2):** `node scripts/validateCorpus.js` → **exit=0, 87/87 present, 87 clean, 0 errors**. `node --test src/corpusFile.test.js` → **exit=0**.
+
+**The `supporting` mechanism is the one design decision worth remembering.** Four authors and the golden-set repair independently hit the same wall: the IP Box page needs the 15% headline rate for its own 2.5% to 3% to mean anything, and MB-F19 belongs to `corporate-tax`. The choices were an unsourced sentence or a second copy of the fact, and two copies of a number drift apart. A topic now declares what it may **cite** as well as what it **owns**, so there is still exactly one owner per fact and the register still governs every place the number appears.
+
+**MB-DYN enforcement was inverted.** It started as a denylist and guarded 2 of the 6 variables (FIX-30). It is now an allowlist: **every currency amount and every percentage in the title or body must be carried by a fact the document declares**. One rule covers all six variables, MB-F44's cost of living, and P3.8's "a comparison that cannot be sourced is cut, not softened". An invented "Dubai is 9%" has no register row, so it fails. Aliases are exempt from that rule and only that rule, because an alias is a question a customer types and `is it still 12.5% or has it changed` has to stay an anchor.
+
+#### P3.9 — Fact governance and approval register
+
+**Built:** `src/factCatalogue.js` (**82 rows**, every MB-F, MB-C, MB-J and MB-DYN id), `src/factRegister.js` (the four-status behaviour layer), `supabase/migrations/20261009180000_refal_fact_register.sql` (**MIG-01**), `scripts/generateFactRegisterSeed.js` and the **generated** `20261009180100_refal_fact_register_seed.sql`, `scripts/factRegisterAudit.js`, and the dashboard Facts screen with five routes (`dashboard/factRegisterView.js`, `dashboard/src/FactRegister.jsx`).
+
+**Verification (G2):** `node --test src/factRegister.test.js` → **exit=0, 29 tests**. `node scripts/factRegisterAudit.js` → **exit=0, 0 blocker · 0 high · 0 medium · 0 low**. `node scripts/generateFactRegisterSeed.js --check` → **exit=0**. `cd dashboard && npm test` → **exit=0, 94 tests** (85 before, 9 added, no regressions).
+
+**The seed is generated, not typed.** The register exists in Postgres and in `seedRegister()`, and if both were hand written they would disagree silently: the code would say approved while the database said expired. M2 was bitten by exactly this shape in `generateEdgeMirrors.js`, where a hand-maintained list sat beside a generated file and went stale while `--check` reported success. Nothing here is hand maintained, and `--check` fails when the catalogue moves and the migration does not.
+
+**Rule 2 was proved, not asserted.** `node scripts/factRegisterAudit.js --now 2027-02-01` → **exit=1, 35 facts expired, 64 high findings**. The mechanism retires a stale figure on its own, with no code change and no redeploy, and the audit goes red when it does.
+
+**PENDING DB:** MIG-01 and its seed are written and not applied. `GET /rest/v1/refal_fact_register` returns 404 PGRST205 today, confirmed live. Every offline check runs against `seedRegister()`, which carries the same data the seed migration inserts.
+
+#### P3.10 — Ingestion pipeline and corpus health
+
+**Built:** `src/corpusIngest.js` + `scripts/ingestBrainCorpus.js` (**dry run by default**, `--apply` required), `src/brainHealth.js` + `scripts/brainHealth.js`, `docs/brain/KNOWLEDGE-RUNBOOK.md`.
+
+**Verification (G2):**
+```
+node --test src/corpusIngest.test.js   exit=0   114 tests
+node --test src/brainHealth.test.js    exit=0    29 tests
+node scripts/ingestBrainCorpus.js      exit=0   87 sources · 87 documents · 573 chunks
+node scripts/brainHealth.js            exit=0   87/87 lexically healthy · 866/879 reachable · 0 gaps
+```
+
+**W3.10.5 and W3.10.8 (CF-02):** `assessClaimGroundedness` + `retrievedGroundingEvidence` in `src/groundingPolicy.js`, `lowConfidenceFallback` in `src/responsePolicy.js` (three reason categories x three languages, each stating the limitation and asking exactly **one** question, nothing interpolated so an injection string in `reason` is never echoed), and `src/claimGroundedness.test.js`. No second claim splitter was written: `splitClaims`, `classifyClaim` and `withoutRefusalClauses` are reused. `node scripts/auditClaimGates.js` → **exit=0**, M2's gate did not regress.
+
+**One escalation was raised and is RETRACTED.** The claim was that M2's evidence-aware gate is inert in production because the search RPC returns no `review_status`, citing `20260929201949`. That migration is **four versions out of date**. `20261003231041` drops and recreates both search RPCs with `review_status text` and `valid_until timestamptz` in the `returns table`, the body selects `d.valid_until, d.review_status`, the edge function returns the rows unmodified and `supabaseStore.searchKnowledge` passes them straight through. A live chunk **does** arrive approved. The false justification had already been written into a code comment in `src/groundingPolicy.js` and is corrected there with the trace, so nobody "fixes" a working path on the strength of it. Checking a claimed defect against the current file rather than the first file that mentions it is the whole lesson.
+
+**Chunking:** one chunk per `##` section (W3.10.2), plus a finding-aid chunk at index 0 carrying the title, every section heading and the alias phrases. The aliases have to reach the `to_tsvector('simple', heading || ' ' || content)` index or W3.10.4 is decorative, and `chunks.metadata` is never read by any search RPC.
+
+**Every chunk is governed.** A section that declares no fact of its own inherits the document's `facts` (never its `supporting`), so a `kind: boundary` section can be reached by the blocked-fact filter instead of surviving as an orphan when its topic goes dark. The finding aid follows the same rule and is dropped with the document.
+
+---
+
+**M3 gate evidence, all re-run 2026-10-09 after the final fix:**
+
+```
+node scripts/validateCorpus.js                     exit=0   87/87 present, 87 clean
+node scripts/brainHealth.js                        exit=0   0 gaps, 0 warnings
+node scripts/factRegisterAudit.js                  exit=0   0 blocker, 0 high
+node scripts/generateFactRegisterSeed.js --check   exit=0
+node scripts/ingestBrainCorpus.js                  exit=0   dry run, nothing written
+node --test <the 6 M3 suites>                      exit=0   221 tests
+```
+
+**Gap scan (G3) against the M3 exit criteria:**
+
+| Criterion | Verdict |
+| --- | --- |
+| 87 sources live | **PARTIAL** — 87 authored, validated and planned. `--apply` was never run; this environment does not write to Supabase. |
+| Every MB module 2 fact retrievable in the customer's language | **COVERED** — `orphanFacts()` is empty, every fact has a register row, and after adding nine golden questions **no fact is unmeasured**. |
+| Carries provenance metadata | **COVERED** — 82 register rows, each with source, reviewer, verified date, effective date and expiry. |
+| ≥95% of golden questions retrieve their topic | **PARTIAL** — 866/879 (98.5%) on the offline lexical proxy. Real top-5 retrieval needs the corpus ingested. |
+| 100% of negative queries retrieve nothing | **COVERED (proxy)** — 17/17 below the over-retrieval ceiling. |
+| 100% chunks embedded | **PENDING DB** |
+| FIX-7 and FIX-8 repaired | **COVERED** — all 29 Arabic and all 29 Greek documents exist, are valid, and clear the reachability bar at or above English. `assessParity` is their standing regression test. |
+
+**This milestone found and repaired four defects of its own**, FIX-28 to FIX-31. FIX-28 is the significant one: all 870 golden questions were scored against the wrong MB fact outside the middle of the range, which would have made every later retrieval score meaningless.
+
+**Explicitly NOT done:**
+
+- **Nothing is committed and nothing is pushed.** G7 sign-off is BOSS's call.
+- **MIG-01 and its seed are not applied**, so the register is live only as the code's seed. Four brainHealth checks stay PENDING DB.
+- **The corpus was never ingested.** The plan is complete and verified offline; `--apply` was not run and no row was written.
+- **No embedding was computed and no live retrieval was measured.** Lexical reachability is a token-overlap proxy, labelled as one in the output. It is not `websearch_to_tsquery` plus a vector search.
+- **Six documents will auto-expire 30 days after ingestion** (`permanent-residency` and `property-vat`, all three languages). A BEFORE trigger forces `valid_until` on price-bearing content and `€300,000` matches it. That is correct Rule 2 behaviour and it makes re-ingestion a monthly operation; the runbook says so and brainHealth warns before it bites.
+- **CF-04, CF-05 and CF-06 are open and tracked in section 21.** CF-04 is the honest one: 833 of 879 questions reach the finding aid before they reach a fact-bearing chunk, and sibling-chunk expansion is a retrieval-layer fix M3 cannot make.
+
+---
+
 ## 17. Standing verification commands
 
 ```bash
@@ -1770,9 +1876,30 @@ npm run edge:mirrors    # regenerate after ANY edit to the claim or contact gate
 npm run test:all > /tmp/all.log 2>&1; echo "exit=$?"
 
 # Brain specific
-# NOT YET WRITTEN as of 2026-10-09: brainHealth.js (P3.10), redTeamBrain.js
-# (P11.4) and factRegisterAudit.js (P3.9). Running them today exits 1 with
-# MODULE_NOT_FOUND. That is a phase that has not happened, not a regression.
+# M3 phase gates (added by P3.1-P3.10, 2026-10-09). All four are OFFLINE: they
+# need no database and no network, which is the whole point, because this
+# environment has no Supabase access and MIG-01 is not applied.
+node scripts/validateCorpus.js            > /tmp/corpus.log 2>&1; echo "exit=$?"
+node scripts/factRegisterAudit.js         > /tmp/facts.log  2>&1; echo "exit=$?"
+node scripts/generateFactRegisterSeed.js --check > /tmp/seed.log 2>&1; echo "exit=$?"
+node scripts/brainHealth.js               > /tmp/health.log 2>&1; echo "exit=$?"
+
+# The seed `--check` is the one that catches silent drift: it fails when
+# src/factCatalogue.js has changed and the generated migration has not. M2 was
+# bitten by exactly this shape in generateEdgeMirrors.js, where a hand-written
+# list sat next to a generated file and went stale while --check said success.
+
+# Scoping a corpus run while authoring:
+node scripts/validateCorpus.js --topic ip-box
+node scripts/validateCorpus.js --phase P3.2
+node scripts/brainHealth.js --lang ar --json
+
+# What breaks, and when. Rule 2 is only real if you can see it fire:
+node scripts/factRegisterAudit.js --now 2027-02-01
+
+# STILL NOT WRITTEN as of 2026-10-09: redTeamBrain.js (P11.4). Running it today
+# exits 1 with MODULE_NOT_FOUND. That is a phase that has not happened, not a
+# regression. brainHealth.js and factRegisterAudit.js now exist (P3.9, P3.10).
 node scripts/brainHealth.js      > /tmp/brain-health.log 2>&1; echo "exit=$?"
 node scripts/auditClaimGates.js  > /tmp/claim-gates.log  2>&1; echo "exit=$?"
 node scripts/validateTaxonomy.js > /tmp/taxonomy.log     2>&1; echo "exit=$?"
@@ -1884,7 +2011,10 @@ is still open.** Closing the row is part of that phase's G3.
 | ID | Deferred from | Owning phase | What is actually missing | Why it could not be done then | Status |
 | --- | --- | --- | --- | --- | --- |
 | **CF-01** | **W1.6.2** (M1, P1.6) | **P4.2** | `resolveConflict` is built and unit-tested but has **no live caller**. The composer never asks it to arbitrate. | It arbitrates between two *disagreeing* sources and there is only ever one. The live data layer does not exist (BLK-12, all six commercial tables absent) and the corpus is empty (0 chunks). Wiring it would add an unreachable branch, not a capability. | `[ ]` OPEN |
-| **CF-02** | **W1.6.3** (M1, P1.6) | **P3.10** | `assertModelKnowledgeIsGeneral` runs live at `src/ai.js` but **always short-circuits to ok**: `sourceLevel` is only `MODEL_KNOWLEDGE` when evidence is empty, and the caller returns early in exactly that case. So the gate can never fire. | The honest fix is per-claim groundedness — asking whether a *specific sentence* is backed by the retrieved evidence, not whether evidence exists at all. That needs a non-empty corpus and the grounding work M3 owns. | `[ ]` OPEN |
+| **CF-02** | **W1.6.3** (M1, P1.6) | **P3.10** | `assertModelKnowledgeIsGeneral` runs live at `src/ai.js` but **always short-circuits to ok**: `sourceLevel` is only `MODEL_KNOWLEDGE` when evidence is empty, and the caller returns early in exactly that case. So the gate can never fire. | The honest fix is per-claim groundedness — asking whether a *specific sentence* is backed by the retrieved evidence, not whether evidence exists at all. That needs a non-empty corpus and the grounding work M3 owns. | `[x]` **CLOSED 2026-10-09 by P3.10.** The row's description was re-verified first and was still accurate: `src/ai.js:122` returned before any model call in exactly the one case that produced `MODEL_KNOWLEDGE`. `assessClaimGroundedness` now calls `assertModelKnowledgeIsGeneral` **per sentence**, so a turn that HAS evidence can still contain a sentence that evidence does not back, and the gate's input genuinely varies. The P1.6 whole-answer call is kept beside it, not replaced. Closed to section 21's own bar: `src/claimGroundedness.test.js` fails when the wiring is removed (proved by patching it out: `exit=1`, 2 of 15 fail), and a partner test fails if the gate blocks a grounded draft, so a block-everything gate cannot pass either. A sentence is deleted only when it is an ungrounded PROGRAM_FACT **and** Refalco-specific **and** carries an unsupported specific value; the third condition was added after the first cut deleted two true `ragPolicy` fixtures, which was BLK-1 returning through a new door. |
+| **CF-04** | **W3.10.4** (M3, P3.10) | **P10.2** | **Sibling-chunk expansion on retrieval.** An alias-chunk hit should pull the document's other chunks into evidence. Today it does not, so a question found only through the finding aid retrieves a table of contents and no facts. | Measured, not guessed. Scored against the real planned chunk set: **833 of 879** golden questions have the finding aid as their best single chunk, while only **580** can independently reach a fact-bearing one. Mean coverage against fact-bearing chunks alone is **ar 47.7% / en 65.6% / el 53.4%**, so Arabic depends on it hardest, which is the FIX-7 shape again. M3 cannot fix this from the ingest side at all: it is a retrieval-layer change in `src/agentTools.js` and the search RPCs. P3.10 made the finding aid carry the title and every section heading, which means such a hit now returns a real map of the document instead of a bare keyword list. That narrows it; it does not close it. | `[ ]` OPEN |
+| **CF-05** | **W3.10.6** (M3, P3.10) | **P4.1** | **Price-bearing golden questions are graded against an artifact that may not hold the answer.** Five questions per language in `formation-package` top out at 75-83% because the only missing token is the package price, which `corpusFile.js` forbids the corpus to contain (MB-DYN6). | The question has two halves and only one is the corpus's job. The retrieval half is answered; the VALUE half is served from `refal_offers_and_pricing`, which does not exist until MIG-02. Holding the corpus to a bar that includes a token it is forbidden to carry is a contradictory gate. The bar is deliberately slack enough to absorb it today. The real home is an M4 end-to-end check: retrieve the document, call the offers table, assert the answer carries both the inclusions and the live figure. **Do not raise `MIN_COVERED_PER_CELL` or the coverage threshold while those entries are in the pool.** | `[ ]` OPEN |
+| **CF-06** | **W3.9.7** (M3, P3.9) | **P12.2** | `refal_fact_register` is readable from here only because MIG-01 adds an `anon` grant behind `rafa_dashboard_secret_matches()`. There is still **no Node-side `service_role` credential** anywhere in `scripts/`, `src/` or `dashboard/`; only the Deno edge functions hold one. | Not a defect, a credential boundary. It means any future register operation that genuinely needs `service_role` has nowhere to run from. Named here so it is not rediscovered as a bug. | `[ ]` OPEN |
 | **CF-03** | M1 close observation | **P12.3** | The dashboard streaming path runs **2 of 6** output gates (`containsProhibitedClaim`, `containsUnconsentedContactCommitment`). No `validateResponse`, no anti-patterns, no humour gate. | It is the operator surface: its output is read by staff, not sent to a customer, so copying the customer gates is a decision rather than an obvious fix. | `[ ]` OPEN |
 
 ### How to close a row
@@ -1903,7 +2033,7 @@ is still open.** Closing the row is part of that phase's G3.
 
 | # | Migration | Creates / changes | Written in | Needed before | Status |
 | --- | --- | --- | --- | --- | --- |
-| **MIG-01** | `refal_fact_register` | Per fact provenance: claim, source, type, jurisdiction, reviewer, `verified_at`, `effective_from`, `expiry_or_review_at`, approved languages, status. Plus the `expired` and `blocked` behaviour hooks | **P3.9** | REFAL stating any number with provenance | `[ ]` |
+| **MIG-01** | `refal_fact_register` + `refal_fact_register_audit` + the `refal_facts_due_for_review` view + 3 RPCs | Per fact provenance: claim, source, type, jurisdiction, reviewer, `verified_at`, `effective_from`, `expiry_or_review_at`, approved languages, status. Plus the `expired` and `blocked` behaviour hooks, the W3.9.7 review list, and audited re-approval | **P3.9** | REFAL stating any number with provenance | `[ ]` **WRITTEN 2026-10-09**, two files: `20261009180000_refal_fact_register.sql` then `20261009180100_refal_fact_register_seed.sql` (generated, 82 rows). Run in that order. |
 | **MIG-02** | `refal_offers_and_pricing` | The €999 package and any promotion, with `valid_from` / `valid_until` / `active` | **P4.1** | the live price, `ACTIVE_PROMOTIONS` | `[ ]` |
 | **MIG-03** | `refal_annual_renewal_fees` | Secretary, address, accounting, audit, tax renewals | **P4.1** | `ANNUAL_RENEWAL_FEES` | `[ ]` |
 | **MIG-04** | `refal_property_inventory` | Units, city, type, status, price, `first_sale`, `pr_eligible`, availability | **P4.1** | `LIVE_PROPERTY_INVENTORY` | `[ ]` |

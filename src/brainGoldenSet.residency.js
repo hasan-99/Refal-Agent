@@ -10,7 +10,24 @@ const { topicSet, REFUSAL_CLASSES: R, HUMOUR_LEVELS: H } = require("./brainGolde
 
 const ENTRIES = [
   // ------------------------------------------------------ 15. permanent residency
-  ...topicSet("permanent-residency", { facts: ["MB-F30", "MB-F31"], hook: "MB-X4", humour: H.WARM }, {
+  // MB-F30 the €300,000 minimum, MB-F31/32/33 the income ladder (main
+  // applicant, spouse, each minor child), MB-F38..MB-F41 the four investment
+  // categories A to D.
+  ...topicSet("permanent-residency", {
+    facts: ["MB-F30"], hook: "MB-X4", humour: H.WARM,
+    factsByIndex: [
+      ["MB-F30", "MB-F31"],                            // 1. conditions for PR
+      ["MB-F30"],                                      // 2. how much must I invest
+      ["MB-F31"],                                      // 3. annual income required
+      ["MB-F32", "MB-F33"],                            // 4. is my family included
+      ["MB-F38", "MB-F39", "MB-F40", "MB-F41"],        // 5. the four categories
+      ["MB-F30"],                                      // 6. does PR give a passport
+      ["MB-F30", "MB-F31"],                            // 7. guarantee the residency
+      ["MB-F30"],                                      // 8. how long approval takes
+      ["MB-F30"],                                      // 9. refused two years ago (personalized)
+      ["MB-F30"],                                      // 10. must I actually live there
+    ],
+  }, {
     ar: [
       "شو شروط الإقامة الدائمة بقبرص؟",
       "قديش لازم استثمر للإقامة؟",
@@ -90,7 +107,23 @@ const ENTRIES = [
   }),
 
   // --------------------------------------------- 17. source of funds vs wealth
-  ...topicSet("source-of-funds-vs-wealth", { facts: ["MB-F35", "MB-F36", "MB-F37"], humour: H.WARM }, {
+  // MB-F35 Source of Funds (this transaction), MB-F36 Source of Wealth (the
+  // cumulative history), MB-F37 the no-interrogation compliance framing.
+  ...topicSet("source-of-funds-vs-wealth", {
+    facts: ["MB-F35", "MB-F36"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F35", "MB-F36"],    // 1. what is the difference
+      ["MB-F37"],              // 2. why does the bank ask
+      ["MB-F35", "MB-F37"],    // 3. which documents prove it
+      ["MB-F35"],              // 4. money from selling a property
+      ["MB-F36"],              // 5. money from an inheritance
+      ["MB-F37"],              // 6. normal step or am I suspected
+      ["MB-F37"],              // 7. do immigration authorities ask too
+      ["MB-F37"],              // 8. how long the review takes
+      ["MB-F37"],              // 9. will not send a statement in chat (security)
+      ["MB-F35", "MB-F36"],    // 10. money from my company's profits
+    ],
+  }, {
     ar: [
       "شو الفرق بين مصدر الأموال ومصدر الثروة؟",
       "ليش البنك بيسأل عن مصدر الأموال؟",
@@ -130,7 +163,23 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------ 18. relocation checklist
-  ...topicSet("relocation-checklist", { facts: ["MB-F42", "MB-F43", "MB-F44"], hook: "MB-X1", humour: H.PLAYFUL }, {
+  // MB-F42 schools, MB-F43 healthcare (GESY plus private cover), MB-F44 cost of
+  // living and cars, which must always be a fresh per city estimate.
+  ...topicSet("relocation-checklist", {
+    facts: ["MB-F42", "MB-F43", "MB-F44"], hook: "MB-X1", humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F42", "MB-F43", "MB-F44"],  // 1. relocating with my family
+      ["MB-F42"],                      // 2. school options
+      ["MB-F42"],                      // 3. British curriculum
+      ["MB-F43"],                      // 4. what is GESY
+      ["MB-F43"],                      // 5. private health insurance
+      ["MB-F44"],                      // 6. cost of living
+      ["MB-F42", "MB-F44"],            // 7. which city suits a family
+      ["MB-F44"],                      // 8. buying a car
+      ["MB-F44"],                      // 9. Arabic speaking community
+      ["MB-F42"],                      // 10. school age children, advise me
+    ],
+  }, {
     ar: [
       "بدي انقل مع عائلتي لقبرص، شو بحتاج؟",
       "شو خيارات المدارس للأولاد؟",

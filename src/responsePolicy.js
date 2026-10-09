@@ -298,6 +298,94 @@ function safeFallbackData({ language = "en", category = "uncertainty" } = {}) {
   };
 }
 
+// W3.10.5 — the LOW CONFIDENCE fallback (CX 4B).
+//
+// Three permitted moves, and only three: ask ONE clarifying question, state the
+// limitation, or route to a human. The fourth move — filling the gap from the
+// model's own prose, or from the unapproved text sitting in the prompt — is the
+// one this exists to prevent, so nothing the caller passes is ever interpolated
+// into the returned string. `lowConfidenceFallback` takes a LANGUAGE and a
+// REASON CODE, and returns one of nine fixed sentences; a reason it does not
+// recognise degrades to the most conservative of them rather than echoing it.
+//
+// Deliberately an EXTENSION of safeFallbackData's table rather than a parallel
+// set: same shape, same three languages, same `deterministic`/`safe` contract,
+// so a caller can swap one for the other without learning a second surface.
+const LOW_CONFIDENCE_CATEGORIES = Object.freeze({
+  LOW_CONFIDENCE: "low_confidence",
+  NOT_CURRENTLY_CONFIRMED: "not_currently_confirmed",
+  ROUTE_TO_SPECIALIST: "route_to_specialist"
+});
+
+// The keys on the left are src/factRegister.js's `guidance` strings, verbatim.
+// They are literals here rather than an import because responsePolicy.js is a
+// leaf of the safety graph and must not pull in the fact catalogue, the
+// taxonomy and the fact map just to pick a sentence. src/claimGroundedness.
+// test.js asserts these literals still match what factRegister actually emits,
+// so the copy cannot drift silently.
+const LOW_CONFIDENCE_REASONS = Object.freeze({
+  state_not_currently_confirmed_and_offer_specialist_follow_up: LOW_CONFIDENCE_CATEGORIES.NOT_CURRENTLY_CONFIRMED,
+  unknown_fact_route_to_specialist: LOW_CONFIDENCE_CATEGORIES.ROUTE_TO_SPECIALIST,
+  do_not_surface_route_to_specialist: LOW_CONFIDENCE_CATEGORIES.ROUTE_TO_SPECIALIST,
+  answer_in_approved_language_or_route_to_specialist: LOW_CONFIDENCE_CATEGORIES.ROUTE_TO_SPECIALIST,
+  // W3.10.8's own reason: a drafted sentence the retrieved evidence does not
+  // back. Stating the limitation and asking what to check is the right move,
+  // because the customer's question was understood, only unanswerable from
+  // approved material.
+  ungrounded_claim: LOW_CONFIDENCE_CATEGORIES.LOW_CONFIDENCE,
+  no_approved_evidence: LOW_CONFIDENCE_CATEGORIES.LOW_CONFIDENCE
+});
+
+const LOW_CONFIDENCE_FALLBACKS = Object.freeze({
+  en: {
+    low_confidence: "I don't have approved information that confirms that, so I won't guess. Which part would you like me to check with the team?",
+    not_currently_confirmed: "That detail is not currently confirmed in our approved information, so I won't state it. Would you like me to ask a specialist to confirm the current figure?",
+    route_to_specialist: "I don't have approved information I can rely on for that. Would you like me to pass your question to a specialist?"
+  },
+  ar: {
+    low_confidence: "ما عندي معلومات معتمدة بتأكد هالشي، وما بدي خمّن. شو النقطة اللي بتحب أتأكد منها مع الفريق؟",
+    not_currently_confirmed: "هالتفصيل مو مأكد حالياً بالمعلومات المعتمدة عنا، وما رح أذكره. بتحب أسأل مختص يأكدلك الرقم الحالي؟",
+    route_to_specialist: "ما عندي معلومات معتمدة أقدر أعتمد عليها بهالموضوع. بتحب أحوّل سؤالك لمختص؟"
+  },
+  el: {
+    low_confidence: "Δεν έχω εγκεκριμένη πληροφορία που να το επιβεβαιώνει, οπότε δεν θα το υποθέσω. Ποιο σημείο θα θέλατε να ελέγξω με την ομάδα;",
+    not_currently_confirmed: "Αυτό το στοιχείο δεν είναι επιβεβαιωμένο αυτή τη στιγμή στις εγκεκριμένες πληροφορίες, οπότε δεν θα το δηλώσω. Θέλετε να ζητήσω από ειδικό να το επιβεβαιώσει;",
+    route_to_specialist: "Δεν έχω εγκεκριμένη πληροφορία στην οποία μπορώ να βασιστώ για αυτό. Θέλετε να προωθήσω την ερώτησή σας σε ειδικό;"
+  }
+});
+
+// safeFallbackData above keys on `language.slice(0, 2)`, which silently sends
+// GREEK to the English pack: `detectMessageLanguage` returns the WORDS
+// "english" / "arabic" / "greek", and "greek".slice(0, 2) is "gr", not "el".
+// Every existing caller of safeFallbackData happens to pre-map to a two-letter
+// code, so that latent trap has never fired there — but src/ai.js calls this
+// new function with `detectMessageLanguage`'s output directly, so it is
+// resolved properly here rather than reproduced.
+function languagePackKey(language) {
+  const value = String(language || "").toLowerCase();
+  if (value.startsWith("ar")) return "ar";
+  if (value.startsWith("el") || value.startsWith("gr")) return "el";
+  return "en";
+}
+
+function lowConfidenceFallback({ language = "en", reason = "ungrounded_claim" } = {}) {
+  const key = languagePackKey(language);
+  const pack = LOW_CONFIDENCE_FALLBACKS[key] || LOW_CONFIDENCE_FALLBACKS.en;
+  // An unrecognised reason resolves to ROUTE_TO_SPECIALIST, not to the reason
+  // string itself: the only safe thing to do with a confidence signal you do
+  // not understand is hand the turn to a person.
+  const category = LOW_CONFIDENCE_REASONS[String(reason)] || LOW_CONFIDENCE_CATEGORIES.ROUTE_TO_SPECIALIST;
+  return {
+    text: pack[category],
+    language: key,
+    category,
+    reason: LOW_CONFIDENCE_REASONS[String(reason)] ? String(reason) : "unrecognized_reason",
+    deterministic: true,
+    safe: true,
+    reasons: ["low_confidence_fallback", category]
+  };
+}
+
 module.exports = {
   DEFAULT_MAX_CHARS,
   DEFAULT_MIN_SENTENCES,
@@ -319,6 +407,11 @@ module.exports = {
   validateGeneratedResponse: validateResponse,
   safeFallbackData,
   buildSafeFallback: safeFallbackData,
+  LOW_CONFIDENCE_CATEGORIES,
+  LOW_CONFIDENCE_REASONS,
+  LOW_CONFIDENCE_FALLBACKS,
+  languagePackKey,
+  lowConfidenceFallback,
   hasVerifiedHandoverClaim,
   hasVerifiedBookingClaim
 };

@@ -105,7 +105,7 @@ const MB_CANDIDATES = [
 
   // --------------------------------------------------------- Real estate (MB 2.5)
   {
-    id: "MBC-015", mbRef: "MB-F45", topic: "property-vat", expect: "pass",
+    id: "MBC-015", mbRef: "MB-F48", topic: "property-vat", expect: "pass",
     en: "Reduced VAT of 5% can apply to a first permanent residence, subject to the current conditions.",
     ar: "ضريبة القيمة المضافة المخفضة 5% ممكن تنطبق على أول سكن دائم، حسب الشروط الحالية.",
     el: "Μειωμένος ΦΠΑ 5% μπορεί να ισχύει για πρώτη μόνιμη κατοικία, υπό τις τρέχουσες προϋποθέσεις.",
@@ -113,13 +113,13 @@ const MB_CANDIDATES = [
 
   // ------------------------------- Legal / construction / landowners (MB 2.6)
   {
-    id: "MBC-016", mbRef: "MB-F52", topic: "landowners-and-construction", expect: "pass",
+    id: "MBC-016", mbRef: "MB-F58", topic: "landowners-and-construction", expect: "pass",
     en: "A development project needs planning permission and a building permit before construction starts.",
     ar: "مشروع التطوير بيحتاج رخصة تخطيط ورخصة بناء قبل ما يبلش الإنشاء.",
     el: "Ένα αναπτυξιακό έργο χρειάζεται πολεοδομική άδεια και άδεια οικοδομής πριν ξεκινήσει η κατασκευή.",
   },
   {
-    id: "MBC-017", mbRef: "MB-F50", topic: "legal-ip-contracts", expect: "pass",
+    id: "MBC-017", mbRef: "MB-F63", topic: "legal-ip-contracts", expect: "pass",
     en: "Registering a trademark protects the brand name, and that is a separate filing from the company registration itself.",
     ar: "تسجيل العلامة التجارية بيحمي اسم البراند، وهو إيداع منفصل عن تسجيل الشركة نفسها.",
     el: "Η καταχώριση εμπορικού σήματος προστατεύει την επωνυμία, και αυτό είναι ξεχωριστή κατάθεση από την ίδια την εγγραφή της εταιρείας.",
@@ -127,7 +127,7 @@ const MB_CANDIDATES = [
 
   // ----------------------------------------------- Company profile (MB 2.0, 3.0)
   {
-    id: "MBC-018", mbRef: "MB-F02", topic: "company-profile", expect: "pass",
+    id: "MBC-018", mbRef: "MB-C5", topic: "company-profile", expect: "pass",
     en: "Refalco is a Cyprus based corporate services provider helping clients with company formation and relocation.",
     ar: "ريفالكو مزود خدمات شركات مقره قبرص، بيساعد العملاء بتأسيس الشركات والانتقال.",
     el: "Η Refalco είναι πάροχος εταιρικών υπηρεσιών με έδρα την Κύπρο που βοηθά πελάτες με ίδρυση εταιρειών και μετεγκατάσταση.",

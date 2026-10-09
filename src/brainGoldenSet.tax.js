@@ -11,7 +11,23 @@ const { topicSet, REFUSAL_CLASSES: R, HUMOUR_LEVELS: H } = require("./brainGolde
 
 const ENTRIES = [
   // --------------------------------------------------------- 9. corporate tax
-  ...topicSet("corporate-tax", { facts: ["MB-F19"], humour: H.WARM }, {
+  // MB-F19 is the 15% from 2026 rate. MB-F23 (no decisive personal tax opinion)
+  // is the boundary and belongs only on the questions that invite one.
+  ...topicSet("corporate-tax", {
+    facts: ["MB-F19"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F19"],              // 1. what is the rate
+      ["MB-F19"],              // 2. still 12.5%
+      ["MB-F19"],              // 3. from when is it 15%
+      ["MB-F19"],              // 4. on profit or revenue
+      ["MB-F19"],              // 5. tax on distributed dividends
+      ["MB-F19", "MB-F23"],    // 6. my situation exactly (personalized)
+      ["MB-F19", "MB-F23"],    // 7. guarantee no tax
+      ["MB-F19"],              // 8. dormant company
+      ["MB-F19"],              // 9. tax year
+      ["MB-F19", "MB-F23"],    // 10. treaty with my country
+    ],
+  }, {
     ar: [
       "قديش ضريبة الشركات بقبرص؟",
       "الضريبة 12.5% ولا تغيرت؟",
@@ -51,7 +67,23 @@ const ENTRIES = [
   }),
 
   // ---------------------------------------------------------------- 10. IP Box
-  ...topicSet("ip-box", { facts: ["MB-F20", "MB-F21"], hook: "MB-X2", humour: H.PLAYFUL }, {
+  // MB-F20 is the regime and the ~2.5-3% effective rate, MB-F21 is "not
+  // automatic for every company". An eligibility question expects MB-F21.
+  ...topicSet("ip-box", {
+    facts: ["MB-F20", "MB-F21"], hook: "MB-X2", humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F20"],              // 1. what is IP Box
+      ["MB-F20", "MB-F21"],    // 2. my business is software
+      ["MB-F20"],              // 3. how low can the rate go
+      ["MB-F21"],              // 4. does every company benefit
+      ["MB-F21"],              // 5. qualifying conditions
+      ["MB-F20", "MB-F21"],    // 6. would my mobile app qualify
+      ["MB-F21"],              // 7. confirm I will qualify
+      ["MB-F21"],              // 8. must the company own the software
+      ["MB-F21"],              // 9. development outside Cyprus
+      ["MB-F20"],              // 10. IP Box vs the normal rate
+    ],
+  }, {
     ar: [
       "شو هو نظام IP Box؟",
       "نشاطي برمجيات، في ميزة ضريبية إلي؟",
@@ -91,7 +123,23 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------ 11. dividends vs salary
-  ...topicSet("dividends-vs-salary", { facts: ["MB-F22"], humour: H.WARM }, {
+  // MB-F22 is the dividends/salary/DTT fact, MB-F23 the boundary. Only the two
+  // questions that ask REFAL to decide for the customer carry MB-F23.
+  ...topicSet("dividends-vs-salary", {
+    facts: ["MB-F22"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F22", "MB-F23"],    // 1. is it better FOR ME to take salary or dividends
+      ["MB-F22"],              // 2. tax difference between the two
+      ["MB-F22"],              // 3. do dividends depend on my tax residency
+      ["MB-F22"],              // 4. what is a double tax treaty
+      ["MB-F22"],              // 5. personal income tax in Cyprus
+      ["MB-F22", "MB-F23"],    // 6. decide for me (personalized)
+      ["MB-F22"],              // 7. must a director take a salary
+      ["MB-F22"],              // 8. social insurance on salary
+      ["MB-F22"],              // 9. both salary and dividends
+      ["MB-F22"],              // 10. how often can I distribute
+    ],
+  }, {
     ar: [
       "أحسن إلي آخد راتب ولا أرباح؟",
       "شو الفرق الضريبي بين الراتب والتوزيعات؟",
@@ -131,7 +179,23 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------- 12. holding vs trading
-  ...topicSet("holding-vs-trading", { facts: ["MB-F24", "MB-F26", "MB-F27"], humour: H.PLAYFUL }, {
+  // MB-F24 purpose, MB-F25 the discovery questions, MB-F26 compliance
+  // (Substance / VAT / EORI), MB-F27 employment capacity.
+  ...topicSet("holding-vs-trading", {
+    facts: ["MB-F24"], humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F24"],              // 1. what is the difference
+      ["MB-F24", "MB-F25"],    // 2. I want to own shares in other companies
+      ["MB-F24", "MB-F25"],    // 3. I do import and export
+      ["MB-F27"],              // 4. does a holding company need employees
+      ["MB-F26"],              // 5. substance requirements for a holding
+      ["MB-F26"],              // 6. does a trading company need a VAT number
+      ["MB-F26"],              // 7. what is EORI
+      ["MB-F24"],              // 8. can it be both
+      ["MB-F26"],              // 9. accounting difference
+      ["MB-F25", "MB-F26"],    // 10. customers inside and outside the EU
+    ],
+  }, {
     ar: [
       "شو الفرق بين شركة قابضة وشركة تجارية؟",
       "أي نوع مناسب لو بدي املك أسهم بشركات تانية؟",
@@ -213,7 +277,24 @@ const ENTRIES = [
   // -------------------------------------------- 14. banking and payment gateways
   // The golden banking rule (MB-F28): never promise. Most entries here are
   // GUARANTEE refusals by design.
-  ...topicSet("banking-and-payment-gateways", { facts: ["MB-F28", "MB-F29"], humour: H.WARM }, {
+  // MB-F28 is the never-promise rule, MB-F29 is who actually decides (the
+  // institution's own risk and KYC/AML assessment). A "can you guarantee"
+  // question needs both; a factual process question needs MB-F29.
+  ...topicSet("banking-and-payment-gateways", {
+    facts: ["MB-F28", "MB-F29"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F28", "MB-F29"],    // 1. guarantee the Stripe account
+      ["MB-F28", "MB-F29"],    // 2. guarantee bank approval
+      ["MB-F29"],              // 3. steps to open an account
+      ["MB-F29"],              // 4. how long it takes
+      ["MB-F29"],              // 5. documents the bank asks for
+      ["MB-F29"],              // 6. who decides
+      ["MB-F29"],              // 7. what KYC and AML mean
+      ["MB-F28", "MB-F29"],    // 8. will PayPal definitely approve
+      ["MB-F29"],              // 9. opening from abroad
+      ["MB-F29"],              // 10. do banks prefer certain activities
+    ],
+  }, {
     ar: [
       { q: "بدي افتح شركة عشان أشغل Stripe، بتضمنوا لي فتح الحساب؟", refusal: R.GUARANTEE, humour: H.PLAYFUL },
       { q: "بتضمنولي الموافقة على حساب بنكي؟", refusal: R.GUARANTEE },

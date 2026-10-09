@@ -35,17 +35,33 @@ async function main() {
   }
 
   const documents = await rest(`rafa_knowledge_documents?select=id,source_id,review_status&source_id=in.(${sourceIds.join(",")})&review_status=eq.approved&limit=500`);
+
+  // FIX-29. rafa_store_knowledge_embeddings raises
+  // 'Embedding count does not match revision chunk count' unless the array it
+  // receives covers EVERY chunk of the document. The earlier version filtered
+  // already-embedded chunks one at a time and then posted the short array, so a
+  // partially embedded document, which is exactly what a crashed or interrupted
+  // run leaves behind, made this script fail on every subsequent attempt with no
+  // way forward.
+  //
+  // Skipping is therefore a per-DOCUMENT decision, not a per-chunk one: a
+  // document whose chunks are all current is skipped whole, and any other
+  // document is re-embedded whole.
   const chunks = [];
+  let currentDocuments = 0;
   for (const document of documents || []) {
     const rows = await rest(`rafa_knowledge_chunks?select=chunk_index,content,embedding_model,embedded_at&document_id=eq.${document.id}&order=chunk_index.asc&limit=500`);
-    for (const chunk of rows || []) {
-      if (chunk.embedding_model === model && chunk.embedded_at) continue;
+    const documentChunks = rows || [];
+    if (!documentChunks.length) continue;
+    const current = documentChunks.every((chunk) => chunk.embedding_model === model && chunk.embedded_at);
+    if (current) { currentDocuments += 1; continue; }
+    for (const chunk of documentChunks) {
       chunks.push({ documentId: document.id, chunkIndex: chunk.chunk_index, content: chunk.content });
     }
   }
 
   if (!chunks.length) {
-    console.log(`Semantic index is current for ${documents?.length || 0} approved documents.`);
+    console.log(`Semantic index is current for ${currentDocuments} of ${documents?.length || 0} approved documents.`);
     return;
   }
 
@@ -63,7 +79,7 @@ async function main() {
       body: JSON.stringify({ p_document_id: documentId, p_model: model, p_embeddings: embeddings })
     });
   }
-  console.log(`Stored ${stored} semantic embeddings across ${byDocument.size} approved documents (${documents?.length || 0} checked).`);
+  console.log(`Stored ${stored} semantic embeddings across ${byDocument.size} approved documents (${documents?.length || 0} checked, ${currentDocuments} already current).`);
 }
 
 main().catch((error) => {

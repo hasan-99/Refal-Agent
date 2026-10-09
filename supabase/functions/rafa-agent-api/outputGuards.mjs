@@ -110,4 +110,12 @@ function violatesOutputGuards(text, options) {
   return outputGuardViolations(text, options).length > 0;
 }
 
-export { OUTPUT_GUARD_REASONS, outputGuardViolations, violatesOutputGuards };
+// `withoutRefusalClauses` is exported (W3.10.8) rather than kept private
+// because the per-claim grounding gate in src/groundingPolicy.js needs the
+// SAME strip before it asks "is this sentence a Refalco-specific claim".
+// Writing a second stripper there is the M2 trap verbatim: eight approved
+// fallbacks self-flagged because a refusal sentence contains the very words the
+// detector hunts, and the contrastive-conjunction boundary above (never a mere
+// comma, because a refusal ENUMERATES what it refuses) is the fix. One copy, so
+// there is nothing to drift.
+export { OUTPUT_GUARD_REASONS, outputGuardViolations, violatesOutputGuards, withoutRefusalClauses };

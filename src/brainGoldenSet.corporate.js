@@ -9,7 +9,25 @@ const { topicSet, REFUSAL_CLASSES: R, HUMOUR_LEVELS: H } = require("./brainGolde
 
 const ENTRIES = [
   // ---------------------------------------------------------------- 1. lifecycle
-  ...topicSet("company-lifecycle", { facts: ["MB-F06"], humour: H.PLAYFUL }, {
+  // The topic owns exactly one fact, the ten stage lifecycle, so most questions
+  // here resolve to it. Two do not: "how long does registration take" is answered
+  // by MB-F2 and "can I close it later" by MB-F18, both cited from the lifecycle
+  // documents under brainFactMap's `supporting` list.
+  ...topicSet("company-lifecycle", {
+    facts: ["MB-F1"], humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F1"],   // 1. the steps from scratch
+      ["MB-F2"],   // 2. how long registration takes (formation-package fact, cited)
+      ["MB-F1"],   // 3. what happens after registration
+      ["MB-F1"],   // 4. do not know where to start
+      ["MB-F1"],   // 5. must I be in Cyprus
+      ["MB-F1"],   // 6. who signs
+      ["MB-F1"],   // 7. name reservation vs registration
+      ["MB-F1"],   // 8. incorporating from abroad
+      ["MB-F18"],  // 9. closing later (dormant-and-liquidation fact, cited)
+      ["MB-F1"],   // 10. what to know before starting
+    ],
+  }, {
     ar: [
       "شو الخطوات من الصفر لتأسيس شركة بقبرص؟",
       "قديش بياخد وقت تسجيل الشركة؟",
@@ -49,7 +67,24 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------- 2. formation package
-  ...topicSet("formation-package", { facts: ["MB-F07", "MB-F08"], hook: "MB-X1", humour: H.PLAYFUL }, {
+  // MB-F2..MB-F8 are the seven inclusions, MB-F9 is the headline price (served
+  // live, never frozen). A price question expects MB-F9; a "what is included"
+  // question expects the inclusions it actually names.
+  ...topicSet("formation-package", {
+    facts: ["MB-F9"], hook: "MB-X1", humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F9"],                                                                  // 1. what does it cost
+      ["MB-F2", "MB-F3", "MB-F4", "MB-F5", "MB-F6", "MB-F7", "MB-F8"],            // 2. what is included
+      ["MB-F9"],                                                                  // 3. hidden costs
+      ["MB-F9"],                                                                  // 4. inclusive of VAT
+      ["MB-F6", "MB-F7", "MB-F9"],                                                // 5. cheaper competitor (MB-O2)
+      ["MB-F9"],                                                                  // 6. too expensive (MB-O1)
+      ["MB-F6", "MB-F7"],                                                         // 7. second year: the 4 month items renew
+      ["MB-F9"],                                                                  // 8. payment plan
+      ["MB-F6", "MB-F7"],                                                         // 9. secretary and registered address
+      ["MB-F9"],                                                                  // 10. send it all on WhatsApp (MB-O4)
+    ],
+  }, {
     ar: [
       "قديش بتكلف الشركة بقبرص؟",
       "شو شامل عرض الـ999 يورو؟",
@@ -89,7 +124,7 @@ const ENTRIES = [
   }),
 
   // --------------------------------------------------------- 3. company structures
-  ...topicSet("company-structures", { facts: ["MB-F09"], humour: H.PLAYFUL }, {
+  ...topicSet("company-structures", { facts: ["MB-F10"], humour: H.PLAYFUL }, {
     ar: [
       "شو أنواع الشركات بقبرص؟",
       "شو الفرق بين شركة محدودة وفرع؟",
@@ -129,7 +164,23 @@ const ENTRIES = [
   }),
 
   // -------------------------------------------------- 4. shareholder vs director
-  ...topicSet("shareholder-vs-director", { facts: ["MB-F10"], humour: H.PLAYFUL }, {
+  // MB-F11 shareholder = owner, MB-F12 director = executive officer,
+  // MB-F13 REFAL's one line phrasing including "can be the same person".
+  ...topicSet("shareholder-vs-director", {
+    facts: ["MB-F11", "MB-F12"], humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F11", "MB-F12", "MB-F13"],  // 1. what is the difference
+      ["MB-F13"],                      // 2. can I be both
+      ["MB-F12"],                      // 3. must the director be resident
+      ["MB-F12"],                      // 4. who decides
+      ["MB-F11"],                      // 5. shareholder liable for debts
+      ["MB-F12"],                      // 6. appoint another director
+      ["MB-F12"],                      // 7. director's powers
+      ["MB-F12"],                      // 8. how many directors
+      ["MB-F11"],                      // 9. how are shares split
+      ["MB-F11", "MB-F12"],            // 10. legal responsibility of each role
+    ],
+  }, {
     ar: [
       "شو الفرق بين المساهم والمدير؟",
       "ممكن اكون مساهم ومدير بنفس الوقت؟",
@@ -169,7 +220,7 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------- 5. ownership changes
-  ...topicSet("ownership-changes", { facts: ["MB-F11"], humour: H.WARM }, {
+  ...topicSet("ownership-changes", { facts: ["MB-F14"], humour: H.WARM }, {
     ar: [
       "كيف بنقل أسهم لشريك جديد؟",
       "بدي اطلع شريك من الشركة، شو الخطوات؟",
@@ -209,7 +260,24 @@ const ENTRIES = [
   }),
 
   // -------------------------------------------- 6. registered vs physical office
-  ...topicSet("registered-vs-physical-office", { facts: ["MB-F12"], hook: "MB-X5", humour: H.PLAYFUL }, {
+  // MB-F15 is the address versus workspace distinction. "Can I use my home
+  // address" is answered by MB-F7, the Registered Address itself, which
+  // formation-package owns and this topic cites.
+  ...topicSet("registered-vs-physical-office", {
+    facts: ["MB-F15"], hook: "MB-X5", humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F15"],  // 1. registered address vs physical office
+      ["MB-F15"],  // 2. do I need a real office
+      ["MB-F15"],  // 3. is the registered address enough
+      ["MB-F15"],  // 4. what substance means
+      ["MB-F15"],  // 5. genuinely moving operations
+      ["MB-F15"],  // 6. offices for rent
+      ["MB-F15"],  // 7. will the bank ask
+      ["MB-F7"],   // 8. home address (formation-package fact, cited)
+      ["MB-F15"],  // 9. tax difference with a real office
+      ["MB-F15"],  // 10. relocating and working from Cyprus
+    ],
+  }, {
     ar: [
       "شو الفرق بين العنوان المسجل والمكتب الفعلي؟",
       "لازم يكون عندي مكتب حقيقي بقبرص؟",
@@ -249,7 +317,7 @@ const ENTRIES = [
   }),
 
   // ---------------------------------------------------- 7. privacy vs concealment
-  ...topicSet("privacy-vs-concealment", { facts: ["MB-F13"], humour: H.WARM, refusal: R.NONE }, {
+  ...topicSet("privacy-vs-concealment", { facts: ["MB-F16"], humour: H.WARM, refusal: R.NONE }, {
     ar: [
       "أسماء الملاك بتكون علنية؟",
       "في طريقة ما يظهر اسمي بالسجل؟",
@@ -289,7 +357,23 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------- 8. dormant and liquidation
-  ...topicSet("dormant-and-liquidation", { facts: ["MB-F14"], humour: H.WARM }, {
+  // MB-F17 dormant still carries reporting obligations, MB-F18 liquidation has
+  // formal procedures. Each question asks about one or the other.
+  ...topicSet("dormant-and-liquidation", {
+    facts: ["MB-F17", "MB-F18"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F17", "MB-F18"],  // 1. dormant instead of closing
+      ["MB-F17"],            // 2. what is a dormant company
+      ["MB-F17"],            // 3. annual cost while dormant
+      ["MB-F18"],            // 4. how to liquidate
+      ["MB-F18"],            // 5. how long liquidation takes
+      ["MB-F17"],            // 6. never used it, still fees
+      ["MB-F18"],            // 7. voluntary vs compulsory
+      ["MB-F17"],            // 8. obligations while dormant
+      ["MB-F17"],            // 9. reactivate after dormancy
+      ["MB-F18"],            // 10. debts during liquidation
+    ],
+  }, {
     ar: [
       "ممكن اخلي الشركة خاملة بدل ما اسكرها؟",
       "شو يعني شركة dormant؟",

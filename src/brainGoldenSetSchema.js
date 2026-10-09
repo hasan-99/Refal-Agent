@@ -68,14 +68,23 @@ const VALID_OBJECTIONS = Object.freeze(["MB-O1", "MB-O2", "MB-O3", "MB-O4", "MB-
  * Build the golden questions for one topic.
  *
  * @param {string} slug           topic slug, must exist in brainTaxonomy
- * @param {object} defaults       { facts, hook, humour, refusal, objection }
+ * @param {object} defaults       { facts, factsByIndex, hook, humour, refusal, objection }
  * @param {object} byLang         { ar: [...], en: [...], el: [...] }
  *                                each entry is a string, or an object
  *                                { q, ...overrides } to override the defaults
+ *
+ * FIX-28 — expectedFacts is a PER QUESTION claim, not a per topic one. The three
+ * language arrays are index parallel (ar[3], en[3] and el[3] are the same
+ * question), so `defaults.factsByIndex[i]` names the MB facts that question must
+ * state and applies to all three languages at once. Precedence, narrowest first:
+ *   entry.facts  >  defaults.factsByIndex[i]  >  defaults.facts
+ * A topic whose questions all resolve to its single primary fact needs only
+ * `facts` and no `factsByIndex`.
  */
 function topicSet(slug, defaults, byLang) {
   const topic = topicBySlug(slug);
   if (!topic) throw new Error(`topicSet: unknown slug "${slug}"`);
+  const { factsByIndex } = defaults;
 
   const out = [];
   for (const lang of LANGUAGES) {
@@ -86,6 +95,11 @@ function topicSet(slug, defaults, byLang) {
       if (!merged.q || typeof merged.q !== "string") {
         throw new Error(`topicSet ${slug}/${lang}[${i}]: missing question text`);
       }
+      // A short factsByIndex is a miscount, not a licence to fall back silently.
+      if (factsByIndex && !entry.facts && !factsByIndex[i]) {
+        throw new Error(`topicSet ${slug}/${lang}[${i}]: factsByIndex has no entry for index ${i}`);
+      }
+      merged.facts = entry.facts || (factsByIndex && factsByIndex[i]) || defaults.facts;
       out.push(Object.freeze({
         id: `GQ-${String(topic.n).padStart(2, "0")}-${lang}-${String(i + 1).padStart(2, "0")}`,
         topic: slug,

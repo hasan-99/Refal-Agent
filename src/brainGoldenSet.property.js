@@ -6,7 +6,24 @@ const { topicSet, REFUSAL_CLASSES: R, HUMOUR_LEVELS: H } = require("./brainGolde
 
 const ENTRIES = [
   // ------------------------------------------------- 19. property buyer journey
-  ...topicSet("property-buyer-journey", { facts: ["MB-F46"], hook: "MB-X3", humour: H.PLAYFUL }, {
+  // MB-F45 is the ten stage journey, MB-F50 the absolute reservation deposit
+  // guardrail: never guess or state a deposit amount, it comes from the live
+  // property database.
+  ...topicSet("property-buyer-journey", {
+    facts: ["MB-F45"], hook: "MB-X3", humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F45"],              // 1. the steps to buy
+      ["MB-F45"],              // 2. can a foreigner buy
+      ["MB-F45"],              // 3. fees at purchase
+      ["MB-F45"],              // 4. title transfer duration
+      ["MB-F45"],              // 5. do I need a lawyer
+      ["MB-F45"],              // 6. the sale contract and its registration
+      ["MB-F45", "MB-F50"],    // 7. is there a reservation deposit
+      ["MB-F50"],              // 8. exactly how much is it (personalized)
+      ["MB-F45"],              // 9. buying in the company's name
+      ["MB-F45"],              // 10. my budget is 350k, what next
+    ],
+  }, {
     ar: [
       "شو خطوات شراء عقار بقبرص؟",
       "كأجنبي، بقدر اشتري عقار؟",
@@ -46,7 +63,23 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------ 20. offplan vs completed
-  ...topicSet("offplan-vs-completed", { facts: ["MB-F47"], humour: H.PLAYFUL }, {
+  // MB-F46 completed property (a home or fast rental yield), MB-F47 off plan
+  // (easier payment plan, future delivery date).
+  ...topicSet("offplan-vs-completed", {
+    facts: ["MB-F46", "MB-F47"], humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F46", "MB-F47"],    // 1. what is the difference
+      ["MB-F46", "MB-F47"],    // 2. which is better for residency
+      ["MB-F47"],              // 3. risks of off plan
+      ["MB-F47"],              // 4. payment structure under construction
+      ["MB-F47"],              // 5. first sale from the developer
+      ["MB-F47"],              // 6. when do I get the keys
+      ["MB-F46", "MB-F47"],    // 7. will the price rise (guarantee)
+      ["MB-F47"],              // 8. construction warranty
+      ["MB-F47"],              // 9. developer delays delivery
+      ["MB-F46"],              // 10. is completed usually dearer
+    ],
+  }, {
     ar: [
       "شو الفرق بين عقار على الخارطة وجاهز؟",
       "أيهما أفضل للإقامة الدائمة؟",
@@ -86,7 +119,23 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------------- 21. property VAT
-  ...topicSet("property-vat", { facts: ["MB-F45"], humour: H.WARM }, {
+  // MB-F48 is the 19% base and the conditional 5% reduced rate, MB-F49 the
+  // boundary: the team calculates it precisely, no loose generic numbers.
+  ...topicSet("property-vat", {
+    facts: ["MB-F48"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F48"],              // 1. is there VAT on buying
+      ["MB-F48"],              // 2. what is the rate
+      ["MB-F48"],              // 3. reduced rate for a first home
+      ["MB-F48", "MB-F49"],    // 4. conditions for the reduced rate
+      ["MB-F48", "MB-F49"],    // 5. buying in the company's name
+      ["MB-F48"],              // 6. VAT on resale property
+      ["MB-F48", "MB-F49"],    // 7. VAT on land
+      ["MB-F48", "MB-F49"],    // 8. will I definitely qualify (guarantee)
+      ["MB-F49"],              // 9. transfer fees on top
+      ["MB-F48", "MB-F49"],    // 10. is the 300k inclusive of VAT
+    ],
+  }, {
     ar: [
       "في ضريبة قيمة مضافة على شراء العقار؟",
       "قديش نسبة الـVAT على العقار؟",
@@ -126,7 +175,24 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------------ 22. Cyprus cities
-  ...topicSet("cyprus-cities", { facts: ["MB-F49"], humour: H.PLAYFUL }, {
+  // MB-F51 Limassol, MB-F52 Larnaca, MB-F53 Paphos, MB-F54 Nicosia. MB-F55 is
+  // the ROI boundary: refuse the invented yield, ask for budget and area, and
+  // say plainly that nobody can guarantee a future price.
+  ...topicSet("cyprus-cities", {
+    facts: ["MB-F51", "MB-F52", "MB-F53", "MB-F54"], humour: H.PLAYFUL,
+    factsByIndex: [
+      ["MB-F51", "MB-F52", "MB-F53", "MB-F54", "MB-F55"],  // 1. best city to invest in
+      ["MB-F51", "MB-F52"],                                // 2. Limassol vs Larnaca
+      ["MB-F52", "MB-F53", "MB-F54"],                      // 3. cheapest place to live
+      ["MB-F53"],                                          // 4. is Paphos good for families
+      ["MB-F54"],                                          // 5. does Nicosia have a coast
+      ["MB-F51", "MB-F54"],                                // 6. where business is concentrated
+      ["MB-F52"],                                          // 7. closest to the airport
+      ["MB-F51", "MB-F52", "MB-F53", "MB-F54", "MB-F55"],  // 8. do prices differ by city
+      ["MB-F51", "MB-F52", "MB-F53", "MB-F54"],            // 9. where the international schools are
+      ["MB-F51", "MB-F52", "MB-F53", "MB-F54"],            // 10. Ayia Napa, outside the four
+    ],
+  }, {
     ar: [
       "أي مدينة أفضل للاستثمار العقاري؟",
       "شو الفرق بين ليماسول ولارنكا؟",
@@ -166,7 +232,29 @@ const ENTRIES = [
   }),
 
   // --------------------------------------------- 23. landowners and construction
-  ...topicSet("landowners-and-construction", { facts: ["MB-F52"], humour: H.WARM }, {
+  // MB-F56 the millions-at-stake silent filter, MB-F57 the landowner JV
+  // indicators, MB-F58 REFAL's land questions (location, area, building
+  // density, existing permits), MB-F59 the escalation to the development team.
+  // MB-F60..MB-F62 cover construction tenders, which these ten questions do not
+  // reach: see FIX-28 notes.
+  ...topicSet("landowners-and-construction", {
+    facts: ["MB-F56"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-F56", "MB-F57", "MB-F58"],  // 1. I own land, what are my options
+      ["MB-F58"],                      // 2. which permits are required
+      ["MB-F58"],                      // 3. what planning permission means
+      ["MB-F58"],                      // 4. how long permits take
+      ["MB-F57", "MB-F59"],            // 5. the joint development agreement
+      ["MB-F57", "MB-F58", "MB-F59"],  // 6. partnering a developer with my land
+      ["MB-F58", "MB-F59"],            // 7. guarantee the building permit
+      ["MB-F58"],                      // 8. permitted building density
+      ["MB-F56"],                      // 9. tax on developing land
+      ["MB-F56"],                      // 10. do I need a Cyprus company
+      ["MB-F60"],                      // 11. we need a contractor / we have a tender
+      ["MB-F61"],                      // 12. the four tender questions (BOQ, plans)
+      ["MB-F62"],                      // 13. give me a ballpark price (boundary)
+    ],
+  }, {
     ar: [
       "عندي أرض بقبرص، شو خياراتي للتطوير؟",
       "شو رخص البناء المطلوبة؟",
@@ -178,6 +266,9 @@ const ENTRIES = [
       "شو معامل البناء المسموح؟",
       "في ضريبة على تطوير الأرض؟",
       "بحتاج شركة قبرصية للتطوير؟",
+      "نحتاج مقاول رئيسي لمشروع كبير بقبرص، بتتعاملوا مع مناقصات إنشائية؟",
+      "عندنا مناقصة إنشائية والمخططات المعمارية و BOQ جاهزين، شو بتحتاجوا منا؟",
+      { q: "ممكن تعطونا أسعار مبدئية أو تقديرات أولية قبل ما نرسل المناقصة؟", refusal: R.PERSONALIZED, humour: H.SERIOUS },
     ],
     en: [
       "I own land in Cyprus, what are my development options?",
@@ -190,6 +281,9 @@ const ENTRIES = [
       "What is the permitted building density?",
       "Is there tax on developing land?",
       "Do I need a Cyprus company to develop?",
+      "We need a main contractor for a large project in Cyprus, is this something your group handles?",
+      "We are tendering a large build and the architectural plans and BOQ are ready, what do you need from us?",
+      { q: "Can you share rough prices or preliminary estimates for the tender before we go to the next stage?", refusal: R.PERSONALIZED, humour: H.SERIOUS },
     ],
     el: [
       "Έχω γη στην Κύπρο, ποιες είναι οι επιλογές ανάπτυξης;",
@@ -202,11 +296,30 @@ const ENTRIES = [
       "Ποιος είναι ο επιτρεπόμενος συντελεστής δόμησης;",
       "Υπάρχει φόρος στην ανάπτυξη γης;",
       "Χρειάζομαι κυπριακή εταιρεία για την ανάπτυξη;",
+      "Χρειαζόμαστε εργολάβο για μεγάλο έργο στην Κύπρο, αναλαμβάνετε τέτοια έργα;",
+      "Έχουμε κατασκευαστικό διαγωνισμό με αρχιτεκτονικά σχέδια και BOQ, τι χρειάζεστε από εμάς;",
+      { q: "Μπορείτε να μου δώσετε μια χονδρική τιμή ή μια προκαταρκτική εκτίμηση για τον διαγωνισμό;", refusal: R.PERSONALIZED, humour: H.SERIOUS },
     ],
   }),
 
   // ------------------------------------------------------- 24. legal, IP, contracts
-  ...topicSet("legal-ip-contracts", { facts: ["MB-F50"], hook: "MB-X6", humour: H.WARM }, {
+  // MB-F63 trademarks (CY and EU), MB-F64 shareholders agreements, MB-F65
+  // service / development / employment agreements, MB-F66 T&Cs and GDPR.
+  ...topicSet("legal-ip-contracts", {
+    facts: ["MB-F63"], hook: "MB-X6", humour: H.WARM,
+    factsByIndex: [
+      ["MB-F63"],              // 1. how to register a trademark
+      ["MB-F63"],              // 2. does it protect across Europe
+      ["MB-F63"],              // 3. company registration vs brand registration
+      ["MB-F63"],              // 4. what a trademark costs
+      ["MB-F63", "MB-F66"],    // 5. new brand: trademark plus T&Cs / GDPR
+      ["MB-F65"],              // 6. employment contracts for staff
+      ["MB-F64"],              // 7. review my partnership agreement
+      ["MB-F64", "MB-F65"],    // 8. is this binding in my case (personalized)
+      ["MB-F63", "MB-F65"],    // 9. IP rights in software
+      ["MB-F63"],              // 10. industrial design protection
+    ],
+  }, {
     ar: [
       "كيف بسجل علامة تجارية بقبرص؟",
       "العلامة التجارية بتحمي بكل أوروبا؟",

@@ -132,6 +132,15 @@ test("the 'the business' placeholder is absent from the whole repository", () =>
     "src/companyProfile.test.js"                       // this file
   ]);
 
+  // The placeholder wearing a name's clothes: quoted as a value, or followed by
+  // a capitalised word the way a brand name is ("the business Services").
+  // No `i` flag, deliberately. The whole discriminator is that the word AFTER
+  // the phrase is capitalised the way a brand name is, and a case-insensitive
+  // `[A-Z]` matches every lowercase letter too, which turns the shape check back
+  // into the substring check it was meant to replace. `[Tt]` carries the only
+  // case-insensitivity that is actually wanted.
+  const PLACEHOLDER_AS_A_NAME = /["'`]\s*[Tt]he business\b[^"'`]*["'`]|\b[Tt]he business\s+[A-Z]/u;
+
   const offenders = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -144,9 +153,28 @@ test("the 'the business' placeholder is absent from the whole repository", () =>
       const rel = path.relative(REPO, full).split(path.sep).join("/");
       if (ALLOWED.has(rel)) continue;
       const text = fs.readFileSync(full, "utf8");
-      if (/the business/i.test(text)) {
-        offenders.push(`${rel} (${(text.match(/the business/gi) || []).length})`);
-      }
+
+      // M3's corpus is 87 hand-written documents of ordinary business English,
+      // and "the business" is an ordinary English phrase in it: "amended as the
+      // business evolves", "which part of the business needs to be inside the
+      // EU". Seventeen such sentences are correct prose and none of them is the
+      // defect.
+      //
+      // The defect was a PLACEHOLDER standing in for the company NAME, and it
+      // always looked like a name: `expectedSource: "the business Services"`,
+      // or the bare phrase quoted as a value. So inside knowledge/ the gate
+      // matches that SHAPE instead of the substring. Everywhere else, including
+      // every prompt surface, every config file and every script, the ban stays
+      // exactly as absolute as it was, because that is where the placeholder
+      // actually lived and there is nothing to loosen for.
+      //
+      // This is narrower, not weaker: a file under knowledge/ carrying
+      // `"the business"` as a value, or `the business Services` as a name, still
+      // fails, and there is a test below that proves it.
+      const corpusProse = rel.startsWith("knowledge/");
+      const pattern = corpusProse ? PLACEHOLDER_AS_A_NAME : /the business/i;
+      const hits = text.match(new RegExp(pattern.source, `${pattern.flags.replace(/g/u, "")}g`)) || [];
+      if (hits.length) offenders.push(`${rel} (${hits.length}: ${hits.slice(0, 3).join(", ")})`);
     }
   };
   walk(REPO);
@@ -155,4 +183,34 @@ test("the 'the business' placeholder is absent from the whole repository", () =>
     `the "the business" placeholder is back in:\n  ${offenders.join("\n  ")}\n`
     + "Replace it with the configured company name, or add the file to ALLOWED "
     + "if it exists to document the defect.");
+});
+
+test("the narrowed corpus rule still catches the placeholder wearing a name's clothes", () => {
+  // Proof that scoping the previous test to a SHAPE inside knowledge/ did not
+  // weaken it. Each of these is the defect; each of these must still fail.
+  // No `i` flag, deliberately. The whole discriminator is that the word AFTER
+  // the phrase is capitalised the way a brand name is, and a case-insensitive
+  // `[A-Z]` matches every lowercase letter too, which turns the shape check back
+  // into the substring check it was meant to replace. `[Tt]` carries the only
+  // case-insensitivity that is actually wanted.
+  const PLACEHOLDER_AS_A_NAME = /["'`]\s*[Tt]he business\b[^"'`]*["'`]|\b[Tt]he business\s+[A-Z]/u;
+
+  for (const defect of [
+    `expectedSource: "the business Services"`,
+    `the business Services is the approved source`,
+    `source_name: 'the business'`,
+    "Contact the business Group for more detail.",
+  ]) {
+    assert.ok(PLACEHOLDER_AS_A_NAME.test(defect), `the placeholder slipped through: ${defect}`);
+  }
+
+  // And each of these is ordinary English that the corpus is entitled to use.
+  for (const prose of [
+    "Directors and shareholders are amended as the business evolves.",
+    "which part of the business needs to be inside the EU",
+    "the pace is slower than in the business cities",
+    "What does the business actually do?",
+  ]) {
+    assert.ok(!PLACEHOLDER_AS_A_NAME.test(prose), `correct prose was rejected: ${prose}`);
+  }
 });

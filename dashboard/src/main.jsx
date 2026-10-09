@@ -52,6 +52,7 @@ import rafaLogo from "./assets/rafa-mark.png";
 const Conversations = React.lazy(() => import("./Conversations.jsx"));
 const Performance = React.lazy(() => import("./Performance.jsx"));
 const HandoverInbox = React.lazy(() => import("./HandoverInbox.jsx"));
+const FactRegister = React.lazy(() => import("./FactRegister.jsx"));
 
 const navItems = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -59,6 +60,9 @@ const navItems = [
   { id: "performance", label: "Performance", icon: TrendingUp },
   { id: "conversations", label: "Conversations", icon: MessageCircleMore },
   { id: "knowledge", label: "Knowledge", icon: BookOpenCheck },
+  // W3.9.7 — the fact register. Admin only: re-approval is an accountability
+  // record, and blocking a fact removes it from retrieval entirely.
+  { id: "facts", label: "Facts", icon: ShieldCheck, adminOnly: true },
   { id: "bookings", label: "Bookings", icon: CalendarClock },
   { id: "follow-ups", label: "Follow-ups", icon: Bell, adminOnly: true },
   { id: "blocked", label: "Blocked numbers", icon: ShieldBan, adminOnly: true }
@@ -318,6 +322,7 @@ function App() {
         {active === "performance" && <React.Suspense fallback={<Loading label="Loading performance" />}><Performance isAdmin={isAdmin} /></React.Suspense>}
         {active === "conversations" && <React.Suspense fallback={<Loading label="Loading conversations" />}><Conversations isAdmin={isAdmin} view={conversationView} onViewChange={setConversationView} selectedConversationId={selectedConversationId} onSelectedConversationChange={setSelectedConversationId} onNavigate={navigateTo} /></React.Suspense>}
         {active === "knowledge" && <Knowledge isAdmin={isAdmin} />}
+        {active === "facts" && isAdmin && <React.Suspense fallback={<Loading label="Loading the fact register" />}><FactRegister isAdmin={isAdmin} /></React.Suspense>}
         {active === "bookings" && <Bookings isAdmin={isAdmin} />}
         {active === "follow-ups" && isAdmin && <React.Suspense fallback={<Loading label="Loading specialist follow-ups" />}><HandoverInbox onNavigate={navigateTo} /></React.Suspense>}
         {active === "blocked" && isAdmin && <BlockedNumbers />}

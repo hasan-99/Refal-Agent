@@ -1,0 +1,76 @@
+.facts-page { --facts-ink:#243941; --facts-muted:#71848b; }
+.facts-hero { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; padding:22px 24px; border:1px solid #dce7e9; border-radius:18px; background:linear-gradient(115deg,#f0f8f8,#fbfcfa 68%); }
+.facts-kicker { display:flex; align-items:center; gap:6px; color:#4c7d85; font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+.facts-hero h2 { margin:8px 0 5px; color:var(--facts-ink); font-size:24px; }
+.facts-hero p { max-width:720px; margin:0; color:var(--facts-muted); font-size:13px; line-height:1.55; }
+.facts-refresh { display:inline-flex; align-items:center; gap:7px; white-space:nowrap; }
+
+/* The unapplied migration is its own state, deliberately louder than an empty
+   table, because an empty table would read as "nothing needs review". */
+.facts-migration { display:flex; align-items:flex-start; gap:12px; padding:14px 16px; border:1px solid #e8cfa8; border-radius:12px; color:#7a5312; background:#fdf6e7; }
+.facts-migration svg { flex:none; margin-top:2px; color:#b5812a; }
+.facts-migration strong { display:block; margin-bottom:4px; font-size:13px; }
+.facts-migration p { margin:0; font-size:12px; line-height:1.55; }
+.facts-migration code { display:inline-block; margin-top:7px; padding:3px 7px; border-radius:5px; background:#f6ead1; font-size:11px; }
+.facts-alert,.facts-notice { padding:11px 14px; border-radius:10px; color:#90452e; background:#fff2eb; font-size:12px; }
+.facts-notice { color:#276b55; background:#eaf7f1; }
+
+.facts-banner { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.facts-stat { display:grid; gap:5px; padding:14px 16px; border:1px solid #e4ebec; border-left:3px solid #cfdcde; border-radius:12px; background:#fff; }
+.facts-stat span { color:#7a898d; font-size:9px; font-weight:800; letter-spacing:.09em; }
+.facts-stat strong { color:var(--facts-ink); font-size:26px; font-weight:730; letter-spacing:-.02em; }
+.facts-stat small { color:var(--facts-muted); font-size:11px; line-height:1.45; }
+.facts-stat.soon { border-left-color:#d79c45; background:#fdf8f0; }
+.facts-stat.overdue { border-left-color:#c2643f; background:#fdf2ee; }
+
+.facts-legend { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; padding:14px 16px; border:1px solid #e4ebec; border-radius:12px; background:#fbfcfc; }
+.facts-legend-item { display:grid; gap:5px; }
+.facts-legend-item small { color:var(--facts-muted); font-size:11px; line-height:1.45; }
+
+/* The three statuses have to be told apart at a glance: they are the reason the
+   register exists. Colour is backed by an icon and the word itself, never alone. */
+.facts-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 8px; border:1px solid #d8e6dd; border-radius:5px; color:#3c715e; background:#f3f8f4; font-size:10px; font-weight:700; text-transform:capitalize; }
+.facts-pill.expired { border-color:#ebcbb9; color:#9a512e; background:#fdf2ec; }
+.facts-pill.blocked { border-color:#d9d4e4; color:#5d4f7d; background:#f5f2fa; }
+.facts-pill.pending { border-color:#d6e2ee; color:#4d6d89; background:#f1f6fb; }
+
+.facts-controls { display:flex; align-items:flex-end; flex-wrap:wrap; gap:14px; padding:14px 16px; border:1px solid #e4ebec; border-radius:12px; background:#fff; }
+.facts-controls label { display:grid; gap:6px; color:#536a72; font-size:12px; font-weight:650; }
+.facts-controls select,.facts-controls input[type="number"] { min-width:150px; padding:9px 11px; border:1px solid #dce5e6; border-radius:9px; outline:none; color:#2d444b; background:white; font:inherit; font-weight:400; }
+.facts-controls select:focus,.facts-controls input:focus { border-color:#6aa1a7; box-shadow:0 0 0 3px #e7f2f1; }
+.facts-controls .facts-toggle { display:flex; align-items:center; gap:8px; min-height:38px; font-weight:600; }
+.facts-controls .facts-toggle input { width:15px; height:15px; }
+
+.facts-table-wrap { overflow-x:auto; padding:6px 0; }
+.facts-table { width:100%; border-collapse:collapse; font-size:12px; }
+.facts-table th { padding:10px 12px; border-bottom:1px solid #e4ebec; color:#7a898d; font-size:9px; font-weight:800; letter-spacing:.08em; text-align:left; text-transform:uppercase; white-space:nowrap; }
+.facts-table td { padding:11px 12px; border-bottom:1px solid #eff3f3; color:#425960; vertical-align:top; }
+.facts-row.expired { background:#fffaf7; }
+.facts-row.blocked { background:#fbfaff; }
+.facts-id { color:var(--facts-ink); font-weight:750; white-space:nowrap; }
+.facts-claim { max-width:340px; min-width:220px; color:#34484e; line-height:1.5; }
+.facts-topics { min-width:120px; }
+.facts-chip { display:inline-block; margin:0 4px 4px 0; padding:2px 7px; border-radius:20px; color:#56717a; background:#eef3f4; font-size:10px; }
+.facts-stored { display:block; margin-top:4px; color:#96a3a7; font-size:9px; }
+.facts-days { display:inline-block; padding:3px 7px; border-radius:5px; color:#5a6f76; background:#f1f4f5; font-size:10px; font-weight:700; white-space:nowrap; }
+.facts-days.soon { color:#8a5c14; background:#fbf0dd; }
+.facts-days.overdue { color:#9a3f24; background:#fbe6de; }
+.facts-risk { display:inline-block; padding:3px 7px; border-radius:5px; color:#8c3f55; background:#fbecf0; font-size:10px; font-weight:700; white-space:nowrap; }
+.facts-actions { white-space:nowrap; }
+.facts-actions button { display:inline-flex; align-items:center; gap:6px; min-height:30px; margin-right:6px; padding:5px 9px; border-radius:5px; font-size:11px; }
+
+.facts-audit-row > td { background:#f9fbfb; }
+.facts-audit { display:grid; gap:10px; padding:4px 2px 8px; }
+.facts-audit-head { display:flex; align-items:baseline; gap:10px; }
+.facts-audit-head strong { color:var(--facts-ink); font-size:12px; }
+.facts-audit-head small,.facts-audit-list small { color:#8d9b9f; font-size:10px; }
+.facts-audit-list { display:grid; gap:9px; margin:0; padding:0; list-style:none; }
+.facts-audit-list li { display:grid; grid-template-columns:auto auto 1fr; align-items:center; gap:8px 10px; padding:9px 11px; border:1px solid #e6ecec; border-radius:9px; background:#fff; }
+.facts-audit-list p { grid-column:1 / -1; margin:0; color:#54696f; font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
+.facts-audit-list strong { color:#3a545a; font-size:11px; }
+.facts-action { padding:3px 7px; border-radius:4px; color:#3a6863; background:#edf4f0; font-size:9px; font-weight:800; text-transform:uppercase; }
+.facts-action.block,.facts-action.expire { color:#9a512e; background:#fbe9e1; }
+.facts-empty { margin:14px 12px; color:#829198; font-size:12px; line-height:1.5; }
+
+@media (max-width:1000px) { .facts-banner { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:560px) { .facts-hero { align-items:flex-start; flex-direction:column; } .facts-banner { grid-template-columns:1fr; } }

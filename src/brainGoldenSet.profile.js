@@ -10,7 +10,24 @@ const { topicSet, REFUSAL_CLASSES: R, HUMOUR_LEVELS: H } = require("./brainGolde
 
 const ENTRIES = [
   // --------------------------------------------------------- 25. company profile
-  ...topicSet("company-profile", { facts: ["MB-C1", "MB-C2", "MB-C3", "MB-C4"], humour: H.WARM }, {
+  // MB-C1 roots from 2000, MB-C2 20+ years, MB-C3 47 developments, MB-C4 400+
+  // multi sector projects, MB-C5 the positioning (a gateway to investment and
+  // structural solutions, not a registration office).
+  ...topicSet("company-profile", {
+    facts: ["MB-C5"], humour: H.WARM,
+    factsByIndex: [
+      ["MB-C1", "MB-C2", "MB-C3", "MB-C4", "MB-C5"],  // 1. who are you
+      ["MB-C5"],                                      // 2. what are you
+      ["MB-C1", "MB-C2"],                             // 3. how long in the market
+      ["MB-C3", "MB-C4"],                             // 4. how many projects
+      ["MB-C1", "MB-C2", "MB-C3", "MB-C4"],           // 5. is this a scam (MB-O5)
+      ["MB-C5"],                                      // 6. where are your offices
+      ["MB-C5"],                                      // 7. what services
+      ["MB-C5"],                                      // 8. does anyone speak Arabic
+      ["MB-C5"],                                      // 9. can I speak to a person
+      ["MB-C5"],                                      // 10. bot or human
+    ],
+  }, {
     ar: [
       "مين انتو؟ حدثوني عن الشركة",
       "من أنت؟",
@@ -50,7 +67,10 @@ const ENTRIES = [
   }),
 
   // ------------------------------------------------------- 26. jurisdiction Dubai
-  ...topicSet("jurisdiction-dubai", { facts: ["MB-F56"], humour: H.PLAYFUL }, {
+  // Every comparison question needs both the posture rule MB-J0 (never attack
+  // another country, never claim to be always the best) and the comparison
+  // content itself, here MB-J1 for Dubai / UAE.
+  ...topicSet("jurisdiction-dubai", { facts: ["MB-J0", "MB-J1"], humour: H.PLAYFUL }, {
     ar: [
       "قبرص ولا دبي أفضل لتأسيس شركة؟",
       "شو الفرق الضريبي بين قبرص ودبي؟",
@@ -90,7 +110,7 @@ const ENTRIES = [
   }),
 
   // ----------------------------------------------------- 27. jurisdiction Estonia
-  ...topicSet("jurisdiction-estonia", { facts: ["MB-F57"], humour: H.PLAYFUL }, {
+  ...topicSet("jurisdiction-estonia", { facts: ["MB-J0", "MB-J2"], humour: H.PLAYFUL }, {
     ar: [
       "قبرص ولا إستونيا للشركات التقنية؟",
       "شو هي e-Residency بإستونيا؟",
@@ -130,7 +150,7 @@ const ENTRIES = [
   }),
 
   // --------------------------------------------- 28. jurisdiction Malta / Bulgaria
-  ...topicSet("jurisdiction-malta-bulgaria", { facts: ["MB-F58"], humour: H.PLAYFUL }, {
+  ...topicSet("jurisdiction-malta-bulgaria", { facts: ["MB-J0", "MB-J3"], humour: H.PLAYFUL }, {
     ar: [
       "قبرص ولا مالطا أفضل؟",
       "بلغاريا ضريبتها 10%، ليش قبرص؟",
@@ -170,7 +190,7 @@ const ENTRIES = [
   }),
 
   // --------------------------------------------------------- 29. jurisdiction USA
-  ...topicSet("jurisdiction-usa", { facts: ["MB-F59"], humour: H.PLAYFUL }, {
+  ...topicSet("jurisdiction-usa", { facts: ["MB-J0", "MB-J4"], humour: H.PLAYFUL }, {
     ar: [
       "قبرص ولا أمريكا لتأسيس شركة؟",
       "شو الفرق بين LLC الأمريكية والشركة القبرصية؟",

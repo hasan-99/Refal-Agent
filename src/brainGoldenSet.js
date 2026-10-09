@@ -8,6 +8,7 @@
 
 const { topicSet, REFUSAL_CLASSES: R, HUMOUR_LEVELS: H, validateEntry, THRESHOLDS, RUBRIC } = require("./brainGoldenSetSchema");
 const { TOPICS, LANGUAGES } = require("./brainTaxonomy");
+const { isFactId, normalizeFactId, citableFactsForTopic } = require("./brainFactMap");
 
 const ENTRIES = Object.freeze([
   ...require("./brainGoldenSet.corporate").ENTRIES,
@@ -87,6 +88,31 @@ function validateAll() {
   for (const e of ENTRIES) {
     if (seen.has(e.id)) errors.push(`duplicate golden id ${e.id}`);
     seen.add(e.id);
+  }
+  // FIX-28 — expectedFacts must name real MB facts that the entry's own topic
+  // actually owns. The set was originally filled with the mechanical placeholder
+  // `MB-F0${topicNumber + 5}`, which was silently wrong at both ends of the
+  // range. brainFactMap is the single source of truth, so a future edit that
+  // drifts from it fails here instead of quietly scoring against the wrong fact.
+  for (const e of ENTRIES) {
+    if (!e.expectedFacts.length) {
+      errors.push(`${e.id}: expectedFacts is empty`);
+      continue;
+    }
+    // Owned facts, plus the ones brainFactMap says this topic may CITE. A
+    // lifecycle question asking how long registration takes is answered by
+    // MB-F2, which formation-package owns; forbidding the reference would force
+    // either a wrong expectation or a duplicated fact.
+    const allowed = new Set(citableFactsForTopic(e.topic));
+    for (const raw of e.expectedFacts) {
+      if (!isFactId(raw)) {
+        errors.push(`${e.id}: unknown fact id "${raw}"`);
+        continue;
+      }
+      const id = normalizeFactId(raw);
+      if (id !== raw) errors.push(`${e.id}: fact id "${raw}" is zero padded, write "${id}"`);
+      if (!allowed.has(id)) errors.push(`${e.id}: fact "${id}" is neither owned nor citable by topic ${e.topic}`);
+    }
   }
   // Duplicate question text within a topic+language is a padding smell.
   const byCell = new Map();

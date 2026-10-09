@@ -16,6 +16,7 @@ import { createAgentRateLimit } from "./agentRateLimit.js";
 import { deleteConversationTranscript } from "./conversationDelete.js";
 import { displayName, isPlausibleCustomerName } from "./contactIdentity.js";
 import { countUniqueHandoverContacts } from "./handoverGrouping.js";
+import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -482,6 +483,56 @@ app.post("/api/knowledge/search", async (req, res) => {
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
+});
+
+// W3.9.7 — the fact register admin surface. Rule 2 made operable: what REFAL
+// may state today, what has quietly stopped being stated, and who extended
+// which date. The decisions all live in src/factRegister.js and the two audited
+// RPCs in supabase/migrations/20261009180000_refal_fact_register.sql;
+// dashboard/factRegisterView.js is the adapter between them.
+//
+// That migration is not applied yet. Every one of these routes answers 503 with
+// an explicit "migration not applied" payload in that case, because an empty
+// 200 would read as "no facts need review", which is the one wrong answer.
+function factRouteError(res, error) {
+  res.status(error.code || 500).json({ error: error.message, ...(error.details || {}) });
+}
+
+app.get("/api/facts/due", async (req, res) => {
+  try { res.json(await dueFacts(supabaseRest, { days: req.query?.days })); }
+  catch (error) { factRouteError(res, error); }
+});
+
+app.get("/api/facts", async (req, res) => {
+  try { res.json(await listFacts(supabaseRest, { status: req.query?.status, topic: req.query?.topic })); }
+  catch (error) { factRouteError(res, error); }
+});
+
+app.get("/api/facts/:factId/audit", async (req, res) => {
+  try { res.json(await factAudit(supabaseRest, req.params.factId)); }
+  catch (error) { factRouteError(res, error); }
+});
+
+app.post("/api/facts/:factId/reapprove", requireAdmin, async (req, res) => {
+  try {
+    res.json(await reapproveFact(supabaseRest, {
+      factId: req.params.factId,
+      reviewer: req.body?.reviewer,
+      cadenceDays: req.body?.cadenceDays,
+      reason: req.body?.reason
+    }));
+  } catch (error) { factRouteError(res, error); }
+});
+
+app.post("/api/facts/:factId/status", requireAdmin, async (req, res) => {
+  try {
+    res.json(await setFactStatus(supabaseRest, {
+      factId: req.params.factId,
+      status: req.body?.status,
+      actor: req.body?.actor,
+      reason: req.body?.reason
+    }));
+  } catch (error) { factRouteError(res, error); }
 });
 
 app.get("/api/overview", async (req, res) => {
@@ -1790,7 +1841,19 @@ async function supabaseRest(pathname, options = {}) {
   });
   if (response.status === 204) return [];
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.error || `Supabase REST failed: ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(body.message || body.error || `Supabase REST failed: ${response.status}`);
+    // Additive diagnostics. The Postgres / PostgREST error code is the only
+    // reliable way to tell "this migration has not been applied" (42P01,
+    // PGRST205) apart from a genuine failure — see factRegisterView.js. `code`
+    // is deliberately left alone: every existing caller reads it as an HTTP
+    // status (`res.status(error.code || 500)`).
+    error.pgCode = body.code || "";
+    error.pgHint = body.hint || "";
+    error.pgDetails = body.details || "";
+    error.httpStatus = response.status;
+    throw error;
+  }
   return body;
 }
 

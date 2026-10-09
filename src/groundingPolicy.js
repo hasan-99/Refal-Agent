@@ -26,6 +26,13 @@
 //    they are called only from agentLoop.js (not yet live — shadow-mode only,
 //    Ticket 010).
 
+// --- 3. W3.10.8, PER-CLAIM groundedness (closes CF-02) ----------------------
+// See the block above assessClaimGroundedness, at the end of this file.
+
+const { splitClaims, classifyClaim, CLAIM_CLASSES } = require("./claimPolicy");
+const { withoutRefusalClauses } = require("./outputGuards");
+const { SOURCE_LEVELS, assertModelKnowledgeIsGeneral } = require("./policyPrecedence");
+
 // --- 1. Moved, behavior-identical (previously defined inline in ai.js) ------
 
 const PRICE_FACT = /(?:[$€£]\s?[\d٠-٩]|\b[\d٠-٩][\d,.]*\s?(?:eur|euros?|dollars?|pounds?)\b|\b(?:price|fee|package|costs?|charges?)\b.{0,35}\b\d|\b\d.{0,25}\b(?:price|fee|package|costs?|charges?)\b|(?:السعر|رسوم|باقة|تكلفة|يكلف|تكلف).{0,35}[\d٠-٩]|[\d٠-٩].{0,25}(?:يورو|دولار|جنيه)|(?:τιμή|κόστος|πακέτο|κοστίζει).{0,35}\d|\d.{0,25}(?:ευρώ|τιμή|κόστος))/iu;
@@ -352,6 +359,209 @@ function validateFactualGrounding(text, { evidenceItems = [] } = {}) {
   return { valid: reasons.length === 0, reasons };
 }
 
+// --- 3. W3.10.8 — PER-CLAIM groundedness. This is what closes CF-02. --------
+//
+// THE CARRY-FORWARD, AND WHY IT WAS REAL
+// --------------------------------------
+// `assertModelKnowledgeIsGeneral` has been live in src/ai.js since P1.6 and has
+// never once been able to fire. Its input is computed as:
+//
+//     sourceLevel = evidence.length > 0 ? APPROVED_KNOWLEDGE : MODEL_KNOWLEDGE
+//
+// and the gate returns `{ ok: true }` immediately for anything that is not
+// MODEL_KNOWLEDGE. But `askOpenRouter` returns `null` at its very first line
+// when `evidence.length === 0` (src/ai.js), so the only branch that can produce
+// MODEL_KNOWLEDGE is the branch that never reaches the gate. Verified again in
+// this session against the current file: the early return and the ternary are
+// both still exactly as CF-02 describes them.
+//
+// WHAT CHANGES, AND WHAT DOES NOT
+// -------------------------------
+// The all-or-nothing question "did this TURN have evidence" is replaced by the
+// per-claim question "does the retrieved evidence back THIS SENTENCE". An
+// answer drafted from a real, non-empty corpus routinely mixes both: four
+// grounded sentences and one invented one. So the gate's input genuinely
+// varies now, per sentence, on a turn that HAS evidence — which is the
+// reachability CF-02 was waiting for, not a caller invented to make a dead gate
+// look alive.
+//
+// The whole-answer call in src/ai.js is NOT removed. It is a different
+// question (does this turn have any evidence at all) with a different, broader
+// input, and it is the only protection a future caller that skips the early
+// return would get. This runs BESIDE it.
+//
+// WHAT IS REUSED RATHER THAN REBUILT
+// ----------------------------------
+// Everything that splits and judges a claim already exists in
+// src/claimPolicy.js and is used here unchanged: `splitClaims` (the hand-rolled
+// scanner that does not break "2.5%" or "300.000"), `classifyClaim` (Arabic
+// letter folding, the digit/cardinal-word canonicalizer, the three-language
+// entity rules, the 50%-with-a-floor-of-two entity overlap, the interrogative
+// carve-out and the refusal strips). There is NO second claim splitter here.
+// `withoutRefusalClauses` is likewise imported from src/outputGuards.js, not
+// re-derived.
+//
+// THE REFUSAL CARVE-OUT (the M2 trap, paid for once already)
+// ----------------------------------------------------------
+// A gate wired live flags REFAL's own refusals, because a refusal sentence
+// contains the exact words the detector hunts. Two layers stop that here:
+//   * `classifyClaim` strips complete refusal clauses before it classifies, so
+//     a pure refusal comes back NEUTRAL/`disclaimer_only` and never reaches the
+//     precedence gate at all;
+//   * the text handed to `assertModelKnowledgeIsGeneral` is the sentence with
+//     its refusal clauses removed, so "I can't confirm our package price, but
+//     formation takes two weeks" is judged on its SECOND half. The strip stops
+//     at a contrastive conjunction (but / ولكن / αλλά), never at a comma,
+//     because refusals enumerate what they refuse.
+//
+// ONLY PROGRAM_FACT IS A GROUNDEDNESS QUESTION
+// --------------------------------------------
+// GUARANTEE and PERSONALIZED_CONCLUSION are blocked because of WHAT they
+// assert, with no evidence condition attached, and they are already enforced
+// unconditionally by `containsUnconditionalProhibition` on both the legacy and
+// the agent path. Re-blocking them here would duplicate a live gate and change
+// which error a caller sees, so they are reported in the per-claim breakdown
+// and otherwise left alone.
+//
+// WHAT IS BLOCKED, AND WHY IT IS NARROWER THAN "UNGROUNDED"
+// ---------------------------------------------------------
+// Three conditions must ALL hold before a sentence is deleted:
+//
+//   1. the retrieved evidence does not back it (an ungrounded PROGRAM_FACT),
+//   2. `assertModelKnowledgeIsGeneral` says it is Refalco-SPECIFIC rather than
+//      a general explanation, and
+//   3. it carries an unsupported SPECIFIC VALUE — a figure, a count, a rate, a
+//      duration — that is not present in the evidence.
+//
+// Condition 3 is the one that stops this from re-creating BLK-1. `classifyClaim`
+// reports two different kinds of "not grounded", and they are not equally
+// trustworthy:
+//
+//   number_not_in_evidence:N   HARD. The sentence states a value and the
+//                              evidence does not contain it. Language
+//                              independent, unambiguous, and exactly the
+//                              example W1.6.3 is written around ("VAT is a
+//                              consumption tax" is fine from model knowledge,
+//                              "Refalco charges 19% VAT" is not).
+//   entities_not_in_evidence   SOFT. A 50%-of-content-tokens overlap heuristic.
+//                              It measures topical relevance, not truth, and on
+//                              its own it deletes ordinary identity and
+//                              capability sentences — "Refalco Group can help
+//                              you set up a company in Cyprus" overlaps a
+//                              contact-page chunk by two tokens out of six and
+//                              fails it, while being both true and something
+//                              P1.1/W1.1.4 deliberately made REFAL free to say
+//                              (that is BLK-3). Deleting correct answers is the
+//                              defect M2 exists to remove, not a safe failure.
+//
+// So a soft-only miss is reported (`lowConfidence: true`, sourceLevel
+// MODEL_KNOWLEDGE) and left standing. STATED LIMITATION, not an oversight: an
+// invented Refalco claim that carries no number at all — "Refalco Group is
+// licensed by the Cyprus Bar Association" — is NOT deleted by this gate. It is
+// covered elsewhere (the blanket restricted-topic regex catches "licen[cs]e",
+// and the agent path has `containsUnsupportedBrandHistoryClaim`), and widening
+// condition 3 to close it here would cost more true answers than it saves.
+
+// `classifyClaim` filters its evidence through claimPolicy's
+// `isApprovedEvidence`, which requires a literal `review_status: "approved"`
+// field on the chunk. This function is more lenient: a chunk carrying NEITHER
+// `review_status` nor `valid_until` is taken as retrieved rather than rejected.
+//
+// CORRECTION, verified 2026-10-09 against the migrations as they stand.
+// An earlier draft of this comment claimed the live RPC returns no
+// `review_status`, citing 20260929201949. That is four migrations out of date
+// and the claim is FALSE. 20261003231041 drops and recreates both search RPCs,
+// and its `returns table (...)` carries `review_status text` and `valid_until
+// timestamptz`; the body selects `d.valid_until, d.review_status`; the edge
+// function returns the rows unmodified (`json({ results: data || [] })`) and
+// `supabaseStore.searchKnowledge` passes them straight through. So a live chunk
+// DOES arrive with `review_status: "approved"`, and M2's evidence-aware claim
+// gate is reachable in production. Do not "fix" it on the strength of that
+// retracted claim.
+//
+// The leniency therefore is NOT a workaround for a broken RPC. It is a
+// tolerance for evidence that did not come from the search RPC at all: a
+// synthetic fixture, an operator-supplied chunk, a future retrieval path. On
+// live chunks this function and `isApprovedEvidence` agree exactly, because the
+// field is always present.
+//
+// What stays strict is the part that matters: a chunk that EXPLICITLY carries a
+// non-approved status, or an expiry that has passed, is still dropped. Only the
+// absent-field case is treated as retrieved, and treating an absent field as
+// fatal would delete true answers from every non-RPC caller, which is the BLK-1
+// failure mode under a new name.
+function retrievedGroundingEvidence(evidence) {
+  return (Array.isArray(evidence) ? evidence : [])
+    .filter((item) => item && typeof item === "object")
+    .filter((item) => item.review_status === undefined || item.review_status === null || item.review_status === "approved")
+    .filter((item) => {
+      const validUntil = item.valid_until;
+      if (validUntil === undefined || validUntil === null || String(validUntil).trim() === "") return true;
+      const expiry = Date.parse(validUntil);
+      return Number.isFinite(expiry) && expiry > Date.now();
+    })
+    .map((item) => ({ ...item, review_status: "approved", valid_until: null }));
+}
+
+/**
+ * Per-claim groundedness. Returns ONE VERDICT PER SENTENCE, never a single
+ * verdict for the whole answer.
+ *
+ * Each claim carries the precedence level it actually sits at:
+ *   APPROVED_KNOWLEDGE  the retrieved evidence backs this sentence (rank 5)
+ *   MODEL_KNOWLEDGE     it does not, so the sentence can only have come from
+ *                       the model (rank 6) — permitted while it stays general,
+ *                       blocked the moment it makes a Refalco-specific claim
+ *   null                the sentence asserts no programme fact (a question, a
+ *                       refusal, a greeting), so the ladder does not apply
+ *
+ * `ok === false` means at least one sentence is an ungrounded Refalco-specific
+ * claim carrying an unsupported value. `lowConfidence === true` is the weaker,
+ * wider signal W3.10.5 keys on: at least one sentence is ungrounded at all.
+ */
+function assessClaimGroundedness(answer, { evidence = [], language } = {}) {
+  const items = retrievedGroundingEvidence(evidence);
+  const claims = [];
+  for (const sentence of splitClaims(answer)) {
+    const verdict = classifyClaim(sentence, { evidence: items, language });
+    const base = { sentence, claimClass: verdict.claimClass, reasons: verdict.reasons, unsupportedValues: [] };
+    if (verdict.claimClass !== CLAIM_CLASSES.PROGRAM_FACT) {
+      claims.push({ ...base, sourceLevel: null, grounded: true, blocked: false, label: null, unconditional: !verdict.allowed });
+      continue;
+    }
+    if (verdict.allowed) {
+      claims.push({ ...base, sourceLevel: SOURCE_LEVELS.APPROVED_KNOWLEDGE, grounded: true, blocked: false, label: null, unconditional: false });
+      continue;
+    }
+    // The refusal strip runs on the RAW sentence, not on claimPolicy's folded
+    // and normalized form: `isRefalcoSpecificClaim` matches unfolded Arabic
+    // literals (أسعارنا), and handing it folded text would be a silent
+    // fail-open of exactly the BLK-16 shape.
+    const asserted = withoutRefusalClauses(sentence);
+    const gate = assertModelKnowledgeIsGeneral(asserted, SOURCE_LEVELS.MODEL_KNOWLEDGE);
+    const unsupportedValues = Array.isArray(verdict.unsupportedNumbers) ? verdict.unsupportedNumbers : [];
+    claims.push({
+      ...base,
+      unsupportedValues,
+      sourceLevel: SOURCE_LEVELS.MODEL_KNOWLEDGE,
+      grounded: false,
+      blocked: !gate.ok && unsupportedValues.length > 0,
+      label: gate.label,
+      unconditional: false
+    });
+  }
+  const blocked = claims.filter((claim) => claim.blocked);
+  const ungrounded = claims.filter((claim) => !claim.grounded);
+  return {
+    ok: blocked.length === 0,
+    lowConfidence: ungrounded.length > 0,
+    label: blocked.length ? blocked[0].label : null,
+    claims,
+    blocked,
+    ungrounded
+  };
+}
+
 module.exports = {
   // moved, behavior-identical (also used by src/ai.js)
   PRICE_FACT,
@@ -371,5 +581,8 @@ module.exports = {
   containsUnsupportedUrlClaim,
   containsUnsupportedBrandHistoryClaim,
   containsUnsupportedNumericClaim,
-  validateFactualGrounding
+  validateFactualGrounding,
+  // W3.10.8 — per-claim groundedness (closes CF-02)
+  retrievedGroundingEvidence,
+  assessClaimGroundedness
 };

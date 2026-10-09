@@ -38,6 +38,26 @@ test("every src/*.test.js on disk is listed in package.json#scripts.test", () =>
     `these test files never run: ${missing.join(", ")}. Add them to package.json#scripts.test — the list is not a glob.`);
 });
 
+test("every scripts/*.test.js on disk is listed in package.json#scripts.test", () => {
+  // The same blind spot, one directory over. FIX-27 added the src/ check and
+  // stopped there, but scripts/ holds eight test files that are listed purely by
+  // hand with nothing enforcing it. All eight happen to be listed today, which
+  // is exactly the state src/ was in before leadQualification.test.js went
+  // missing for an unknown number of commits.
+  const script = JSON.parse(fs.readFileSync(path.join(REPO, "package.json"), "utf8")).scripts.test;
+
+  const onDisk = fs.readdirSync(path.join(REPO, "scripts"))
+    .filter((file) => /\.test\.m?js$/.test(file))
+    .map((file) => `scripts/${file}`)
+    .sort();
+
+  const listed = new Set(script.split(/\s+/));
+  const missing = onDisk.filter((file) => !listed.has(file));
+
+  assert.deepEqual(missing, [],
+    `these test files never run: ${missing.join(", ")}. Add them to package.json#scripts.test — the list is not a glob.`);
+});
+
 test("the dashboard suite is reachable from a single named command", () => {
   // The same failure mode as leadQualification.test.js, one directory over.
   // dashboard/ has 18 test files and its own `node --test` script, which DOES
