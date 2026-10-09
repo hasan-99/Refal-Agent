@@ -104,15 +104,16 @@ function render() {
   w(`insert into public.refal_fact_register (`);
   w(`  ${COLUMNS.join(", ")}`);
   w(`) values`);
+  // The last row takes NO terminator. `on conflict` is a clause of this same
+  // INSERT, not a statement of its own, and emitting `;` here produced
+  // `42601: syntax error at or near "on"` on the first real apply.
   rows.forEach((row, i) => {
-    const sep = i === rows.length - 1 ? ";" : ",";
+    const sep = i === rows.length - 1 ? "" : ",";
     w(`  (${rowValues(row)})${sep}   -- ${row.id}${row.highRisk ? " [high risk]" : ""}`);
   });
-  w();
-  w(`-- Conflict handling is deliberately NOT part of the insert above, because`);
-  w(`-- "on conflict do update" would have to decide what to do with status and`);
-  w(`-- verified_at, and the right answer differs per column. Doing it as an`);
-  w(`-- explicit second statement makes that decision readable.`);
+  w(`-- Re-running this file refreshes what the catalogue owns and leaves the`);
+  w(`-- reviewer's own columns alone, so a second run can never un-expire a fact`);
+  w(`-- someone retired or revive one they blocked.`);
   w(`on conflict (fact_id) do update set`);
   w(`  claim_text = excluded.claim_text,`);
   w(`  topics = excluded.topics,`);

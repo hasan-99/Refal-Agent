@@ -121,9 +121,12 @@ begin
   end loop;
 end $$;
 
-grant execute on function public.refal_fact_effective_status(text, date, date, date) to anon;
-grant execute on function public.refal_reapprove_fact(text, text, integer, text) to anon;
-grant execute on function public.refal_set_fact_status(text, text, text, text) to anon;
+-- The matching `grant execute ... to anon` for the three functions lives at the
+-- BOTTOM of this file, after they are created. It sat here originally and the
+-- first apply failed on it with `42883: function
+-- public.refal_fact_effective_status(text, date, date, date) does not exist`,
+-- because a grant cannot name a function the same batch has not created yet.
+-- Table grants can sit here. Function grants cannot.
 
 drop trigger if exists set_refal_fact_register_updated_at on public.refal_fact_register;
 create trigger set_refal_fact_register_updated_at
@@ -323,6 +326,12 @@ revoke all on function public.refal_set_fact_status(text, text, text, text) from
 grant execute on function public.refal_fact_effective_status(text, date, date, date) to service_role;
 grant execute on function public.refal_reapprove_fact(text, text, integer, text) to service_role;
 grant execute on function public.refal_set_fact_status(text, text, text, text) to service_role;
+
+-- The dashboard reaches Supabase as anon plus the x-rafa-dashboard-secret
+-- header. These three grants must come after the CREATE statements above.
+grant execute on function public.refal_fact_effective_status(text, date, date, date) to anon;
+grant execute on function public.refal_reapprove_fact(text, text, integer, text) to anon;
+grant execute on function public.refal_set_fact_status(text, text, text, text) to anon;
 
 -- ROLLBACK:
 -- drop policy if exists rafa_dashboard_refal_fact_register_audit on public.refal_fact_register_audit;

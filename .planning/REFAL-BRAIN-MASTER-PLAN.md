@@ -99,20 +99,34 @@ Merged from Claude G1-G5 and CX section 2.2. No phase starts until the previous 
 
 **I never write to Supabase.** Confirmed working rule, set by BOSS 2026-10-07.
 
-> **Corrected 2026-10-09 during P3.10.** The original wording was "this environment has no Supabase
-> access", and that turned out to be wrong about READS. `SUPABASE_URL`, the publishable key and
-> `RAFA_DASHBOARD_SUPABASE_SECRET` are all present here, and `GET /rest/v1/rafa_knowledge_sources`
-> returns HTTP 200. `scripts/brainHealth.js --db` works today.
+> **Corrected twice on 2026-10-09/10, and the second correction overrides the first.**
 >
-> What it reports is that all three knowledge tables are **empty** (`content-range: */0`), which is
-> real rather than an RLS artifact: migration `20261001193152` deleted them and the M3 corpus has
-> not been ingested. `GET /rest/v1/refal_fact_register` returns 404 PGRST205 because MIG-01 is not
-> applied.
+> **First pass, during P3.10:** the original "this environment has no Supabase access" looked wrong,
+> because `GET /rest/v1/rafa_knowledge_sources` returned HTTP 200 and the tables read as empty.
 >
-> **Nothing about the write rule changes.** Read access makes the verification honest, not the
-> protocol looser: inspection stays `SELECT` and `INFORMATION_SCHEMA`, and every schema or data
-> change is still a reviewed `.sql` file that BOSS runs. A `PENDING DB` gate can now sometimes be
-> answered truthfully instead of deferred, and that is the only difference.
+> **Second pass, during the M3 deployment: that reading was WRONG, and the way it was wrong matters.**
+> `RAFA_DASHBOARD_SUPABASE_SECRET` on this machine **does not authenticate**. Every RLS policy on the
+> knowledge tables is `rafa_private.dashboard_secret_matches()`, which sha256s the supplied header and
+> compares it to `rafa_private.api_secret_hashes`. Calling `rpc/rafa_dashboard_secret_matches` with the
+> configured value returns **`false`**. So those HTTP 200s with zero rows were **RLS denials wearing the
+> costume of an empty table**, and "all three tables are empty" was an unproven conclusion that happened
+> to be true. A PostgREST **write** from here would have been accepted and silently discarded.
+>
+> **What does work: the Supabase Management API query endpoint**, which runs as the service and is not
+> filtered by RLS. It was always the documented path on this PC (`SUPABASE-ACCESS-GUIDE.md`,
+> `scripts/inspectSupabaseReadOnly.ps1`). Two siblings were added for the deployment:
+> `scripts/querySupabaseReadOnly.ps1` (ad hoc `read_only` query) and
+> `scripts/applySupabaseMigration.ps1` (applies **one named file**, never a bulk push).
+>
+> **The lesson, which is the whole reason this note is long:** an HTTP 200 carrying zero rows proves
+> nothing under RLS. Confirm emptiness through a path that is not subject to the policy, or do not
+> claim it. There is no Node side `service_role` credential here (CF-06), so that path is the
+> Management API.
+>
+> **The write rule did not loosen, it got a reviewed instrument.** Every schema change is still a
+> numbered `.sql` file with a `-- ROLLBACK:` block, applied one at a time by name, with BOSS's explicit
+> go-ahead. What changed on 2026-10-10 is that BOSS gave that go-ahead and the files were applied from
+> here rather than pasted into a dashboard.
 
 | | Rule |
 | --- | --- |
@@ -1236,6 +1250,14 @@ One row per defect found, with the phase that repairs it and the regression test
 | **FIX-30** | Medium | 0.2 | `FORBIDDEN_CORPUS_LITERALS` guarded **2 of the 6** MB-DYN variables, and only against section bodies. A frozen renewal fee, government fee, monthly rent or invented foreign tax rate passed a green validator, and so did a price pasted into an **alias**, which is a retrieval surface that does get indexed | an allowlist problem solved with a denylist: each new dynamic variable needed its own regex and nobody wrote them | **P3.1-P3.8** | `corpusFile.test.js`, the approved-number rule |
 | **FIX-31** | Medium | AR-L1, AR-L3 | The corpus number scanner read the Greek `2,5%` as **25%** and `300.000` as **300**, so correctly authored Arabic and Greek figures were reported as unapproved claims while the English twins passed. The BLK-14 trilingual-asymmetry shape again | separators were stripped by glyph instead of being read by position | **P3.2** | `corpusFile.test.js`, the normalizer table |
 
+**Found by the M3 deployment on 2026-10-10.** Every one of these had passed offline review. None could have been caught without actually applying the file, which is the point.
+
+| ID | Sev | Req | What is wrong | Root cause | **Repaired by** | Regression test |
+| --- | --- | --- | --- | --- | --- | --- |
+| **FIX-32** | High | MIG-01 | MIG-01 **aborted on first apply**: `42883: function public.refal_fact_effective_status(text, date, date, date) does not exist`. The three `grant execute ... to anon` statements sat in the security section, above the `create` statements for the functions they name | a table grant can be written before the table in a batch, a function grant cannot, and the security block grouped them by topic rather than by dependency | **P3.9** | the apply itself; the grants now sit at the bottom with a comment saying why |
+| **FIX-33** | High | MIG-01 seed | The generated seed aborted: `42601: syntax error at or near "on"`. The generator terminated the last VALUES row with `;` and then emitted `on conflict (fact_id) do update set ...` as if it were a separate statement | `on conflict` is a clause of the INSERT, not a statement. A comment in the generator asserted the opposite and was simply wrong SQL | **P3.9** | `scripts/generateFactRegisterSeed.js`, last row takes no terminator |
+| **FIX-34** | **Critical** | 0.3, W3.9.7 | **`RAFA_DASHBOARD_SUPABASE_SECRET` on this machine does not authenticate.** `rpc/rafa_dashboard_secret_matches` returns `false`. Every RLS policy on the knowledge tables and on `refal_fact_register` is that function, so from here PostgREST **reads return empty and writes are accepted and silently discarded**. The earlier "Supabase reads work, the tables are empty" conclusion rested on HTTP 200s that were RLS denials | a 200 with zero rows is indistinguishable from an empty table unless you check through a path the policy does not filter | **environment, not code** — see CF-07 | `scripts/emitCorpusSql.js` header documents the detection |
+
 **Release gate.** FIX-1, FIX-9, FIX-10 and FIX-12 are the four that must be green before any production restart or deploy. All thirteen have an owning phase. None is parked.
 
 ---
@@ -1822,16 +1844,67 @@ node scripts/ingestBrainCorpus.js                  exit=0   dry run, nothing wri
 node --test <the 6 M3 suites>                      exit=0   221 tests
 ```
 
+---
+
+#### M3 DEPLOYMENT — 2026-10-10, on BOSS's explicit instruction
+
+M3 was committed (`a222ea6`, 133 files), MIG-01 and its seed applied, the corpus ingested, the
+embeddings generated, and live retrieval measured. **State confirmed in the database, read
+through the Management API so RLS cannot flatter it:**
+
+```
+refal_fact_register      82 rows · 82 audit rows · 20 high risk · 82 approved
+rafa_knowledge_sources   87
+rafa_knowledge_documents 87, all review_status = approved, 6 carrying valid_until
+rafa_knowledge_chunks    573, embedded 573, embedding_model distinct count 1
+```
+
+The 6 documents carrying an expiry are `permanent-residency` and `property-vat` in all three
+languages, exactly the six the dry run predicted, because `€300,000` trips the price trigger.
+
+**The write path had to change, and the reason is FIX-34.** `scripts/ingestBrainCorpus.js --apply`
+writes through PostgREST as `anon` plus the dashboard secret, and that secret does not
+authenticate from this machine, so every write would have been accepted and silently discarded.
+The ingestion was therefore emitted as SQL from the **same** `planCorpus` the PostgREST path uses
+(`scripts/emitCorpusSql.js`, `scripts/emitEmbeddingSql.js`) and applied through the Management API.
+Nothing was re-implemented; only the transport changed.
+
+**Live retrieval, `scripts/verifyLiveRetrieval.js`. This is the first non-proxy measurement in M3
+and it does NOT meet the gate.**
+
+| path | ar | en | el | overall | gate |
+| --- | --- | --- | --- | --- | --- |
+| lexical `rafa_search_knowledge` | 85.3% | 65.5% | 79.2% | **76.7%** | 95% |
+| hybrid `rafa_hybrid_search_knowledge` | 94.5% | 89.8% | 94.5% | **92.9%** | 95% |
+
+`scripts/brainHealth.js` reported 98.5% reachable. It was right about what it measures and said so
+in its own output: token overlap against the corpus FILES, at a 50% bar. Real retrieval is
+`websearch_to_tsquery` plus a vector search, and it is harsher. **The lesson is to label a proxy as
+a proxy and then go and measure the real thing**, because a 6 to 22 point gap is not a rounding
+difference.
+
+**English is the worst language**, which inverts the FIX-7 and FIX-8 story. The cause is that
+`search_vector` uses `to_tsvector('simple', ...)`, which does **no stemming and has no stopword
+list**: "registration" and "register" are different lexemes, and Greek and Arabic function words
+match almost every document.
+
+**Negative queries: 14/17 on the lexical path, 0/17 on hybrid.** The hybrid result is structural,
+not a regression. The semantic branch admits anything within 0.65 cosine distance and the rank
+fusion then returns the top N regardless, so "retrieve nothing" is not a behaviour the hybrid path
+has. The M3 criterion was written assuming lexical-only retrieval. **What actually protects those
+queries is the answer side**, the M2 claim gates plus the per-claim groundedness check CF-02 added,
+not retrieval. That needs to be stated rather than scored.
+
 **Gap scan (G3) against the M3 exit criteria:**
 
 | Criterion | Verdict |
 | --- | --- |
-| 87 sources live | **PARTIAL** — 87 authored, validated and planned. `--apply` was never run; this environment does not write to Supabase. |
+| 87 sources live | **COVERED** — 87 sources, 87 approved documents, 573 chunks, confirmed in the database 2026-10-10. |
 | Every MB module 2 fact retrievable in the customer's language | **COVERED** — `orphanFacts()` is empty, every fact has a register row, and after adding nine golden questions **no fact is unmeasured**. |
-| Carries provenance metadata | **COVERED** — 82 register rows, each with source, reviewer, verified date, effective date and expiry. |
-| ≥95% of golden questions retrieve their topic | **PARTIAL** — 866/879 (98.5%) on the offline lexical proxy. Real top-5 retrieval needs the corpus ingested. |
-| 100% of negative queries retrieve nothing | **COVERED (proxy)** — 17/17 below the over-retrieval ceiling. |
-| 100% chunks embedded | **PENDING DB** |
+| Carries provenance metadata | **COVERED** — 82 register rows live, each with source, reviewer, verified date, effective date and expiry. |
+| ≥95% of golden questions retrieve their topic | **NOT MET** — **92.9%** hybrid, 76.7% lexical, measured live. The offline proxy said 98.5% and was measuring something easier. |
+| 100% of negative queries retrieve nothing | **NOT MET on the live path** — 14/17 lexical, **0/17 hybrid**. Structural: see the deployment note above. The real protection is the answer-side gate. |
+| 100% chunks embedded | **COVERED** — 573/573, one `embedding_model` value, exactly `DEFAULT_EMBEDDING_MODEL`. |
 | FIX-7 and FIX-8 repaired | **COVERED** — all 29 Arabic and all 29 Greek documents exist, are valid, and clear the reachability bar at or above English. `assessParity` is their standing regression test. |
 
 **This milestone found and repaired four defects of its own**, FIX-28 to FIX-31. FIX-28 is the significant one: all 870 golden questions were scored against the wrong MB fact outside the middle of the range, which would have made every later retrieval score meaningless.
@@ -2015,6 +2088,7 @@ is still open.** Closing the row is part of that phase's G3.
 | **CF-04** | **W3.10.4** (M3, P3.10) | **P10.2** | **Sibling-chunk expansion on retrieval.** An alias-chunk hit should pull the document's other chunks into evidence. Today it does not, so a question found only through the finding aid retrieves a table of contents and no facts. | Measured, not guessed. Scored against the real planned chunk set: **833 of 879** golden questions have the finding aid as their best single chunk, while only **580** can independently reach a fact-bearing one. Mean coverage against fact-bearing chunks alone is **ar 47.7% / en 65.6% / el 53.4%**, so Arabic depends on it hardest, which is the FIX-7 shape again. M3 cannot fix this from the ingest side at all: it is a retrieval-layer change in `src/agentTools.js` and the search RPCs. P3.10 made the finding aid carry the title and every section heading, which means such a hit now returns a real map of the document instead of a bare keyword list. That narrows it; it does not close it. | `[ ]` OPEN |
 | **CF-05** | **W3.10.6** (M3, P3.10) | **P4.1** | **Price-bearing golden questions are graded against an artifact that may not hold the answer.** Five questions per language in `formation-package` top out at 75-83% because the only missing token is the package price, which `corpusFile.js` forbids the corpus to contain (MB-DYN6). | The question has two halves and only one is the corpus's job. The retrieval half is answered; the VALUE half is served from `refal_offers_and_pricing`, which does not exist until MIG-02. Holding the corpus to a bar that includes a token it is forbidden to carry is a contradictory gate. The bar is deliberately slack enough to absorb it today. The real home is an M4 end-to-end check: retrieve the document, call the offers table, assert the answer carries both the inclusions and the live figure. **Do not raise `MIN_COVERED_PER_CELL` or the coverage threshold while those entries are in the pool.** | `[ ]` OPEN |
 | **CF-06** | **W3.9.7** (M3, P3.9) | **P12.2** | `refal_fact_register` is readable from here only because MIG-01 adds an `anon` grant behind `rafa_dashboard_secret_matches()`. There is still **no Node-side `service_role` credential** anywhere in `scripts/`, `src/` or `dashboard/`; only the Deno edge functions hold one. | Not a defect, a credential boundary. It means any future register operation that genuinely needs `service_role` has nowhere to run from. Named here so it is not rediscovered as a bug. | `[ ]` OPEN |
+| **CF-07** | **M3 deployment** (2026-10-10) | **P12.2** | **FIX-34.** The `RAFA_DASHBOARD_SUPABASE_SECRET` in this machine's `.env` does not match the sha256 stored in `rafa_private.api_secret_hashes`. Until it does, nothing on this PC can read or write the knowledge tables or the fact register through PostgREST, which means `scripts/ingestBrainCorpus.js --apply`, `scripts/backfillKnowledgeEmbeddings.js`, `scripts/brainHealth.js --db` and the whole W3.9.7 dashboard Facts screen are unusable from here. | It is a credential, so it is BOSS's to resolve, not something to go hunting for. The value is never to be printed. The deployment went through the Management API instead (`scripts/emitCorpusSql.js`, `scripts/emitEmbeddingSql.js`, `scripts/applySupabaseMigration.ps1`), which is not subject to RLS, so M3 is deployed and verified regardless. **What is still unproven is whether the live agent and the dashboard can reach the data**, because they authenticate the same way this PC does. If the deployed app uses a different secret than this `.env`, it is fine and only the local tooling is affected. | `[ ]` OPEN |
 | **CF-03** | M1 close observation | **P12.3** | The dashboard streaming path runs **2 of 6** output gates (`containsProhibitedClaim`, `containsUnconsentedContactCommitment`). No `validateResponse`, no anti-patterns, no humour gate. | It is the operator surface: its output is read by staff, not sent to a customer, so copying the customer gates is a decision rather than an obvious fix. | `[ ]` OPEN |
 
 ### How to close a row
@@ -2033,7 +2107,7 @@ is still open.** Closing the row is part of that phase's G3.
 
 | # | Migration | Creates / changes | Written in | Needed before | Status |
 | --- | --- | --- | --- | --- | --- |
-| **MIG-01** | `refal_fact_register` + `refal_fact_register_audit` + the `refal_facts_due_for_review` view + 3 RPCs | Per fact provenance: claim, source, type, jurisdiction, reviewer, `verified_at`, `effective_from`, `expiry_or_review_at`, approved languages, status. Plus the `expired` and `blocked` behaviour hooks, the W3.9.7 review list, and audited re-approval | **P3.9** | REFAL stating any number with provenance | `[ ]` **WRITTEN 2026-10-09**, two files: `20261009180000_refal_fact_register.sql` then `20261009180100_refal_fact_register_seed.sql` (generated, 82 rows). Run in that order. |
+| **MIG-01** | `refal_fact_register` + `refal_fact_register_audit` + the `refal_facts_due_for_review` view + 3 RPCs | Per fact provenance: claim, source, type, jurisdiction, reviewer, `verified_at`, `effective_from`, `expiry_or_review_at`, approved languages, status. Plus the `expired` and `blocked` behaviour hooks, the W3.9.7 review list, and audited re-approval | **P3.9** | REFAL stating any number with provenance | `[x]` **APPLIED 2026-10-10** with BOSS's explicit go-ahead. Both files, in order. Verified through the Management API, which is not subject to RLS: **82 facts · 82 audit rows · 20 high risk · 82 approved**. Each file failed once first and the failures are FIX-32 and FIX-33. |
 | **MIG-02** | `refal_offers_and_pricing` | The €999 package and any promotion, with `valid_from` / `valid_until` / `active` | **P4.1** | the live price, `ACTIVE_PROMOTIONS` | `[ ]` |
 | **MIG-03** | `refal_annual_renewal_fees` | Secretary, address, accounting, audit, tax renewals | **P4.1** | `ANNUAL_RENEWAL_FEES` | `[ ]` |
 | **MIG-04** | `refal_property_inventory` | Units, city, type, status, price, `first_sale`, `pr_eligible`, availability | **P4.1** | `LIVE_PROPERTY_INVENTORY` | `[ ]` |
@@ -2047,6 +2121,31 @@ is still open.** Closing the row is part of that phase's G3.
 | **MIG-12** | `refal_compliance_events` + `refal_identity_verification` | AML and sanctions escalation records, one time code verification state | **P2.5** | compliance escalation, existing client unlock | `[ ]` |
 | **MIG-13** | `refal_rate_limits` | Shared counters replacing in process memory | **P13.2** | FIX fix 11, surviving a restart | `[ ]` |
 | **MIG-14** | audit extensions | Append only events for consent, score change, human correction, booking confirmation, sensitive access | **P12.4** | dashboard corrections and audit | `[ ]` |
+
+### How a migration is applied, as of 2026-10-10
+
+The flow below is still the rule. What changed is the last step: BOSS gave an explicit
+go-ahead for M3, so the files were applied from this machine rather than pasted into the
+dashboard. The instrument is `scripts/applySupabaseMigration.ps1`, which takes **one named
+file**. There is deliberately no bulk push: this repo's migration history is not guaranteed to
+match what the remote has actually had applied, so `db push` could silently re-run forty files.
+
+```
+pwsh -NoProfile -File .\scripts\applySupabaseMigration.ps1 `
+     -MigrationPath .\supabase\migrations\<file>.sql -Preview     # shows target, changes nothing
+pwsh -NoProfile -File .\scripts\applySupabaseMigration.ps1 `
+     -MigrationPath .\supabase\migrations\<file>.sql              # applies, after a confirm prompt
+pwsh -NoProfile -File .\scripts\querySupabaseReadOnly.ps1 -Query "select ..."   # verify
+```
+
+Both reuse the credential flow in `SUPABASE-ACCESS-GUIDE.md`: the Supabase CLI token from
+Windows Credential Manager, used only as a bearer token to the Management API, never printed
+and never passed as an argument.
+
+`querySupabaseReadOnly.ps1` has an `-AsService` switch for the case where an object is granted
+to `anon` only and the read-only role cannot touch it at all, which is true of
+`rafa_search_knowledge` and therefore of the whole retrieval check. It **refuses any query
+containing a write keyword**, so the switch cannot quietly become a write path.
 
 ### How a migration reaches you
 
