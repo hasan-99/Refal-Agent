@@ -16,7 +16,7 @@ const cases = [
     id: "ar-services-declines-meeting",
     text: "بدي أعرف بشكل عام شو خدماتكم، وما بدي احجز موعد حالياً.",
     language: "arabic",
-    source: "the business official website",
+    source: "Refalco Group official website",
     mustMention: /تطوير|البنية التحتية|التقنية|الاستراتيجي/,
     mustNotMention: /(?:احجز|حجز|نحدد|نرتب|ننسق).{0,15}(?:موعد|اجتماع)|(?:موعد|اجتماع).{0,15}(?:احجز|نحدد|نرتب|ننسق|مناسب)/
   },
@@ -24,48 +24,48 @@ const cases = [
     id: "ar-services-paraphrase",
     text: "مرحبا، شو خدماتكم؟",
     language: "arabic",
-    source: "the business official website",
+    source: "Refalco Group official website",
     mustMention: /تطوير|البنية التحتية|التقنية|الاستراتيجي/
   },
   {
     id: "en-lamar-services-transition",
     text: "What happened to LAMAR's former Cyprus company-formation services?",
     language: "english",
-    source: "Owner-confirmed the business services transition",
-    mustMention: /LAMAR.*the business|the business.*LAMAR/i,
+    source: "Owner-confirmed Refalco Group services transition",
+    mustMention: /LAMAR.*Refalco Group|Refalco Group.*LAMAR/i,
     mustNotMention: /owner|confirmed by|verification|999|price|package/i
   },
   {
     id: "ar-services-page",
     text: "ما هي الخدمات التي تقدمها الشركة؟",
     language: "arabic",
-    source: "the business Services",
+    source: "Refalco Group Services",
     mustMention: /(?:شركة|خدمات|تأسيس|قبرص)/,
     mustNotMention: /مالك|تأكيد المالك|999|٩٩٩|owner|confirmed by/i
   },
   {
     id: "en-services",
-    text: "What business areas and platforms does the business focus on?",
+    text: "What business areas and platforms does Refalco Group focus on?",
     language: "english",
-    source: "the business official website",
+    source: "Refalco Group official website",
     mustMention: /development|infrastructure|operation|technology|strategic/i,
     mustNotMention: /book (?:a )?meeting|schedule (?:a )?call/i
   },
   {
     id: "el-services-language-switch",
-    text: "Μπορείτε να μου πείτε με τι ασχολείται η the business; Δεν θέλω ραντεβού ακόμη.",
+    text: "Μπορείτε να μου πείτε με τι ασχολείται η Refalco Group; Δεν θέλω ραντεβού ακόμη.",
     language: "greek",
     mustIntent: "business_areas",
-    source: "the business official website",
+    source: "Refalco Group official website",
     mustMention: /ανάπτυξη|υποδομ|λειτουργ|τεχνολογ|στρατηγικ/i,
     mustNotMention: /(?:κλείσουμε|κανονίσουμε|ορίσουμε).{0,20}(?:ραντεβού|συνάντηση)|(?:ραντεβού|συνάντηση).{0,20}(?:κλείσουμε|κανονίσουμε|ορίσουμε)/i
   },
   {
     id: "el-services-activity-paraphrase",
-    text: "Τι δραστηριότητες έχει η the business; Δεν θέλω ραντεβού τώρα.",
+    text: "Τι δραστηριότητες έχει η Refalco Group; Δεν θέλω ραντεβού τώρα.",
     language: "greek",
     mustIntent: "business_areas",
-    source: "the business official website",
+    source: "Refalco Group official website",
     mustMention: /ανάπτυξη|υποδομ|λειτουργ|τεχνολογ|στρατηγικ/i,
     mustNotMention: /(?:κλείσουμε|κανονίσουμε|ορίσουμε).{0,20}(?:ραντεβού|συνάντηση)|(?:ραντεβού|συνάντηση).{0,20}(?:κλείσουμε|κανονίσουμε|ορίσουμε)/i
   }

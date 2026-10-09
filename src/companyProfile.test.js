@@ -101,3 +101,58 @@ test("a founding year in the future is rejected", () => {
   const nextYear = new Date().getUTCFullYear() + 1;
   assert.throws(() => validate(validProfile({ foundedYear: nextYear })), /is in the future/);
 });
+
+test("the 'the business' placeholder is absent from the whole repository", () => {
+  // P1.1's G2 gate grepped only `src/ dashboard/ config/ supabase/`, which is
+  // what W1.1.3 listed. It passed, and the placeholder was still live in 13
+  // other files — including scripts/evaluateRag.js, where `expectedSource:
+  // "the business Services"` meant the RAG evaluator was scoring against a
+  // source name that can never exist, and docs/refal-agent-system-map.html,
+  // a stakeholder-facing document.
+  //
+  // A gate scoped to four directories proves nothing about the fifth. This
+  // walks the repository.
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const REPO = path.join(__dirname, "..");
+  const SKIP_DIRS = new Set(["node_modules", "dist", ".git", "coverage", "artifacts", "auth_info"]);
+
+  // Files that document the defect. The literal IS the evidence there, so
+  // removing it would destroy the record. Each entry is a deliberate claim.
+  const ALLOWED = new Set([
+    ".planning/REFAL-BRAIN-MASTER-PLAN.md",            // the plan quotes the defect
+    "docs/brain/CONFLICT-REGISTER.md",                 // CR-009 is the defect
+    "docs/brain/KNOWN-DEFECTS.md",                     // FIX-13 is the defect
+    "docs/brain/SOURCE-ANALYSIS.md",
+    "docs/brain/SURFACE-AND-GATE-INVENTORY.md",
+    "docs/brain/ROADMAP-COMPARISON.html",
+    "docs/brain/PLAN-PROGRESS.html",                   // generated from the plan
+    "scripts/reproduceKnownDefects.js",                // reproduces it on purpose
+    "src/companyProfile.js",                           // the validator rejects it
+    "src/companyProfile.test.js"                       // this file
+  ]);
+
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!SKIP_DIRS.has(entry.name)) walk(full);
+        continue;
+      }
+      if (!/\.(?:js|mjs|ts|tsx|jsx|json|md|html|sql)$/.test(entry.name)) continue;
+      const rel = path.relative(REPO, full).split(path.sep).join("/");
+      if (ALLOWED.has(rel)) continue;
+      const text = fs.readFileSync(full, "utf8");
+      if (/the business/i.test(text)) {
+        offenders.push(`${rel} (${(text.match(/the business/gi) || []).length})`);
+      }
+    }
+  };
+  walk(REPO);
+
+  assert.deepEqual(offenders, [],
+    `the "the business" placeholder is back in:\n  ${offenders.join("\n  ")}\n`
+    + "Replace it with the configured company name, or add the file to ALLOWED "
+    + "if it exists to document the defect.");
+});

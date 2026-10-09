@@ -1560,12 +1560,60 @@ Both items below were held back from the third sweep as "outside P1.7's three na
 
 **Explicitly NOT done:**
 
-- **Not committed and not pushed.** G7 holds the commit until BOSS approves. The M1 work is in the working tree on `main`.
-- **The edge function is not deployed.** `supabase/functions/rafa-agent-api/index.ts` and its new `brainPrompt.mjs` mirror are changed locally only. Until BOSS deploys the function, the live edge surface still runs the old inline prompt, which still carries BLK-5 and BLK-6. This is the one M1 outcome that is not live after a merge.
+- ~~Not committed and not pushed.~~ **Committed and pushed 2026-10-09** on BOSS's approval as `b765b74c0aacf414d2c43ce53328eca3b539d411`, 85 files, directly on `main`. Re-fetched afterwards: `git rev-list --left-right --count origin/main...HEAD` returns `0 0`, so this is verified against the remote rather than read off the push message. The stray `SharedProjects.lnk` was deliberately left untracked.
+- ~~The edge function is not deployed.~~ **Deployed 2026-10-09**, see the deployment record below.
 - The four credibility numbers remain unspeakable until P3.7 lands their knowledge source.
 - The remaining 25 of 66 blocked MB sentences are **M2's**, not M1's. M1 gave REFAL a voice; the guardrails still silence most of what she is allowed to say.
 
 **BOSS sign off:** `pending`
+
+---
+
+### Post-deployment correction — P1.1's gate was scoped too narrowly
+
+Found 2026-10-09 while checking whether the plan and HTML artifacts were current.
+
+**W1.1.3's G2 gate greps `src/ dashboard/ config/ supabase/` and returns zero. It always did. The placeholder was still live in 13 other files**, because a gate scoped to four directories proves nothing about the fifth. 107 further occurrences, and two of them were not cosmetic:
+
+- **`scripts/evaluateRag.js` carried `expectedSource: "the business Services"`.** The RAG evaluator was scoring retrieval against a source name that cannot exist, so every one of those cases could only ever score as a miss. `scripts/evaluateKnowledge.js` had the same shape (`source: "the business official website"`, `query: "What does the business Group do?"`). This is an evaluation harness measuring the wrong thing, and **M14's golden-set scoring depends on it.**
+- **`docs/refal-agent-system-map.html` is stakeholder-facing** and read *"approved the business services facts"* and *"the business · OPERATIONS ENGINEERING"*.
+
+Also corrected: `conversationBenchmarkScenarios.js` (27), `evaluateWhatsappConversation.js` (12), `refal-agent-refactor-progress.md` (8), and six smaller files. All affected tests re-run green.
+
+**Deliberately NOT changed**, because the literal is the evidence: this plan, the five `docs/brain/` M0 artifacts, `scripts/reproduceKnownDefects.js`, and `src/companyProfile.js` plus its test, where the validator rejects the string on purpose.
+
+**The gate is now repository-wide.** `src/companyProfile.test.js` walks the whole tree across `.js/.mjs/.ts/.tsx/.jsx/.json/.md/.html/.sql` with an explicit, reasoned allowlist. Adding a file to that allowlist is a claim that the file documents the defect, not a way to silence the check.
+
+**The lesson, since it is now the second time:** the first version of a gate tends to be scoped to where the author already looked. The `` guard had the identical flaw and was widened in the same session. Scope a gate to the repository and allowlist the exceptions, never the reverse.
+
+---
+
+### M1 deployment record — 2026-10-09
+
+**Project `anhharmjtmqndhzenicb`, function `rafa-agent-api`: version 42 -> 43, ACTIVE, `verify_jwt` unchanged at `true`.**
+
+Five runtime files uploaded in one request: `index.ts`, `brainPrompt.mjs`, `refalcoAnswer.mjs`, `responsePolicy.mjs`, `handoverPersistence.mjs`. The two `*.test.mjs` files were excluded on purpose.
+
+**The CLI could not do this deploy.** `supabase functions deploy` returned the McAfee gateway notification page: the Go CLI does not do NTLM, which is the same 407 class of failure `SUPABASE-ACCESS-GUIDE.md` already documents. The deploy went through the Management API from PowerShell with `-Proxy $env:HTTPS_PROXY -ProxyUseDefaultCredentials`, exactly the guide's sections 1, 4 and 5. No proxy bypass, no TLS change, no credential printed or written to a file.
+
+**The guide's recipe needed extending.** Section 5 covers a *single-file* function and says so explicitly. `rafa-agent-api` imports four local ESM modules, so every runtime file goes in the same multipart form. `verify_jwt` was read off the **currently deployed** function rather than assumed, and the deploy script refused to report success unless the version advanced, status was `ACTIVE`, and the auth posture was unchanged.
+
+**Post-deployment verification.** The deployed bundle was pulled back with `GET /functions/{slug}/body` and all three generated mirrors were confirmed **byte-identical** to the committed files. The gates were then executed over a 20-case trilingual corpus: **20 cases, 0 failures.**
+
+| | case | old deployed gate | now |
+| --- | --- | --- | --- |
+| en | `We have a 100% success rate.` | passed | **blocked** |
+| ar | `نسبة نجاح 100٪ مضمونة.` | passed | **blocked** |
+| el | `Σίγουρη έγκριση για εσάς.` | passed | **blocked** |
+| ar | `موافقة مضمونة للجميع.` | passed | **blocked** |
+| en | suitability claim | passed | **blocked** |
+| en | `I cannot provide tax advice.` | **wrongly blocked** | allowed |
+| en | `A specialist will contact you shortly.` | passed | **blocked** |
+| en | `The team will call you tomorrow.` | passed | **blocked** |
+
+It did not over-correct: `A non-resident can own 100% of a Cyprus company.` still passes, a consent-seeking contact offer still passes, and ordinary answers pass in all three languages.
+
+**Honest limit on that test.** It exercises the deployed gate code, pulled back from Supabase, not a live HTTP round trip. A real invoke needs an anon JWT and spends OpenRouter credit on a non-deterministic reply, which cannot assert the gate anyway because the model cannot be made to emit those exact strings. Verifying the deployed artifact is the stronger check, but it is not the same claim as "the live endpoint was called".
 
 ---
 

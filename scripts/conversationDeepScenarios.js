@@ -7,7 +7,7 @@ const FOLLOW_UPS = {
       ["Would that automatically make the activity approved or eligible? I don't want an assumption presented as a fact.", "Can you tell me whether the activity needs a licence, or is that still something to verify?"],
       ["I don't have the final shareholder details yet. What can you explain without asking me to guess them?", "Please don't collect personal documents at this stage. What business information is actually useful first?"],
       ["I am not ready for a call or appointment. Could you answer here and let me decide the next step?", "Please don't arrange contact for me. I only want the information I asked for."],
-      ["Can you recap the activity I described, what the business's approved information confirms, and what remains uncertain?", "Before we finish, summarize only what I told you and one useful next question, if needed."]
+      ["Can you recap the activity I described, what Refalco Group's approved information confirms, and what remains uncertain?", "Before we finish, summarize only what I told you and one useful next question, if needed."]
     ],
     ar: [
       ["يمكن ما شرحتها منيح: النشاط بالبداية هو {activity}، وممكن نفكر بشي تاني بعدين. خليهن منفصلين لو سمحت.", "للتوضيح، الخطة الحالية هي {activity}. في فكرة ثانية للمستقبل بس لسا مو قرار."],
@@ -28,7 +28,7 @@ const FOLLOW_UPS = {
     en: [
       ["A correction: the land is jointly owned, and I can only speak for myself. We have not agreed to a project or appointed a representative."],
       ["I can share a rough area, but not the exact address, title deed, or another owner's contact details in this chat. Is a short overview enough for now?"],
-      ["Can you guarantee the business will invest, partner, bid, or meet our deadline? Please separate interest from a confirmed decision."],
+      ["Can you guarantee Refalco Group will invest, partner, bid, or meet our deadline? Please separate interest from a confirmed decision."],
       ["I don't want anyone contacted yet. What non-confidential information could I choose to share if I decide to continue?"],
       ["Please summarize the opportunity, who I represent, and what has not been agreed or verified. No meeting request yet."]
     ],
