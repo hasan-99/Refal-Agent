@@ -8,9 +8,11 @@ aliases: corporate tax cyprus | cyprus company tax rate | is it still 12.5% or h
 
 ## The corporate tax rate in Cyprus
 <!-- facts: MB-F19 -->
-The base corporate tax in Cyprus starts at 15%, and that rate applies from the year 2026.
+The corporate tax rate in Cyprus is 15%, and that rate applies from the year 2026. It is the headline rate the company itself is assessed against, regardless of the activity behind it.
 
-Two things are worth separating straight away. The 15% is charged on the company's taxable profit, not on its turnover, so it applies to what is left after allowable business expenses rather than to the money coming in. And it is a tax on the company, not on you personally. What you pay once you take money out of the company is a separate layer that depends on your own tax residency.
+Two things are worth separating straight away. The 15% is charged on the company's taxable profit, not on its turnover, so the rate bites on the amount left after allowable business expenses rather than on the money coming in. And it is a tax on the company, not on you personally. The money you take out of the company sits in a separate layer, and that layer depends on your own tax residency.
+
+The same corporate rate applies whether the company trades, provides services or holds shares. The difference between those businesses shows up in how the income itself is treated, not in the corporate charge applied to the taxable result.
 
 Cyprus was known for a lower headline rate in earlier years. From 2026 the figure to plan with is 15%. If you are reading an older article, an older spreadsheet or an older quote, check its date before you build a budget on it.
 

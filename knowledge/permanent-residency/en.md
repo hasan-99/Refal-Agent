@@ -6,6 +6,16 @@ facts: MB-F30, MB-F31, MB-F32, MB-F33, MB-F38, MB-F39, MB-F40, MB-F41
 aliases: permanent residency cyprus | cyprus residency by investment | what are the conditions for permanent residency in cyprus | how much do i need to invest for residency | what annual income is required for cyprus residency | is my family included in the residency | what are the four investment categories | does permanent residency give a passport | can you guarantee i will get the residency | how long does residency approval take | do i have to live in cyprus for residency | residency application refused cyprus | pr cyprus investment | golden visa cyprus | 300000 investment residency cyprus | category a first sale developer property | aif aiflnp fund units residency | share capital cyprus company residency
 ---
 
+## The conditions the programme sets, in one place
+<!-- facts: MB-F30, MB-F31 -->
+The conditions for permanent residency in Cyprus come down to three, and a file is assessed against all three together rather than against the headline one.
+
+The first condition is the qualifying investment, held through one of the four recognised categories the programme allows, so the type of asset counts alongside the amount. The second condition is proven annual income arising outside Cyprus, tested for the main applicant and raised for a spouse and for each eligible minor child. The third is documentary: the money used in the transaction has to be traceable, the income has to be evidenced rather than stated, and the compliance file has to stand up to examination.
+
+Those conditions apply as a set. Meeting the investment threshold on its own does not carry a file, and neither does strong income behind an investment that sits outside the four categories.
+
+The conditions for the family follow the same logic. A spouse and eligible minor children are included on the same application, and the income tested rises for each of them rather than staying at the main applicant's level.
+
 ## The qualifying investment the programme is built on
 <!-- facts: MB-F30 -->
 Cyprus grants permanent residency to investors on the basis of one qualifying investment. The minimum is €300,000, plus VAT where VAT is due on what is being acquired.

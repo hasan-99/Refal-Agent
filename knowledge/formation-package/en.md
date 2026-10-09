@@ -3,7 +3,7 @@ topic: formation-package
 lang: en
 title: What the Cyprus company formation package includes
 facts: MB-F2, MB-F3, MB-F4, MB-F5, MB-F6, MB-F7, MB-F8, MB-F9
-aliases: what is included in the formation package | cyprus company formation package | how much does it cost to set up a company in cyprus | is the package price inclusive of vat | are the secretary and registered office included | hidden costs cyprus company formation | what do i pay in the second year | cyprus ltd setup package | company secretary and registered address included | how long does company registration take | do you offer a payment plan | price of setting up a cyprus company | what exactly is included in the package | are there hidden costs beyond the package | i found a cheaper offer why are you more expensive | the package feels expensive | just send me everything on whatsapp | how much do i pay in total
+aliases: what is included in the formation package | cyprus company formation package | how much does it cost to open a company in cyprus | company formation cost in cyprus | is the package price inclusive of vat | are the secretary and registered office included | hidden costs cyprus company formation | what do i pay in the second year | cyprus ltd setup package | company secretary and registered address included | how long does company registration take | do you offer a payment plan | price of setting up a cyprus company | what exactly is included in the package | are there hidden costs beyond the package | i found a cheaper offer why are you more expensive | the package feels expensive | just send me everything on whatsapp | how much do i pay in total
 ---
 
 ## The seven things the package covers
@@ -52,7 +52,7 @@ Government and third party fees are separate from the package and are confirmed 
 
 The Company Secretary and the Registered Address are included for the first 4 consecutive months. After that they become an annual renewal, priced from the current renewal schedule.
 
-Payment terms, including whether an instalment option is available for your case, are confirmed by the team for your specific file.
+Payment terms are confirmed by the team for your specific file. Whether a payment plan is available, and what an instalment arrangement would look like on your file, is answered there rather than assumed here, and the terms of any payment plan are set out before anything is agreed.
 
 ## Hidden costs, cheaper offers, and what you actually pay in total
 <!-- kind: boundary; facts: MB-F9 -->

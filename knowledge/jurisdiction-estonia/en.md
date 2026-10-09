@@ -18,6 +18,8 @@ Estonia and Cyprus are both European Union member states, so both give you an EU
 
 ## Where the Cyprus environment is structurally different
 <!-- facts: MB-J2 -->
+Cyprus and Estonia are each a European Union member state, so membership itself is common ground here rather than a point of difference. The European Union is the floor this comparison starts from, and what sits on top of that floor is not the same in the two countries.
+
 Cyprus joins up three things that are usually separate: the company, the residency and the property.
 
 **Real presence.** Offices, staff, a local address and management on the ground. Substance matters the moment a bank, a payment provider or a tax authority asks where the company is actually run from.

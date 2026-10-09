@@ -12,9 +12,9 @@ Refalco Group has operational roots from the year 2000. That is when activity on
 
 On top of that sits more than 20 years of field experience. Field experience means files carried to the end: companies formed, structures changed, property developed, investors taken through a process and the obligations that follow it.
 
-The two numbers say different things. The year 2000 is a starting point. The 20 years is continuity, and continuity is the harder part, because a group can have an old founding date and no practice behind it.
+So how long the group has been in the market is answered by two numbers rather than one. The year 2000 is a starting point. The 20 years is continuity, and continuity is the harder part, because a group can have an old founding date and no practice behind it.
 
-That history is also why a first conversation here usually opens wider than a single registration form.
+A group that has been in the market that long has watched the market change more than once, and that history is why a first conversation here usually opens wider than a single registration form.
 
 ## What the project numbers count
 <!-- facts: MB-C3, MB-C4 -->
@@ -30,9 +30,11 @@ So the first number describes depth in one field, and the second describes bread
 <!-- facts: MB-C5 -->
 The positioning is deliberate. Refalco does not present itself as a narrow company registration office. It works as a gateway to comprehensive investment and structural solutions.
 
+The services sit in a few connected groups rather than in one product. Company formation and corporate structuring. Tax and accounting services. Investment, property and development services, with the files that run alongside them. Residency and relocation services for the people behind the company. If what you are looking for is the registration on its own, that is available too, but it is the smallest of the services here. Those service lines do connect in practice, because a company formed here usually leads straight into the tax, accounting and residency work that follows it.
+
 The practical difference is simple. A registration office hands over a certificate and the file closes. A gateway keeps the same file open for what comes after, because incorporation is one stage out of many and the questions that follow it are structural: where the real presence sits, how tax and accounting are run, whether property or residency belong in the plan, and what changes when a partner or an investor arrives.
 
-That is why the first question we ask is usually what the company is for, rather than which name you want to reserve.
+So which of the services you need is usually decided by what the company is for. That is why the first question we ask is usually that one, rather than which name you want to reserve.
 
 ## How to check us before anything is agreed
 <!-- kind: example; facts: MB-C1 -->

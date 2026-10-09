@@ -30,6 +30,8 @@ The compliance load differs in kind, not only in size.
 
 A holding company that never moves goods normally has no reason to hold an EORI number. A trading company importing from day one needs its EORI before the first shipment arrives, not after it is stuck at the border.
 
+Where the customers sit is the thing that changes the registration list. Customers inside the EU and customers outside it are treated differently at the VAT layer and at the customs layer, so a company selling on each side of the border carries the two sets of obligations rather than picking one. Selling to customers inside and outside the EU at the same time is an ordinary answer, and the changes it brings are to the paperwork rather than to the company type.
+
 ## Who you can employ in each structure
 <!-- facts: MB-F27 -->
 **A holding company** is usually limited to senior management teams. It owns and it decides, and it rarely needs headcount beyond the people who direct it.
@@ -73,6 +75,6 @@ It does not say which structure suits your position. That depends on what you al
 
 It does not quote VAT rates, registration thresholds or filing frequencies. Those follow the specific supplies your company makes and are confirmed against your activity, never copied from a general description.
 
-It does not settle the accounting treatment either. Both are Cyprus companies carrying full reporting and audit obligations; what differs is the volume and the nature of what passes through the books.
+It does not settle the accounting treatment either. Both are Cyprus companies carrying full reporting and audit obligations, so the accounting difference between the two is one of volume and of the nature of what passes through the books rather than one of regime.
 
 And it does not answer how profits reach you. Dividends depend on your own tax residency and on Double Tax Treaties (DTT), which is a tax advisory question rather than a structural one.

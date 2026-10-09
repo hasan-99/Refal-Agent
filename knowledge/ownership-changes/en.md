@@ -24,7 +24,7 @@ Four situations cover most of what clients ask for.
 
 **A partner leaves.** Their shares move to the remaining shareholders or to a buyer, and the register is updated to reflect it.
 
-**The director changes.** A director can resign or be replaced, and this is separate from any movement of shares, because managing and owning are different roles.
+**The director changes.** A director can resign or be replaced. A change of director is filed separately from any movement of shares, because managing and owning are different roles, and how the change is done depends on whether the outgoing director resigns or is removed by the shareholders.
 
 **The whole company changes hands.** All the shares move to a new owner, and the entity itself continues as it is.
 

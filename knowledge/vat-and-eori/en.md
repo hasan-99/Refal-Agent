@@ -36,6 +36,16 @@ This is the part that most often gets left until a container is already in trans
 
 If you hold stock or use a warehouse, say so early. Storage changes both the customs picture and the VAT picture, and it is far cheaper to map it before the goods move.
 
+## The VAT rate in Cyprus, and why no figure sits on this page
+<!-- kind: boundary; facts: MB-F26 -->
+The VAT rate in Cyprus is not one single number, and that is the reason no rate is printed here.
+
+Cyprus runs a standard rate alongside reduced rates, and the rate that lands on an invoice follows the type of supply behind it. Goods, services and digital products are not all treated alike, and the rate on property follows separate rules again on its own page.
+
+So the honest answer to a question about the VAT rate in Cyprus starts with a question back: on which supply, and to whom. The rate that applies to your own sales is confirmed against your real activity before anything is filed or invoiced, and that check costs nothing next to charging the wrong rate for a year and correcting it afterwards.
+
+The registration threshold is handled the same way. The condition that makes VAT registration mandatory is read against your real turnover and your real supplies rather than copied from a general page.
+
 ## Payroll, social insurance and permits
 <!-- facts: MB-F27 -->
 Hiring turns the company into an employer, and that is its own set of obligations.
@@ -79,7 +89,9 @@ This page describes registrations. It is not tax advice and it does not fix figu
 
 It does not state VAT rates or a registration threshold. Rates differ by the type of supply, and the applicable registration condition depends on your activity, so both are confirmed on your file rather than quoted from a general description.
 
-It does not set your filing frequency, and it does not decide whether VIES reporting applies to your intra EU sales or whether input VAT on a particular expense can be reclaimed. Those are answered by the accounting team against your real transactions.
+VAT and VIES are not the same thing, and the difference is worth holding onto: VAT is the registration and the tax on supplies, VIES is the reporting of intra EU sales that sits on top of it. Which difference that makes to your own calendar is a filing question rather than a definition.
+
+This page does not set your filing frequency, and it does not decide whether VIES reporting applies to your intra EU sales or whether input VAT on a particular expense can be reclaimed. Those are answered by the accounting team against your real transactions.
 
 It does not promise that any registration will be granted on a particular date. Applications go to the authorities and the processing time is theirs.
 

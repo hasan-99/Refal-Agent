@@ -28,6 +28,16 @@ A director of an established international company that wants an EU presence. He
 
 The second case is a corporate structuring review, not a registration form. It is routed to the corporate advisory team, because the cost of getting it wrong is not the registration fee, it is the restructuring later.
 
+## Being the sole owner, or bringing partners in
+<!-- kind: boundary -->
+Two ownership questions arrive with almost every enquiry. Can the company be owned by one person, and how many partners are needed before a company can be opened at all.
+
+Neither is answered here as a general rule. Shareholder and director minimums, and the share capital that sits with them, are confirmed by the corporate team against the requirements in force for the route you take, because a new Cyprus Ltd, a Branch and a Subsidiary are not examined on the same terms.
+
+What the route does decide is the shape of the ownership. A new Cyprus Ltd is owned by its own shareholders, whoever those turn out to be. A Subsidiary is owned by the existing foreign parent, so the owner is a company rather than a person. A Branch has no separate ownership at all, because it is an extension of the company that already exists rather than a new one.
+
+So the useful first answer is which of the three routes is on the table. Who can be the sole owner, and who else can be brought in later, follows from that, and the corporate team confirms the detail against your case.
+
 ## What a general description cannot decide for you
 <!-- kind: boundary -->
 This page explains that three routes exist. It does not pick one for you.

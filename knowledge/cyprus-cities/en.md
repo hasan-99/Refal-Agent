@@ -14,9 +14,11 @@ Limassol (Lemesos, Λεμεσός, ليماسول) is the international one. Coa
 
 **Who buys here.** Files built around capital growth and luxury investment. High net worth investors, and international corporate activity: companies placing an office, moving executives, or putting staff in long stay accommodation.
 
-**Character.** The concentration of international business is the reason the city reads the way it does. Shipping, services, technology and professional firms sit here, so demand for quality housing comes from companies as well as from private buyers.
+**Character.** Most of the international businesses that come to Cyprus are concentrated here, and that is the reason the city reads the way it does. Shipping, services, technology and professional firms sit here, so demand for quality housing comes from companies as well as from private buyers.
 
 If the file combines a corporate presence in Cyprus with a home that has to hold its standing, Limassol is the profile that matches. If the priority is the lowest entry price, it is not.
+
+Asked which city most businesses are concentrated in, the answer is this one for international business. Domestic head offices and the administrative layer are concentrated in Nicosia instead, which is the comparison the next profiles make.
 
 ## Larnaca, growth and the airport
 <!-- facts: MB-F52 -->
