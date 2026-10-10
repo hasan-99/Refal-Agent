@@ -17,10 +17,18 @@
 // canonical_url (`refal://kb/<domain>/<slug>/<lang>`), which is the table's
 // only unique column and therefore the only idempotency key we have.
 //
-// One `rafa_knowledge_documents` revision per source, written through
-// `rafa_store_knowledge_revision`, which is replace-in-place: it deletes every
-// other document for that source, pins revision = 1 and stamps the row
-// approved. Re-running the ingest is therefore safe and non-accumulating.
+// One LIVE `rafa_knowledge_documents` revision per source, written through
+// `rafa_store_knowledge_revision`.
+//
+// Updated 2026-10-10 for P3.9 / CR-014. That function used to be
+// replace-in-place: it deleted every other document for the source, pinned
+// revision = 1 and stamped the row approved on its own. It no longer deletes,
+// because a superseded revision is the evidence of what was reviewed and when,
+// and revisions increment again. CR-010's partial unique index still allows at
+// most one APPROVED row per source, so "one live document per source" holds;
+// what changed is that the history survives and approving is a decision the
+// caller states. Re-running the ingest is still safe: identical content short
+// circuits to `unchanged: true`.
 //
 // One `rafa_knowledge_chunks` row per `##` section (W3.10.2 — chunk by
 // meaning, never by character count), plus ONE finding-aid chunk at index 0
@@ -108,6 +116,8 @@ const APPROVAL_NOTE = "Ingested from the authored M3 knowledge corpus.";
 // in the middle of a write, so the plan refuses to produce it in the first
 // place.
 const MIN_CHUNKS = 1;
+const REVIEW_STATUS_ON_INGEST = "approved";  // CR-014: stated, not assumed
+const INGEST_REVIEWER = "m3-corpus-ingestion";   // tells a generated ingest apart from a human save
 const MAX_CHUNKS = 500;              // rafa_store_knowledge_revision
 const MIN_CHUNK_CHARS = 1;           // chunks.content check
 const MAX_CHUNK_CHARS = 12000;       // chunks.content check
@@ -289,6 +299,15 @@ function buildDocumentPayload(parsed, body) {
     p_content: body,
     p_content_sha256: contentSha256(body),
     p_language_code: meta.lang,
+    // NOT optional. P3.9 / CR-014 changed rafa_store_knowledge_revision to
+    // default to `pending`, because a save silently approving itself was the
+    // conflict that phase had to remove. A call that omits these two still
+    // RESOLVES against the new signature, so leaving them off would queue all
+    // 87 documents and take retrieval dark while the script reported success.
+    // That is the exact silent-failure class this module guards against
+    // everywhere else, so it is stated here rather than inherited.
+    p_review_status: REVIEW_STATUS_ON_INGEST,
+    p_approved_by: INGEST_REVIEWER,
     p_metadata: {
       topic: meta.topic,
       topicNumber: topic ? topic.n : null,
@@ -517,6 +536,7 @@ function planCorpus({ root = "knowledge", topics = TOPICS, langs = LANGUAGES, re
 }
 
 module.exports = {
+  REVIEW_STATUS_ON_INGEST, INGEST_REVIEWER,
   CONTRACT_VERSION, SOURCE_KIND, SOURCE_TRUST_TIER, SOURCE_KINDS, SOURCE_TRUST_TIERS,
   ALIAS_CHUNK_KIND, APPROVAL_NOTE,
   MIN_CHUNKS, MAX_CHUNKS, MIN_CHUNK_CHARS, MAX_CHUNK_CHARS, MAX_CONTENT_CHARS,
