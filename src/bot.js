@@ -39,7 +39,7 @@ const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
-const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
+const { buildKnowledgeSearchQuery, turnNeedsKnowledge } = require("./knowledgeQuery");
 const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
 const { detectIntent, INTENTS } = require("./intent");
 const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
@@ -392,15 +392,26 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     const knowledgeSearchQuery = buildKnowledgeSearchQuery(customerText, routed.user, routed.metadata?.intent?.intents);
     let evidence = [];
     let stageAt = performance.now();
-    try {
-      const embedding = await embedText(knowledgeSearchQuery);
-      stage("embedding", stageAt);
-      stageAt = performance.now();
-      evidence = store.searchKnowledge ? await store.searchKnowledge(knowledgeSearchQuery, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
-      stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
-    } catch (error) {
-      console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
-      logEvent("knowledge_search_error", safeErrorDiagnostics(error));
+    // A purely social turn ("كيفك", "thanks") has no knowledge need, and the
+    // hybrid path cannot return nothing (CF-09) -- it would hand her the N
+    // closest chunks as if they answered the question. She still replies; she
+    // just replies from persona and identity, which are not evidence-gated,
+    // instead of from whatever the ranker happened to surface.
+    const needsKnowledge = turnNeedsKnowledge(routed.metadata?.intent?.intents);
+    if (!needsKnowledge) {
+      stage("knowledge_retrieval", stageAt, { evidenceCount: 0, skipped: "social_turn" });
+      logEvent("knowledge_retrieval_skipped", { reason: "social_turn", intents: routed.metadata?.intent?.intents || [] });
+    } else {
+      try {
+        const embedding = await embedText(knowledgeSearchQuery);
+        stage("embedding", stageAt);
+        stageAt = performance.now();
+        evidence = store.searchKnowledge ? await store.searchKnowledge(knowledgeSearchQuery, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
+        stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
+      } catch (error) {
+        console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
+        logEvent("knowledge_search_error", safeErrorDiagnostics(error));
+      }
     }
 
     let dynamicResult = { requested: [], live: [], statuses: [] };
