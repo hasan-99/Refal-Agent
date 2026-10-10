@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { CONSENT_STATES, getFollowUpDecision, runFollowUpCheck, shouldSendFollowUp } = require("./followUp");
 
-function user(overrides = {}) { return { id: "contact-1", history: [{ at: "2026-09-30T00:00:00.000Z", message: "Yes, please follow up", response: "Of course.", metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } } }], ...overrides }; }
+function user(overrides = {}) { return { id: "contact-1", history: [{ id: "consent-turn", at: "2026-09-30T00:00:00.000Z", source: "whatsapp", message: "I agree to automated reminders", response: "Understood.", metadata: { intent: { language: "english" }, followUpConsent: { state: "granted", purpose: "automated_reminder", sourceTurnId: "consent-turn", channel: "whatsapp", language: "en" } } }], ...overrides }; }
 
 test("follow-up decision reports consent and timing reasons", () => {
   const now = new Date("2026-10-01T01:00:00.000Z"); const allowed = getFollowUpDecision(user(), now);
@@ -15,6 +15,13 @@ test("opted-out and blocked contacts cannot be sent follow-ups", () => {
   const now = new Date("2026-10-02T00:00:00Z");
   assert.equal(getFollowUpDecision(user({ history: [{ at: "2026-09-30T00:00:00Z", message: "Please stop messaging me", response: "Understood" }] }), now).reason, "opted_out");
   assert.equal(shouldSendFollowUp(user({ blocked: true }), now), false);
+});
+
+test("specialist-contact consent alone cannot authorize generic automated reminder outreach", () => {
+  const now = new Date("2026-10-02T00:00:00Z");
+  const specialistOnly = user({ history: [{ id: "specialist-turn", at: "2026-09-30T00:00:00Z", message: "Please follow up", response: "Understood.", metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } } }] });
+  assert.equal(getFollowUpDecision(specialistOnly, now).reason, "consent_required");
+  assert.equal(shouldSendFollowUp(specialistOnly, now), false);
 });
 
 test("an explicit saved schedule controls due time and still requires purpose-bound consent", () => {
@@ -31,4 +38,40 @@ test("runFollowUpCheck remains idempotent for one conversation cycle", async () 
   const now = new Date("2026-10-01T01:00:00Z");
   await runFollowUpCheck({ store, now, sendFollowUp: async (...args) => sent.push(args) }); await runFollowUpCheck({ store, now, sendFollowUp: async (...args) => sent.push(args) });
   assert.equal(sent.length, 1);
+});
+
+test("saved schedules and low delay settings cannot bypass the 24-hour silence floor", () => {
+  const previous = process.env.FOLLOW_UP_DELAY_HOURS;
+  process.env.FOLLOW_UP_DELAY_HOURS = "1";
+  try {
+    const lastAt = "2026-10-01T00:00:00Z";
+    const tooSoon = user({
+      history: [{ ...user().history[0], at: lastAt, message: "I agree to automated reminders", response: "Understood." }],
+      followUpState: { status: "scheduled", next_due_at: "2026-10-01T02:00:00Z" }
+    });
+    const timing = getFollowUpDecision(tooSoon, new Date("2026-10-01T23:59:59Z")).timing;
+    assert.equal(timing.dueAt.toISOString(), "2026-10-02T00:00:00.000Z");
+    assert.equal(timing.due, false);
+    assert.equal(getFollowUpDecision(tooSoon, new Date("2026-10-02T00:00:00Z")).reason, "ready");
+  } finally {
+    if (previous === undefined) delete process.env.FOLLOW_UP_DELAY_HOURS;
+    else process.env.FOLLOW_UP_DELAY_HOURS = previous;
+  }
+});
+
+test("follow-up sends stay disabled when suppression checks are missing or fail", async () => {
+  const now = new Date("2026-10-02T00:00:00Z");
+  const target = user();
+  const sent = [];
+  const missing = await runFollowUpCheck({ store: { async allUsers() { return [target]; } }, now, sendFollowUp: async (...args) => sent.push(args) });
+  assert.equal(missing.disabled, true);
+  assert.equal(missing.reason, "suppression_check_unavailable");
+  assert.equal(sent.length, 0);
+
+  const failureStore = {
+    async allUsers() { return [target, { ...target, id: "contact-2" }]; },
+    async isContactBlocked(id) { if (id === "contact-2") throw new Error("lookup failed"); return false; }
+  };
+  await assert.rejects(runFollowUpCheck({ store: failureStore, now, sendFollowUp: async (...args) => sent.push(args) }), /lookup failed/);
+  assert.equal(sent.length, 0, "all suppression lookups finish before the first send");
 });

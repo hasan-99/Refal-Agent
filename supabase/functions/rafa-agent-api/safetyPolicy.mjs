@@ -96,10 +96,32 @@ const rawRules = [
 // patterns match the folded text (BLK-16).
 const rules = foldRulePatterns(rawRules);
 
+// Normalize visually confusable Greek/Cyrillic letters only inside a token
+// that also contains Latin letters. This catches mixed-script keyword spoofing
+// (for example `ignοre` with Greek omicron) without transliterating ordinary
+// Greek, Arabic, or Cyrillic customer text.
+const MIXED_SCRIPT_CONFUSABLES = Object.freeze({
+  "α": "a", "Α": "A", "ε": "e", "Ε": "E", "ι": "i", "Ι": "I",
+  "κ": "k", "Κ": "K", "ο": "o", "Ο": "O", "ρ": "p", "Ρ": "P",
+  "τ": "t", "Τ": "T", "υ": "y", "Υ": "Y", "χ": "x", "Χ": "X",
+  "а": "a", "А": "A", "е": "e", "Е": "E", "о": "o", "О": "O",
+  "р": "p", "Р": "P", "с": "c", "С": "C", "х": "x", "Х": "X",
+  "і": "i", "І": "I", "ј": "j", "Ј": "J"
+});
+
+function normalizeMixedScriptToken(token) {
+  if (!/[A-Za-z]/u.test(token) || !/[\u0370-\u03FF\u1F00-\u1FFF\u0400-\u04FF]/u.test(token)) return token;
+  return [...token].map((character) => MIXED_SCRIPT_CONFUSABLES[character] || character).join("");
+}
+
 function normalizeSafetyText(text) {
-  return foldArabicLetters(
-    String(text || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, "").replace(/\s+/gu, " ").trim()
-  );
+  const normalized = String(text || "").normalize("NFKC")
+    .replace(/[\u064B-\u065F\u0670\u0640]/gu, "")
+    // Zero-width format characters are not meaningful in a safety keyword.
+    .replace(/[\u200B-\u200D\uFEFF]/gu, "")
+    .replace(/[\p{L}\p{N}_]+/gu, normalizeMixedScriptToken)
+    .replace(/\s+/gu, " ").trim();
+  return foldArabicLetters(normalized);
 }
 
 // A customer DECLINING to hand over a credential ("I will not send my password")

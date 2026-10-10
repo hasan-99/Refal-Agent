@@ -433,6 +433,11 @@ input[type="checkbox"] { accent-color: #16836f; }
 .knowledge-revision-head > div { min-width: 0; display: grid; gap: 4px; }
 .knowledge-revision-head strong { font-size: 12px; }
 .knowledge-revision-head small { color: var(--muted); font-size: 10px; }
+.knowledge-review-source { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.knowledge-review-evidence { margin-top: 8px; padding: 9px 10px; border-left: 3px solid #9bb6c5; background: #f5f8fa; color: #52636a; font-size: 10px; line-height: 1.5; }
+.knowledge-review-evidence p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.badge.pending { color: #795b22; background: #fbf2dc; }
+.badge.rejected { color: #a84039; background: #f9e9e7; }
 .knowledge-revision-content { max-height: 340px; margin: 9px 0 2px; padding: 12px; overflow: auto; border: 1px solid #e2e9ed; border-radius: 7px; background: #fafcfd; color: #40545f; font-size: 12px; line-height: 1.65; text-align: start; unicode-bidi: plaintext; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-gutter: stable; }
 .knowledge-entry-actions { padding-top: 7px; display: flex; justify-content: flex-end; gap: 7px; }
 .knowledge-entry-actions button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; font-size: 10px; }
@@ -452,7 +457,8 @@ input[type="checkbox"] { accent-color: #16836f; }
 .knowledge-delete-dialog-actions .knowledge-delete-confirm-button:hover:not(:disabled) { border-color: #8d3030; background: #8d3030; }
 .knowledge-delete-spinner { width: 13px; height: 13px; border: 2px solid rgb(255 255 255 / 45%); border-top-color: #fff; border-radius: 50%; animation: knowledge-spin .75s linear infinite; }
 @keyframes knowledge-spin { to { transform: rotate(360deg); } }
-.knowledge-review-actions { display: flex; gap: 7px; }
+.knowledge-review-actions { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 7px; }
+.knowledge-review-actions > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .knowledge-result-list { display: grid; gap: 9px; }
 .knowledge-result-list article { padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8faf9; }
 .knowledge-result-list strong { font-size: 11px; }

@@ -43,13 +43,13 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
   // Some imported chunks include retrieval phrases to help Arabic lexical
   // search. Those phrases are metadata-like and should never be repeated to
   // the customer as prose. Keep only grounded declarative source sentences.
-  const sentences = raw.split(/(?<=[.!؟?])\s+/u).filter((sentence) =>
+  const listText = raw.replace(/(\d{1,2})\.(?=\s+\*\*)/gu, "$1\uE000");
+  const sentences = listText.split(/(?<=[.!؟?])\s+/u).map((sentence) => sentence.replace(/\uE000/gu, ".")).filter((sentence) =>
     !/[؟?]/u.test(sentence) &&
     !/(?:what services does|what does business offer|شو خدمات الشركة|ما هي الخدمات التي تقدمها|بدي اسجل شركة|طلب عن تأسيس الشركة|retrieval\s+query|search\s+query|customer\s+question|user\s+query)/iu.test(sentence)
   );
-  const excerpt = sentences
-    .filter((sentence) => allowPricing || !PRICE_BEARING.test(sentence))
-    .join(" ").trim();
+  const groundedSentences = sentences.filter((sentence) => allowPricing || !PRICE_BEARING.test(sentence));
+  let excerpt = groundedSentences.join(" ").trim();
   // W2.2.2 — the excerpt is built FROM this evidence, so it is judged against
   // this evidence. Before M2 the blanket gate deleted every grounded excerpt
   // that merely mentioned residency, a permit or a tax rate, which is BLK-1:
@@ -62,7 +62,16 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
     if (detectMessageLanguage(excerpt) !== detectMessageLanguage(customerQuestion)) return null;
     if (!allowPricing && !hasQuestionEvidenceOverlap(customerQuestion, excerpt)) return null;
   }
-  const answer = excerpt.length > 460 ? `${excerpt.slice(0, 457).replace(/\s+\S*$/, "")}...` : excerpt;
+  if (excerpt.length > 460) {
+    excerpt = "";
+    for (const sentence of groundedSentences) {
+      const candidate = excerpt ? `${excerpt} ${sentence}` : sentence;
+      if (candidate.length > 460) break;
+      excerpt = candidate;
+    }
+    if (!excerpt) return null;
+  }
+  const answer = excerpt;
   const citations = [{
     name: source.source_name,
     url: source.source_url,

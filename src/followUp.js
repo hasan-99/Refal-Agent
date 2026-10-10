@@ -1,5 +1,5 @@
 const cron = require("node-cron");
-const { CONSENT_STATES, getConsentState, hasFollowUpPermission } = require("./leadQualification");
+const { CONSENT_STATES, getConsentState, hasFollowUpPermission, hasAutomatedReminderPermission } = require("./leadQualification");
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
 
 const FOLLOW_UP_MESSAGE = "لسا مهتم تعرف أكتر؟ أنا هون لو عندك أي سؤال ";
@@ -30,16 +30,20 @@ function lastHistoryEntry(user) {
 function followUpTiming(user, now = new Date()) {
   const last = lastHistoryEntry(user);
   const lastMessageAt = last?.at ? new Date(last.at).getTime() : NaN;
+  const configuredDelayMs = followUpDelayMs();
+  const minimumSilenceMs = Math.max(24 * 60 * 60 * 1000, Number.isFinite(configuredDelayMs) ? configuredDelayMs : 0);
   const scheduledAt = user?.followUpState?.status === "scheduled"
     ? new Date(user.followUpState.next_due_at || user.followUpState.nextDueAt).getTime()
     : NaN;
   if (Number.isFinite(scheduledAt)) {
-    const delayMs = Number.isFinite(lastMessageAt) ? Math.max(0, scheduledAt - lastMessageAt) : 0;
-    const dueAt = new Date(scheduledAt);
-    const remainingMs = Math.max(0, scheduledAt - now.getTime());
+    const earliestAt = Number.isFinite(lastMessageAt) ? lastMessageAt + minimumSilenceMs : scheduledAt;
+    const dueTimestamp = Math.max(scheduledAt, earliestAt);
+    const delayMs = Number.isFinite(lastMessageAt) ? Math.max(0, dueTimestamp - lastMessageAt) : 0;
+    const dueAt = new Date(dueTimestamp);
+    const remainingMs = Math.max(0, dueTimestamp - now.getTime());
     return { delayMs, dueAt, remainingMs, due: remainingMs === 0 };
   }
-  const delayMs = followUpDelayMs();
+  const delayMs = minimumSilenceMs;
   const dueAt = Number.isFinite(lastMessageAt) ? new Date(lastMessageAt + delayMs) : null;
   const remainingMs = dueAt ? Math.max(0, dueAt.getTime() - now.getTime()) : null;
   return { delayMs, dueAt, remainingMs, due: remainingMs === 0 };
@@ -50,7 +54,7 @@ function followUpReason(user, now = new Date()) {
   if (user.blocked || user.followUpBlocked) return "blocked";
   const state = getConsentState({ user });
   if ([CONSENT_STATES.DENIED, CONSENT_STATES.REVOKED].includes(state) || user.optedOut === true) return "opted_out";
-  if (!hasFollowUpPermission(user)) return "consent_required";
+  if (!hasAutomatedReminderPermission(user)) return "consent_required";
   const last = lastHistoryEntry(user);
   if (!last?.at || !last.response) return "missing_history";
   if (last.automated || last.message === "[auto-follow-up]") return "automated_message";
@@ -62,7 +66,7 @@ function followUpReason(user, now = new Date()) {
 
 function shouldSendFollowUp(user, now = new Date()) {
   if (!user?.id || user.id.startsWith("self-test:") || user.blocked || user.followUpBlocked) return false;
-  if (!hasFollowUpPermission(user)) return false;
+  if (!hasAutomatedReminderPermission(user)) return false;
   const last = lastHistoryEntry(user);
   if (!last?.at || !last.response || last.automated || last.message === "[auto-follow-up]" || isNaturalConversationEnd(last.message)) return false;
   const lastMessageAt = new Date(last.at).getTime();
@@ -73,16 +77,24 @@ function shouldSendFollowUp(user, now = new Date()) {
 
 function getFollowUpDecision(user, now = new Date()) {
   const reason = followUpReason(user, now);
-  return { allowed: reason === "ready", eligible: reason === "ready", reason, consent: getConsentState({ user }), timing: followUpTiming(user, now) };
+  const consent = hasAutomatedReminderPermission(user) ? CONSENT_STATES.GRANTED : getConsentState({ user });
+  return { allowed: reason === "ready", eligible: reason === "ready", reason, consent, timing: followUpTiming(user, now) };
 }
 
 async function runFollowUpCheck({ store, sendFollowUp, now = new Date(), logEvent = () => {} }) {
   if (!isFollowUpEnabled()) return { sent: 0 };
-  let sent = 0;
   const users = store.allUsers ? await store.allUsers({ includeHistory: true }) : Object.values(store.data.users || {});
-  for (const user of users) {
-    if (!shouldSendFollowUp(user, now)) continue;
-    if (typeof store.isContactBlocked === "function" && await store.isContactBlocked(user.id)) continue;
+  const eligible = users.filter((user) => shouldSendFollowUp(user, now));
+  if (eligible.length && typeof store.isContactBlocked !== "function") {
+    logEvent("follow_up_suppression_check_unavailable", { eligibleCount: eligible.length });
+    return { sent: 0, disabled: true, reason: "suppression_check_unavailable" };
+  }
+  // Complete every suppression lookup before any outbound send. If one lookup
+  // fails, the promise rejects and the caller's scheduler error path sends none.
+  const blockedStates = await Promise.all(eligible.map((user) => store.isContactBlocked(user.id)));
+  let sent = 0;
+  for (const [index, user] of eligible.entries()) {
+    if (blockedStates[index]) continue;
     await sendFollowUp(user.id, FOLLOW_UP_MESSAGE);
     const sentAt = now.toISOString();
     await store.updateUser(user.id, (draft) => { draft.lastFollowUpSent = sentAt; });

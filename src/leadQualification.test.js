@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   CONSENT_STATES, DIMENSIONS, consentFromText, getConsentState, hasFollowUpPermission,
-  qualifyLead, recordFollowUpConsent
+  hasAutomatedReminderPermission, qualifyLead, recordFollowUpConsent
 } = require("./leadQualification");
 
 test("qualification always returns six bounded dimensions and a 0..30 total", () => {
@@ -69,4 +69,36 @@ test("bare booking confirmations and unrelated yes replies never grant follow-up
   const user = { id: "x", history: [{ message: "yes" }, { message: "Yes, confirm the booking" }] };
   assert.equal(getConsentState({ user }), CONSENT_STATES.UNKNOWN);
   assert.equal(hasFollowUpPermission(user), false);
+});
+
+test("specialist consent does not authorize automated reminder outreach", () => {
+  const user = { id: "x", history: [{
+    id: "specialist-turn", at: "2026-10-01T00:00:00Z", source: "whatsapp", message: "Please follow up",
+    metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" }, intent: { language: "english" } }
+  }] };
+  assert.equal(hasFollowUpPermission(user), true);
+  assert.equal(hasAutomatedReminderPermission(user), false);
+});
+
+test("automated reminder consent requires its own durable, scoped, localized source turn", () => {
+  const source = {
+    id: "reminder-turn", at: "2026-10-01T00:00:00Z", message: "I agree to automated reminders",
+    metadata: { intent: { language: "arabic" }, followUpConsent: {
+      state: "granted", purpose: "automated_reminder", sourceTurnId: "reminder-turn", channel: "whatsapp", language: "ar"
+    } }
+  };
+  const user = { id: "x", history: [source] };
+  assert.equal(hasAutomatedReminderPermission(user), true);
+  for (const invalid of [
+    { ...source, metadata: { ...source.metadata, followUpConsent: { ...source.metadata.followUpConsent, purpose: "specialist_follow_up" } } },
+    { ...source, metadata: { ...source.metadata, followUpConsent: { ...source.metadata.followUpConsent, sourceTurnId: "other-turn" } } },
+    { ...source, metadata: { ...source.metadata, followUpConsent: { ...source.metadata.followUpConsent, channel: "" } } },
+    { ...source, metadata: { ...source.metadata, intent: { language: "" }, followUpConsent: { ...source.metadata.followUpConsent, language: "" } } },
+    { ...source, at: undefined }
+  ]) assert.equal(hasAutomatedReminderPermission({ id: "x", history: [invalid] }), false);
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "Stop messaging me" }] }), false);
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "no", metadata: { followUpConsent: { state: "denied", purpose: "automated_reminder" } } }] }), false);
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "", metadata: { followUpConsent: { state: "revoked", purpose: "automated_reminder" } } }] }), false);
+  const renewed = { ...source, id: "renewed-turn", at: "2026-10-02T00:00:00Z", metadata: { ...source.metadata, followUpConsent: { ...source.metadata.followUpConsent, sourceTurnId: "renewed-turn" } } };
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "Stop messaging me" }, renewed] }), true);
 });

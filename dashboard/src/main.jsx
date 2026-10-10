@@ -890,6 +890,7 @@ function Knowledge({ isAdmin, onNavigate }) {
   const [error, setError] = useState("");
   const [importTitle, setImportTitle] = useState("");
   const [importContent, setImportContent] = useState("");
+  const [importLanguage, setImportLanguage] = useState("en");
   const [uploadFile, setUploadFile] = useState(null);
   const [knowledgeMode, setKnowledgeMode] = useState("text");
   const [knowledgeView, setKnowledgeView] = useState("content");
@@ -924,6 +925,7 @@ function Knowledge({ isAdmin, onNavigate }) {
     setEditorMode(document ? "update" : "new");
     setImportTitle(document?.title || "");
     setImportContent(document?.canonical_content || "");
+    setImportLanguage(document?.language_code || "en");
     setUploadFile(null);
     setKnowledgeView("edit");
   }
@@ -933,6 +935,7 @@ function Knowledge({ isAdmin, onNavigate }) {
     setEditingDocument(null);
     setImportTitle("");
     setImportContent("");
+    setImportLanguage("en");
     setUploadFile(null);
     setKnowledgeMode("text");
   }
@@ -948,7 +951,7 @@ function Knowledge({ isAdmin, onNavigate }) {
     await run("fetch", async () => {
       const value = await api(`/api/knowledge/${selectedId}/fetch`, { method: "POST" });
       setDetail(await api(`/api/knowledge/${selectedId}`));
-      return { message: value.deduplicated ? "No content change; existing revision kept." : `Revision saved with ${value.chunkCount} searchable chunks.` };
+      return { message: value.deduplicated ? "No content change; existing revision kept." : `Revision v${value.revision} saved pending review. It is not available to REFAL until approved.` };
     });
   }
 
@@ -958,17 +961,17 @@ function Knowledge({ isAdmin, onNavigate }) {
       let targetSourceId = selectedId;
       let saved;
       if (editorMode === "update" && editingDocument?.id) {
-        saved = await api(`/api/knowledge/documents/${editingDocument.id}`, { method: "PATCH", body: JSON.stringify({ title: importTitle, content: importContent }) });
+        saved = await api(`/api/knowledge/documents/${editingDocument.id}`, { method: "PATCH", body: JSON.stringify({ title: importTitle, content: importContent, language: importLanguage }) });
       } else {
         const created = await api("/api/knowledge", { method: "POST", body: JSON.stringify({ displayName: importTitle }) });
         targetSourceId = created.source.id;
-        const value = await api(`/api/knowledge/${targetSourceId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent }) });
+        const value = await api(`/api/knowledge/${targetSourceId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent, language: importLanguage }) });
         saved = value;
         setSelectedId(targetSourceId);
       }
       setImportTitle(""); setImportContent(""); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
       if (saved.embeddingWarning) return { message: `Saved to the database. Text search is ready, but semantic indexing failed: ${saved.embeddingWarning}` };
-      return { message: saved.unchanged ? "No changes detected. The database entry was left as it was." : editorMode === "update" ? "Changes saved to the database and REFAL search index." : `Added to the database and indexed in ${saved.embeddedChunks} searchable sections.` };
+      return { message: saved.unchanged ? "No content change detected. The existing revision and review status were kept." : `Revision v${saved.revision} saved as pending review. REFAL will not use or index it until an administrator approves it.` };
     });
   }
 
@@ -984,6 +987,7 @@ function Knowledge({ isAdmin, onNavigate }) {
       }
       const formData = new FormData();
       formData.append("file", uploadFile);
+      formData.append("language", importLanguage);
       // Not the shared api() helper: it always forces Content-Type:
       // application/json, which would break the browser's own multipart
       // boundary for this file upload.
@@ -991,7 +995,7 @@ function Knowledge({ isAdmin, onNavigate }) {
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.error || `Upload failed: ${response.status}`);
       setUploadFile(null); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
-      return { message: value.embeddingWarning ? `Saved to the database. Text search is ready, but semantic indexing failed: ${value.embeddingWarning}` : value.unchanged ? "No changes detected. The database entry was left as it was." : `File added and indexed in ${value.embeddedChunks} searchable sections.` };
+      return { message: value.unchanged ? "No content change detected. The existing revision and review status were kept." : `File saved as revision v${value.revision}, pending review. REFAL will not use or index it until an administrator approves it.` };
     });
   }
 
@@ -1018,6 +1022,17 @@ function Knowledge({ isAdmin, onNavigate }) {
     finally { setSearching(false); }
   }
 
+  async function reviewDocument(document, status) {
+    await run(`review-${document.id}`, async () => {
+      const result = await api(`/api/knowledge/documents/${document.id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      setDetail(await api(`/api/knowledge/${document.source_id}`));
+      return { message: status === "approved" ? result.embeddingWarning ? `Revision approved, but search indexing needs attention: ${result.embeddingWarning}` : `Revision v${document.revision} approved and indexed in ${result.embeddedChunks} chunks.` : `Revision v${document.revision} marked ${status}.` };
+    });
+  }
+
   if (loading) return <Loading />;
   return (
     <div className="page-stack overview-page">
@@ -1025,13 +1040,13 @@ function Knowledge({ isAdmin, onNavigate }) {
         <div>
           <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> REFAL KNOWLEDGE BASE</span>
           <h2>Give REFAL better context</h2>
-          <p>Add or update company information. Saving replaces the database entry and refreshes REFAL’s searchable knowledge.</p>
+          <p>Add or update company information. Each changed revision waits for administrator review before REFAL can use it.</p>
         </div>
-        <div className="knowledge-hero-note"><span className="knowledge-live-dot" /><span><strong>Active when saved</strong><small>Edits replace the current entry.</small></span></div>
+        <div className="knowledge-hero-note"><span className="knowledge-live-dot" /><span><strong>Review before use</strong><small>Approved revisions are indexed for REFAL.</small></span></div>
       </section>
       <section className="knowledge-summary">
-        <div><span>Company knowledge</span><strong>{documents.length}</strong><small>saved entries</small></div>
-        <div><span>Saved knowledge entries</span><strong>{documents.length}</strong><small>active in REFAL</small></div>
+        <div><span>Knowledge revisions</span><strong>{documents.length}</strong><small>visible to you</small></div>
+        <div><span>Awaiting review</span><strong>{documents.filter((doc) => doc.review_status === "pending").length}</strong><small>not used by REFAL</small></div>
         <form className="knowledge-search" onSubmit={searchKnowledge}>
           <label htmlFor="knowledge-query">Search approved knowledge</label>
           <div><input id="knowledge-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try a company, project, or contact question" /><button className="primary" disabled={searching || !query.trim()}><Search size={16} /> {searching ? "Searching" : "Search"}</button>{isAdmin && <button type="button" className="primary knowledge-search-add" onClick={() => openKnowledgeEditor()}><Plus size={16} /> Add knowledge</button>}</div>
@@ -1048,7 +1063,7 @@ function Knowledge({ isAdmin, onNavigate }) {
               const source = sources.find((item) => item.id === doc.source_id);
               const snippet = String(doc.canonical_content || "").replace(/\s+/g, " ").trim();
               return <button key={doc.id} className={`knowledge-source${selectedId === doc.source_id ? " selected" : ""}`} onClick={() => setSelectedId(doc.source_id)}>
-                <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className="badge online">Active</span></span>
+                <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></span>
                 <small>{source?.display_name || "Knowledge entry"}</small>
                 <span className="knowledge-source-preview">{snippet.slice(0, 150)}{snippet.length > 150 ? "…" : ""}</span>
               </button>;
@@ -1062,7 +1077,7 @@ function Knowledge({ isAdmin, onNavigate }) {
             {selected.last_error && <p className="knowledge-error">{selected.last_error}</p>}
             {knowledgeView === "content" && isAdmin && <div className="knowledge-entry-toolbar"><span>Saved content</span></div>}
             {isAdmin && knowledgeView === "edit" && <section className="knowledge-add-panel" aria-labelledby="knowledge-add-title">
-              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "Save replaces this database entry and refreshes REFAL search. Unchanged text is left alone." : "Add clear information for REFAL. Save activates it and updates the search index."}</p></div><button type="button" className="ghost" onClick={() => setKnowledgeView("content")}>Back to content</button></div>
+              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "A changed save creates a pending revision. The current approved revision remains available until a reviewer approves the new one." : "New content stays pending and is not available to REFAL until reviewed."}</p></div><button type="button" className="ghost" onClick={() => setKnowledgeView("content")}>Back to content</button></div>
               <div className="knowledge-editor-actions">
                 <span>{editorMode === "update" ? `Editing revision v${editingDocument?.revision}` : "New entry"}</span>
                 {editorMode === "update" && <button type="button" className="ghost" onClick={startNewKnowledgeEntry}>Start a new entry</button>}
@@ -1074,21 +1089,34 @@ function Knowledge({ isAdmin, onNavigate }) {
               {knowledgeMode === "text" ? <form className="knowledge-import" onSubmit={importText}>
                 <label htmlFor="knowledge-title">Title</label>
                 <input id="knowledge-title" required value={importTitle} onChange={(event) => setImportTitle(event.target.value)} placeholder="For example, Company setup FAQs" />
+                <label htmlFor="knowledge-language">Content language</label>
+                <select id="knowledge-language" value={importLanguage} onChange={(event) => setImportLanguage(event.target.value)}><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select>
                 <label htmlFor="knowledge-content">Knowledge text</label>
                 <textarea id="knowledge-content" dir="auto" value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste company facts, service details, policies, or FAQs…" rows={7} />
                 <KnowledgeCommercialWarning content={importContent} onOpenCommercialData={() => onNavigate("commercial-data")} />
-                <div className="knowledge-submit-row"><small>At least 40 characters. Arabic and English text are both supported.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving and activating…" : editorMode === "update" ? "Save changes to database" : "Add to database"}</button></div>
+                <div className="knowledge-submit-row"><small>At least 40 characters. Choose the language reviewers should use to assess this revision.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving for review…" : editorMode === "update" ? "Save pending revision" : "Submit for review"}</button></div>
               </form> : <form className="knowledge-upload" onSubmit={uploadDocument}>
                 <label htmlFor="knowledge-file">Choose a text, PDF, or Word file</label>
                 <input id="knowledge-file" type="file" accept=".txt,.pdf,.docx" aria-label="Choose a TXT, PDF, or DOCX knowledge file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
-                <div className="knowledge-file-note"><BookOpenCheck size={18} /><span><strong>{uploadFile?.name || "Your file will become searchable knowledge"}</strong><small>REFAL will use its text in future answers after saving.</small></span></div>
-                <div className="knowledge-submit-row"><small>Supported formats: TXT, PDF, DOCX.</small><button className="primary" disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Saving and activating…" : "Add file to database"}</button></div>
+                <div className="knowledge-file-note"><BookOpenCheck size={18} /><span><strong>{uploadFile?.name || "Your file will be submitted for review"}</strong><small>REFAL can use its text after an administrator approves the revision.</small></span></div>
+                <label htmlFor="knowledge-file-language">Content language</label>
+                <select id="knowledge-file-language" value={importLanguage} onChange={(event) => setImportLanguage(event.target.value)}><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select>
+                <div className="knowledge-submit-row"><small>Supported formats: TXT, PDF, DOCX.</small><button className="primary" disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Saving for review…" : "Submit file for review"}</button></div>
               </form>}
             </section>}
             {knowledgeView === "content" && <div className="knowledge-revisions">
               {(detail?.documents || []).map((doc) => <article className="knowledge-revision" key={doc.id}>
-                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Updated {formatDate(doc.fetched_at)} · {doc.chunks.length} searchable sections{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small></div><span className="badge online">Active</span></div>
+                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Revision v{doc.revision} · {doc.language_code || "language unspecified"} · Saved {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></div>
+                <small className="knowledge-review-source">Source: {selected.display_name}{selected.canonical_url && !selected.canonical_url.startsWith("manual:") ? ` · ${selected.canonical_url}` : " · operator supplied"}{doc.metadata?.sourceFileName ? ` · File: ${doc.metadata.sourceFileName}` : ""}</small>
+                {(doc.metadata?.evidence || doc.metadata?.supporting) && <div className="knowledge-review-evidence"><strong>Evidence / supporting references</strong><p>{typeof (doc.metadata.evidence || doc.metadata.supporting) === "string" ? (doc.metadata.evidence || doc.metadata.supporting) : JSON.stringify(doc.metadata.evidence || doc.metadata.supporting)}</p></div>}
                 <div className="knowledge-revision-content" dir="auto">{doc.canonical_content}</div>
+                {isAdmin && <div className="knowledge-review-actions">
+                  <div>
+                    <button className="primary" onClick={() => reviewDocument(doc, "approved")} disabled={Boolean(busy) || doc.review_status === "approved"}>{busy === `review-${doc.id}` ? "Saving review…" : "Approve and index"}</button>
+                    <button className="ghost" onClick={() => reviewDocument(doc, "pending")} disabled={Boolean(busy) || doc.review_status === "pending"}>Return to pending</button>
+                    <button className="knowledge-delete-button" onClick={() => reviewDocument(doc, "rejected")} disabled={Boolean(busy) || doc.review_status === "rejected"}>Reject</button>
+                  </div>
+                </div>}
                 {isAdmin && <div className="knowledge-entry-actions"><button className="ghost" onClick={() => openKnowledgeEditor(doc)}><Save size={14} /> Edit</button><button className="knowledge-delete-button" onClick={() => setDeleteTarget(doc)} disabled={Boolean(busy)}><Trash2 size={14} /> Delete</button></div>}
               </article>)}
               {!detail?.documents?.length && <p className="empty">No knowledge saved yet. Select Add knowledge to paste text or upload a file.</p>}

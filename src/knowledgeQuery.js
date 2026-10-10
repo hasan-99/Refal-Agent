@@ -5,21 +5,49 @@ const { filterRetrievableEvidence } = require("./factRegister");
 const CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION = /(?:\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and that|what about it)\b|(?:كم|قديش).{0,24}(?:تكلف|سعر|رسوم)|(?:بدي|بدّي|اعطيني|أعطيني).{0,20}تفاصيل|تفاصيل\s*(?:أكثر|اكتر)|شو\s*(?:بيشمل|بتشمل)|(?:πόσο|τιμή|κόστος|χρέωση|πες μου περισσότερα|περισσότερες πληροφορίες|τι περιλαμβάνει))/iu;
 const NON_CONTEXT_RESPONSES = /(?:ما عندي معلومة معتمدة|لا تتوفر لديّ حالياً|ما عندي سعر معتمد|I don['’]t have approved information|I don['’]t have an approved company formation fee|Δεν έχω εγκεκριμένη)/iu;
 const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services", "corporate_services"]);
+const PACKAGE_DETAIL_QUESTION = /(?:\b(?:package|formation package|setup package|what does .{0,20} include|what(?:'s| is) included)\b|باقة|شو\s*(?:بتشمل|بيشمل)|ماذا\s*تشمل|πακέτο|τι\s*περιλαμβάνει)/iu;
 // The corpus has separate approved topic documents. Retrieve each business
 // area before composing a broad answer so one high-ranking document cannot
 // crowd out every other area.
-const BROAD_SERVICE_FACETS = Object.freeze([
-  "Cyprus company formation package, company structures and lifecycle",
-  "corporate tax Cyprus 15% 2026, IP Box, accounting, VAT and payroll",
-  "banking and payment gateways for a Cyprus company, corporate bank account",
-  "permanent residency Cyprus investment requirements, family, relocation and Non Dom",
-  "buying property in Cyprus, buyer journey, off-plan and completed"
-]);
-const BROAD_COMPANY_PROFILE_FACETS = Object.freeze([
-  "who Refalco Group is, company profile, Cyprus, experience and projects",
-  ...BROAD_SERVICE_FACETS.slice(0, 3),
-  BROAD_SERVICE_FACETS[4]
-]);
+const BROAD_SERVICE_FACETS = Object.freeze({
+  english: [
+    "Cyprus company formation package, company structures and lifecycle",
+    "corporate tax Cyprus 15% 2026, IP Box, accounting, VAT and payroll",
+    "banking and payment gateways for a Cyprus company, corporate bank account",
+    "permanent residency Cyprus investment requirements, family, relocation and Non Dom",
+    "buying property in Cyprus, buyer journey, off-plan and completed"
+  ],
+  arabic: [
+    "باقة تأسيس الشركة القبرصية، هياكل الشركات ودورة حياتها",
+    "ضريبة الشركات في قبرص، IP Box، المحاسبة، VAT والرواتب",
+    "الخدمات المصرفية وبوابات الدفع لشركة قبرصية",
+    "الإقامة الدائمة في قبرص بالاستثمار، العائلة والانتقال وNon Dom",
+    "شراء عقار في قبرص، عقار على الخارطة أو جاهز"
+  ],
+  greek: [
+    "πακέτο ίδρυσης κυπριακής εταιρείας, εταιρικές δομές και κύκλος ζωής",
+    "εταιρικός φόρος στην Κύπρο, IP Box, λογιστική, VAT και μισθοδοσία",
+    "τραπεζικές υπηρεσίες και πύλες πληρωμών για κυπριακή εταιρεία",
+    "μόνιμη διαμονή στην Κύπρο μέσω επένδυσης, οικογένεια και Non Dom",
+    "αγορά ακινήτου στην Κύπρο, υπό κατασκευή ή ολοκληρωμένο"
+  ]
+});
+const BROAD_PROFILE_INTRO = Object.freeze({
+  english: "Refalco Group business areas and services: company formation, corporate structuring, tax, accounting, investment, property, development, residency and relocation",
+  arabic: "مجالات وخدمات Refalco Group: تأسيس الشركات، الهيكلة، الضرائب، المحاسبة، الاستثمار، العقارات، التطوير، الإقامة والانتقال",
+  greek: "τομείς δραστηριότητας και υπηρεσίες του ομίλου Refalco: σύσταση εταιρειών, εταιρική δομή, φορολογία, λογιστική, επενδύσεις, ακίνητα, ανάπτυξη, διαμονή και μετεγκατάσταση"
+});
+const PACKAGE_TITLE_QUERY = Object.freeze({
+  english: "What the Cyprus company formation package includes",
+  arabic: "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط",
+  greek: "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας"
+});
+function normalizedLanguage(language) {
+  const value = String(language || "english").toLowerCase();
+  if (["ar", "arabic"].includes(value)) return "arabic";
+  if (["el", "greek"].includes(value)) return "greek";
+  return "english";
+}
 function buildKnowledgeSearchQuery(currentMessage, user, intents = []) {
   const current = redactPersonalData(String(currentMessage || "").trim()).slice(0, 1000);
   if (!current || current.length > 140 || !CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION.test(current)) return current;
@@ -39,25 +67,52 @@ function buildKnowledgeSearchQuery(currentMessage, user, intents = []) {
   return `${current}\nRelevant prior topic: ${priorMessage}\n${priorResponse}`.slice(0, 1800);
 }
 
-function buildKnowledgeSearchQueries(currentMessage, user, intents = []) {
+function buildKnowledgeSearchQueries(currentMessage, user, intents = [], language = "english") {
   const base = buildKnowledgeSearchQuery(currentMessage, user, intents);
   if (!Array.isArray(intents) || !intents.some((intent) => BROAD_KNOWLEDGE_INTENTS.has(intent))) return [base];
   // Keep each query focused: the hybrid and lexical search both lose recall
   // when the customer's whole question is combined with a long facet string.
-  const facets = intents.includes("company_info") ? BROAD_COMPANY_PROFILE_FACETS : BROAD_SERVICE_FACETS;
-  return [...facets];
+  const key = normalizedLanguage(language);
+  const serviceFacets = BROAD_SERVICE_FACETS[key];
+  const facets = intents.includes("company_info")
+    ? [BROAD_PROFILE_INTRO[key], ...serviceFacets]
+    : intents.includes("business_areas")
+      ? [BROAD_PROFILE_INTRO[key], ...serviceFacets]
+      : serviceFacets;
+  // A specific package question must lead with its own wording so both the
+  // model and deterministic fallback see the matching approved package fact
+  // first. Broad service questions still fan out across all service facets.
+  return PACKAGE_DETAIL_QUESTION.test(base) ? [PACKAGE_TITLE_QUERY[key], base, ...facets] : [...facets];
 }
 
 async function retrieveKnowledgeForTurn(currentMessage, {
-  user, intents = [], store, embedText, embeddingModel, matchCount = 6
+  user, intents = [], language = "english", store, embedText, embedQueryTexts, embeddingModel, matchCount = 6
 } = {}) {
-  const queries = buildKnowledgeSearchQueries(currentMessage, user, intents);
+  const queries = buildKnowledgeSearchQueries(currentMessage, user, intents, language);
   const evidence = [];
   const seen = new Set();
   const failures = [];
-  for (const query of queries) {
+  let queryEmbeddings = null;
+  let embeddingFailure = null;
+  const embeddingStartedAt = Date.now();
+  if (typeof embedQueryTexts === "function") {
     try {
-      const embedding = typeof embedText === "function" ? await embedText(query) : null;
+      queryEmbeddings = await embedQueryTexts(queries);
+      if (!Array.isArray(queryEmbeddings) || queryEmbeddings.length !== queries.length) {
+        throw new Error("Query embedding batch did not match the knowledge query count.");
+      }
+    } catch (error) {
+      embeddingFailure = error;
+    }
+  }
+  const embeddingMs = Date.now() - embeddingStartedAt;
+  const searchStartedAt = Date.now();
+  const results = await Promise.all(queries.map(async (query, index) => {
+    try {
+      if (embeddingFailure) throw embeddingFailure;
+      const embedding = queryEmbeddings
+        ? queryEmbeddings[index]
+        : typeof embedText === "function" ? await embedText(query) : null;
       const rows = typeof store?.searchKnowledge === "function"
         ? await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount)
         : [];
@@ -65,17 +120,25 @@ async function retrieveKnowledgeForTurn(currentMessage, {
         const kind = candidate?.chunk_kind ?? candidate?.chunkKind ?? candidate?.metadata?.kind;
         if (kind && String(kind) !== "fact") return false;
         if (filterRetrievableEvidence([candidate]).kept.length === 0) return false;
-        const key = String(candidate?.chunk_id || candidate?.chunkId || [candidate?.document_id, candidate?.heading, candidate?.content].join("|"));
-        if (seen.has(key)) return false;
-        seen.add(key);
         return true;
       });
-      if (row) evidence.push(row);
+      return { row, error: null };
     } catch (error) {
-      failures.push(error);
+      return { row: null, error };
     }
+  }));
+  // Promise.all preserves query order. Deduplicate after all independent
+  // searches finish so concurrent workers never race on the shared Set.
+  for (const result of results) {
+    if (result.error) failures.push(result.error);
+    if (!result.row) continue;
+    const row = result.row;
+    const key = String(row?.chunk_id || row?.chunkId || [row?.document_id, row?.heading, row?.content].join("|"));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    evidence.push(row);
   }
-  return { evidence, queryCount: queries.length, failures, complete: failures.length === 0 };
+  return { evidence, queryCount: queries.length, failures, complete: failures.length === 0, embeddingMs, searchMs: Date.now() - searchStartedAt };
 }
 
 

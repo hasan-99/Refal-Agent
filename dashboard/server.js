@@ -19,6 +19,7 @@ import { countUniqueHandoverContacts } from "./handoverGrouping.js";
 import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
+import { reviewKnowledgeDocument } from "./knowledgeReview.js";
 import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
 
@@ -284,7 +285,7 @@ app.get("/api/knowledge", async (req, res) => {
     const isAdmin = req.dashboardUser.role === "admin";
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,approval_note,last_status,last_error,last_fetched_at,last_success_at,last_content_hash,created_at,updated_at${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&order=updated_at.desc`),
-      supabaseRest("rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until&review_status=eq.approved&order=fetched_at.desc&limit=200")
+      supabaseRest(`rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata${isAdmin ? "" : "&review_status=eq.approved"}&order=fetched_at.desc&limit=200`)
     ]);
     res.json({ sources, documents });
   } catch (error) {
@@ -303,7 +304,7 @@ app.post("/api/knowledge", requireAdmin, async (req, res) => {
     const canonicalUrl = String(req.body?.url || "").trim() ? validateKnowledgeUrl(req.body.url).href : `manual:${crypto.randomUUID()}`;
     const rows = await supabaseRest("rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,last_status", {
       method: "POST", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied", enabled: true, approved: true, approval_note: "Knowledge entries are active when saved." })
+      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied", enabled: true, approved: true, approval_note: "Operator-supplied source; each content revision requires review before REFAL can use it." })
     });
     res.status(201).json({ source: rows[0] });
   } catch (error) {
@@ -348,8 +349,7 @@ app.post("/api/knowledge/:id/fetch", requireAdmin, async (req, res) => {
     const page = await fetchKnowledgePage(source.canonical_url);
     const extracted = extractKnowledgeText(page.html, page.url);
     const saved = await storeKnowledgeRevision(id, extracted, "en");
-    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
-    res.json({ ...saved, ...indexed, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
+    res.json({ ...saved, embeddedChunks: 0, embeddingWarning: "", title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     const status = error.code || 502;
     try {
@@ -368,8 +368,7 @@ app.post("/api/knowledge/:id/import", requireAdmin, async (req, res) => {
     if (content.length < 40) return res.status(400).json({ error: "Import at least 40 characters of source content." });
     const extracted = { title, content, chunks: chunkKnowledge(content) };
     const saved = await storeKnowledgeRevision(id, extracted, String(req.body?.language || "en").slice(0, 8));
-    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
-    res.status(201).json({ ...saved, ...indexed, characterCount: content.length, chunkCount: extracted.chunks.length });
+    res.status(201).json({ ...saved, embeddedChunks: 0, embeddingWarning: "", characterCount: content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -388,8 +387,7 @@ app.patch("/api/knowledge/documents/:id", requireAdmin, async (req, res) => {
     if (!documents[0]) return res.status(404).json({ error: "Knowledge entry not found." });
     const chunks = chunkKnowledge(content);
     const result = await storeKnowledgeRevision(documents[0].source_id, { title, content, chunks }, String(req.body?.language || "en").slice(0, 8));
-    const indexed = result.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(result.document_id);
-    res.json({ ...result, ...indexed, chunkCount: chunks.length });
+    res.json({ ...result, embeddedChunks: 0, embeddingWarning: "", chunkCount: chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message || "Could not update this knowledge entry." });
   }
@@ -410,8 +408,7 @@ app.post("/api/knowledge/:id/upload", requireAdmin, upload.single("file"), async
       sourceFileType: extracted.sourceFileType,
       sourceFileName: extracted.sourceFileName
     });
-    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
-    res.status(201).json({ ...saved, ...indexed, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
+    res.status(201).json({ ...saved, embeddedChunks: 0, embeddingWarning: "", title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -437,7 +434,7 @@ app.get("/api/knowledge/:id", async (req, res) => {
     const isAdmin = req.dashboardUser.role === "admin";
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=*${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&limit=1`),
-      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}&review_status=eq.approved&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until,metadata&order=revision.desc&limit=1`)
+      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}${isAdmin ? "" : "&review_status=eq.approved"}&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata&order=revision.desc&limit=${isAdmin ? "20" : "1"}`)
     ]);
     if (!sources[0]) return res.status(404).json({ error: "Knowledge source not found." });
     const chunks = documents.length ? await supabaseRest(`rafa_knowledge_chunks?document_id=in.(${documents.map((doc) => doc.id).join(",")})&select=id,document_id,chunk_index,heading,content,metadata,embedding_model,embedded_at&order=chunk_index.asc`) : [];
@@ -451,12 +448,14 @@ app.patch("/api/knowledge/documents/:id/review", requireAdmin, async (req, res) 
   try {
     const id = requireUuid(req.params.id);
     const status = req.body?.status;
-    if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "Review status must be approved or rejected." });
-    const rows = await supabaseRest(`rafa_knowledge_documents?id=eq.${id}&select=id,source_id,revision,review_status,approved_at,approved_by`, {
-      method: "PATCH", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ review_status: status, approved_at: status === "approved" ? new Date().toISOString() : null, approved_by: status === "approved" ? "dashboard-operator" : null })
+    if (!["approved", "rejected", "pending"].includes(status)) return res.status(400).json({ error: "Review status must be approved, rejected, or pending." });
+    const reviewer = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
+    const decision = await reviewKnowledgeDocument(supabaseRest, {
+      documentId: id,
+      status,
+      reviewer,
+      reason: req.body?.reason
     });
-    if (!rows[0]) return res.status(404).json({ error: "Document revision not found." });
     let embeddedChunks = 0;
     let embeddingWarning = "";
     if (status === "approved") {
@@ -471,7 +470,7 @@ app.patch("/api/knowledge/documents/:id/review", requireAdmin, async (req, res) 
         embeddingWarning = String(error.message || "Embedding failed").slice(0, 240);
       }
     }
-    res.json({ document: rows[0], embeddedChunks, embeddingWarning });
+    res.json({ document: decision, embeddedChunks, embeddingWarning });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -1475,25 +1474,11 @@ async function storeKnowledgeRevision(sourceId, document, languageCode, metadata
       p_language_code: languageCode,
       p_chunks: document.chunks,
       p_metadata: metadata,
-      // P3.9 / CR-014 made `rafa_store_knowledge_revision` default to `pending`,
-      // because a save silently approving itself is the conflict that phase had
-      // to remove. This call site must therefore state its intent EXPLICITLY.
-      //
-      // It states `approved`, deliberately, and that is not a regression of
-      // CR-014. The dashboard has no pending-review screen: the UI copy says
-      // "Active when saved" and `POST /api/knowledge` creates every source with
-      // `approved: true, enabled: true`. Letting the new default apply here
-      // would queue entries into a screen that does not exist, and they would
-      // silently never become searchable, which is precisely the bug the
-      // 2026-10-07 migrations were written to fix.
-      //
-      // What CR-014 actually asked for is now true: the queue EXISTS, nothing
-      // deletes a non-approved revision any more, and approving is a stated
-      // decision rather than something the database does behind the caller's
-      // back. Flipping this to `pending` is a one word change the moment P12.2
-      // ships the review screen.
-      p_review_status: "approved",
-      p_approved_by: "dashboard-operator"
+      // Dashboard edits and imports require a separate administrator decision.
+      // The generated corpus uses its own explicit approved-ingestion path in
+      // src/corpusIngest.js and remains unchanged.
+      p_review_status: "pending",
+      p_approved_by: null
     })
   });
   return result;

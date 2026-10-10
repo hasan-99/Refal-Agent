@@ -84,12 +84,15 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   const metadata = { ...(extra?.metadata || {}) };
   const qualificationEvidence = extra?.metadata?.[QUALIFICATION_EVIDENCE] || null;
   delete metadata.privacySafeQuestion;
+  const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
   // W2.5.3. A locked conversation never tracks a new sales hook, so a later
   // "yes" cannot be read as consent to an offer that should not have been made.
   if (!metadata.specialistOffer && !metadata.complianceLock?.salesHooksSuppressed && isTrackedSpecialistOffer(response)) {
     metadata.specialistOffer = { offered: true, consentRequired: true, offeredAt: new Date().toISOString() };
   }
-  const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
+  if (!metadata.automatedReminderOffer && isTrackedAutomatedReminderOffer(response)) {
+    metadata.automatedReminderOffer = { consentRequired: true, purpose: "automated_reminder", offeredAt: new Date().toISOString(), language, channel: "whatsapp" };
+  }
   const consentGranted = metadata.specialistFollowUp?.consented === true && metadata.specialistFollowUp?.purpose === "specialist_follow_up";
   const responsePolicy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata), customerMessage: message });
   const safeResponse = responsePolicy.valid ? response : safeFallbackData({ language, category: "uncertainty" }).text;
@@ -98,6 +101,16 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   const consentDecision = consentFromText(message);
   const explicitOptOut = consentDecision === "revoked";
   const handover = consentGranted ? metadata.handover : null;
+  if (metadata.automatedReminderConsent) {
+    metadata.followUpConsent = {
+      state: metadata.automatedReminderConsent.state,
+      purpose: "automated_reminder",
+      sourceTurnId: "pending-current",
+      offerSourceTurnId: metadata.automatedReminderConsent.offerSourceTurnId || null,
+      channel: "whatsapp",
+      language: metadata.automatedReminderConsent.language || language
+    };
+  }
   // Do not persist an unconsented handover even as turn metadata.
   if (!consentGranted) delete metadata.handover;
   const turn = await store.addHistory(userId, storedMessage, safeResponse, {
@@ -107,6 +120,13 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     ...(extra || {}),
     metadata
   });
+  if (metadata.automatedReminderConsent && turn?.id) {
+    metadata.followUpConsent.sourceTurnId = turn.id;
+    turn.metadata = { ...(turn.metadata || metadata), followUpConsent: metadata.followUpConsent };
+    if (typeof store.updateHistoryTurn === "function" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(turn.id)) {
+      await store.updateHistoryTurn(userId, turn.id, { response: safeResponse, metadata: { followUpConsent: metadata.followUpConsent } });
+    }
+  }
   if (!privacyTurn && qualificationEvidence) {
     const evidence = qualificationEvidence.map((item) => item.sourceRef === "pending-current" ? { ...item, sourceRef: turn?.id || "" } : item);
     const scored = scoreQualification({ evidence });
@@ -139,8 +159,16 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   if (!privacyTurn && metadata.intent?.intents?.length && typeof store.saveIntents === "function") {
     writes.push(store.saveIntents(userId, metadata.intent.intents, { sourceTurnId: turn?.id, source: "deterministic" }));
   }
-  if ((explicitOptOut || consentDecision === "denied" || consentGranted) && typeof store.saveConsent === "function") {
-    writes.push(store.saveConsent(userId, explicitOptOut ? "revoked" : consentDecision === "denied" ? "denied" : "granted", { sourceTurnId: turn?.id }));
+  if ((explicitOptOut || consentDecision === "denied" || consentGranted || metadata.automatedReminderConsent) && typeof store.saveConsent === "function") {
+    const state = explicitOptOut ? "revoked" : metadata.automatedReminderConsent?.state || (consentDecision === "denied" ? "denied" : "granted");
+    if (explicitOptOut) {
+      writes.push(store.saveConsent(userId, "revoked", { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
+      writes.push(store.saveConsent(userId, "revoked", { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent?.offerSourceTurnId || null, language, channel: "whatsapp" }));
+    } else if (metadata.automatedReminderConsent) {
+      writes.push(store.saveConsent(userId, state, { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent.offerSourceTurnId || null, language: metadata.automatedReminderConsent.language || language, channel: "whatsapp" }));
+    } else {
+      writes.push(store.saveConsent(userId, state, { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
+    }
   }
   if (handover && typeof store.createHandover === "function") {
     handoverWrite = store.createHandover(userId, {
@@ -294,6 +322,21 @@ function isTrackedSpecialistOffer(response) {
   const text = String(response || "");
   const hasExplicitOffer = /(?:would you like|shall i|may i|if you want|with your permission).{0,140}(?:specialist|team|follow.?up|contact|connect)|(?:specialist|team|follow.?up|contact|connect).{0,140}(?:would you like|shall i|may i|with your permission)|(?:إذا بتحب|إذا بتحبي|هل ترغب|هل تود|إذا أردت).{0,130}(?:مختص|الفريق|يتواصل|يتابع)|(?:مختص|الفريق).{0,130}(?:إذا بتحب|إذا بتحبي|هل ترغب|هل تود)|(?:αν θέλετε|θα θέλατε|με την άδειά σας).{0,130}(?:ειδικ|ομάδα|επικοινων)|(?:ειδικ|ομάδα).{0,130}(?:αν θέλετε|θα θέλατε|με την άδειά σας)/iu.test(text);
   return hasExplicitOffer && /[?؟;]/u.test(text) ? true : false;
+}
+
+function isTrackedAutomatedReminderOffer(response) {
+  const text = String(response || "");
+  const reminder = /\b(?:automated|automatic|scheduled)\s+(?:reminders?|messages?)\b|\breminders?\s+(?:automatically|by\s+message)\b|(?:ال)?تذكير(?:ات)?\s*(?:(?:ال)?آلي(?:ة)?|(?:ال)?تلقائي(?:ة)?)|(?:ال)?رسائل\s*(?:تذكير|تذكيرية)\s*(?:آلية|تلقائية)|(?:αυτόματ(?:ες|ων)\s+υπενθυμίσε(?:ις|ων)|υπενθυμίσε(?:ις|ων)\s+(?:αυτόματ(?:ες|ων)|με\s+αυτόματο\s+τρόπο))/iu.test(text);
+  const asksConsent = /\b(?:would you like|may i|can i|do you want|with your permission|shall i)\b|هل\s*(?:تود|ترغب)|إذا\s*(?:بتحب|بتحبي)|(?:θα θέλατε|θέλετε|με την άδειά σας)/iu.test(text);
+  return reminder && asksConsent && /[?؟;]/u.test(text);
+}
+
+function isAutomatedReminderAffirmative(text) {
+  return /^(?:yes|yeah|yep|sure|of course|please do|نعم|إي|اي|أيوه|ايوه|أكيد|اكيد|موافق(?:ة)?|ναι|βεβαίως|φυσικά)[.!،؟\s]*$/iu.test(normalizeSmallTalk(text));
+}
+
+function isAutomatedReminderDecline(text) {
+  return /^(?:no|no thanks|no thank you|not now|لا|لا شكرا|لا شكراً|مش هلأ|مو هلأ|όχι|όχι ευχαριστώ|όχι τώρα)[.!،؟\s]*$/iu.test(normalizeSmallTalk(text));
 }
 
 function isFreshSpecialistOffer(turn) {
@@ -761,6 +804,24 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const language = nameWasRequested && !explicitName && ["arabic", "english", "greek"].includes(lastTurn?.metadata?.intent?.language)
     ? lastTurn.metadata.intent.language
     : classification.language;
+  const reminderOffer = lastTurn?.metadata?.automatedReminderOffer;
+  const reminderOfferAt = Date.parse(reminderOffer?.offeredAt || lastTurn?.at || "");
+  const immediateReminderOffer = reminderOffer?.consentRequired === true && reminderOffer?.purpose === "automated_reminder" &&
+    Number.isFinite(reminderOfferAt) && reminderOfferAt <= Date.now() + 5 * 60 * 1000 && Date.now() - reminderOfferAt <= 24 * 60 * 60 * 1000;
+  if (immediateReminderOffer && (isAutomatedReminderAffirmative(incoming) || isAutomatedReminderDecline(incoming) || ["denied", "revoked"].includes(consentFromText(incoming)))) {
+    const currentConsent = user.consent?.automatedReminder;
+    const confirmation = isAutomatedReminderAffirmative(incoming) && consentFromText(incoming) !== "revoked";
+    const alreadyRevoked = currentConsent === "revoked" && Date.parse(user.consent?.automatedReminderUpdatedAt || "") >= reminderOfferAt;
+    const state = consentFromText(incoming) === "revoked" ? "revoked" : alreadyRevoked ? "revoked" : confirmation ? "granted" : "denied";
+    response = state === "granted"
+      ? localized(language, { english: "Understood. You’ve agreed to automated reminders for this request. You can ask me to stop them at any time.", arabic: "تمام، وافقت على التذكيرات الآلية لهذا الطلب. فيك تطلب إيقافها بأي وقت.", greek: "Κατανοητό. Συμφωνήσατε να λαμβάνετε αυτόματες υπενθυμίσεις για αυτό το αίτημα. Μπορείτε να ζητήσετε διακοπή όποτε θέλετε." })
+      : localized(language, { english: state === "revoked" ? "Understood. Automated reminders are stopped." : "Understood. I won’t set up automated reminders.", arabic: state === "revoked" ? "تمام، أوقفت التذكيرات الآلية." : "تمام، ما رح أفعّل تذكيرات آلية.", greek: state === "revoked" ? "Κατανοητό. Οι αυτόματες υπενθυμίσεις σταματούν." : "Κατανοητό. Δεν θα ενεργοποιήσω αυτόματες υπενθυμίσεις." });
+    const automatedReminderConsent = { state, purpose: "automated_reminder", scope: "automated_reminder", offerSourceTurnId: lastTurn.id || null, language: language === "arabic" ? "ar" : language === "greek" ? "el" : "en", channel: "whatsapp", observedAt: new Date().toISOString() };
+    const metadata = { ...prepared.metadata, automatedReminderConsent };
+    user.consent = { ...(user.consent || {}), automatedReminder: state, automatedReminderUpdatedAt: automatedReminderConsent.observedAt };
+    const history = await recordHistory(store, userId, incoming, response, { metadata });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
+  }
   if (echoesRecentAssistantReply(incoming, user.history)) {
     response = localized(language, {
       english: "Understood. I’m here if you want me to clarify a specific point.",

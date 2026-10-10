@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { scoreResult } = require("./evaluateRag");
+const { cases, scoreResult, wilsonInterval, languageParity } = require("./evaluateRag");
 
 const validEvidence = {
   source_name: "Refalco Group Services",
@@ -67,4 +67,49 @@ test("Arabic expected facts are compared without corrupting Unicode", () => {
 
   assert.equal(result.status, "PASS");
   assert.equal(result.targetChunkId, "chunk-1");
+});
+
+test("retrieval reports multilingual pass rates per language and domain with Wilson intervals", () => {
+  const result = languageParity([
+    { expectedSource: "source", language: "english", domain: "services", status: "PASS" },
+    { expectedSource: "source", language: "english", domain: "services", status: "FAIL" },
+    { expectedSource: "source", language: "arabic", domain: "services", status: "PASS" },
+    { expectedSource: "source", language: "greek", domain: "pricing", status: "ERROR" },
+    { language: "english", domain: "negative_controls", status: "PASS" }
+  ]);
+
+  assert.deepEqual(result.byLanguage.english, {
+    samples: 2, passed: 1, errors: 0, passRate: 0.5,
+    confidence95: wilsonInterval(1, 2)
+  });
+  assert.equal(result.byLanguage.greek.samples, 1);
+  assert.equal(result.byLanguage.greek.errors, 1);
+  assert.equal(result.byLanguage.greek.passRate, 0);
+  assert.equal(result.byDomain.services.samples, 3);
+  assert.equal(result.byDomain.negative_controls, undefined);
+  assert.equal(result.maxPassRateGap, 1);
+  assert.equal(result.withinTenPercentagePoints, false);
+  const equalZero = languageParity([
+    { expectedSource: "s", language: "english", domain: "x", status: "FAIL" },
+    { expectedSource: "s", language: "arabic", domain: "x", status: "FAIL" },
+    { expectedSource: "s", language: "greek", domain: "x", status: "FAIL" }
+  ]);
+  assert.equal(equalZero.withinTenPercentagePoints, false, "equal zero pass rates are not successful language parity");
+});
+
+test("real-data smoke cases use current corpus titles and never expect live prices from RAG", () => {
+  assert.ok(cases.some((item) => item.id === "services_en" && item.expectedDocumentTitle === "What the Cyprus company formation package includes"));
+  assert.ok(cases.some((item) => item.id === "services_ar" && item.language === "arabic"));
+  assert.ok(cases.some((item) => item.id === "services_el" && item.language === "greek"));
+  assert.equal(cases.some((item) => (item.expectedFacts || []).some((fact) => /€\s?\d|\d+\s*يورو/u.test(fact))), false);
+  assert.equal(cases.some((item) => item.id.startsWith("former_services_")), false, "missing approved transition evidence is tracked as a knowledge gap, not asserted as present");
+});
+
+test("Wilson intervals are unavailable for an empty sample and bounded for finite samples", () => {
+  assert.equal(wilsonInterval(0, 0), null);
+  const interval = wilsonInterval(10, 10);
+  assert.ok(interval.lower >= 0);
+  assert.ok(interval.upper <= 1);
+  assert.ok(interval.lower < 1);
+  assert.equal(interval.upper, 1);
 });

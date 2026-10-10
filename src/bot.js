@@ -12,7 +12,7 @@ const {
 const P = require("pino");
 const qrcode = require("qrcode-terminal");
 const { loadProjectEnv } = require("./env");
-const { askOpenRouter, embedText, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
+const { askOpenRouter, embedText, embedQueryTexts, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
 const { createStore } = require("./supabaseStore");
 const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
@@ -408,8 +408,9 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     const retrieval = await retrieveKnowledgeForTurn(customerText, {
       user: routed.user,
       intents: routed.metadata?.intent?.intents || [],
+      language: routed.metadata?.intent?.language || "english",
       store,
-      embedText,
+      embedQueryTexts,
       embeddingModel: DEFAULT_EMBEDDING_MODEL,
       matchCount: 6
     });

@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { hasConfirmationEventId, isAllowedAppointmentTransition, updateAppointmentIfStatusMatches } from "./appointmentStateMachine.mjs";
-import { buildSafeHistoryInsert, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
+import { areAdjacentConsentTurns, buildSafeHistoryInsert, hasPurposeBoundAutomatedReminderConsent, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
 import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate } from "./responsePolicy.mjs";
 // Was a hand-copied regex in this file that had drifted into a fail-open:
 // it let "100% success rate", "موافقة مضمونة" and "Σίγουρη έγκριση" through,
@@ -1141,7 +1141,7 @@ function validateHistoryMetadataPatch(value: unknown, userId: string) {
   if (value === undefined) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError("Metadata must be an object.", 400);
   const patch = value as Record<string, unknown>;
-  const allowedSections = new Set(["delivery", "editability", "whatsapp", "salesOffer", "specialistOffer"]);
+  const allowedSections = new Set(["delivery", "editability", "whatsapp", "salesOffer", "specialistOffer", "followUpConsent"]);
   if (Object.keys(patch).some((key) => !allowedSections.has(key))) throw new HttpError("Unsupported history metadata section.", 400);
 
   const deliveryFields: Record<string, (value: unknown) => boolean> = {
@@ -1191,6 +1191,15 @@ function validateHistoryMetadataPatch(value: unknown, userId: string) {
       continue;
     }
     const input = fields as Record<string, unknown>;
+    if (section === "followUpConsent") {
+      const stateValid = ["unknown", "granted", "denied", "revoked"].includes(String(input.state || ""));
+      const valid = stateValid && input.purpose === "automated_reminder" && input.channel === "whatsapp" &&
+        ["ar", "en", "el"].includes(String(input.language || "")) && isUuid(String(input.sourceTurnId || "")) &&
+        (input.offerSourceTurnId === null || isUuid(String(input.offerSourceTurnId || "")));
+      if (!valid || (input.state === "granted" && !isUuid(String(input.offerSourceTurnId || "")))) throw new HttpError("Invalid automated reminder consent metadata.", 400);
+      result[section] = input;
+      continue;
+    }
     const validators = section === "delivery" ? deliveryFields : section === "editability" ? editabilityFields : whatsappFields;
     if (Object.keys(input).some((key) => !validators[key])) throw new HttpError(`Unsupported ${section} metadata field.`, 400);
     for (const [key, item] of Object.entries(input)) {
@@ -1479,6 +1488,22 @@ async function runDynamicAction(name: string, body: Record<string, any>) {
     const { data: consentTurn, error: turnError } = await supabase.from("rafa_conversation_turns").select("id,metadata").eq("id", consent.source_turn_id).eq("contact_id", contact.contactId).maybeSingle();
     if (turnError) throw turnError;
     if (!consentTurn || !hasPurposeBoundFollowUpConsent(consent, consentTurn)) throw new HttpError("Purpose-bound follow-up consent is required.", 403);
+    const { data: reminderConsent, error: reminderError } = await supabase.from("rafa_contact_consents").select("consent_type,state,source_turn_id,offer_source_turn_id,language,channel").eq("contact_id", contact.contactId).eq("consent_type", "automated_reminder").maybeSingle();
+    if (reminderError) throw reminderError;
+    if (!reminderConsent || reminderConsent.state !== "granted" || !reminderConsent.source_turn_id || !reminderConsent.offer_source_turn_id) throw new HttpError("Automated reminder consent is required.", 403);
+    const { data: reminderTurns, error: reminderTurnError } = await supabase.from("rafa_conversation_turns")
+      .select("id,metadata,at").eq("contact_id", contact.contactId)
+      .in("id", [reminderConsent.source_turn_id, reminderConsent.offer_source_turn_id]);
+    if (reminderTurnError) throw reminderTurnError;
+    const confirmationTurn = (reminderTurns || []).find((turn) => turn.id === reminderConsent.source_turn_id);
+    const offerTurn = (reminderTurns || []).find((turn) => turn.id === reminderConsent.offer_source_turn_id);
+    if (!confirmationTurn || !offerTurn || !hasPurposeBoundAutomatedReminderConsent(reminderConsent, confirmationTurn, offerTurn)) throw new HttpError("Purpose-bound automated reminder consent is required.", 403);
+    const offerAt = Date.parse(String(offerTurn.at || "")), confirmationAt = Date.parse(String(confirmationTurn.at || ""));
+    if (!Number.isFinite(offerAt) || !Number.isFinite(confirmationAt) || confirmationAt < offerAt) throw new HttpError("Automated reminder consent source is invalid.", 403);
+    const { data: interveningTurns, error: interveningError } = await supabase.from("rafa_conversation_turns").select("id")
+      .eq("contact_id", contact.contactId).gte("at", new Date(offerAt).toISOString()).lte("at", new Date(confirmationAt).toISOString()).order("at", { ascending: true });
+    if (interveningError) throw interveningError;
+    if (!areAdjacentConsentTurns(interveningTurns || [], offerTurn.id, confirmationTurn.id)) throw new HttpError("Automated reminder consent was not given immediately after its offer.", 403);
     const saved = await persistWorkflow("follow-up", { userId, consentState: "granted", status: "scheduled", nextDueAt: dueAt.toISOString() });
     if (!saved?.followUp?.contact_id) throw new Error("Follow-up schedule persistence was not confirmed.");
     return { id: saved.followUp.contact_id, status: "scheduled", userSafeSummary: "Your follow-up request is scheduled." };
@@ -1587,13 +1612,36 @@ async function persistWorkflow(kind: string, body: Record<string, unknown>) {
     return { intents: data || [] };
   }
   if (kind === "consent") {
-    if (body.consentType !== "follow_up") throw new HttpError("Only follow-up consent is supported.", 400);
+    const consentType = String(body.consentType || "follow_up");
+    if (!["follow_up", "automated_reminder"].includes(consentType)) throw new HttpError("Unsupported consent scope.", 400);
     const state = String(body.state || "");
     if (!["unknown", "granted", "denied", "revoked"].includes(state)) throw new HttpError("Invalid consent state.", 400);
-    const { data, error } = await supabase.from("rafa_contact_consents").upsert({ contact_id: contact.contactId, consent_type: "follow_up", state, source_turn_id: sourceTurnId }, { onConflict: "contact_id,consent_type" }).select("*").single();
+    const purpose = consentType === "automated_reminder" ? "automated_reminder" : "specialist_contact";
+    const language = ["ar", "en", "el"].includes(String(body.language || "")) ? String(body.language) : "unknown";
+    const channel = String(body.channel || "whatsapp");
+    if (channel !== "whatsapp" || (state === "granted" && language === "unknown")) throw new HttpError("Consent provenance is incomplete.", 400);
+    const offerSourceTurnId = body.offerSourceTurnId ? String(body.offerSourceTurnId) : null;
+    if (state === "granted" && consentType === "automated_reminder") {
+      if (!sourceTurnId || !offerSourceTurnId || !isUuid(offerSourceTurnId)) throw new HttpError("Automated reminder offer provenance is required.", 400);
+      const { data: linkedTurns, error: linkedError } = await supabase.from("rafa_conversation_turns").select("id,metadata,at").eq("contact_id", contact.contactId).in("id", [sourceTurnId, offerSourceTurnId]);
+      if (linkedError) throw linkedError;
+      const confirmationTurn = (linkedTurns || []).find((turn) => turn.id === sourceTurnId);
+      const offerTurn = (linkedTurns || []).find((turn) => turn.id === offerSourceTurnId);
+      const consent = { consent_type: consentType, state, source_turn_id: sourceTurnId, offer_source_turn_id: offerSourceTurnId, language, channel };
+      if (!confirmationTurn || !offerTurn || !hasPurposeBoundAutomatedReminderConsent(consent, confirmationTurn, offerTurn)) throw new HttpError("Automated reminder consent must affirm a tracked reminder offer.", 403);
+      const offerAt = Date.parse(String(offerTurn.at || "")), confirmationAt = Date.parse(String(confirmationTurn.at || ""));
+      if (!Number.isFinite(offerAt) || !Number.isFinite(confirmationAt) || confirmationAt < offerAt) throw new HttpError("Automated reminder offer provenance is invalid.", 403);
+      const { data: adjacentTurns, error: adjacentError } = await supabase.from("rafa_conversation_turns").select("id").eq("contact_id", contact.contactId)
+        .gte("at", new Date(offerAt).toISOString()).lte("at", new Date(confirmationAt).toISOString()).order("at", { ascending: true });
+      if (adjacentError) throw adjacentError;
+      if (!areAdjacentConsentTurns(adjacentTurns || [], offerSourceTurnId, sourceTurnId)) throw new HttpError("Reminder consent must immediately follow its offer.", 403);
+    }
+    const { data, error } = await supabase.from("rafa_contact_consents").upsert({ contact_id: contact.contactId, consent_type: consentType, state, purpose, language, channel, source_turn_id: sourceTurnId, offer_source_turn_id: offerSourceTurnId }, { onConflict: "contact_id,consent_type" }).select("*").single();
     if (error) throw error;
-    const { error: followUpError } = await supabase.from("rafa_follow_up_states").upsert({ contact_id: contact.contactId, consent_state: state, status: state === "granted" ? "eligible" : "suppressed" }, { onConflict: "contact_id" });
-    if (followUpError) throw followUpError;
+    if (consentType === "follow_up") {
+      const { error: followUpError } = await supabase.from("rafa_follow_up_states").upsert({ contact_id: contact.contactId, consent_state: state, status: state === "granted" ? "eligible" : "suppressed" }, { onConflict: "contact_id" });
+      if (followUpError) throw followUpError;
+    }
     return { consent: data };
   }
   if (kind === "follow-up") {
@@ -1942,20 +1990,25 @@ function rowToUser(row: Record<string, any>, history: unknown[]) {
 async function attachWorkflowState(user: Record<string, any>) {
   const contactId = user.contactId;
   if (!contactId) return user;
-  const [consentResult, followUpResult, qualificationResult, existingClientResult] = await Promise.all([
+  const [consentResult, automatedReminderResult, followUpResult, qualificationResult, existingClientResult] = await Promise.all([
     supabase.from("rafa_contact_consents").select("state,observed_at").eq("contact_id", contactId).eq("consent_type", "follow_up").maybeSingle(),
+    supabase.from("rafa_contact_consents").select("state,observed_at").eq("contact_id", contactId).eq("consent_type", "automated_reminder").maybeSingle(),
     supabase.from("rafa_follow_up_states").select("consent_state,status,next_due_at,last_sent_at,updated_at").eq("contact_id", contactId).maybeSingle(),
     supabase.from("rafa_lead_qualifications").select("need,value,timing,authority,readiness,fit,total,status,priority_reason,thresholds,assessed_at").eq("contact_id", contactId).maybeSingle(),
     supabase.from("rafa_existing_client_verifications").select("state,attempts,identifier_provided,verified,account_disclosure_allowed,verified_at,updated_at").eq("contact_id", contactId).maybeSingle()
   ]);
-  for (const result of [consentResult, followUpResult, qualificationResult, existingClientResult]) if (result.error) throw result.error;
+  for (const result of [consentResult, automatedReminderResult, followUpResult, qualificationResult, existingClientResult]) if (result.error) throw result.error;
   const consent = consentResult.data;
+  const automatedReminderConsent = automatedReminderResult.data;
   const followUpState = followUpResult.data;
   const qualification = qualificationResult.data;
   const existingClient = existingClientResult.data;
   return {
     ...user,
-    consent: consent ? { followUp: consent.state, followUpUpdatedAt: consent.observed_at } : undefined,
+    consent: consent || automatedReminderConsent ? {
+      ...(consent ? { followUp: consent.state, followUpUpdatedAt: consent.observed_at } : {}),
+      ...(automatedReminderConsent ? { automatedReminder: automatedReminderConsent.state, automatedReminderUpdatedAt: automatedReminderConsent.observed_at } : {})
+    } : undefined,
     followUpState: followUpState || undefined,
     leadQualification: qualification || undefined,
     profile: existingClient ? { ...(user.profile || {}), existingClientState: {

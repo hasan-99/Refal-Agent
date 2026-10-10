@@ -119,6 +119,40 @@ function hasFollowUpPermission(user, { requireExplicit = true } = {}) {
   return requireExplicit ? state === CONSENT_STATES.GRANTED : ![CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(state);
 }
 
+// Automated reminders are a separate purpose from a human specialist's
+// follow-up. A specialist-contact grant must never authorize the scheduler.
+// This scope is deliberately accepted only when its durable source turn is
+// present and identifies the channel and language used for the grant.
+function hasAutomatedReminderPermission(user) {
+  if (!user?.id || user.id.startsWith("self-test:") || user.blocked || user.consent?.blocked || user.followUpBlocked || user.optedOut === true) return false;
+  let state = CONSENT_STATES.UNKNOWN;
+  for (const turn of user.history || []) {
+    const messageState = consentFromText(turn?.message || "");
+    const explicitState = turn?.metadata?.followUpConsent?.state;
+    const deniedState = [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(explicitState)
+      ? explicitState
+      : messageState;
+    if ([CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(deniedState)) {
+      state = deniedState;
+      continue;
+    }
+    const grant = turn?.metadata?.followUpConsent;
+    const sourceId = String(turn?.id || "");
+    const channel = String(grant?.channel || turn?.channel || turn?.source || "").toLowerCase();
+    const language = String(grant?.language || turn?.metadata?.intent?.language || "").toLowerCase();
+    const validLanguage = ["en", "ar", "el", "english", "arabic", "greek"].includes(language);
+    const isValidGrant = grant?.state === CONSENT_STATES.GRANTED
+      && grant?.purpose === "automated_reminder"
+      && Boolean(sourceId)
+      && grant?.sourceTurnId === sourceId
+      && Boolean(channel)
+      && validLanguage
+      && Number.isFinite(Date.parse(turn?.at || ""));
+    if (isValidGrant) state = CONSENT_STATES.GRANTED;
+  }
+  return state === CONSENT_STATES.GRANTED;
+}
+
 function recordFollowUpConsent(user, message, now = new Date()) {
   const next = consentFromText(message);
   if (next === CONSENT_STATES.UNKNOWN) return user;
@@ -141,6 +175,7 @@ module.exports = {
   detectPriority,
   getConsentState,
   hasFollowUpPermission,
+  hasAutomatedReminderPermission,
   inferDimensions,
   ownerThresholds,
   qualifyLead,

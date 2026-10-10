@@ -261,7 +261,7 @@ class EdgeApiStore {
   }
 
   async saveConsent(userId, state, options = {}) {
-    const { consent } = await this.persistWorkflow("consent", { userId, consentType: "follow_up", state, ...options });
+    const { consent } = await this.persistWorkflow("consent", { userId, consentType: options.consentType || "follow_up", state, ...options });
     return consent;
   }
 

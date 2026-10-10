@@ -33,6 +33,7 @@ const { detectMessageLanguage } = require("./language");
 // telemetry helper; reusing it here does not change its own behavior or
 // make it a gate on its own — only this file's use of its return value gates.
 const { languageSignalsFrom } = require("./agentObservability");
+const { findRepeatedQuestion } = require("./neverReAsk");
 
 const DEFAULT_MAX_STEPS = 4;
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -138,6 +139,8 @@ function checkLanguageEquivalence(text, locale) {
 function checkDraftPolicy(text, thresholds, observations, locale, context = {}) {
   const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage });
   if (!policy.valid) return policy;
+  const repeatedFields = findRepeatedQuestion(text, context.knownCustomerFacts);
+  if (repeatedFields.length) return { ...policy, valid: false, reasons: repeatedFields.map((field) => `never_reask:${field}`) };
   const conflicts = resolveObservationConflicts(context, observations);
   const evidenceItems = collectApprovedKnowledgeEvidence(observations)
     .filter((item) => !item.sourceRef || !conflicts.staleRefs.has(item.sourceRef));

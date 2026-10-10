@@ -71,12 +71,12 @@ function toSupabaseVector(values) {
   return vector.concat(Array(EMBEDDING_DIMENSIONS - LOCAL_EMBEDDING_DIMENSIONS).fill(0));
 }
 
-async function embedWithPipeline(texts, pipelineFactory = loadEmbeddingPipeline) {
+async function embedTextsWithPrefix(texts, prefix, pipelineFactory = loadEmbeddingPipeline) {
   if (!Array.isArray(texts) || texts.length < 1 || texts.length > 500) throw new Error("Embedding batch size is invalid.");
   const pipeline = await pipelineFactory();
   const vectors = [];
   for (let index = 0; index < texts.length; index += EMBEDDING_BATCH_SIZE) {
-    const batch = texts.slice(index, index + EMBEDDING_BATCH_SIZE).map((text) => `passage: ${redactPersonalData(text).slice(0, 6000)}`);
+    const batch = texts.slice(index, index + EMBEDDING_BATCH_SIZE).map((text) => `${prefix}: ${redactPersonalData(text).slice(0, 6000)}`);
     const output = await pipeline(batch, { pooling: "mean", normalize: true, truncation: true, max_length: 512 });
     const dimensions = output?.dims?.at(-1);
     const data = output?.data;
@@ -90,8 +90,16 @@ async function embedWithPipeline(texts, pipelineFactory = loadEmbeddingPipeline)
   return vectors;
 }
 
+async function embedWithPipeline(texts, pipelineFactory = loadEmbeddingPipeline) {
+  return embedTextsWithPrefix(texts, "passage", pipelineFactory);
+}
+
 async function embedTexts(texts, pipelineFactory) {
   return embedWithPipeline(texts, pipelineFactory);
+}
+
+async function embedQueryTexts(texts, pipelineFactory) {
+  return embedTextsWithPrefix(texts, "query", pipelineFactory);
 }
 
 async function embedText(text, pipelineFactory) {
@@ -531,4 +539,4 @@ function redactPersonalData(value) {
     .replace(/\b(?:my name is|i am|i'm|my email is|my phone is|call me at)\s+[^,.!?\n]+/gi, "[personal detail]");
 }
 
-module.exports = { askOpenRouter, embedText, embedTexts, embedWithPipeline, warmEmbeddingPipeline: loadEmbeddingPipeline, normalizeOpenRouterUsage, redactPersonalData, containsPriceClaim, containsUnsupportedPackageInclusion, withoutPriceFacts, suppressRepeatedSpecialistOffer, DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS };
+module.exports = { askOpenRouter, embedText, embedTexts, embedQueryTexts, embedWithPipeline, warmEmbeddingPipeline: loadEmbeddingPipeline, normalizeOpenRouterUsage, redactPersonalData, containsPriceClaim, containsUnsupportedPackageInclusion, withoutPriceFacts, suppressRepeatedSpecialistOffer, DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS };

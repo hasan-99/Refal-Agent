@@ -1424,3 +1424,83 @@ test("P2.6: the sticky lock still outlives the turn, for an Arabic and a Greek p
     assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false, id);
   }
 });
+
+test("automated reminder consent requires a tracked reminder offer in the immediately prior turn", async () => {
+  const user = { id: "reminder-consent", profile: {}, history: [], workflowCalls: [] };
+  let sequence = 0;
+  const store = integrationStore(user);
+  store.addHistory = async (_id, message, response, extra = {}) => {
+    const turn = { id: `turn-${++sequence}`, at: new Date(Date.now() + sequence).toISOString(), message, response, metadata: extra.metadata || {} };
+    user.history.push(turn);
+    return turn;
+  };
+  const offerHistory = await recordHistory(store, user.id, "Question about reminders", "Would you like automated reminders for this request?", {
+    metadata: { intent: { language: "english", intents: ["appointment"] } }
+  });
+  const offerTurn = user.history.at(-1);
+  assert.equal(offerTurn.metadata.automatedReminderOffer?.purpose, "automated_reminder");
+  assert.equal(offerTurn.metadata.specialistOffer, undefined, "automated reminders do not create specialist-contact consent");
+
+  const accepted = await routeMessageResult({ userId: user.id, text: "yes", store, existingUser: user });
+  assert.equal(accepted.metadata.automatedReminderConsent.state, "granted");
+  assert.equal(accepted.metadata.automatedReminderConsent.offerSourceTurnId, offerTurn.id);
+  assert.equal(user.history.at(-1).metadata.followUpConsent.sourceTurnId, user.history.at(-1).id);
+  assert.equal(user.history.at(-1).metadata.followUpConsent.purpose, "automated_reminder");
+  const persisted = user.workflowCalls.find(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "automated_reminder");
+  assert.ok(persisted);
+  assert.equal(persisted[2], "granted");
+  assert.equal(persisted[3].sourceTurnId, user.history.at(-1).id);
+  assert.equal(persisted[3].offerSourceTurnId, offerTurn.id);
+  assert.equal(persisted[3].purpose, "automated_reminder");
+  assert.equal(persisted[3].language, "en");
+  assert.equal(persisted[3].channel, "whatsapp");
+  assert.equal(user.workflowCalls.some(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "follow_up"), false);
+});
+
+test("bare yes and delayed yes do not grant automated reminder consent", async () => {
+  for (const history of [
+    [{ id: "unrelated", at: new Date().toISOString(), message: "Hours?", response: "Anything else?", metadata: {} }],
+    [
+      { id: "offer", at: new Date().toISOString(), message: "Question", response: "Would you like automated reminders?", metadata: { automatedReminderOffer: { consentRequired: true, purpose: "automated_reminder", offeredAt: new Date().toISOString(), language: "en", channel: "whatsapp" } } },
+      { id: "intervening", at: new Date().toISOString(), message: "What are your opening hours?", response: "We are checking the approved information.", metadata: {} }
+    ]
+  ]) {
+    const user = { id: `reminder-no-infer-${Math.random()}`, profile: {}, history, workflowCalls: [] };
+    const result = await routeMessageResult({ userId: user.id, text: "yes", store: integrationStore(user), existingUser: user });
+    assert.notEqual(result.metadata.automatedReminderConsent?.state, "granted");
+    assert.equal(user.workflowCalls.some(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "automated_reminder" && _state === "granted"), false);
+  }
+});
+
+test("automated reminder offers and consent provenance work in Arabic, English, and Greek", async () => {
+  const cases = [
+    { language: "arabic", reply: "نعم", offer: "هل ترغب في تفعيل التذكيرات الآلية لهذا الطلب؟", code: "ar" },
+    { language: "english", reply: "yes", offer: "Would you like automated reminders for this request?", code: "en" },
+    { language: "greek", reply: "Ναι", offer: "Θα θέλατε αυτόματες υπενθυμίσεις για αυτό το αίτημα;", code: "el" }
+  ];
+  for (const item of cases) {
+    const user = { id: `localized-reminder-${item.code}`, profile: {}, history: [], workflowCalls: [] };
+    let sequence = 0;
+    const store = integrationStore(user);
+    store.addHistory = async (_id, message, response, extra = {}) => {
+      const turn = { id: `${item.code}-${++sequence}`, at: new Date(Date.now() + sequence).toISOString(), message, response, metadata: extra.metadata || {} };
+      user.history.push(turn);
+      return turn;
+    };
+    await recordHistory(store, user.id, "Inquiry", item.offer, { metadata: { intent: { language: item.language } } });
+    const offerTurn = user.history.at(-1);
+    assert.equal(offerTurn.metadata.automatedReminderOffer?.language, item.code, item.language);
+    const confirmed = await routeMessageResult({ userId: user.id, text: item.reply, store, existingUser: user });
+    assert.equal(confirmed.metadata.automatedReminderConsent?.state, "granted", item.language);
+    const [, , , provenance] = user.workflowCalls.find(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "automated_reminder");
+    assert.equal(provenance.language, item.code, item.language);
+    assert.equal(provenance.channel, "whatsapp", item.language);
+  }
+});
+
+test("a global stop revokes automated reminder and specialist contact scopes", async () => {
+  const user = { id: "reminder-global-stop", profile: {}, history: [], workflowCalls: [] };
+  await recordHistory(integrationStore(user), user.id, "STOP", "Understood. I’ll stop further outreach.", { metadata: { intent: { language: "english" } } });
+  const revoked = user.workflowCalls.filter(([kind, _id, state]) => kind === "consent" && state === "revoked");
+  assert.deepEqual(revoked.map(([, , , options]) => options.consentType).sort(), ["automated_reminder", "follow_up"]);
+});

@@ -8,14 +8,14 @@ function detectMessageLanguage(text) {
 
   // Detect common Latin-script Syrian Arabic when the user types Arabizi.
   // Require a distinctive dialect word so ordinary English stays English.
-  if (!arabicMatches.length && !greekMatches.length && /\b(?:baddi|bade|bdi|shu|shoo|kifak|keefak|3andi|3am|wein|leish|mnih|kwayyis|yalla|wallah|hayda|hayde|mafi|shoghl(?:ha)?|barmeje|mish|mesh|t2a(?:k|kk)ed|adde|adey|la\s+t2a(?:k|kk)ed)\b/iu.test(value)) {
+  if (!arabicMatches.length && !greekMatches.length && /\b(?:baddi|bade|bdi|shu|shoo|kifak|keefak|3andi|3am|wein|leish|mnih|kwayyis|yalla|wallah|hayda|hayde|mafi|shoghl(?:ha)?|barmeje|mish|mesh|t2a(?:k|kk)ed|adde|adey|la\s+t2a(?:k|kk)ed|tasees|ta.?sis|sharike|sherke|dareebe|darayeb|muhasabe|muhasaba|iqame|i.?qame|3aqar|3a.?qar|mashroo3|masareef|bankiye|mowazzaf|mowazafeen)\b/iu.test(value)) {
     return "arabic";
   }
 
   // Greeklish is common in WhatsApp. These domain and conversational terms
   // are distinctive enough to identify short messages without misclassifying
   // ordinary English.
-  if (!arabicMatches.length && !greekMatches.length && /\b(?:thelo|anoikso|etaireia|stin|kypro|yperesies|exete|asxoleitai|rantevou|kostizei|sigouro|poso|akoma|den|exo|gia|ora|xreiaso|epikoinonias|stoicheia|piesis|kleiso|argotera|efharisto|periptosi|diki|sigkrinw|apofasisei|elefthero|kata\d?esi|egkrisi|synithismeno|xroniko|diastima|mexri|kathorisei|teliko|desmeftiko|epivevaiose|anthropos|paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|tesseres|mines|grammateia|diefthynsi|ftiaxno|efarmogi|logismiko)\b/iu.test(value)) {
+  if (!arabicMatches.length && !greekMatches.length && /\b(?:thelo|anoikso|etaireia|stin|kypro|yperesies|exete|asxoleitai|rantevou|kostizei|sigouro|poso|akoma|den|exo|gia|ora|xreiaso|epikoinonias|stoicheia|piesis|kleiso|argotera|efharisto|periptosi|diki|sigkrinw|apofasisei|elefthero|kata\d?esi|egkrisi|synithismeno|xroniko|diastima|mexri|kathorisei|teliko|desmeftiko|epivevaiose|anthropos|paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|tesseres|mines|grammateia|diefthynsi|ftiaxno|efarmogi|logismiko|foros|forolog(?:ia|ikos|iki)|akinito|enoikio|trapeza|etaireikos|logistiki|adeia|adeia\s+diamoni|monimi\s+diamoni|epixeirisi|epixeirimatiko|systasi|idioktisia|akinita)\b/iu.test(value)) {
     return "greek";
   }
 
@@ -31,9 +31,16 @@ function detectMessageLanguage(text) {
 
 function detectExplicitLanguageRequest(text) {
   const value = String(text || "").normalize("NFKC");
-  if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?greek\b|\bgreek\s+(?:please|instead|from now on)\b|στα\s+ελληνικά|στα\s+ελληνικα|να\s+συνεχίσουμε\s+στα\s+ελληνικά/iu.test(value)) return "greek";
-  if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?arabic\b|\barabic\s+(?:please|instead|from now on)\b|بالعربي|باللغة\s+العربية|نحكي\s+عربي|نكمل\s+عربي|رد\s+عربي/iu.test(value)) return "arabic";
-  if (/\b(?:continue|switch|reply|respond|write)\b.{0,36}\b(?:in\s+)?english\b|\benglish\s+(?:please|instead|from now on)\b|στα\s+αγγλικά|στα\s+αγγλικα/iu.test(value)) return "english";
+  if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?greek\b|\bgreek\s+(?:please|instead|from now on)\b|στα\s+ελληνικ(?:ά|α)|να\s+συνεχίσουμε\s+στα\s+ελληνικ(?:ά|α)|στα\s+ελληνικα/iu.test(value)) return "greek";
+  if (/\b(?:apantise|grapse|milise|synexise)\s+(?:sta\s+)?ellinika\b|(?:احكي|اكتب|رد|جاوب)(?:ني)?(?:\s+(?:لي|علي|معي))?\s*(?:بال)?(?:يوناني|اليوناني)/iu.test(value)) return "greek";
+  if (/\b(?:continue|switch|reply|respond|write)\b.{0,36}\b(?:in\s+)?english\b|\benglish\s+(?:please|instead|from now on)\b|στα\s+αγγλικ(?:ά|α)|(?:γράψε|γραψε|απάντησε|απαντησε|μίλα|μιλα)\s+στα\s+αγγλικ(?:ά|α)|(?:احكي|اكتب|رد|جاوب)(?:ني)?(?:\s+(?:لي|علي|معي))?\s*(?:بال)?(?:إنجليزي|انجليزي|إنكليزي|انكليزي|الإنجليزية|الانجليزية)/iu.test(value)) return "english";
+  if (/\b(?:continue|switch|reply|respond|speak|talk|write)\b.{0,36}\b(?:in\s+)?arabic\b|\barabic\s+(?:please|instead|from now on)\b|بالعربي|باللغة\s+العربية|نحكي\s+عربي|نكمل\s+عربي|رد\s+عربي|(?:احكي|اكتب|رد|جاوب)(?:ني)?(?:\s+(?:لي|علي|معي))?\s*(?:بال)?(?:عربي|العربية)/iu.test(value)) return "arabic";
+  if (/στα\s+αραβικ(?:ά|α)|(?:γράψε|γραψε|απάντησε|απαντησε|μίλα|μιλα)\s+στα\s+αραβικ(?:ά|α)/iu.test(value)) return "arabic";
+  if (/στα\s+ελληνικ(?:ά|α)|(?:γράψε|γραψε|απάντησε|απαντησε|μίλα|μιλα)\s+στα\s+ελληνικ(?:ά|α)/iu.test(value)) return "greek";
+  if (/\b(?:apantise|grapse|milise|synexise)\s+(?:sta\s+)?(?:agglika|ellinika|aravika)\b/iu.test(value)) {
+    const requested = value.match(/\b(?:apantise|grapse|milise|synexise)\s+(?:sta\s+)?(agglika|ellinika|aravika)\b/iu)?.[1]?.toLowerCase();
+    return requested === "ellinika" ? "greek" : requested === "aravika" ? "arabic" : "english";
+  }
   return null;
 }
 
