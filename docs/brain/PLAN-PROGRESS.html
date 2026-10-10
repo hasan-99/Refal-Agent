@@ -877,11 +877,11 @@
       <div class="dbblock">
         <div class="dbhead">🗄 Database changes for M3 — apply in this order</div>
         <ol class="dblist">
-          <li class="dbrow">
-            <span class="dbnum">1</span>
+          <li class="dbrow ran">
+            <span class="dbnum">✓</span>
             <code class="dbfile">supabase/migrations/20261010020000_refal_fact_governance.sql</code>
-            <span class="dbbadge ready">ready to run</span>
-            <span class="dbnote">P3.9. Stop the save path forcing review_status=&#39;approved&#39; and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing trust_tier CHECK (CR-023). Must not break the partial unique index behind CR-010. WRITTEN AND APPLIED 2026-10-10.</span>
+            <span class="dbbadge ran">executed</span>
+            <span class="dbnote">P3.9. Stop the save path forcing review_status=&#39;approved&#39; and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing trust_tier CHECK (CR-023). Must not break the partial unique index behind CR-010. APPLIED 2026-10-10, and re-applied to prove idempotency.</span>
           </li>
         </ol>
       </div>
@@ -1689,7 +1689,7 @@
     </details>
 
 <footer>
-  Generated 2026-10-10 05:47 UTC · 16 milestones · 83 phases · 118 waves<br>
+  Generated 2026-10-10 06:02 UTC · 16 milestones · 83 phases · 118 waves<br>
   Regenerate after any plan update with <code>npm run plan:ui</code>, then refresh this page.<br>
   Status marks come straight from the plan: <code>[ ]</code> not started · <code>[~]</code> in progress · <code>[x]</code> done.
 </footer>

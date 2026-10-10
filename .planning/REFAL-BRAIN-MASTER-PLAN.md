@@ -720,7 +720,7 @@ node scripts/evaluateRag.js > /tmp/rag.log 2>&1; echo "exit=$?"
 ---
 
 **Database changes (apply in order).**
-1. `supabase/migrations/20261010020000_refal_fact_governance.sql` — P3.9. Stop the save path forcing `review_status='approved'` and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing `trust_tier` CHECK (CR-023). Must not break the partial unique index behind CR-010. **WRITTEN AND APPLIED 2026-10-10.**
+1. [x] `supabase/migrations/20261010020000_refal_fact_governance.sql` — P3.9. Stop the save path forcing `review_status='approved'` and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing `trust_tier` CHECK (CR-023). Must not break the partial unique index behind CR-010. **APPLIED 2026-10-10**, and re-applied to prove idempotency.
 
 > **This file was missed when P3.9 was first ticked, and BOSS caught it in the progress UI.** The
 > fact register (MIG-01) governs each MB **fact**; this one governs each knowledge **document**,

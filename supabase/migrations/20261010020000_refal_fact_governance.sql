@@ -70,9 +70,23 @@ where governance_tier is null
 -- A new parameter changes the identifying argument-type list, so CREATE OR
 -- REPLACE would overload rather than replace. Drop the 7-argument signature
 -- first, exactly as 20261006120000 had to.
+-- Drops the OLD 7-argument signature. A new parameter changes the identifying
+-- argument-type list, so CREATE OR REPLACE would overload rather than replace,
+-- the same reasoning 20261006120000 already had to apply. On a second run this
+-- is a no-op, because the 7-argument version is already gone.
 drop function if exists public.rafa_store_knowledge_revision(uuid, text, text, text, text, jsonb, jsonb);
 
-create function public.rafa_store_knowledge_revision(
+-- CREATE OR REPLACE, not CREATE.
+--
+-- The first cut of this file used a bare CREATE, which made the header's "safe
+-- to run twice" a lie: the second run would die on `42723: function
+-- rafa_store_knowledge_revision already exists`, because the drop above only
+-- removes the 7-argument signature and this is the 9-argument one. Caught when
+-- BOSS asked for the migration to be run again after it had already been
+-- applied. CREATE OR REPLACE is correct here precisely because the identifying
+-- argument types are now unchanged between runs, and it is still allowed to
+-- change the parameter DEFAULTS.
+create or replace function public.rafa_store_knowledge_revision(
   p_source_id uuid,
   p_title text,
   p_content text,
