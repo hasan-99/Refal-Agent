@@ -198,10 +198,10 @@ function checkDraftPolicy(text, thresholds, observations, locale, context = {}) 
 //   tools: { [name]: { run(args, toolContext) } }       -- the deterministic tool registry
 //   toolContext: extra data (store, user, etc.) passed through to every tool.run call
 //   maxSteps: bounded step budget, default 4 (never unlimited)
-async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS } = {}) {
+async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [] } = {}) {
   if (typeof decideNextStep !== "function") throw new Error("runAgentTurn requires a decideNextStep function.");
-  const observations = [];
-  const toolsUsed = [];
+  const observations = Array.isArray(initialObservations) ? [...initialObservations] : [];
+  const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
 
   for (let step = 1; step <= maxSteps; step += 1) {
     let rawDecision;
@@ -241,7 +241,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
         result = { ok: false, status: "error", reasonCode: "TOOL_THREW", message: String(error?.message || error).slice(0, 200) };
       }
       observations.push({ step, tool: validated.tool, args: validated.args, result });
-      toolsUsed.push(validated.tool);
+      if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
       continue;
     }
 

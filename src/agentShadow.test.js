@@ -111,7 +111,10 @@ test("runShadowAgentTurn, when enabled, reaches the real tool/store through a sc
   assert.equal(events[0].fields.ragResultStatus, "found");
   assert.equal(events[0].fields.responseLength, "The price is EUR 1500.".length);
   assert.equal(events[0].fields.response, undefined, "the logged event must never carry the free-text response");
-  assert.deepEqual(events[0].fields.toolCalls, [{ tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null }]);
+  assert.deepEqual(events[0].fields.toolCalls, [
+    { tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null },
+    { tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null }
+  ]);
   assert.equal(events[0].fields.toolCalls[0].args, undefined, "a tool-call observation must never carry raw args");
 });
 

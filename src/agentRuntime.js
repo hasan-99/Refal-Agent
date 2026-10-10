@@ -13,6 +13,58 @@ const { runAgentTurn, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { embedText: defaultEmbedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
+const { INTENTS } = require("./intent");
+
+// Factual customer questions must not depend on the model remembering to ask
+// for its evidence first. Retrieve approved knowledge deterministically for
+// these routed intents, then let the Agent reason over that bounded result.
+const KNOWLEDGE_REQUIRED_INTENTS = new Set([
+  INTENTS.COMPANY_INFO, INTENTS.BUSINESS_AREAS, INTENTS.PRICING, INTENTS.SERVICES,
+  INTENTS.CONTACT, INTENTS.COMPANY_FORMATION, INTENTS.ACCOUNTING, INTENTS.VAT,
+  INTENTS.CYPRUS_BUSINESS_EXPANSION, INTENTS.BUSINESS_RELOCATION, INTENTS.RESIDENCY_ENQUIRY,
+  INTENTS.REAL_ESTATE_PURCHASE, INTENTS.REAL_ESTATE_INVESTMENT, INTENTS.LAND_OWNER,
+  INTENTS.PROPERTY_DEVELOPMENT, INTENTS.CONSTRUCTION_TENDER, INTENTS.PROJECT_MANAGEMENT,
+  INTENTS.INVESTMENT_OPPORTUNITY, INTENTS.INVESTMENT_PARTNERSHIP, INTENTS.STRATEGIC_PARTNERSHIP,
+  INTENTS.INFRASTRUCTURE, INTENTS.TECHNOLOGY, INTENTS.OPERATIONS, INTENTS.STRATEGIC_ASSETS,
+  INTENTS.BUSINESS_PROPOSAL, INTENTS.PROJECT_ENQUIRY, INTENTS.GENERAL_INFORMATION,
+  INTENTS.REAL_ESTATE, INTENTS.LAND_DEVELOPMENT, INTENTS.CONSTRUCTION,
+  INTENTS.CORPORATE_SERVICES, INTENTS.INVESTMENT, INTENTS.PARTNERSHIP
+]);
+const BROAD_COMPANY_INTENTS = new Set([
+  INTENTS.COMPANY_INFO, INTENTS.BUSINESS_AREAS, INTENTS.SERVICES, INTENTS.CORPORATE_SERVICES
+]);
+const COMPANY_OVERVIEW_RETRIEVAL_TERMS = [
+  "Refalco Group company overview: company formation and structuring, tax and accounting, investment, real estate and property development, comprehensive investment and structural solutions.",
+  "تأسيس الشركات والهيكلة، ملفات الضريبة والمحاسبة، الملفات الاستثمارية، العقار والتطوير، حلول استثمارية وهيكلية شاملة."
+].join(" ");
+
+function requiresApprovedKnowledge(intents) {
+  return Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+}
+
+async function initialKnowledgeObservation(currentMessage, intents, toolContext, tools) {
+  if (!requiresApprovedKnowledge(intents)) return [];
+  const tool = tools?.searchApprovedKnowledge;
+  const message = String(currentMessage || "").trim().slice(0, 1000);
+  const query = Array.isArray(intents) && intents.some((intent) => BROAD_COMPANY_INTENTS.has(intent))
+    ? `${message}\n${COMPANY_OVERVIEW_RETRIEVAL_TERMS}`.slice(0, 1800)
+    : message;
+  const args = { query };
+  let result;
+  try {
+    if (typeof tool?.run !== "function") throw new Error("Approved knowledge search is unavailable.");
+    result = await tool.run(args, toolContext);
+  } catch (error) {
+    result = {
+      ok: false,
+      status: "error",
+      reasonCode: "RETRIEVAL_FAILED",
+      message: String(error?.message || error).slice(0, 200),
+      modelObservation: { type: "approved_knowledge", status: "error", evidence: [], truncated: false }
+    };
+  }
+  return [{ step: 0, tool: "searchApprovedKnowledge", args, result }];
+}
 
 // Everything a tool might need, bound once per turn. Deliberately narrow:
 // only what the Ticket 001 tools actually read (store, user, userId, intents,
@@ -99,7 +151,8 @@ async function runAgentTurnForContact({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
     inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy
   });
-  return runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps });
+  const initialObservations = await initialKnowledgeObservation(currentMessage, intents, toolContext, tools);
+  return runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps, initialObservations });
 }
 
-module.exports = { runAgentTurnForContact, buildToolContext };
+module.exports = { runAgentTurnForContact, buildToolContext, requiresApprovedKnowledge };

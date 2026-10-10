@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { runAgentTurnForContact, buildToolContext } = require("./agentRuntime");
+const { INTENTS } = require("./intent");
 
 function scriptedDecider(decisions) {
   let index = 0;
@@ -40,6 +41,41 @@ test("RAG is never invoked when the Agent's decision never asks for it (e.g. a s
 
   assert.equal(result.outcome, "responded");
   assert.equal(searchCalls, 0, "a plain acknowledgement must never trigger a knowledge search");
+});
+
+test("factual services intents retrieve approved knowledge before the model decides, even if it tries to answer immediately", async () => {
+  let searchCalls = 0;
+  let observationsSeenByModel = null;
+  const store = {
+    searchKnowledge: async (query) => {
+      searchCalls += 1;
+      assert.match(query, /^What services do you offer\?/);
+      assert.match(query, /company formation and structuring/);
+      assert.match(query, /العقار والتطوير/u);
+      return [{ heading: "Company formation", content: "We provide company formation support." }];
+    }
+  };
+  const decide = async ({ observations }) => {
+    observationsSeenByModel = observations;
+    return { type: "respond", text: "We provide company formation support." };
+  };
+
+  const result = await runAgentTurnForContact({
+    currentMessage: "What services do you offer?",
+    locale: "english",
+    store,
+    user: { id: "u1" },
+    userId: "u1",
+    intents: [INTENTS.SERVICES],
+    embedText: async () => [1]
+  }, { decideNextStep: decide });
+
+  assert.equal(searchCalls, 1);
+  assert.equal(observationsSeenByModel[0].tool, "searchApprovedKnowledge");
+  assert.equal(observationsSeenByModel[0].result.modelObservation.status, "found");
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, "We provide company formation support.");
+  assert.deepEqual(result.toolsUsed, ["searchApprovedKnowledge"]);
 });
 
 test("a real end-to-end turn: decide calls searchApprovedKnowledge, the real tool reaches the injected embedText and store, and the answer is grounded in the returned evidence", async () => {

@@ -651,6 +651,23 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
         buyingSignals: routed.metadata?.buyingSignals || []
       }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
+      if (!decision.send) {
+        const failedStep = Array.isArray(agentResult.steps)
+          ? agentResult.steps.find((step) => step?.result?.ok === false)
+          : null;
+        const knowledgeStep = Array.isArray(agentResult.steps)
+          ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge")
+          : null;
+        await logEvent("agent_turn_not_clean", {
+          outcome: String(agentResult.outcome || "unknown").slice(0, 40),
+          reasonCode: /^[A-Za-z0-9_:,-]{1,100}$/u.test(String(agentResult.reason || ""))
+            ? String(agentResult.reason).slice(0, 100)
+            : String(failedStep?.result?.reasonCode || "not_clean").slice(0, 80),
+          stepCount: Number.isInteger(agentResult.stepCount) ? agentResult.stepCount : 0,
+          knowledgeStatus: String(knowledgeStep?.result?.modelObservation?.status || "not_retrieved").slice(0, 30),
+          toolsUsed: Array.isArray(agentResult.toolsUsed) ? agentResult.toolsUsed.filter((tool) => typeof tool === "string").slice(0, 12) : []
+        });
+      }
       if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
       const policyRows = observationPolicyRows(agentResult.steps);
       const jurisdiction = guardJurisdictionAnswer({ message: text, response: decision.responseText, rows: policyRows, language });
