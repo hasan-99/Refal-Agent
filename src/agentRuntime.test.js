@@ -14,6 +14,20 @@ test("buildToolContext binds the real embedText/embeddingModel defaults when the
   assert.equal(ctx.matchCount, 6);
 });
 
+test("buildToolContext passes trusted M4 contact, source-turn, consent, language, and capability context", () => {
+  const ctx = buildToolContext({
+    store: {}, user: {}, userId: "contact-1", inboundMessageId: "wa-provider-turn-9", sourceTurnId: "persisted-turn-uuid",
+    language: "arabic", consentState: "granted", allowedCapabilities: ["upsertLead", "scheduleFollowUp"]
+  });
+  assert.equal(ctx.sourceTurnId, "persisted-turn-uuid");
+  assert.equal(ctx.inboundMessageId, "wa-provider-turn-9");
+  assert.equal(ctx.userId, "contact-1");
+  assert.equal(ctx.consentState, "granted");
+  assert.equal(ctx.language, "arabic");
+  assert.deepEqual(ctx.allowedCapabilities, ["upsertLead", "scheduleFollowUp"]);
+  assert.equal(Object.isFrozen(ctx.allowedCapabilities), true);
+});
+
 test("RAG is never invoked when the Agent's decision never asks for it (e.g. a simple acknowledgement)", async () => {
   let searchCalls = 0;
   const store = { searchKnowledge: async () => { searchCalls += 1; return []; } };

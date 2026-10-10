@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Database,
   Eye,
   EyeOff,
   KeyRound,
@@ -48,11 +49,13 @@ import { readSseData } from "./sse.js";
 import { notificationJobLabel } from "../notificationLabels.js";
 import { notificationBadgeText } from "../notificationBadge.js";
 import { normalizeWhatsAppNumber } from "../phoneNumber.js";
+import KnowledgeCommercialWarning from "./KnowledgeCommercialWarning.jsx";
 import rafaLogo from "./assets/rafa-mark.png";
 const Conversations = React.lazy(() => import("./Conversations.jsx"));
 const Performance = React.lazy(() => import("./Performance.jsx"));
 const HandoverInbox = React.lazy(() => import("./HandoverInbox.jsx"));
 const FactRegister = React.lazy(() => import("./FactRegister.jsx"));
+const DynamicData = React.lazy(() => import("./DynamicData.jsx"));
 
 const navItems = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -63,6 +66,7 @@ const navItems = [
   // W3.9.7 — the fact register. Admin only: re-approval is an accountability
   // record, and blocking a fact removes it from retrieval entirely.
   { id: "facts", label: "Facts", icon: ShieldCheck, adminOnly: true },
+  { id: "commercial-data", label: "Commercial data", icon: Database, adminOnly: true },
   { id: "bookings", label: "Bookings", icon: CalendarClock },
   { id: "follow-ups", label: "Follow-ups", icon: Bell, adminOnly: true },
   { id: "blocked", label: "Blocked numbers", icon: ShieldBan, adminOnly: true }
@@ -141,7 +145,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (authState?.role !== "admin" && active === "team") setActive("overview");
+    if (authState?.role !== "admin" && ["team", "facts", "commercial-data", "follow-ups", "blocked"].includes(active)) setActive("overview");
   }, [active, authState?.role]);
 
   useEffect(() => {
@@ -321,8 +325,9 @@ function App() {
         {active === "agent-status" && <AgentStatus isAdmin={isAdmin} />}
         {active === "performance" && <React.Suspense fallback={<Loading label="Loading performance" />}><Performance isAdmin={isAdmin} /></React.Suspense>}
         {active === "conversations" && <React.Suspense fallback={<Loading label="Loading conversations" />}><Conversations isAdmin={isAdmin} view={conversationView} onViewChange={setConversationView} selectedConversationId={selectedConversationId} onSelectedConversationChange={setSelectedConversationId} onNavigate={navigateTo} /></React.Suspense>}
-        {active === "knowledge" && <Knowledge isAdmin={isAdmin} />}
+        {active === "knowledge" && <Knowledge isAdmin={isAdmin} onNavigate={navigateTo} />}
         {active === "facts" && isAdmin && <React.Suspense fallback={<Loading label="Loading the fact register" />}><FactRegister isAdmin={isAdmin} /></React.Suspense>}
+        {active === "commercial-data" && isAdmin && <React.Suspense fallback={<Loading label="Loading commercial data" />}><DynamicData isAdmin={isAdmin} /></React.Suspense>}
         {active === "bookings" && <Bookings isAdmin={isAdmin} />}
         {active === "follow-ups" && isAdmin && <React.Suspense fallback={<Loading label="Loading specialist follow-ups" />}><HandoverInbox onNavigate={navigateTo} /></React.Suspense>}
         {active === "blocked" && isAdmin && <BlockedNumbers />}
@@ -876,7 +881,7 @@ function AgentSidebar({ role }) {
   );
 }
 
-function Knowledge({ isAdmin }) {
+function Knowledge({ isAdmin, onNavigate }) {
   const { data, setData, loading, reload } = useApi("/api/knowledge");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState(null);
@@ -1071,6 +1076,7 @@ function Knowledge({ isAdmin }) {
                 <input id="knowledge-title" required value={importTitle} onChange={(event) => setImportTitle(event.target.value)} placeholder="For example, Company setup FAQs" />
                 <label htmlFor="knowledge-content">Knowledge text</label>
                 <textarea id="knowledge-content" dir="auto" value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste company facts, service details, policies, or FAQs…" rows={7} />
+                <KnowledgeCommercialWarning content={importContent} onOpenCommercialData={() => onNavigate("commercial-data")} />
                 <div className="knowledge-submit-row"><small>At least 40 characters. Arabic and English text are both supported.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving and activating…" : editorMode === "update" ? "Save changes to database" : "Add to database"}</button></div>
               </form> : <form className="knowledge-upload" onSubmit={uploadDocument}>
                 <label htmlFor="knowledge-file">Choose a text, PDF, or Word file</label>

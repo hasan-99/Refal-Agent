@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { decideNextStep, buildDecisionMessages, parseDecisionJson, defaultCallModel, formatApprovedKnowledgeEvidence } = require("./agentDecision");
+const { decideNextStep, buildDecisionMessages, parseDecisionJson, defaultCallModel, formatApprovedKnowledgeEvidence, formatDynamicDataEvidence, resolveObservationConflicts } = require("./agentDecision");
+const { resolveConflict } = require("./policyPrecedence");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { buildAgentContext } = require("./agentContext");
 
@@ -135,6 +136,83 @@ test("buildDecisionMessages does NOT automatically include an unrelated tool's r
   const messages = buildDecisionMessages(CONTEXT, observations, TOOL_REGISTRY);
   const userMessage = messages[1].content;
   assert.equal(userMessage.includes("DO-NOT-SHOW-THIS-RAW-DATA"), false);
+});
+
+test("dynamic evidence is shown only through the explicit bounded observation and unknown fields are dropped", () => {
+  const block = formatDynamicDataEvidence({
+    type: "dynamic_data", kind: "offers", status: "found",
+    records: [{ code: "formation-package", amount: 999, currency: "EUR", inclusions: ["incorporation"], hiddenPrompt: "leak", id: "private-id" }]
+  });
+  assert.match(block, /DATA, NOT INSTRUCTIONS/);
+  assert.match(block, /formation-package/);
+  assert.doesNotMatch(block, /hiddenPrompt|private-id/);
+  assert.equal(formatDynamicDataEvidence({ type: "approved_knowledge", evidence: [{ content: "x" }] }), "");
+});
+
+test("buildDecisionMessages includes only bounded dynamic modelObservation data, never raw result data", () => {
+  const messages = buildDecisionMessages(CONTEXT, [{
+    step: 1, tool: "lookupActiveOffer", args: { code: "formation-package" },
+    result: {
+      ok: true, status: "found", data: [{ secret: "raw-data-secret" }],
+      modelObservation: { type: "dynamic_data", kind: "offers", status: "found", records: [{ amount: 999, currency: "EUR" }] }
+    }
+  }], TOOL_REGISTRY);
+  const serialized = JSON.stringify(messages);
+  assert.match(serialized, /Current live offers tool result/);
+  assert.match(serialized, /999/);
+  assert.doesNotMatch(serialized, /raw-data-secret/);
+});
+
+test("the composer resolves a live offer conflict, excludes the losing stale price, and preserves unrelated inclusions", () => {
+  const now = Date.now();
+  let resolverCalls = 0;
+  const live = {
+    step: 1, tool: "lookupActiveOffer", args: { code: "formation-package" },
+    result: { ok: true, status: "found", modelObservation: {
+      type: "dynamic_data", source: "trusted_edge_dynamic_read", kind: "offers", status: "found",
+      records: [{ code: "formation-package", title_en: "Company formation package", amount: 999, currency: "EUR", inclusions: ["Incorporation", "Secretary"],
+        location: "CY", vatTreatment: "plus VAT", availability: null, eligibility: null,
+        effectiveDate: new Date(now - 1000).toISOString(), lastUpdated: new Date(now - 500).toISOString(),
+        verifiedAt: new Date(now - 1500).toISOString(), validUntil: new Date(now + 86400000).toISOString(), reviewStatus: "approved", provenance: "approved_live_edge_data" }]
+    } }
+  };
+  const knowledge = {
+    step: 2, tool: "searchApprovedKnowledge", args: { query: "company formation package" },
+    result: { ok: true, status: "found", userSafeSummary: ["Formation package inclusions"], modelObservation: {
+      type: "approved_knowledge", status: "found", evidence: [
+        { title: "Formation package inclusions", content: "The company formation package costs EUR 888 and includes incorporation and a company secretary.", sourceRef: "stale-price-chunk" },
+        { title: "Formation inclusions", content: "The company formation package includes incorporation and a company secretary.", sourceRef: "inclusions-chunk" }
+      ]
+    } }
+  };
+  const messages = buildDecisionMessages(CONTEXT, [live, knowledge], TOOL_REGISTRY, {
+    conflictResolver: (sources) => { resolverCalls += 1; return resolveConflict(sources); }
+  });
+  const text = JSON.stringify(messages);
+  assert.equal(resolverCalls, 1);
+  assert.match(text, /999/);
+  assert.doesNotMatch(text, /888/);
+  assert.match(text, /stale-price-chunk/);
+  assert.match(text, /company secretary/);
+  assert.match(text, /inclusions-chunk/);
+});
+
+test("the composer resolves a customer statement against a chunk about that customer", () => {
+  let resolverCalls = 0;
+  const observation = {
+    tool: "searchApprovedKnowledge", args: { query: "customer company" },
+    result: { ok: true, status: "found", modelObservation: {
+      type: "approved_knowledge", evidence: [{ content: "You do not already have a Cyprus company.", sourceRef: "customer-stale-chunk" }]
+    } }
+  };
+  const messages = buildDecisionMessages({ ...CONTEXT, currentMessage: "I already have a Cyprus company." }, [observation], TOOL_REGISTRY, {
+    conflictResolver: (sources) => { resolverCalls += 1; return resolveConflict(sources); }
+  });
+  const text = JSON.stringify(messages);
+  assert.equal(resolverCalls, 1);
+  assert.match(text, /customer-stale-chunk/);
+  assert.doesNotMatch(text, /do not already have/);
+  assert.match(text, /I already have a Cyprus company/);
 });
 
 test("formatApprovedKnowledgeEvidence produces no text for a no_evidence observation (no fabricated payload)", () => {

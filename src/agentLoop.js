@@ -14,7 +14,8 @@ const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIF
 // only once the ordinary policy check already passed, so every existing
 // rejection reason/path is untouched; this can only add a NEW rejection
 // reason, never remove one.
-const { validateFactualGrounding, collectApprovedKnowledgeEvidence } = require("./groundingPolicy");
+const { validateFactualGrounding, collectApprovedKnowledgeEvidence, collectDynamicDataEvidence } = require("./groundingPolicy");
+const { resolveObservationConflicts } = require("./agentDecision");
 // M1 close — the three output gates the Agent path was missing. Each had
 // exactly one caller in the repo (src/ai.js), so flipping the Agent flag
 // silently dropped every M1 guard while their unit tests stayed green.
@@ -137,8 +138,11 @@ function checkLanguageEquivalence(text, locale) {
 function checkDraftPolicy(text, thresholds, observations, locale, context = {}) {
   const policy = validateResponse(text, thresholds);
   if (!policy.valid) return policy;
-  const evidenceItems = collectApprovedKnowledgeEvidence(observations);
-  const grounding = validateFactualGrounding(text, { evidenceItems });
+  const conflicts = resolveObservationConflicts(context, observations);
+  const evidenceItems = collectApprovedKnowledgeEvidence(observations)
+    .filter((item) => !item.sourceRef || !conflicts.staleRefs.has(item.sourceRef));
+  const dynamicEvidenceItems = collectDynamicDataEvidence(observations);
+  const grounding = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems });
   if (!grounding.valid) return { ...policy, valid: false, reasons: grounding.reasons };
   const language = checkLanguageEquivalence(text, locale);
   if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };

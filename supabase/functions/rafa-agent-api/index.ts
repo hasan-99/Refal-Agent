@@ -7,6 +7,9 @@ import { containsUnconsentedContactCommitment } from "./responsePolicy.mjs";
 // drift-tested extract of src/refalcoAnswer.js (npm run edge:mirrors).
 import { containsProhibitedClaim } from "./refalcoAnswer.mjs";
 import { buildBrainPrompt as buildOperatorPrompt } from "./brainPrompt.mjs";
+import { listDynamicData, mutateDynamicData, performDynamicAction } from "./dynamicData.mjs";
+import { validateCustomerLeadFields } from "./dynamicActionValidation.mjs";
+import { persistDynamicActionAlert } from "./dynamicActionAlert.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,6 +59,56 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const parts = url.pathname.replace(/^\/rafa-agent-api/, "").split("/").filter(Boolean);
+
+    // M4: service-role access stays inside this authenticated Edge gateway.
+    // Dashboard operator authorization is checked by its trusted server route;
+    // model callers can only use the read-only GET surface.
+    if (parts[0] === "dynamic-data" && parts[1]) {
+      const kind = decodeURIComponent(parts[1]);
+      if (req.method === "GET") {
+        const result = await listDynamicData(supabase, kind, Object.fromEntries(url.searchParams.entries()));
+        return json(result);
+      }
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        const row = await mutateDynamicData(supabase, kind, body);
+        return json({ row }, body.operation === "create" ? 201 : 200);
+      }
+    }
+
+    if (parts[0] === "dynamic-actions" && parts[1] && req.method === "POST" && parts.length === 2) {
+      const name = decodeURIComponent(parts[1]);
+      const body = await req.json().catch(() => ({}));
+      const { contact, sourceTurnId } = await workflowContact(body);
+      const result = await performDynamicAction(supabase, name, {
+        ...body,
+        contactId: contact.contactId,
+        sourceTurnId
+      }, () => runDynamicAction(name, { ...body, sourceTurnId, contact }));
+      if (result.status === "pending") {
+        try {
+          await logWorkflowAudit(contact.contactId, "dynamic_action_reconciliation_required", {
+            tool: name,
+            receipt_id: result.receiptId || null,
+            reason: result.reasonCode || "duplicate_pending"
+          }, "system");
+        } catch (alertError) {
+          console.error("dynamic action reconciliation audit could not be persisted", { tool: name, error: String(alertError).slice(0, 160) });
+        }
+        try {
+          await persistDynamicActionAlert(supabase, {
+            contactId: contact.contactId,
+            sourceTurnId,
+            tool: name,
+            receiptId: result.receiptId || null,
+            reasonCode: result.reasonCode || "outcome_uncertain"
+          });
+        } catch (alertError) {
+          console.error("dynamic action operator alert could not be persisted", { tool: name, error: String(alertError).slice(0, 160) });
+        }
+      }
+      return json({ ...result, userSafeSummary: result.status === "confirmed" ? result.result?.userSafeSummary || "Confirmed." : result.status === "pending" ? "The request is still being checked." : "The request could not be confirmed." }, result.status === "confirmed" ? 200 : 202);
+    }
 
     if (parts[0] === "settings" && parts[1] === "booking-policy" && parts.length === 2) {
       if (req.method === "GET") {
@@ -480,7 +533,7 @@ Deno.serve(async (req: Request) => {
     const status = error && typeof error === "object" && "statusCode" in error && typeof error.statusCode === "number" ? error.statusCode : 500;
     const requestId = crypto.randomUUID();
     console.error("rafa-agent-api request failed", { requestId, status, error });
-    const message = status < 500 && error instanceof HttpError ? error.message : "RAFA API request failed.";
+    const message = status < 500 && (error instanceof HttpError || (error && typeof error === "object" && (error as Error).name === "HttpError")) ? (error as Error).message : "RAFA API request failed.";
     return json({ error: message, requestId }, status);
   }
 });
@@ -1141,6 +1194,95 @@ async function deleteConversationData(userId: string) {
 const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk"]);
 const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
 const WORKFLOW_TRIGGERS = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity"]);
+
+async function runDynamicAction(name: string, body: Record<string, any>) {
+  const userId = String(body.userId || "");
+  const sourceTurnId = String(body.sourceTurnId || "");
+  const args = body.args && typeof body.args === "object" && !Array.isArray(body.args) ? body.args : {};
+  const contact = body.contact;
+  if (!contact?.contactId || !sourceTurnId) throw new HttpError("A verified source turn is required.", 400);
+
+  if (name === "upsertLead") {
+    const input = args.profile && typeof args.profile === "object" && !Array.isArray(args.profile) ? args.profile
+      : args.fields && typeof args.fields === "object" && !Array.isArray(args.fields) ? args.fields : args;
+    const allowed = new Set(["name", "nationality", "residenceCountry", "primaryGoal", "budgetAmount", "budgetCurrency"]);
+    const profile: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (!allowed.has(key)) throw new HttpError(`Unsupported lead field: ${key}`, 400);
+      if (typeof value === "string") {
+        const clean = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+        if (!clean || clean.length > 300) throw new HttpError(`Invalid lead field: ${key}`, 400);
+        profile[key] = clean;
+      } else if (typeof value === "number" && Number.isFinite(value) && value >= 0 && key === "budgetAmount") profile[key] = value;
+      else throw new HttpError(`Invalid lead field: ${key}`, 400);
+    }
+    if (!Object.keys(profile).length) throw new HttpError("At least one supported lead field is required.", 400);
+    const { data: sourceTurn, error: sourceTurnError } = await supabase.from("rafa_conversation_turns")
+      .select("message").eq("id", sourceTurnId).eq("contact_id", contact.contactId).maybeSingle();
+    if (sourceTurnError) throw sourceTurnError;
+    if (!sourceTurn || !validateCustomerLeadFields(profile, sourceTurn.message)) {
+      throw new HttpError("Lead details must be stated by the customer in the linked source turn.", 400);
+    }
+    const { data: current, error: readError } = await supabase.from("refal_lead_profile").select("profile,field_provenance").eq("contact_id", contact.contactId).maybeSingle();
+    if (readError) throw readError;
+    const capturedAt = new Date().toISOString();
+    const provenance = { ...(current?.field_provenance || {}) };
+    for (const field of Object.keys(profile)) provenance[field] = { source: "customer_message", source_turn_id: sourceTurnId, captured_at: capturedAt };
+    const { data, error } = await supabase.from("refal_lead_profile").upsert({
+      contact_id: contact.contactId,
+      profile: { ...(current?.profile || {}), ...profile },
+      field_provenance: provenance,
+      source_turn_id: sourceTurnId
+    }, { onConflict: "contact_id" }).select("contact_id,profile,field_provenance,source_turn_id,updated_at").single();
+    if (error) throw error;
+    if (!data?.contact_id) throw new Error("Lead profile persistence was not confirmed.");
+    return { id: data.contact_id, status: "confirmed", userSafeSummary: "Your details were saved." };
+  }
+
+  if (name === "createHandover") {
+    const department = String(args.department || "general");
+    const priority = String(args.priority || "normal");
+    if (!WORKFLOW_DEPARTMENTS.has(department) || !["normal", "high", "urgent"].includes(priority)) throw new HttpError("Invalid handover routing.", 400);
+    const saved = await persistWorkflow("handover", {
+      userId,
+      sourceTurnId,
+      department,
+      priority,
+      status: "open",
+      summary: boundedObject(args.summary || {}, 6000)
+    });
+    const handover = saved?.handover;
+    if (!handover?.id) throw new Error("Handover persistence was not confirmed.");
+    return { id: handover.id, status: handover.status, userSafeSummary: "Your request has been sent to the relevant team." };
+  }
+
+  if (name === "scheduleFollowUp") {
+    if (args.purpose !== "specialist_follow_up") throw new HttpError("A specific follow-up purpose is required.", 400);
+    const dueAt = new Date(String(args.dueAt || ""));
+    if (!Number.isFinite(dueAt.getTime()) || dueAt.getTime() < Date.now() + 60_000 || dueAt.getTime() > Date.now() + 30 * 86400000) throw new HttpError("Choose a follow-up time within the next 30 days.", 400);
+    const { data: consent, error: consentError } = await supabase.from("rafa_contact_consents").select("state,source_turn_id").eq("contact_id", contact.contactId).eq("consent_type", "follow_up").maybeSingle();
+    if (consentError) throw consentError;
+    if (!consent || consent.state !== "granted" || !consent.source_turn_id) throw new HttpError("Follow-up consent is required.", 403);
+    const { data: consentTurn, error: turnError } = await supabase.from("rafa_conversation_turns").select("id,metadata").eq("id", consent.source_turn_id).eq("contact_id", contact.contactId).maybeSingle();
+    if (turnError) throw turnError;
+    if (!consentTurn || !hasPurposeBoundFollowUpConsent(consent, consentTurn)) throw new HttpError("Purpose-bound follow-up consent is required.", 403);
+    const saved = await persistWorkflow("follow-up", { userId, consentState: "granted", status: "scheduled", nextDueAt: dueAt.toISOString() });
+    if (!saved?.followUp?.contact_id) throw new Error("Follow-up schedule persistence was not confirmed.");
+    return { id: saved.followUp.contact_id, status: "scheduled", userSafeSummary: "Your follow-up request is scheduled." };
+  }
+
+  if (name === "recordComplianceEvent") {
+    const trigger = String(args.trigger || "");
+    const allowed = new Set(["aml_concern", "sanctions_concern", "source_of_funds_unclear", "identity_mismatch", "high_risk_transaction"]);
+    if (!allowed.has(trigger)) throw new HttpError("Unsupported compliance event category.", 400);
+    const event = await logWorkflowAudit(contact.contactId, `m4_compliance_${trigger}`, {
+      source_turn_id: sourceTurnId,
+      language: ["ar", "en", "el"].includes(String(args.language || "")) ? args.language : "unknown"
+    }, "system");
+    return { id: event.id, status: "confirmed", userSafeSummary: "The matter was flagged for internal review." };
+  }
+  throw new HttpError("Unknown dynamic action.", 404);
+}
 
 async function workflowContact(body: Record<string, unknown>) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError("A JSON object is required.", 400);

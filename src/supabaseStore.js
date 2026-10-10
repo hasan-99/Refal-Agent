@@ -31,17 +31,67 @@ class EdgeApiStore {
   }
 
   async request(path, options = {}) {
-    const response = await fetch(`${this.apiUrl}${path}`, {
-      ...options,
-      headers: {
-        apikey: this.key,
-        authorization: `Bearer ${this.key}`,
-        "x-rafa-api-secret": this.apiSecret,
-        "content-type": "application/json",
-        ...(options.headers || {})
+    const { timeoutMs = 8000, signal, ...fetchOptions } = options;
+    const method = String(fetchOptions.method || "GET").toUpperCase();
+    const attempts = method === "GET" ? 3 : 1;
+    let lastError;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const timeout = AbortSignal.timeout(Math.max(500, Math.min(15000, Number(timeoutMs) || 8000)));
+      const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      try {
+        const response = await fetch(`${this.apiUrl}${path}`, {
+          ...fetchOptions,
+          signal: requestSignal,
+          headers: {
+            apikey: this.key,
+            authorization: `Bearer ${this.key}`,
+            "x-rafa-api-secret": this.apiSecret,
+            "content-type": "application/json",
+            ...(fetchOptions.headers || {})
+          }
+        });
+        if (method === "GET" && attempt + 1 < attempts && (response.status === 429 || response.status >= 500)) {
+          await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+          continue;
+        }
+        return parseResponse(response);
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 >= attempts || method !== "GET" || signal?.aborted) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
       }
+    }
+    throw lastError || new Error("RAFA API request failed.");
+  }
+
+  async lookupDynamicData(kind, args = {}) {
+    const filters = {
+      offers: ["code"],
+      renewals: ["item"],
+      properties: ["city", "type", "status", "reference"],
+      reservations: ["projectOrPropertyId"],
+      governmentFees: ["feeType"]
+    }[kind];
+    if (!filters) throw new Error("Unsupported dynamic data kind.");
+    const query = new URLSearchParams();
+    for (const key of filters) {
+      const value = args[key];
+      if (typeof value === "string" && value.trim()) query.set(key, value.trim().slice(0, 120));
+    }
+    const response = await this.request(`/dynamic-data/${encodeURIComponent(kind)}${query.size ? `?${query}` : ""}`);
+    const rows = Array.isArray(response.rows) ? response.rows : [];
+    return { ok: response.status === "available" && rows.length > 0, status: response.status || (rows.length ? "available" : "unavailable"), reasonCode: response.reasonCode || null, data: rows };
+  }
+
+  async performDynamicAction(name, payload = {}) {
+    if (!["upsertLead", "createHandover", "scheduleFollowUp", "recordComplianceEvent"].includes(name)) throw new Error("Unsupported dynamic action.");
+    return this.request(`/dynamic-actions/${encodeURIComponent(name)}`, {
+      method: "POST",
+      // Ambiguous write timeouts are not retried here. The durable Edge receipt
+      // remains pending until reconciliation proves whether it persisted.
+      timeoutMs: 10000,
+      body: JSON.stringify(payload)
     });
-    return parseResponse(response);
   }
 
   async hydrate() {

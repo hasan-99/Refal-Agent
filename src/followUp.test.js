@@ -17,6 +17,14 @@ test("opted-out and blocked contacts cannot be sent follow-ups", () => {
   assert.equal(shouldSendFollowUp(user({ blocked: true }), now), false);
 });
 
+test("an explicit saved schedule controls due time and still requires purpose-bound consent", () => {
+  const now = new Date("2026-10-01T12:00:00Z");
+  const scheduled = user({ followUpState: { status: "scheduled", next_due_at: "2026-10-01T13:00:00Z" } });
+  assert.equal(getFollowUpDecision(scheduled, now).reason, "not_due");
+  assert.equal(getFollowUpDecision(scheduled, new Date("2026-10-01T13:00:00Z")).reason, "ready");
+  assert.equal(getFollowUpDecision({ ...scheduled, history: [{ at: "2026-09-30T00:00:00Z", message: "Hello", response: "Hi" }] }, new Date("2026-10-01T13:00:00Z")).reason, "consent_required");
+});
+
 test("runFollowUpCheck remains idempotent for one conversation cycle", async () => {
   const sent = []; const data = { "contact-1": user() };
   const store = { async allUsers() { return Object.values(data); }, async isContactBlocked() { return false; }, async updateUser(id, update) { update(data[id]); }, async addHistory(id, message, response, metadata) { data[id].history.push({ at: metadata.at, message, response, ...metadata }); } };

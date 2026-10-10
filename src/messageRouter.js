@@ -74,7 +74,7 @@ function sameComplianceLock(previous, next) {
     (previous.complianceTriggers || []).join("|") === (next.complianceTriggers || []).join("|");
 }
 
-async function recordHistory(store, userId, message, response, extra) {
+async function recordHistory(store, userId, message, response, extra, { bestEffortWorkflowWrites = false } = {}) {
   const metadata = { ...(extra?.metadata || {}) };
   delete metadata.privacySafeQuestion;
   // W2.5.3. A locked conversation never tracks a new sales hook, so a later
@@ -100,6 +100,12 @@ async function recordHistory(store, userId, message, response, extra) {
     ...(extra || {}),
     metadata
   });
+  // Agent writes require the source turn to be durable before any tool runs,
+  // but auxiliary workflow records must not make the caller retry the whole
+  // inbound message after this insert. Keep attempting them and contain only
+  // their failures for the Agent route; deterministic callers retain current
+  // error behavior.
+  try {
   // The turn ID is required as a foreign key for the workflow records above.
   // Once it exists, these persistence operations are independent; serial awaits
   // added one full Edge Function round-trip per record to every eligible turn.
@@ -236,6 +242,11 @@ async function recordHistory(store, userId, message, response, extra) {
       ? { complianceRecorded: Boolean(complianceAuditRecord), complianceRecordId: complianceAuditRecord?.id || null }
       : {})
   };
+  } catch (error) {
+    if (!bestEffortWorkflowWrites) throw error;
+    console.error("Agent source-turn workflow persistence failed after turn insert.");
+    return { turn, turnId: turn?.id || null, workflows: [], workflowError: true };
+  }
 }
 
 function isTrackedSpecialistOffer(response) {

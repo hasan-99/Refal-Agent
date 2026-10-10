@@ -35,9 +35,20 @@ function buildToolContext({
   // `policy` is the already-loaded booking policy; when omitted the tools read
   // it once via store.getBookingPolicy().
   inboundMessageId = null,
+  // M4 receipt foreign key: a persisted conversation-turn UUID supplied by
+  // the trusted caller. Provider message ids remain separate for booking
+  // idempotency and are never substituted for this database identity.
+  sourceTurnId = null,
+  consentState = "unknown",
+  allowedCapabilities = [],
   policy = null
 } = {}) {
-  return { store, user, userId, intents, language, embedText, embeddingModel, matchCount, inboundMessageId, policy };
+  return {
+    store, user, userId, intents, language, embedText, embeddingModel, matchCount,
+    inboundMessageId, sourceTurnId, consentState,
+    allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).filter((value) => typeof value === "string"))]),
+    policy
+  };
 }
 
 // The one real entry point for a full Agent turn. `store` and `user` must
@@ -62,6 +73,7 @@ async function runAgentTurnForContact({
   embeddingModel,
   matchCount,
   inboundMessageId,
+  sourceTurnId,
   policy
 } = {}, {
   decideNextStep = defaultDecideNextStep,
@@ -79,7 +91,10 @@ async function runAgentTurnForContact({
     consentState,
     allowedCapabilities
   });
-  const toolContext = buildToolContext({ store, user, userId, intents, language, embedText, embeddingModel, matchCount, inboundMessageId, policy });
+  const toolContext = buildToolContext({
+    store, user, userId, intents, language, embedText, embeddingModel, matchCount,
+    inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy
+  });
   return runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps });
 }
 

@@ -350,6 +350,48 @@ test("valid_until: past is a gap, inside 7 days is a warning that names the 30 d
   assert.deepEqual(health.assessDatabase([c], row("2027-10-13T00:00:00Z"), opts), []);
 });
 
+test("approved chunks reject frozen dynamic deposits, unit prices and government fees", () => {
+  const model = "m";
+  const approvedRow = (validUntil = "2026-11-08T00:00:00Z") => new Map([["refal://kb/test", {
+    source: { enabled: true, approved: true },
+    document: { id: "d", review_status: "approved", valid_until: validUntil },
+    chunkCount: 1, embeddedCount: 1, embeddingModels: [model],
+  }]]);
+  const cellWith = (body, topic = "property-buyer-journey") => cell({
+    topic, canonicalUrl: "refal://kb/test", title: "Current information",
+    sections: [{ heading: "Details", body }], chunkCount: 1,
+  });
+  for (const body of [
+    "The reservation deposit is €5,000.",
+    "This unit price is €245,000.",
+    "The government fee costs €120.",
+  ]) {
+    const found = health.assessDatabase([cellWith(body)], approvedRow(), { now: "2026-10-10", expectedEmbeddingModel: model });
+    assert.equal(found.filter((finding) => finding.code === "BH-DYNAMIC-FROZEN").length, 1, body);
+  }
+});
+
+test("approved programme rates stay allowed; legacy formation price needs a current expiry within 30 days", () => {
+  const model = "m";
+  const database = (validUntil) => new Map([["refal://kb/test", {
+    source: { enabled: true, approved: true },
+    document: { id: "d", review_status: "approved", valid_until: validUntil },
+    chunkCount: 1, embeddedCount: 1, embeddingModels: [model],
+  }]]);
+  const check = (topic, body, validUntil) => health.assessDatabase([cell({
+    topic, canonicalUrl: "refal://kb/test", sections: [{ heading: "Rates", body }], chunkCount: 1,
+  })], database(validUntil), { now: "2026-10-10", expectedEmbeddingModel: model });
+
+  assert.ok(!check("property-vat", "The standard VAT rate is 19% and the reduced rate is 5%.", null)
+    .some((finding) => finding.code === "BH-DYNAMIC-FROZEN"));
+  assert.ok(!check("formation-package", "The company formation package price is €999.", "2026-11-06T00:00:00Z")
+    .some((finding) => finding.code === "BH-DYNAMIC-FROZEN"));
+  assert.ok(check("formation-package", "The company formation package price is €999.", "2026-12-01T00:00:00Z")
+    .some((finding) => finding.code === "BH-DYNAMIC-FROZEN"));
+  assert.ok(check("formation-package", "The company formation package price is €999.", null)
+    .some((finding) => finding.code === "BH-DYNAMIC-FROZEN"));
+});
+
 // ----------------------------------------------------------- the whole gate
 
 test("exitCodeFor fails on a gap OR a blocker, and never on a warning or a pending", () => {

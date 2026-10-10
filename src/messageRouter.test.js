@@ -609,6 +609,21 @@ test("Greeklish no-pressure boundary is acknowledged in Greek and persisted", as
   assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false);
 });
 
+test("Agent source-turn persistence keeps workflow writes best-effort after the durable insert", async () => {
+  const user = { id: "agent-source-turn", profile: {}, history: [] };
+  const store = integrationStore(user);
+  let workflowAttempts = 0;
+  store.saveQualification = async () => { workflowAttempts += 1; throw new Error("simulated workflow outage"); };
+  const { turn } = await recordHistory(store, user.id, "I need help with a business question", "Your message is being processed.", {
+    metadata: { qualification: { dimensions: { intent: "business_setup" } } }
+  }, { bestEffortWorkflowWrites: true });
+
+  assert.ok(turn);
+  assert.equal(user.history.length, 1);
+  assert.equal(turn.message, "I need help with a business question");
+  assert.equal(workflowAttempts, 1);
+});
+
 test("Greeklish polite closure gets a short Greek response without invoking AI", async () => {
   const user = { id: "greeklish-closure", profile: {}, history: [] };
   const result = await routeMessageResult({

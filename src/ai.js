@@ -14,9 +14,8 @@ const { resolveHumourLevel, assertHumourCompliance } = require("./humourEngine")
 const { detectAntiPatterns } = require("./antiPatterns");
 // W3.9.3 query-time enforcement: a blocked fact never reaches the model.
 const { filterRetrievableEvidence } = require("./factRegister");
-// resolveConflict is NOT imported: it has no live caller yet. See the P1.6 note
-// in section 16 of the plan — arbitrating live data against a knowledge chunk
-// needs the live tables M4 builds and a non-empty corpus from M3.
+// M4's legacy fallback composes only after live-data arbitration in
+// dynamicDataFallback.js; this AI module receives that already-filtered bundle.
 const { SOURCE_LEVELS, assertModelKnowledgeIsGeneral } = require("./policyPrecedence");
 const { buildBrainPrompt, PROMPT_VERSION } = require("./brainPrompt");
 const { ORDINARY, EXPANDED, analyseAnswerShape } = require("./goldenFormula");

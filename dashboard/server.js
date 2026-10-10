@@ -18,6 +18,7 @@ import { displayName, isPlausibleCustomerName } from "./contactIdentity.js";
 import { countUniqueHandoverContacts } from "./handoverGrouping.js";
 import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
+import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -167,6 +168,7 @@ app.get("/api/session", async (req, res) => {
 });
 
 app.use("/api", requireAuth);
+registerDynamicDataAdminRoutes(app, { requireAdmin });
 
 app.get("/api/whatsapp/control", requireAdmin, async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

@@ -97,6 +97,7 @@ function requestReference({ sourceTurnId, createdAt, department, priority, summa
   };
 }
 
+/** @param {Record<string, any>} existing @param {Record<string, any>} incoming @param {{sourceTurnId?: string | null, now?: string}} options */
 export function mergeActiveHandover(existing, incoming, { sourceTurnId, now = new Date().toISOString() } = {}) {
   const oldSummary = sanitizeHandoverSummary(existing.summary);
   const newSummary = sanitizeHandoverSummary(incoming.summary);

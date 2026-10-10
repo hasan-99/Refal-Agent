@@ -140,6 +140,96 @@ function collectApprovedKnowledgeEvidence(observations) {
   return items;
 }
 
+const DYNAMIC_TOOL_KINDS = Object.freeze({
+  lookupActiveOffer: "offers",
+  lookupRenewalFees: "renewals",
+  searchPropertyInventory: "properties",
+  lookupReservationRules: "reservations",
+  lookupGovernmentFees: "governmentFees"
+});
+
+function validDate(value) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function validDynamicRecord(kind, record, nowMs) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+  if (record.reviewStatus !== "approved" || record.provenance !== "approved_live_edge_data") return false;
+  const verifiedAt = validDate(record.verifiedAt);
+  const effectiveDate = validDate(record.effectiveDate);
+  const validUntil = validDate(record.validUntil);
+  const lastUpdated = validDate(record.lastUpdated);
+  if (![verifiedAt, effectiveDate, validUntil, lastUpdated].every(Number.isFinite)) return false;
+  if (verifiedAt > nowMs || effectiveDate > nowMs || validUntil <= nowMs || lastUpdated > nowMs || effectiveDate >= validUntil) return false;
+  if (record.currency !== null && (typeof record.currency !== "string" || !/^[A-Z]{3}$/.test(record.currency))) return false;
+  if (record.eligibility !== null && (!record.eligibility || typeof record.eligibility !== "object" || Array.isArray(record.eligibility))) return false;
+  if (kind === "offers") return typeof record.code === "string" && Number.isFinite(record.amount) && record.amount >= 0
+    && Array.isArray(record.inclusions) && record.inclusions.every((item) => typeof item === "string");
+  if (kind === "renewals") return ["secretary", "address", "accounting", "audit", "tax"].includes(record.item)
+    && Number.isFinite(record.amount) && record.amount >= 0 && typeof record.period === "string";
+  if (kind === "properties") return typeof record.reference === "string" && Number.isFinite(record.price) && record.price >= 0
+    && record.availability === true && (record.pr_eligible === null || typeof record.pr_eligible === "boolean")
+    && (record.first_sale === null || typeof record.first_sale === "boolean");
+  if (kind === "reservations") return typeof record.project_or_property_id === "string"
+    && ((Number.isFinite(record.deposit_amount) && record.deposit_amount >= 0 && record.deposit_percent == null)
+      || (Number.isFinite(record.deposit_percent) && record.deposit_percent > 0 && record.deposit_percent <= 100 && record.deposit_amount == null))
+    && (record.refundable === null || typeof record.refundable === "boolean");
+  if (kind === "governmentFees") return typeof record.fee_type === "string" && Number.isFinite(record.amount) && record.amount >= 0
+    && typeof record.authority === "string";
+  return false;
+}
+
+function dynamicRecordContent(record) {
+  const omitted = new Set(["kind", "verifiedAt", "validUntil", "reviewStatus", "provenance", "lastUpdated"]);
+  const moneyKey = ["amount", "price", "deposit_amount"].find((key) => Number.isFinite(record[key]));
+  const money = moneyKey ? `${moneyKey}: ${record.currency ? `${record.currency} ` : ""}${record[moneyKey]}` : null;
+  const items = Object.entries(record).filter(([key, value]) => !omitted.has(key) && value !== null && value !== undefined && key !== moneyKey && key !== "currency")
+    .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+  if (money) items.unshift(money);
+  if (record.currency && !money) items.unshift(`currency: ${record.currency}`);
+  return items.join("; ").slice(0, 1800);
+}
+
+// This is the only dynamic-data path into deterministic factual grounding.
+// A tool result must carry the exact registry identity, approved/current
+// provenance marker and per-row timestamps; raw result.data is never read.
+function collectDynamicDataEvidence(observations, { now = Date.now() } = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Number(now);
+  const items = [];
+  for (const observation of Array.isArray(observations) ? observations : []) {
+    const result = observation?.result;
+    const modelObservation = result?.modelObservation;
+    if (result?.ok !== true || result.status !== "found" || modelObservation?.type !== "dynamic_data" || modelObservation.status !== "found") continue;
+    const kind = DYNAMIC_TOOL_KINDS[observation.tool];
+    const source = kind ? "trusted_edge_dynamic_read" : observation.tool === "listCalendarSlots" ? "trusted_calendar_read" : null;
+    if (!source || modelObservation.source !== source || modelObservation.kind !== (kind || "calendarSlots")) continue;
+    const records = Array.isArray(modelObservation.records) ? modelObservation.records.slice(0, 4) : [];
+    for (const record of records) {
+      if (kind && !validDynamicRecord(kind, record, nowMs)) continue;
+      if (!kind) {
+        const start = validDate(record?.start);
+        const end = validDate(record?.end);
+        if (record?.availability !== "available" || !Number.isFinite(start) || !Number.isFinite(end) || start <= nowMs || end <= start) continue;
+      }
+      const content = dynamicRecordContent(record);
+      if (!content) continue;
+      items.push({
+        content,
+        kind: kind || "calendarSlots",
+        record,
+        review_status: "approved",
+        valid_until: kind ? record.validUntil : null,
+        sourceLevel: SOURCE_LEVELS.LIVE_DATA,
+        sourceType: kind || "calendarSlots",
+        sourceRef: kind ? null : `calendar:${record.start}`,
+        trustedDynamic: true
+      });
+    }
+  }
+  return items;
+}
+
 function combinedEvidenceText(evidenceItems) {
   return (Array.isArray(evidenceItems) ? evidenceItems : [])
     .map((item) => String(item?.content || ""))
@@ -346,15 +436,19 @@ function containsUnsupportedNumericClaim(text, evidenceItems = []) {
 // ingestion"), a claim that happens to reuse the same digits would read as
 // "supported" by this check. The approval workflow, not this validator, is
 // the control for that.
-function validateFactualGrounding(text, { evidenceItems = [] } = {}) {
+function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [] } = {}) {
+  const boundedDynamic = (Array.isArray(dynamicEvidenceItems) ? dynamicEvidenceItems : [])
+    .filter((item) => item?.trustedDynamic === true && item?.sourceLevel === SOURCE_LEVELS.LIVE_DATA)
+    .slice(0, 20);
+  const allEvidence = [...(Array.isArray(evidenceItems) ? evidenceItems : []), ...boundedDynamic];
   const reasons = [];
   const add = (code, triggered) => { if (triggered && !reasons.includes(code)) reasons.push(code); };
 
-  add("unsupported_price_claim", containsUnsupportedPriceValueClaim(text, evidenceItems));
-  add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, evidenceItems) || containsUnsupportedServiceListClaim(text, evidenceItems) || containsUnsupportedNamedPackageInclusion(text, evidenceItems));
-  add("unsupported_url_claim", containsUnsupportedUrlClaim(text, evidenceItems));
-  add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, evidenceItems));
-  add("unsupported_numeric_claim", containsUnsupportedNumericClaim(text, evidenceItems));
+  add("unsupported_price_claim", containsUnsupportedPriceValueClaim(text, allEvidence));
+  add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, allEvidence) || containsUnsupportedServiceListClaim(text, allEvidence) || containsUnsupportedNamedPackageInclusion(text, allEvidence));
+  add("unsupported_url_claim", containsUnsupportedUrlClaim(text, allEvidence));
+  add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, allEvidence));
+  add("unsupported_numeric_claim", containsUnsupportedNumericClaim(text, allEvidence));
 
   return { valid: reasons.length === 0, reasons };
 }
@@ -519,8 +613,11 @@ function retrievedGroundingEvidence(evidence) {
  * claim carrying an unsupported value. `lowConfidence === true` is the weaker,
  * wider signal W3.10.5 keys on: at least one sentence is ungrounded at all.
  */
-function assessClaimGroundedness(answer, { evidence = [], language } = {}) {
-  const items = retrievedGroundingEvidence(evidence);
+function assessClaimGroundedness(answer, { evidence = [], dynamicEvidence = [], language } = {}) {
+  const boundedDynamic = (Array.isArray(dynamicEvidence) ? dynamicEvidence : [])
+    .filter((item) => item?.trustedDynamic === true && item?.sourceLevel === SOURCE_LEVELS.LIVE_DATA)
+    .slice(0, 20);
+  const items = retrievedGroundingEvidence([...(Array.isArray(evidence) ? evidence : []), ...boundedDynamic]);
   const claims = [];
   for (const sentence of splitClaims(answer)) {
     const verdict = classifyClaim(sentence, { evidence: items, language });
@@ -530,7 +627,10 @@ function assessClaimGroundedness(answer, { evidence = [], language } = {}) {
       continue;
     }
     if (verdict.allowed) {
-      claims.push({ ...base, sourceLevel: SOURCE_LEVELS.APPROVED_KNOWLEDGE, grounded: true, blocked: false, label: null, unconditional: false });
+      const claimValues = extractPriceValues(sentence);
+      const liveValues = new Set(extractPriceValues(combinedEvidenceText(items.filter((item) => item?.sourceLevel === SOURCE_LEVELS.LIVE_DATA))));
+      const liveSupports = claimValues.length > 0 && claimValues.every((value) => liveValues.has(value));
+      claims.push({ ...base, sourceLevel: liveSupports ? SOURCE_LEVELS.LIVE_DATA : SOURCE_LEVELS.APPROVED_KNOWLEDGE, grounded: true, blocked: false, label: null, unconditional: false });
       continue;
     }
     // The refusal strip runs on the RAW sentence, not on claimPolicy's folded
@@ -573,6 +673,8 @@ module.exports = {
   containsRawUrlClaim,
   // shared evidence helpers
   collectApprovedKnowledgeEvidence,
+  collectDynamicDataEvidence,
+  validDynamicRecord,
   combinedEvidenceText,
   // new, Agent-path-only
   containsUnsupportedPriceValueClaim,

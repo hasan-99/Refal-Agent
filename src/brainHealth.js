@@ -43,6 +43,7 @@
 const { TOPICS, LANGUAGES } = require("./brainTaxonomy");
 const { normalizeFactId } = require("./brainFactMap");
 const { effectiveStatus, nowIsoDay, daysBetween, STATUS } = require("./factRegister");
+const { findFrozenCommercialFacts } = require("./dynamicDataSeparation");
 
 // ---------------------------------------------------------------- constants
 
@@ -522,6 +523,22 @@ function assessDatabase(cells, dbIndex, { now, expectedEmbeddingModel } = {}) {
     }
     if (row.document.review_status !== "approved") {
       at(SEVERITY.GAP, "BH-DB-DOCUMENT", `document review_status is ${row.document.review_status}, not approved`);
+    }
+    if (row.document.review_status === "approved") {
+      const content = [cell.title, ...(cell.sections || []).flatMap((section) => [section.heading, section.body])].join("\n");
+      for (const dynamic of findFrozenCommercialFacts(content)) {
+        const validUntil = row.document.valid_until ? new Date(row.document.valid_until) : null;
+        const current = now instanceof Date ? now : new Date(now || Date.now());
+        const withinLegacyWindow = dynamic.code === "formation-package-price"
+          && cell.topic === "formation-package"
+          && validUntil && Number.isFinite(validUntil.getTime())
+          && validUntil > current
+          && validUntil.getTime() - current.getTime() <= 30 * 24 * 60 * 60 * 1000;
+        if (withinLegacyWindow) continue;
+        at(SEVERITY.GAP, "BH-DYNAMIC-FROZEN",
+          `approved chunk contains a frozen ${dynamic.code} (${dynamic.value}); remove it and use the live M4 source`,
+          { dynamicKind: dynamic.code, value: dynamic.value, validUntil: row.document.valid_until || null });
+      }
     }
     if (row.document.valid_until) {
       const until = String(row.document.valid_until).slice(0, 10);

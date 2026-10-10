@@ -11,6 +11,7 @@ const {
   withoutPriceFacts,
   containsUnsupportedPackageInclusion,
   collectApprovedKnowledgeEvidence,
+  collectDynamicDataEvidence,
   containsUnsupportedPriceValueClaim,
   containsUnsupportedServiceListClaim,
   containsUnsupportedUrlClaim,
@@ -40,6 +41,47 @@ test("[028-3] evidence contains no price -> response invents EUR 1,500 -> reject
 test("[028-4] response contains no price -> no false price rejection", () => {
   assert.equal(containsUnsupportedPriceValueClaim("Company formation is available in Cyprus.", evidence("Company formation is available in Cyprus.")), false);
   assert.equal(containsUnsupportedPriceValueClaim("Your card 4111111111111111 is on file.", []), false);
+});
+
+function liveOfferObservation(overrides = {}) {
+  const now = Date.now();
+  return {
+    tool: "lookupActiveOffer",
+    result: {
+      ok: true,
+      status: "found",
+      modelObservation: {
+        type: "dynamic_data", source: "trusted_edge_dynamic_read", kind: "offers", status: "found",
+        records: [{
+          code: "formation-package", amount: 999, currency: "EUR", inclusions: ["Incorporation"],
+          location: "CY", vatTreatment: "plus VAT", eligibility: null, availability: null, effectiveDate: new Date(now - 1000).toISOString(),
+          lastUpdated: new Date(now - 500).toISOString(), verifiedAt: new Date(now - 1500).toISOString(),
+          validUntil: new Date(now + 86400000).toISOString(), reviewStatus: "approved", provenance: "approved_live_edge_data",
+          ...overrides
+        }]
+      }
+    }
+  };
+}
+
+test("current trusted dynamic evidence grounds only its exact live value", () => {
+  const dynamicEvidenceItems = collectDynamicDataEvidence([liveOfferObservation()]);
+  assert.equal(dynamicEvidenceItems.length, 1);
+  assert.equal(dynamicEvidenceItems[0].sourceLevel, "live_data");
+  assert.equal(validateFactualGrounding("The current package price is EUR 999.", { dynamicEvidenceItems }).valid, true);
+  assert.equal(validateFactualGrounding("The current package price is EUR 1099.", { dynamicEvidenceItems }).valid, false);
+});
+
+test("expired, malformed, or untrusted dynamic observations cannot ground a company claim", () => {
+  const expired = collectDynamicDataEvidence([liveOfferObservation({ validUntil: new Date(Date.now() - 1000).toISOString() })]);
+  const malformed = collectDynamicDataEvidence([liveOfferObservation({ amount: "999" })]);
+  const wrongProvenance = collectDynamicDataEvidence([{
+    ...liveOfferObservation(), result: { ...liveOfferObservation().result, modelObservation: { ...liveOfferObservation().result.modelObservation, source: "untrusted_tool" } }
+  }]);
+  for (const dynamicEvidenceItems of [expired, malformed, wrongProvenance]) {
+    assert.deepEqual(dynamicEvidenceItems, []);
+    assert.equal(validateFactualGrounding("The current package price is EUR 999.", { dynamicEvidenceItems }).valid, false);
+  }
 });
 
 // --- PACKAGE / SERVICE CONTENT (required tests 5-7) -------------------------

@@ -38,6 +38,49 @@ test("Important Integration Test — Case A: a response that only restates groun
   assert.equal(result.response, "Refalco Group offers Company Formation for EUR 1500 and Accounting services.");
 });
 
+function currentOfferRows(overrides = {}) {
+  const now = Date.now();
+  return [{
+    id: "offer-private-id", code: "formation-package", title_en: "Company formation package", amount: 999, currency: "EUR",
+    vat_note: "plus VAT", inclusions: ["Company incorporation"], valid_from: new Date(now - 1000).toISOString(),
+    effective_from: new Date(now - 1000).toISOString(), valid_until: new Date(now + 86400000).toISOString(),
+    verified_at: new Date(now - 2000).toISOString(), updated_at: new Date(now - 500).toISOString(), review_status: "approved",
+    active: true, location: "CY", eligibility: null, ...overrides
+  }];
+}
+
+test("a current dynamic offer reaches and passes the real Agent grounding gate", async () => {
+  const context = buildAgentContext({ currentMessage: "What is the current company formation package price?", locale: "english" });
+  const decide = scriptedDecider([
+    { type: "tool", tool: "lookupActiveOffer", args: { code: "formation-package" } },
+    { type: "respond", text: "The current company formation package is EUR 999 plus VAT." }
+  ]);
+  const result = await runAgentTurn(context, {
+    decideNextStep: decide,
+    tools: TOOL_REGISTRY,
+    toolContext: { store: { lookupDynamicData: async (kind) => ({ ok: true, status: "found", data: kind === "offers" ? currentOfferRows() : [] }) } }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /EUR 999/);
+  assert.equal(result.steps[0].result.modelObservation.source, "trusted_edge_dynamic_read");
+});
+
+test("an expired dynamic offer is unavailable and cannot ground a claimed price in the real Agent loop", async () => {
+  const context = buildAgentContext({ currentMessage: "What is the current company formation package price?", locale: "english" });
+  const decide = scriptedDecider([
+    { type: "tool", tool: "lookupActiveOffer", args: { code: "formation-package" } },
+    { type: "respond", text: "The current company formation package is EUR 999." }
+  ]);
+  const result = await runAgentTurn(context, {
+    decideNextStep: decide,
+    tools: TOOL_REGISTRY,
+    toolContext: { store: { lookupDynamicData: async () => ({ ok: true, status: "found", data: currentOfferRows({ valid_until: new Date(Date.now() - 1000).toISOString() }) }) } }, maxSteps: 2
+  });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /unsupported_price_claim/);
+  assert.equal(result.steps[0].result.status, "unavailable");
+});
+
 test("Important Integration Test — Case B: an unsupported price (EUR 2500 vs evidence's EUR 1500) is rejected, never sent, and the turn safely falls back", async () => {
   const context = buildAgentContext({ currentMessage: "What services do you provide and how much does company formation cost?", locale: "english" });
   // Every respond attempt after the tool call repeats the same unsupported

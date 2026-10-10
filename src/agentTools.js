@@ -7,11 +7,354 @@
 // Tools wrap existing services (leadQualification, handover, supabaseStore)
 // rather than reimplementing them.
 
+const { createHash } = require("node:crypto");
+
 const { getConsentState } = require("./leadQualification");
 const { createHandover } = require("./handover");
 const { getConversationState } = require("./conversationState");
 const { ok, fail } = require("./agentToolResult");
 const { getBookingAvailability, requestBookingAction } = require("./agentBookingTools");
+
+const DYNAMIC_READS = Object.freeze({
+  lookupActiveOffer: { kind: "offers", fields: ["code"] },
+  lookupRenewalFees: { kind: "renewals", fields: ["item"] },
+  searchPropertyInventory: { kind: "properties", fields: ["city", "type", "status", "bedrooms", "firstSale", "prEligible"] },
+  lookupReservationRules: { kind: "reservations", fields: ["projectOrPropertyId"] },
+  lookupGovernmentFees: { kind: "governmentFees", fields: ["feeType"] }
+});
+
+const ALLOWED_WRITE_CAPABILITIES = new Set([
+  "upsertLead", "createHandover", "holdOrBookAppointment", "scheduleFollowUp", "recordComplianceEvent"
+]);
+const FOLLOW_UP_CONSENT_ACTIONS = new Set(["scheduleFollowUp"]);
+const LEAD_FIELDS = new Set(["name", "nationality", "residence", "residenceCountry", "primaryGoal", "budget", "budgetAmount", "budgetCurrency"]);
+const COMPLIANCE_TRIGGERS = new Set(["aml_concern", "sanctions_concern", "source_of_funds_unclear", "identity_mismatch", "high_risk_transaction"]);
+const ACTION_FIELDS = Object.freeze({
+  upsertLead: new Set(["fields"]),
+  createHandover: new Set(["reason", "purpose", "department", "summary"]),
+  holdOrBookAppointment: new Set(["start", "end", "purpose"]),
+  scheduleFollowUp: new Set(["purpose", "dueAt"]),
+  recordComplianceEvent: new Set(["trigger"])
+});
+
+const MAX_DYNAMIC_ROWS = 4;
+const MAX_DYNAMIC_TEXT = 300;
+const DYNAMIC_TOOL_TIMEOUT_MS = 12000;
+const DYNAMIC_SYSTEM_FIELDS = new Set([
+  "id", "code", "title_en", "title_ar", "title_el", "amount", "currency", "vat_note", "inclusions",
+  "valid_from", "effective_from", "valid_until", "review_status", "active", "location", "eligibility",
+  "updated_at", "verified_at", "item", "period", "notes_en", "notes_ar", "notes_el", "reference", "city",
+  "type", "status", "price", "vat_rate_note", "bedrooms", "first_sale", "pr_eligible", "available",
+  "developer", "delivery_date", "project_or_property_id", "deposit_amount", "deposit_percent", "refundable",
+  "conditions_en", "conditions_ar", "conditions_el", "fee_type", "authority", "source_note"
+]);
+
+function trimString(value, max = MAX_DYNAMIC_TEXT) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+}
+
+function withTimeout(operation, timeoutMs = DYNAMIC_TOOL_TIMEOUT_MS) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(operation),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error("Tool request timed out.");
+        error.code = "TOOL_TIMEOUT";
+        reject(error);
+      }, timeoutMs);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
+function timeoutFor(context) {
+  const requested = Number(context?.toolTimeoutMs);
+  return Number.isFinite(requested) && requested > 0 ? Math.min(requested, DYNAMIC_TOOL_TIMEOUT_MS) : DYNAMIC_TOOL_TIMEOUT_MS;
+}
+
+function allowedArgs(args, fields) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  if (Object.keys(args).some((key) => !fields.includes(key))) return null;
+  return args;
+}
+
+function isFreshDynamicRow(row, now = new Date()) {
+  if (!row || typeof row !== "object" || row.review_status !== "approved" || row.active !== true) return false;
+  const effectiveFrom = Date.parse(row.effective_from);
+  const validUntil = Date.parse(row.valid_until);
+  const verifiedAt = Date.parse(row.verified_at);
+  const updatedAt = Date.parse(row.updated_at);
+  return Number.isFinite(effectiveFrom) && Number.isFinite(validUntil) && Number.isFinite(verifiedAt)
+    && Number.isFinite(updatedAt) && effectiveFrom <= now.getTime() && now.getTime() < validUntil
+    && verifiedAt <= now.getTime();
+}
+
+function isValidDynamicRow(kind, row) {
+  if (!row || typeof row !== "object" || row.review_status !== "approved" || row.active !== true) return false;
+  if (row.currency !== null && (typeof row.currency !== "string" || !/^[A-Z]{3}$/.test(row.currency))) return false;
+  if (row.eligibility !== null && (typeof row.eligibility !== "object" || Array.isArray(row.eligibility))) return false;
+  if (kind === "offers") return typeof row.code === "string" && typeof row.amount === "number" && row.amount >= 0
+    && Array.isArray(row.inclusions) && row.inclusions.every((item) => typeof item === "string");
+  if (kind === "renewals") return ["secretary", "address", "accounting", "audit", "tax"].includes(row.item)
+    && typeof row.amount === "number" && row.amount >= 0 && typeof row.period === "string";
+  if (kind === "properties") return typeof row.reference === "string" && typeof row.price === "number" && row.price >= 0
+    && typeof row.available === "boolean" && row.available === true
+    && (row.pr_eligible === null || typeof row.pr_eligible === "boolean")
+    && (row.first_sale === null || typeof row.first_sale === "boolean");
+  if (kind === "reservations") return typeof row.project_or_property_id === "string"
+    && ((typeof row.deposit_amount === "number" && row.deposit_amount >= 0 && row.deposit_percent == null)
+      || (typeof row.deposit_percent === "number" && row.deposit_percent > 0 && row.deposit_percent <= 100 && row.deposit_amount == null))
+    && (row.refundable === null || typeof row.refundable === "boolean");
+  if (kind === "governmentFees") return typeof row.fee_type === "string" && typeof row.amount === "number" && row.amount >= 0
+    && typeof row.authority === "string";
+  return false;
+}
+
+function dynamicRecord(kind, row) {
+  const eligibility = {};
+  if (row.eligibility && typeof row.eligibility === "object" && !Array.isArray(row.eligibility)) {
+    for (const [key, value] of Object.entries(row.eligibility).slice(0, 12)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key)) continue;
+      if (typeof value === "string") eligibility[key] = value.slice(0, 120);
+      else if (typeof value === "number" && Number.isFinite(value)) eligibility[key] = value;
+      else if (typeof value === "boolean" || value === null) eligibility[key] = value;
+    }
+  }
+  const shared = {
+    kind,
+    location: trimString(row.location, 40),
+    currency: trimString(row.currency, 3),
+    vatTreatment: trimString(row.vat_note || row.vat_rate_note),
+    effectiveDate: trimString(row.effective_from, 40),
+    lastUpdated: trimString(row.updated_at, 40),
+    verifiedAt: trimString(row.verified_at, 40),
+    validUntil: trimString(row.valid_until, 40),
+    reviewStatus: "approved",
+    provenance: "approved_live_edge_data",
+    eligibility: Object.keys(eligibility).length ? eligibility : null,
+    availability: typeof row.available === "boolean" ? row.available : null
+  };
+  const fields = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (!DYNAMIC_SYSTEM_FIELDS.has(key) || ["id", "review_status", "active", "verified_at", "source_note"].includes(key)) continue;
+    if (key === "inclusions" && Array.isArray(value)) fields.inclusions = value.filter((item) => typeof item === "string").slice(0, 20).map((item) => item.slice(0, MAX_DYNAMIC_TEXT));
+    else if (typeof value === "string") fields[key] = value.slice(0, MAX_DYNAMIC_TEXT);
+    else if (typeof value === "number" && Number.isFinite(value)) fields[key] = value;
+    else if (typeof value === "boolean" || value === null) fields[key] = value;
+  }
+  return { ...shared, ...fields };
+}
+
+async function lookupDynamic(kind, args, { store, now = new Date(), toolTimeoutMs } = {}) {
+  if (typeof store?.lookupDynamicData !== "function") return fail("error", "DYNAMIC_LOOKUP_UNAVAILABLE");
+  try {
+    const result = await withTimeout(store.lookupDynamicData(kind, args), timeoutFor({ toolTimeoutMs }));
+    if (!result || typeof result !== "object" || result.ok !== true) {
+      const status = result?.status === "unavailable" ? "unavailable" : "error";
+      return fail(status, result?.reasonCode || (status === "unavailable" ? "DYNAMIC_DATA_UNAVAILABLE" : "DYNAMIC_LOOKUP_FAILED"), {
+        userSafeSummary: status === "unavailable" ? "This information is not currently confirmed." : "I can't confirm this information right now.",
+        modelObservation: { type: "dynamic_data", source: "trusted_edge_dynamic_read", kind, status, records: [] }
+      });
+    }
+    const values = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
+    const current = values.filter((row) => isValidDynamicRow(kind, row) && isFreshDynamicRow(row, now));
+    if (!current.length) return ok("unavailable", [], {
+      userSafeSummary: "This information is not currently confirmed.",
+      modelObservation: { type: "dynamic_data", source: "trusted_edge_dynamic_read", kind, status: "unavailable", records: [] }
+    });
+    const records = current.slice(0, MAX_DYNAMIC_ROWS).map((row) => dynamicRecord(kind, row));
+    return ok("found", records, {
+      userSafeSummary: `Current ${kind} information is available.`,
+      modelObservation: { type: "dynamic_data", source: "trusted_edge_dynamic_read", kind, status: "found", records }
+    });
+  } catch (error) {
+    const timedOut = error?.code === "TOOL_TIMEOUT";
+    return fail(timedOut ? "timeout" : "error", timedOut ? "DYNAMIC_LOOKUP_TIMEOUT" : "DYNAMIC_LOOKUP_FAILED", {
+      userSafeSummary: "I can't confirm this information right now.",
+      modelObservation: { type: "dynamic_data", source: "trusted_edge_dynamic_read", kind, status: timedOut ? "unavailable" : "error", records: [] }
+    });
+  }
+}
+
+function validateDynamicReadArgs(name, args) {
+  const contract = DYNAMIC_READS[name];
+  const clean = allowedArgs(args, contract.fields);
+  if (!clean) return null;
+  if (contract.kind === "properties") {
+    const normalized = {};
+    for (const [key, value] of Object.entries(clean)) {
+      if (key === "bedrooms") {
+        if (!Number.isInteger(value) || value < 0 || value > 100) return null;
+        normalized[key] = value;
+      } else if (["firstSale", "prEligible"].includes(key)) {
+        if (typeof value !== "boolean") return null;
+        normalized[key] = value;
+      } else {
+        const text = trimString(value, 80);
+        if (!text) return null;
+        normalized[key] = text;
+      }
+    }
+    return Object.keys(normalized).length ? normalized : null;
+  }
+  const key = contract.fields[0];
+  const value = trimString(clean[key], 100);
+  return value ? { [key]: value } : null;
+}
+
+function trustedCapabilities(context) {
+  return new Set(Array.isArray(context?.allowedCapabilities) ? context.allowedCapabilities : []);
+}
+
+function safeActionArgs(name, args) {
+  const fields = ACTION_FIELDS[name];
+  const clean = allowedArgs(args, [...fields]);
+  if (!clean) return null;
+  if (name === "upsertLead") {
+    if (!clean.fields || typeof clean.fields !== "object" || Array.isArray(clean.fields)) return null;
+    const values = {};
+    let budgetAmount;
+    let budgetCurrency;
+    for (const [key, value] of Object.entries(clean.fields)) {
+      if (!LEAD_FIELDS.has(key)) return null;
+      if (typeof value === "string") {
+        const text = trimString(value, key === "name" ? 120 : 240);
+        if (!text) return null;
+        if (key === "budget") {
+          const match = text.match(/^(?:([A-Z]{3})\s*)?(\d[\d,]*(?:\.\d{1,2})?)(?:\s*([A-Z]{3}))?$/);
+          if (!match || Boolean(match[1]) === Boolean(match[3])) return null;
+          budgetCurrency = match[1] || match[3];
+          budgetAmount = Number(match[2].replace(/,/g, ""));
+          if (!Number.isFinite(budgetAmount) || budgetAmount < 0) return null;
+        } else if (key === "budgetCurrency") {
+          if (!/^[A-Z]{3}$/.test(text)) return null;
+          budgetCurrency = text;
+        } else values[key === "residence" ? "residenceCountry" : key] = text;
+      } else if (typeof value === "number" && Number.isFinite(value) && key === "budgetAmount" && value >= 0) budgetAmount = value;
+      else return null;
+    }
+    if ((budgetAmount === undefined) !== (budgetCurrency === undefined)) return null;
+    if (budgetAmount !== undefined) {
+      values.budgetAmount = budgetAmount;
+      values.budgetCurrency = budgetCurrency;
+    }
+    return Object.keys(values).length ? { profile: values } : null;
+  }
+  const result = {};
+  for (const [key, value] of Object.entries(clean)) {
+    if (["reason", "purpose", "department", "summary", "trigger"].includes(key)) {
+      const text = trimString(value, key === "summary" ? 1200 : 240);
+      if (!text) return null;
+      result[key] = text;
+    } else if (key === "dueAt") {
+      const date = Date.parse(value);
+      if (typeof value !== "string" || !Number.isFinite(date) || date < Date.now() + 60000 || date > Date.now() + 30 * 86400000) return null;
+      result.dueAt = new Date(date).toISOString();
+    } else if (["start", "end"].includes(key)) {
+      const date = Date.parse(value);
+      if (typeof value !== "string" || !Number.isFinite(date)) return null;
+      result[key] = new Date(date).toISOString();
+    }
+  }
+  if (name === "holdOrBookAppointment" && (!result.start || !result.end || !result.purpose)) return null;
+  if (name === "scheduleFollowUp" && (result.purpose !== "specialist_follow_up" || !result.dueAt)) return null;
+  if (name === "createHandover" && !result.reason && !result.purpose) return null;
+  if (name === "recordComplianceEvent" && (!COMPLIANCE_TRIGGERS.has(result.trigger))) return null;
+  return result;
+}
+
+async function performDynamicAction(name, args, context = {}) {
+  if (!ALLOWED_WRITE_CAPABILITIES.has(name)) return fail("not_authorized", "ACTION_NOT_ALLOWED");
+  if (!trustedCapabilities(context).has(name)) return fail("not_authorized", "CAPABILITY_REQUIRED");
+  if (FOLLOW_UP_CONSENT_ACTIONS.has(name) && context.consentState !== "granted") return fail("not_authorized", "CONSENT_REQUIRED");
+  if (!isPlainString(context.userId)) return fail("invalid_input", "TRUSTED_CONTACT_REQUIRED");
+  if (name === "holdOrBookAppointment" && !isPlainString(context.inboundMessageId)) return fail("invalid_input", "INBOUND_MESSAGE_ID_REQUIRED");
+  if (name !== "holdOrBookAppointment" && !isPlainString(context.sourceTurnId)) return fail("invalid_input", "PERSISTED_SOURCE_TURN_REQUIRED");
+  const safeArgs = safeActionArgs(name, args);
+  if (!safeArgs) return fail("invalid_input", "INVALID_ACTION_ARGUMENTS");
+  if (name === "holdOrBookAppointment") {
+    // The existing booking state machine owns slot freshness, idempotency,
+    // calendar confirmation, and the distinction between pending review and
+    // a real booking. The trusted capability is issued only after the caller
+    // has verified the customer's explicit booking request/confirmation.
+    const booking = await requestBookingAction(safeArgs, {
+      ...context,
+      inboundMessageId: context.inboundMessageId
+    });
+    if (!booking.ok) return fail(booking.status, booking.reasonCode || "BOOKING_FAILED", {
+      userSafeSummary: booking.userSafeSummary || "I couldn't confirm the appointment request."
+    });
+    const status = booking.status === "confirmed" ? "confirmed" : "pending";
+    return ok(status, booking.data || {}, {
+      userSafeSummary: booking.status === "confirmed"
+        ? booking.userSafeSummary || "The appointment is confirmed."
+        : "The appointment request is pending confirmation."
+    });
+  }
+  if (typeof context.store?.performDynamicAction !== "function") return fail("error", "DYNAMIC_ACTION_UNAVAILABLE");
+  const digest = createHash("sha256").update(`${context.userId}|${name}|${context.sourceTurnId}`).digest("hex");
+  const idempotencyKey = `dynamic:${name}:${digest}`;
+  try {
+    const result = await withTimeout(context.store.performDynamicAction(name, {
+      userId: context.userId,
+      sourceTurnId: context.sourceTurnId,
+      idempotencyKey,
+      args: safeArgs,
+      consentState: context.consentState,
+      allowedCapabilities: [...trustedCapabilities(context)],
+      language: context.language || "english",
+      intents: Array.isArray(context.intents) ? context.intents.filter((intent) => typeof intent === "string").slice(0, 8) : []
+    }), timeoutFor(context));
+    if (!result || typeof result !== "object" || typeof result.ok !== "boolean") return fail("error", "ACTION_RESULT_INVALID");
+    if (!result.ok) return fail(result.status || "error", result.reasonCode || "ACTION_FAILED", {
+      userSafeSummary: result.userSafeSummary || "I couldn't complete that action."
+    });
+    if (!["pending", "confirmed", "failed"].includes(result.status)) return fail("error", "ACTION_RESULT_INVALID");
+    const data = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : {};
+    const hasPersistenceIdentity = ["id", "receiptId", "receipt_id", "actionId", "action_id", "appointmentId"]
+      .some((key) => isPlainString(data[key]));
+    if (!hasPersistenceIdentity) return fail("pending", "PERSISTENCE_UNCONFIRMED", {
+      userSafeSummary: "The request is pending confirmation."
+    });
+    if (result.status === "failed") return fail("error", "ACTION_FAILED", {
+      userSafeSummary: result.userSafeSummary || "The requested action failed."
+    });
+    const summary = result.status === "pending" ? "Your request is pending confirmation."
+      : result.status === "confirmed" ? "The requested action is confirmed."
+        : "The requested action failed.";
+    return ok(result.status, data, { userSafeSummary: summary });
+  } catch {
+    // A timeout may mean the gateway committed the action. Leave it pending;
+    // never claim success or retry an uncertain write here.
+    return fail("pending", "ACTION_OUTCOME_UNCERTAIN", { userSafeSummary: "The request is pending confirmation." });
+  }
+}
+
+async function dynamicReadTool(name, args, context = {}) {
+  const clean = validateDynamicReadArgs(name, args);
+  if (!clean) return fail("invalid_input", "INVALID_LOOKUP_ARGUMENTS");
+  const { kind } = DYNAMIC_READS[name];
+  return lookupDynamic(kind, clean, context);
+}
+
+async function listCalendarSlots(args, context = {}) {
+  if (args && (typeof args !== "object" || Array.isArray(args) || Object.keys(args).some((key) => !["start", "end"].includes(key)))) {
+    return fail("invalid_input", "INVALID_LOOKUP_ARGUMENTS");
+  }
+  const result = await getBookingAvailability(args || {}, context);
+  if (!result.ok) return fail(result.status, result.reasonCode, {
+    userSafeSummary: "I can't confirm calendar availability right now.",
+    modelObservation: { type: "dynamic_data", source: "trusted_calendar_read", kind: "calendarSlots", status: "error", records: [] }
+  });
+  const available = result.status === "available" || result.status === "suggestions";
+  const records = result.status === "suggestions" && Array.isArray(result.data)
+    ? result.data.slice(0, 3).map((slot) => ({ start: slot.start, end: slot.end, availability: "available", location: context.policy?.location || null, currency: null, vatTreatment: null, effectiveDate: null, lastUpdated: null, eligibility: null, timezone: context.policy?.timezone || null }))
+    : result.status === "available" ? [{ ...result.data, availability: "available", location: context.policy?.location || null, currency: null, vatTreatment: null, effectiveDate: null, lastUpdated: null, eligibility: null, timezone: context.policy?.timezone || null }] : [];
+  const status = available ? "found" : result.status === "unavailable" || result.status === "invalid_window" ? "unavailable" : "error";
+  const observation = { type: "dynamic_data", source: "trusted_calendar_read", kind: "calendarSlots", status, records };
+  return status === "error" ? fail("error", "CALENDAR_UNAVAILABLE", { modelObservation: observation })
+    : ok(status, records, { userSafeSummary: available ? "Current calendar availability is available." : "No matching calendar slot is available.", modelObservation: observation });
+}
 
 function isPlainString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -205,6 +548,50 @@ async function proposeHandover(args, { user, intents = [], language } = {}) {
 }
 
 const TOOL_REGISTRY = Object.freeze({
+  lookupActiveOffer: {
+    description: "Read one currently approved, effective offer by its code. Use only current returned data for price or inclusions.",
+    run: (args, context) => dynamicReadTool("lookupActiveOffer", args, context)
+  },
+  lookupRenewalFees: {
+    description: "Read the current approved renewal fee for a specific item. Missing or expired values are unconfirmed.",
+    run: (args, context) => dynamicReadTool("lookupRenewalFees", args, context)
+  },
+  searchPropertyInventory: {
+    description: "Search current approved and available property inventory using explicit filters. Never infer eligibility or availability.",
+    run: (args, context) => dynamicReadTool("searchPropertyInventory", args, context)
+  },
+  lookupReservationRules: {
+    description: "Read the current reservation rule for an exact project or property identifier.",
+    run: (args, context) => dynamicReadTool("lookupReservationRules", args, context)
+  },
+  lookupGovernmentFees: {
+    description: "Read a current approved government fee by fee type. Do not combine it into a total transaction cost.",
+    run: (args, context) => dynamicReadTool("lookupGovernmentFees", args, context)
+  },
+  listCalendarSlots: {
+    description: "Read current calendar availability or up to three current suggested slots using the configured booking system.",
+    run: listCalendarSlots
+  },
+  upsertLead: {
+    description: "Save customer-provided lead fields for the trusted current contact and source turn. This never sends a message.",
+    run: (args, context) => performDynamicAction("upsertLead", args, context)
+  },
+  createHandover: {
+    description: "Persist a purpose-bound specialist handover only when the trusted caller authorizes this handover request or escalation.",
+    run: (args, context) => performDynamicAction("createHandover", args, context)
+  },
+  holdOrBookAppointment: {
+    description: "Request the exact appointment the trusted caller has confirmed with the customer. Pending review is not a confirmed booking.",
+    run: (args, context) => performDynamicAction("holdOrBookAppointment", args, context)
+  },
+  scheduleFollowUp: {
+    description: "Schedule a future follow-up only with current follow-up consent and trusted authorization. Scheduling does not mean a message was sent.",
+    run: (args, context) => performDynamicAction("scheduleFollowUp", args, context)
+  },
+  recordComplianceEvent: {
+    description: "Create a minimal internal compliance event. This does not authorize customer contact or outbound messages.",
+    run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
+  },
   searchApprovedKnowledge: {
     description: "Search approved Refalco Group knowledge for current prices, services, or company facts. Use when the customer's current question needs a factual answer, not for greetings or clarifications.",
     run: searchApprovedKnowledge
@@ -244,6 +631,11 @@ module.exports = {
   proposeHandover,
   getBookingAvailability,
   requestBookingAction,
+  dynamicReadTool,
+  performDynamicAction,
+  listCalendarSlots,
+  isFreshDynamicRow,
+  dynamicRecord,
   buildApprovedKnowledgeObservation,
   MAX_RAG_EVIDENCE_ITEMS,
   MAX_RAG_EVIDENCE_CONTENT_CHARS,

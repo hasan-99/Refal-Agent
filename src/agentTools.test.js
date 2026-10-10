@@ -258,12 +258,182 @@ test("REFAL-AGENT-027: an injection-style instruction embedded in tool args (e.g
   assert.equal(result.reasonCode, "CONSENT_REQUIRED");
 });
 
-test("the tool registry only exposes the explicit named tools", () => {
-  // REFAL-AGENT-009 merged the two booking tools into this same registry
-  // object; there must never be a second, competing registry.
-  assert.deepEqual(Object.keys(TOOL_REGISTRY).sort(), ["getBookingAvailability", "getCustomerContext", "proposeHandover", "requestBookingAction", "saveCustomerFact", "searchApprovedKnowledge"]);
+test("the single registry includes all existing tools and the eleven exact M4 tool names", () => {
+  const expected = [
+    "createHandover", "getBookingAvailability", "getCustomerContext", "holdOrBookAppointment",
+    "listCalendarSlots", "lookupActiveOffer", "lookupGovernmentFees", "lookupRenewalFees",
+    "lookupReservationRules", "proposeHandover", "recordComplianceEvent", "requestBookingAction",
+    "saveCustomerFact", "scheduleFollowUp", "searchApprovedKnowledge", "searchPropertyInventory", "upsertLead"
+  ];
+  assert.deepEqual(Object.keys(TOOL_REGISTRY).sort(), expected.sort());
   for (const tool of Object.values(TOOL_REGISTRY)) {
     assert.equal(typeof tool.description, "string");
     assert.equal(typeof tool.run, "function");
   }
+});
+
+const currentDynamicRow = (extra = {}) => {
+  const now = Date.now();
+  return {
+    id: "private-row-id", code: "formation-package", title_en: "Formation package", amount: 999, currency: "EUR",
+    vat_note: "plus VAT", inclusions: ["Incorporation", "Secretary"], valid_from: new Date(now - 1000).toISOString(),
+    effective_from: new Date(now - 1000).toISOString(), valid_until: new Date(now + 86400000).toISOString(),
+    verified_at: new Date(now - 2000).toISOString(), updated_at: new Date(now - 500).toISOString(),
+    review_status: "approved", active: true, location: "CY", eligibility: null, reviewer_email: "internal@example.test", ...extra
+  };
+};
+
+test("lookupActiveOffer sends only its typed filter and emits a bounded approved-current observation", async () => {
+  let call;
+  const store = { lookupDynamicData: async (...args) => { call = args; return { ok: true, status: "found", data: [currentDynamicRow()] }; } };
+  const result = await TOOL_REGISTRY.lookupActiveOffer.run({ code: "formation-package", view: "all", scope: "drafts" }, { store });
+  assert.equal(result.ok, false, "model query options must not reach a shared Edge gateway");
+  assert.equal(call, undefined);
+
+  const found = await TOOL_REGISTRY.lookupActiveOffer.run({ code: "formation-package" }, { store });
+  assert.deepEqual(call, ["offers", { code: "formation-package" }]);
+  assert.equal(found.status, "found");
+  assert.equal(found.modelObservation.type, "dynamic_data");
+  assert.equal(found.modelObservation.records[0].amount, 999);
+  assert.equal(found.modelObservation.records[0].currency, "EUR");
+  assert.equal("id" in found.modelObservation.records[0], false);
+  assert.equal("reviewer_email" in found.modelObservation.records[0], false);
+});
+
+test("dynamic reads return unavailable for empty, expired, future, inactive, malformed, or unavailable rows", async () => {
+  const cases = [
+    [],
+    [currentDynamicRow({ valid_until: new Date(Date.now() - 1000).toISOString() })],
+    [currentDynamicRow({ effective_from: new Date(Date.now() + 86400000).toISOString() })],
+    [currentDynamicRow({ active: false })],
+    [currentDynamicRow({ amount: "999" })]
+  ];
+  for (const data of cases) {
+    const result = await TOOL_REGISTRY.lookupActiveOffer.run({ code: "formation-package" }, { store: { lookupDynamicData: async () => ({ ok: true, status: "found", data }) } });
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "unavailable");
+    assert.deepEqual(result.modelObservation.records, []);
+  }
+  const unavailable = await TOOL_REGISTRY.lookupActiveOffer.run({ code: "formation-package" }, { store: { lookupDynamicData: async () => ({ ok: false, status: "unavailable" }) } });
+  assert.equal(unavailable.status, "unavailable");
+  assert.match(unavailable.userSafeSummary, /not currently confirmed/);
+});
+
+test("each typed read rejects unknown fields and requires its scoped lookup key", async () => {
+  let calls = 0;
+  const context = { store: { lookupDynamicData: async () => { calls += 1; return { ok: true, status: "found", data: [] }; } } };
+  for (const name of ["lookupRenewalFees", "searchPropertyInventory", "lookupReservationRules", "lookupGovernmentFees"]) {
+    const result = await TOOL_REGISTRY[name].run({ arbitrary: "all rows" }, context);
+    assert.equal(result.ok, false, name);
+  }
+  assert.equal(calls, 0);
+});
+
+test("writes require trusted capability and source identity; model args cannot override the contact", async () => {
+  let call;
+  const store = { performDynamicAction: async (...args) => { call = args; return { ok: true, status: "confirmed", data: { id: "lead-1" } }; } };
+  const untrusted = await TOOL_REGISTRY.upsertLead.run({ fields: { name: "Rami" } }, {
+    store, userId: "contact-1", sourceTurnId: "wa-turn-1", allowedCapabilities: []
+  });
+  assert.equal(untrusted.reasonCode, "CAPABILITY_REQUIRED");
+  assert.equal(call, undefined);
+
+  const override = await TOOL_REGISTRY.upsertLead.run({ userId: "contact-2", fields: { name: "Rami" } }, {
+    store, userId: "contact-1", sourceTurnId: "wa-turn-1", allowedCapabilities: ["upsertLead"]
+  });
+  assert.equal(override.reasonCode, "INVALID_ACTION_ARGUMENTS");
+  assert.equal(call, undefined);
+
+  const result = await TOOL_REGISTRY.upsertLead.run({ fields: { name: "Rami", budget: "EUR 50000" } }, {
+    store, userId: "contact-1", sourceTurnId: "wa-turn-1", allowedCapabilities: ["upsertLead"], consentState: "unknown"
+  });
+  assert.equal(result.status, "confirmed");
+  assert.equal(call[0], "upsertLead");
+  assert.equal(call[1].userId, "contact-1");
+  assert.equal(call[1].sourceTurnId, "wa-turn-1");
+  assert.match(call[1].idempotencyKey, /^dynamic:upsertLead:[a-f0-9]{64}$/);
+  assert.deepEqual(call[1].args, { profile: { name: "Rami", budgetAmount: 50000, budgetCurrency: "EUR" } });
+  assert.equal("store" in call[1], false);
+});
+
+test("follow-up consent is purpose-sensitive and compliance remains an internal consent exception", async () => {
+  let calls = 0;
+  const store = { performDynamicAction: async () => { calls += 1; return { ok: true, status: "confirmed", data: { id: "event-1" } }; } };
+  const followUp = await TOOL_REGISTRY.scheduleFollowUp.run({ purpose: "specialist_follow_up", dueAt: new Date(Date.now() + 3600000).toISOString() }, {
+    store, userId: "contact-1", sourceTurnId: "turn-1", allowedCapabilities: ["scheduleFollowUp"], consentState: "unknown"
+  });
+  assert.equal(followUp.reasonCode, "CONSENT_REQUIRED");
+  assert.equal(calls, 0);
+
+  const compliance = await TOOL_REGISTRY.recordComplianceEvent.run({ trigger: "sanctions_concern" }, {
+    store, userId: "contact-1", sourceTurnId: "turn-1", allowedCapabilities: ["recordComplianceEvent"], consentState: "unknown"
+  });
+  assert.equal(compliance.status, "confirmed");
+  assert.equal(calls, 1);
+  assert.equal("sent" in compliance.data, false);
+});
+
+test("dynamic writes match the Edge profile, follow-up, and compliance contracts", async () => {
+  const calls = [];
+  const store = { performDynamicAction: async (...args) => { calls.push(args); return { ok: true, status: "confirmed", data: { id: "persisted-1" } }; } };
+  const context = { store, userId: "contact-1", sourceTurnId: "turn-1", allowedCapabilities: ["upsertLead", "scheduleFollowUp", "recordComplianceEvent"], consentState: "granted" };
+
+  const lead = await TOOL_REGISTRY.upsertLead.run({ fields: { name: "Rami", residence: "Cyprus", budget: "EUR 50,000.25" } }, context);
+  assert.equal(lead.status, "confirmed");
+  assert.deepEqual(calls[0][1].args, { profile: { name: "Rami", residenceCountry: "Cyprus", budgetAmount: 50000.25, budgetCurrency: "EUR" } });
+
+  const incompleteBudget = await TOOL_REGISTRY.upsertLead.run({ fields: { budgetAmount: 50000 } }, context);
+  const forbiddenLeadField = await TOOL_REGISTRY.upsertLead.run({ fields: { finalRating: 10 } }, context);
+  assert.equal(incompleteBudget.reasonCode, "INVALID_ACTION_ARGUMENTS");
+  assert.equal(forbiddenLeadField.reasonCode, "INVALID_ACTION_ARGUMENTS");
+  assert.equal(calls.length, 1);
+
+  const dueAt = new Date(Date.now() + 3600000).toISOString();
+  const scheduled = await TOOL_REGISTRY.scheduleFollowUp.run({ purpose: "specialist_follow_up", dueAt }, context);
+  assert.equal(scheduled.status, "confirmed");
+  assert.deepEqual(calls[1][1].args, { purpose: "specialist_follow_up", dueAt: new Date(dueAt).toISOString() });
+  const invalidPurpose = await TOOL_REGISTRY.scheduleFollowUp.run({ purpose: "general_reminder", dueAt }, context);
+  assert.equal(invalidPurpose.reasonCode, "INVALID_ACTION_ARGUMENTS");
+
+  const flagged = await TOOL_REGISTRY.recordComplianceEvent.run({ trigger: "aml_concern" }, context);
+  assert.equal(flagged.status, "confirmed");
+  assert.deepEqual(calls[2][1].args, { trigger: "aml_concern" });
+  const invalidTrigger = await TOOL_REGISTRY.recordComplianceEvent.run({ trigger: "freeform high risk" }, context);
+  assert.equal(invalidTrigger.reasonCode, "INVALID_ACTION_ARGUMENTS");
+  assert.equal(calls.length, 3);
+});
+
+test("ambiguous action failures remain pending and a resolved response without persistence identity is not confirmed", async () => {
+  const trusted = { userId: "contact-1", sourceTurnId: "turn-1", allowedCapabilities: ["createHandover"] };
+  const args = { reason: "Customer requested a specialist" };
+  const uncertain = await TOOL_REGISTRY.createHandover.run(args, {
+    ...trusted,
+    store: { performDynamicAction: async () => { throw new Error("timeout"); } }
+  });
+  assert.equal(uncertain.status, "pending");
+  assert.equal(uncertain.reasonCode, "ACTION_OUTCOME_UNCERTAIN");
+  const noReceipt = await TOOL_REGISTRY.createHandover.run(args, {
+    ...trusted,
+    store: { performDynamicAction: async () => ({ ok: true, status: "confirmed", data: {} }) }
+  });
+  assert.equal(noReceipt.ok, false);
+  assert.equal(noReceipt.status, "pending");
+  assert.equal(noReceipt.reasonCode, "PERSISTENCE_UNCONFIRMED");
+});
+
+test("hung dynamic reads become unavailable and hung writes remain pending without retry", async () => {
+  const read = await TOOL_REGISTRY.lookupActiveOffer.run({ code: "offer-a" }, {
+    toolTimeoutMs: 5,
+    store: { lookupDynamicData: () => new Promise(() => {}) }
+  });
+  assert.equal(read.status, "timeout");
+  assert.equal(read.modelObservation.status, "unavailable");
+  let writes = 0;
+  const write = await TOOL_REGISTRY.createHandover.run({ reason: "Requested specialist" }, {
+    userId: "contact-1", sourceTurnId: "turn-1", allowedCapabilities: ["createHandover"], toolTimeoutMs: 5,
+    store: { performDynamicAction: () => { writes += 1; return new Promise(() => {}); } }
+  });
+  assert.equal(write.status, "pending");
+  assert.equal(write.reasonCode, "ACTION_OUTCOME_UNCERTAIN");
+  assert.equal(writes, 1);
 });

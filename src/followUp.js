@@ -30,6 +30,15 @@ function lastHistoryEntry(user) {
 function followUpTiming(user, now = new Date()) {
   const last = lastHistoryEntry(user);
   const lastMessageAt = last?.at ? new Date(last.at).getTime() : NaN;
+  const scheduledAt = user?.followUpState?.status === "scheduled"
+    ? new Date(user.followUpState.next_due_at || user.followUpState.nextDueAt).getTime()
+    : NaN;
+  if (Number.isFinite(scheduledAt)) {
+    const delayMs = Number.isFinite(lastMessageAt) ? Math.max(0, scheduledAt - lastMessageAt) : 0;
+    const dueAt = new Date(scheduledAt);
+    const remainingMs = Math.max(0, scheduledAt - now.getTime());
+    return { delayMs, dueAt, remainingMs, due: remainingMs === 0 };
+  }
   const delayMs = followUpDelayMs();
   const dueAt = Number.isFinite(lastMessageAt) ? new Date(lastMessageAt + delayMs) : null;
   const remainingMs = dueAt ? Math.max(0, dueAt.getTime() - now.getTime()) : null;
@@ -57,7 +66,7 @@ function shouldSendFollowUp(user, now = new Date()) {
   const last = lastHistoryEntry(user);
   if (!last?.at || !last.response || last.automated || last.message === "[auto-follow-up]" || isNaturalConversationEnd(last.message)) return false;
   const lastMessageAt = new Date(last.at).getTime();
-  if (!Number.isFinite(lastMessageAt) || now.getTime() - lastMessageAt < followUpDelayMs()) return false;
+  if (!Number.isFinite(lastMessageAt) || !followUpTiming(user, now).due) return false;
   const lastFollowUpSent = user.lastFollowUpSent ? new Date(user.lastFollowUpSent).getTime() : 0;
   return !lastFollowUpSent || lastFollowUpSent < lastMessageAt;
 }

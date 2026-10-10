@@ -1,0 +1,12 @@
+# Generated edge mirrors are byte-compared with their LF generator output.
+# Keep Windows checkouts deterministic even when core.autocrlf is enabled.
+supabase/functions/rafa-agent-api/brainPrompt.mjs text eol=lf
+supabase/functions/rafa-agent-api/responsePolicy.mjs text eol=lf
+supabase/functions/rafa-agent-api/language.mjs text eol=lf
+supabase/functions/rafa-agent-api/safetyPolicy.mjs text eol=lf
+supabase/functions/rafa-agent-api/bankingPolicy.mjs text eol=lf
+supabase/functions/rafa-agent-api/reservationPolicy.mjs text eol=lf
+supabase/functions/rafa-agent-api/crossCustomerPolicy.mjs text eol=lf
+supabase/functions/rafa-agent-api/outputGuards.mjs text eol=lf
+supabase/functions/rafa-agent-api/claimPolicy.mjs text eol=lf
+supabase/functions/rafa-agent-api/refalcoAnswer.mjs text eol=lf

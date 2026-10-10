@@ -1,0 +1,7 @@
+.knowledge-commercial-warning { display:flex; align-items:flex-start; gap:9px; margin-top:9px; padding:11px 12px; border:1px solid #ead9b7; border-radius:9px; color:#715827; background:#fff9ec; font-size:11px; line-height:1.5; }
+.knowledge-commercial-warning > svg { flex:none; margin-top:1px; color:#a87828; }
+.knowledge-commercial-warning strong { color:#70511b; font-size:11px; }
+.knowledge-commercial-warning p { margin:3px 0 7px; }
+.knowledge-commercial-warning p b { color:#4c656a; }
+.knowledge-commercial-warning button { display:inline-flex; align-items:center; gap:4px; padding:0; border:0; color:#32716e; background:transparent; font:inherit; font-weight:750; cursor:pointer; }
+.knowledge-commercial-warning button:hover { text-decoration:underline; }

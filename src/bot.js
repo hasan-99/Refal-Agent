@@ -40,6 +40,9 @@ const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
 const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
+const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
+const { detectIntent, INTENTS } = require("./intent");
+const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -400,6 +403,16 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
       logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
 
+    let dynamicResult = { requested: [], live: [], statuses: [] };
+    try {
+      dynamicResult = await collectDynamicFallback(store, customerText);
+    } catch (error) {
+      logEvent("dynamic_data_lookup_error", safeErrorDiagnostics(error));
+    }
+    const precedence = applyDynamicPrecedence(evidence, dynamicResult.live, dynamicResult.requested.map((item) => item.kind), {
+      failClosed: isDynamicQuestion(customerText) && dynamicResult.requested.length === 0
+    });
+    evidence = precedence.evidence;
     const grounded = answerFromEvidence(evidence, { allowPricing: routed.metadata?.intent?.intents?.includes("pricing") === true, customerQuestion: redactPersonalData(customerText) });
     let modelRequestMade = false;
     let modelResponseUsed = false;
@@ -500,7 +513,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
       fallbackCitations: citations
     });
     routed.turn = (await recordHistory(store, userId, text, response, {
-      metadata: { ...routed.metadata, retrieval: "approved_knowledge", citations, knowledgeEvidence, abstained: !grounded }
+      metadata: { ...routed.metadata, retrieval: dynamicResult.requested.length ? "approved_knowledge_and_live_data" : "approved_knowledge", dynamicData: dynamicResult.statuses, dynamicConflictDecisions: precedence.decisions, citations, knowledgeEvidence, abstained: !grounded }
     })).turn;
     stage("turn_and_workflow_persistence", stageAt, { route: "knowledge_answer" });
   }
@@ -553,61 +566,59 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
 async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
   await setTyping(socket, chatId, true);
   const user = await store.ensureUser(userId);
-  const history = Array.isArray(user?.history) ? user.history : [];
-  const lastTurn = history[history.length - 1] || null;
-  const conversationState = getConversationState(user || {});
-  const consentState = getConsentState({ user: user || {}, history }) || "unknown";
-  const locale = user?.profile?.language || "unknown";
-
-  // REFAL-AGENT-031: every real side-effecting tool call this turn makes
-  // runs through this wrapped registry instead of the raw TOOL_REGISTRY, so
-  // `commitState` can only ever be set from a tool's own resolved, successful
-  // result — never from the model's decision JSON or draft text.
-  const commitState = createCommitState();
-  const result = await runAgentTurnForContact({
-    currentMessage: text,
-    locale,
-    contact: { id: userId, name: user?.profile?.name || null },
-    recentConversation: buildRecentConversation(history),
-    conversationState,
-    knownCustomerFacts: conversationState.agentFacts,
-    currentOpenQuestion: wasNameRequested(lastTurn) ? (String(lastTurn.response || "").slice(0, 300) || null) : null,
-    consentState,
-    allowedCapabilities: [],
-    store,
-    user,
-    userId,
-    intents: [],
-    language: user?.profile?.language,
-    // REFAL-AGENT-030: the real inbound WhatsApp provider message id, so
-    // agentBookingTools.js's requestBookingAction derives the same
-    // idempotency key for a duplicate-delivered message as it would for any
-    // other booking write — see agentRuntime.js's buildToolContext.
-    inboundMessageId: providerMessageId || null
-  }, {
-    tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState)
-  });
-
-  // REFAL-AGENT-031: the one place that decides what happens with a Agent
-  // turn that did NOT cleanly resolve (respond/clarify). See
-  // agentCommitTracking.js's decideAgentTurnOutcome: if a real write already
-  // landed this turn, it is answered from that write's own deterministic
-  // result and NEVER retried via legacy; if nothing was committed yet, this
-  // throws so turnRouting.js's runRoutedTurn can safely fall back to legacy
-  // — no customer-visible send has happened yet at this point either way.
-  const decision = decideAgentTurnOutcome({ result, commitState, locale });
-  if (!decision.send) {
-    await setTyping(socket, chatId, false);
-    throw new Error(decision.reason);
+  const bookingState = user?.booking?.status;
+  // Booking has a deterministic state machine and remains its sole owner.
+  // Route it to legacy before preflight can persist or trigger anything.
+  if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || detectIntent(text).intents.includes(INTENTS.APPOINTMENT)) {
+    throw new Error("Appointment turn remains owned by the deterministic booking workflow.");
   }
-
-  await setTyping(socket, chatId, false);
-  await sendStoredTextReply(socket, chatId, decision.responseText, userId, null);
-  return {
-    outcome: result.outcome,
-    responseLength: decision.responseText ? decision.responseText.length : 0,
-    sideEffectCommitted: commitState.sideEffectCommitted
-  };
+  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
+  const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
+  const language = prepared.classification?.language || user?.profile?.language || "english";
+  const result = await runAgentAfterPreflight({
+    prepared,
+    routed,
+    userId,
+    sourceMessage: String(text || ""),
+    locale: language,
+    metadata: prepared.metadata || {},
+    pendingResponse: "Your message is being processed."
+  }, {
+    persistTurn: async ({ message, response, metadata }) => (await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true })).turn,
+    runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
+      const currentUser = await store.getUser(userId);
+      const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
+      const conversationState = getConversationState(currentUser || {});
+      const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
+      const commitState = createCommitState();
+      const agentResult = await runAgentTurnForContact({
+        currentMessage: String(text || ""),
+        locale: language,
+        contact: { id: userId, name: currentUser?.profile?.name || null },
+        recentConversation: buildRecentConversation(history.filter((turn) => turn.id !== sourceTurnId)),
+        conversationState,
+        knownCustomerFacts: conversationState.agentFacts,
+        currentOpenQuestion: null,
+        consentState,
+        allowedCapabilities,
+        sourceTurnId,
+        store,
+        user: currentUser,
+        userId,
+        intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
+        language,
+        inboundMessageId: providerMessageId || null
+      }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
+      const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
+      return decision.send ? decision.responseText : null;
+    },
+    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId, patch),
+    send: async (response, turn) => {
+      await setTyping(socket, chatId, false);
+      await sendStoredTextReply(socket, chatId, response, userId, turn);
+    }
+  });
+  return { outcome: result.route, responseLength: result.response.length, sourceTurnId: result.sourceTurnId || null };
 }
 
 // REFAL-AGENT-030 — the one live decision point: legacy vs. Agent, exactly
