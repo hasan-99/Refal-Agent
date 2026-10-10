@@ -440,6 +440,17 @@ test("a comparison objection does not swallow a direct package-price question", 
   assert.equal(result.metadata.objection, undefined);
 });
 
+test("Arabic language-capability question is answered in Arabic and offers a language choice", async () => {
+  const user = { id: "arabic-language-capability", profile: {}, history: [] };
+  const result = await routeMessageResult({ userId: user.id, text: "بتحكي انكليزي", store: integrationStore(user) });
+
+  assert.equal(result.metadata.intent.primary, "language_capability");
+  assert.equal(result.metadata.intent.language, "arabic");
+  assert.match(result.response, /فيني أحكي معك/u);
+  assert.match(result.response, /بأي لغة بتفضّل نكمل/u);
+  assert.doesNotMatch(result.response, /Of course|continue in English/i);
+});
+
 test("all five M5 objections reach the response matrix and record their IDs", async () => {
   const probes = [
     ["O1", "The €999 price feels expensive."],

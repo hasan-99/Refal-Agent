@@ -13,7 +13,7 @@ const { runAgentTurn, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { embedText: defaultEmbedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
-const { INTENTS } = require("./intent");
+const { detectIntent, INTENTS } = require("./intent");
 const { validateResponse, MODEL_DRAFT_THRESHOLDS } = require("./responsePolicy");
 
 // Factual customer questions must not depend on the model remembering to ask
@@ -53,9 +53,24 @@ const COMPANY_OVERVIEW_RETRIEVAL_TERMS = [
   "Refalco Group company overview: company formation and structuring, tax and accounting, investment, real estate and property development, comprehensive investment and structural solutions.",
   "تأسيس الشركات والهيكلة، ملفات الضريبة والمحاسبة، الملفات الاستثمارية، العقار والتطوير، حلول استثمارية وهيكلية شاملة."
 ].join(" ");
-
 function requiresApprovedKnowledge(intents) {
   return Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+}
+
+function contextualKnowledgeQuery(currentMessage, intents, recentConversation) {
+  if (Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent))) return null;
+  const history = Array.isArray(recentConversation) ? recentConversation.slice(-6) : [];
+  const priorUser = [...history].reverse().find((turn) => turn?.role === "user" && typeof turn.content === "string" && turn.content.trim());
+  if (!priorUser) return null;
+  const priorIntents = detectIntent(priorUser.content).intents;
+  const topic = priorIntents.find((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+  if (!topic) return null;
+  const context = history
+    .filter((turn) => ["user", "assistant"].includes(turn?.role) && typeof turn.content === "string")
+    .map((turn) => turn.content.trim())
+    .filter(Boolean)
+    .join("\n");
+  return context ? `${context}\n${String(currentMessage || "").trim()}`.slice(0, 1800) : null;
 }
 
 function appendBroadServiceFollowup(result, { intents, locale, currentMessage } = {}) {
@@ -70,13 +85,17 @@ function appendBroadServiceFollowup(result, { intents, locale, currentMessage } 
   return checked.valid ? { ...result, response: checked.text } : result;
 }
 
-async function initialKnowledgeObservation(currentMessage, intents, toolContext, tools) {
-  if (!requiresApprovedKnowledge(intents)) return [];
+async function initialKnowledgeObservation(currentMessage, intents, recentConversation, toolContext, tools) {
+  const directKnowledgeIntent = Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+  const contextualQuery = contextualKnowledgeQuery(currentMessage, intents, recentConversation);
+  if (!directKnowledgeIntent && !contextualQuery) return [];
   const tool = tools?.searchApprovedKnowledge;
   const message = String(currentMessage || "").trim().slice(0, 1000);
-  const query = Array.isArray(intents) && intents.some((intent) => BROAD_COMPANY_INTENTS.has(intent))
-    ? `${message}\n${COMPANY_OVERVIEW_RETRIEVAL_TERMS}`.slice(0, 1800)
-    : message;
+  let query = contextualQuery || message;
+  if (Array.isArray(intents) && intents.some((intent) => BROAD_COMPANY_INTENTS.has(intent))) {
+    query = `${query}\n${COMPANY_OVERVIEW_RETRIEVAL_TERMS}`;
+  }
+  query = query.slice(0, 1800);
   const args = { query };
   let result;
   try {
@@ -179,7 +198,7 @@ async function runAgentTurnForContact({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
     inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy
   });
-  const initialObservations = await initialKnowledgeObservation(currentMessage, intents, toolContext, tools);
+  const initialObservations = await initialKnowledgeObservation(currentMessage, intents, recentConversation, toolContext, tools);
   const result = await runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps, initialObservations });
   return appendBroadServiceFollowup(result, { intents, locale, currentMessage });
 }

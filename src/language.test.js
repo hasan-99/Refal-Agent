@@ -27,6 +27,8 @@ test("recognizes explicit requests to switch the reply language", () => {
   assert.equal(detectExplicitLanguageRequest("منكمل بالعربي لو سمحت"), "arabic");
   assert.equal(detectExplicitLanguageRequest("Please reply in English from now on."), "english");
   assert.equal(detectExplicitLanguageRequest("What Greek services do you offer?"), null);
+  assert.equal(detectExplicitLanguageRequest("بتحكي انكليزي"), null);
+  assert.equal(detectMessageLanguage("بتحكي انكليزي"), "arabic");
 });
 
 test("language prompts request readable Syrian Arabic and simple professional Greek", () => {

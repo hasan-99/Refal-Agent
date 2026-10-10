@@ -97,6 +97,47 @@ test("broad Arabic service answers get one neutral next question, while focused 
   assert.equal(focused.response, "Company formation is one of our services.");
 });
 
+test("an ambiguous follow-up searches using recent conversation context without canned query terms", async () => {
+  let searchedQuery = "";
+  const store = {
+    searchKnowledge: async (query) => {
+      searchedQuery = query;
+      return [{
+        heading: "بداية التأسيس",
+        content: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
+      }];
+    }
+  };
+  const result = await runAgentTurnForContact({
+    currentMessage: "طيب كيف فينا نبلش",
+    locale: "arabic",
+    store,
+    user: { id: "u1" },
+    userId: "u1",
+    intents: [INTENTS.UNKNOWN],
+    recentConversation: [
+      { role: "user", content: "انا بدي اسجل شركة بقبرص" },
+      { role: "assistant", content: "أكيد، فينا نساعدك بتأسيس شركة بقبرص. عادةً بتمر العملية بتحديد نشاط الشركة، حجز الاسم، وتجهيز وتقديم مستندات التأسيس لسجل الشركات." }
+    ],
+    embedText: async () => [1]
+  }, {
+    decideNextStep: async ({ observations }) => {
+      assert.equal(observations[0].tool, "searchApprovedKnowledge");
+      return {
+        type: "respond",
+        text: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
+      };
+    }
+  });
+
+  assert.match(searchedQuery, /انا بدي اسجل شركة بقبرص/u);
+  assert.match(searchedQuery, /طيب كيف فينا نبلش/u);
+  assert.match(searchedQuery, /حجز الاسم/u);
+  assert.doesNotMatch(searchedQuery, /Cyprus company formation incorporation first steps name reservation/i);
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /نحجز الاسم/u);
+});
+
 test("a real end-to-end turn: decide calls searchApprovedKnowledge, the real tool reaches the injected embedText and store, and the answer is grounded in the returned evidence", async () => {
   let searchArgs = null;
   const store = {

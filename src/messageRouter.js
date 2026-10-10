@@ -486,7 +486,7 @@ const INTAKE_CONTINUATION_BLOCKED_INTENTS = new Set([
   INTENTS.PROMPT_INJECTION, INTENTS.COMPLAINT, INTENTS.EXISTING_CLIENT,
   INTENTS.LEGAL, INTENTS.TAX, INTENTS.IMMIGRATION, INTENTS.BANKING,
   INTENTS.PERMIT, INTENTS.APPROVAL, INTENTS.APPOINTMENT, INTENTS.CONTACT,
-  INTENTS.AGENT_IDENTITY, INTENTS.PRICING, INTENTS.GREETING,
+  INTENTS.AGENT_IDENTITY, INTENTS.LANGUAGE_CAPABILITY, INTENTS.PRICING, INTENTS.GREETING,
   INTENTS.SMALL_TALK
 ]);
 const COMPANY_ACTIVITY_QUESTION = /(?:what\s+(?:will|would|does)\s+(?:the\s+)?company\s+(?:do|offer)|what(?:'s| is)\s+(?:the\s+)?(?:company'?s?\s+)?(?:purpose|business activity|activity)|what kind of business|what activity|شو\s+(?:رح\s+)?تعمل\s+(?:الشركة|شركتك)|شو\s+(?:نشاط|مجال|غرض)\s+(?:الشركة|شركتك)|ما\s+(?:هو\s+)?(?:نشاط|غرض)\s+(?:الشركة|الشركة؟)?|ما\s+النشاط\s+الذي|τι\s+δραστηριότητα\s+θα\s+έχει|με\s+τι\s+θα\s+ασχολείται\s+η\s+εταιρεία|ποιος\s+είναι\s+ο\s+σκοπός\s+της\s+εταιρείας)/iu;
@@ -834,6 +834,16 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       english: "Hello! I’m your digital assistant. How can I help you?",
       arabic: "أهلاً! أنا مساعدك الرقمي. كيف فيني ساعدك؟",
       greek: "Γεια σας! Είμαι ο ψηφιακός σας βοηθός. Πώς μπορώ να σας βοηθήσω;"
+    });
+    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
+  }
+
+  if (classification.intents.includes(INTENTS.LANGUAGE_CAPABILITY)) {
+    response = localized(language, {
+      english: "Yes. I can chat with you in English, Arabic, or Greek. Which would you prefer?",
+      arabic: "إي، فيني أحكي معك بالعربي أو بالإنجليزي أو باليوناني. بأي لغة بتفضّل نكمل؟",
+      greek: "Ναι, μπορώ να μιλήσω μαζί σας στα ελληνικά, αγγλικά ή αραβικά. Σε ποια γλώσσα προτιμάτε να συνεχίσουμε;"
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
