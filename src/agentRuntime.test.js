@@ -74,8 +74,27 @@ test("factual services intents retrieve approved knowledge before the model deci
   assert.equal(observationsSeenByModel[0].tool, "searchApprovedKnowledge");
   assert.equal(observationsSeenByModel[0].result.modelObservation.status, "found");
   assert.equal(result.outcome, "responded");
-  assert.equal(result.response, "We provide company formation support.");
+  assert.equal(result.response, "We provide company formation support. Which area would you like to hear more about?");
   assert.deepEqual(result.toolsUsed, ["searchApprovedKnowledge"]);
+});
+
+test("broad Arabic service answers get one neutral next question, while focused requests keep their answer", async () => {
+  const { appendBroadServiceFollowup } = require("./agentRuntime");
+  const broad = appendBroadServiceFollowup(
+    { outcome: "responded", response: "خدماتنا تشمل تأسيس الشركات والعقار." },
+    { intents: [INTENTS.SERVICES], locale: "arabic", currentMessage: "شو هي خدماتكم؟" }
+  );
+  assert.equal(broad.response, "خدماتنا تشمل تأسيس الشركات والعقار. أي مجال حابب تعرف عنه أكثر؟");
+  const alreadyInteractive = appendBroadServiceFollowup(
+    { outcome: "responded", response: "خدماتنا تشمل تأسيس الشركات. أي مجال يهمك؟" },
+    { intents: [INTENTS.SERVICES], locale: "arabic", currentMessage: "شو هي خدماتكم؟" }
+  );
+  assert.equal(alreadyInteractive.response, "خدماتنا تشمل تأسيس الشركات. أي مجال يهمك؟");
+  const focused = appendBroadServiceFollowup(
+    { outcome: "responded", response: "Company formation is one of our services." },
+    { intents: [INTENTS.SERVICES, INTENTS.COMPANY_FORMATION], locale: "english", currentMessage: "Do you offer company formation?" }
+  );
+  assert.equal(focused.response, "Company formation is one of our services.");
 });
 
 test("a real end-to-end turn: decide calls searchApprovedKnowledge, the real tool reaches the injected embedText and store, and the answer is grounded in the returned evidence", async () => {

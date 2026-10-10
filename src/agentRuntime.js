@@ -14,6 +14,7 @@ const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { embedText: defaultEmbedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
 const { INTENTS } = require("./intent");
+const { validateResponse, MODEL_DRAFT_THRESHOLDS } = require("./responsePolicy");
 
 // Factual customer questions must not depend on the model remembering to ask
 // for its evidence first. Retrieve approved knowledge deterministically for
@@ -33,6 +34,21 @@ const KNOWLEDGE_REQUIRED_INTENTS = new Set([
 const BROAD_COMPANY_INTENTS = new Set([
   INTENTS.COMPANY_INFO, INTENTS.BUSINESS_AREAS, INTENTS.SERVICES, INTENTS.CORPORATE_SERVICES
 ]);
+const SPECIALIZED_SERVICE_INTENTS = new Set([
+  INTENTS.PRICING, INTENTS.COMPANY_FORMATION, INTENTS.ACCOUNTING, INTENTS.VAT,
+  INTENTS.CYPRUS_BUSINESS_EXPANSION, INTENTS.BUSINESS_RELOCATION, INTENTS.RESIDENCY_ENQUIRY,
+  INTENTS.REAL_ESTATE_PURCHASE, INTENTS.REAL_ESTATE_INVESTMENT, INTENTS.LAND_OWNER,
+  INTENTS.PROPERTY_DEVELOPMENT, INTENTS.CONSTRUCTION_TENDER, INTENTS.PROJECT_MANAGEMENT,
+  INTENTS.INVESTMENT_OPPORTUNITY, INTENTS.INVESTMENT_PARTNERSHIP, INTENTS.STRATEGIC_PARTNERSHIP,
+  INTENTS.INFRASTRUCTURE, INTENTS.TECHNOLOGY, INTENTS.OPERATIONS, INTENTS.STRATEGIC_ASSETS,
+  INTENTS.BUSINESS_PROPOSAL, INTENTS.PROJECT_ENQUIRY, INTENTS.REAL_ESTATE,
+  INTENTS.LAND_DEVELOPMENT, INTENTS.CONSTRUCTION, INTENTS.INVESTMENT, INTENTS.PARTNERSHIP
+]);
+const BROAD_SERVICE_FOLLOWUPS = Object.freeze({
+  en: "Which area would you like to hear more about?",
+  ar: "أي مجال حابب تعرف عنه أكثر؟",
+  el: "Ποιον τομέα θα θέλατε να μάθετε καλύτερα;"
+});
 const COMPANY_OVERVIEW_RETRIEVAL_TERMS = [
   "Refalco Group company overview: company formation and structuring, tax and accounting, investment, real estate and property development, comprehensive investment and structural solutions.",
   "تأسيس الشركات والهيكلة، ملفات الضريبة والمحاسبة، الملفات الاستثمارية، العقار والتطوير، حلول استثمارية وهيكلية شاملة."
@@ -40,6 +56,18 @@ const COMPANY_OVERVIEW_RETRIEVAL_TERMS = [
 
 function requiresApprovedKnowledge(intents) {
   return Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+}
+
+function appendBroadServiceFollowup(result, { intents, locale, currentMessage } = {}) {
+  if (result?.outcome !== "responded" || typeof result.response !== "string") return result;
+  if (!Array.isArray(intents) || !intents.includes(INTENTS.SERVICES)
+      || intents.some((intent) => SPECIALIZED_SERVICE_INTENTS.has(intent))) return result;
+  if (/[?؟]/u.test(result.response)) return result;
+  const language = String(locale || "").toLowerCase();
+  const key = language.startsWith("ar") ? "ar" : language.startsWith("el") || language.startsWith("greek") ? "el" : "en";
+  const response = `${result.response.trim()} ${BROAD_SERVICE_FOLLOWUPS[key]}`;
+  const checked = validateResponse(response, { ...MODEL_DRAFT_THRESHOLDS, customerMessage: currentMessage });
+  return checked.valid ? { ...result, response: checked.text } : result;
 }
 
 async function initialKnowledgeObservation(currentMessage, intents, toolContext, tools) {
@@ -152,7 +180,8 @@ async function runAgentTurnForContact({
     inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy
   });
   const initialObservations = await initialKnowledgeObservation(currentMessage, intents, toolContext, tools);
-  return runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps, initialObservations });
+  const result = await runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps, initialObservations });
+  return appendBroadServiceFollowup(result, { intents, locale, currentMessage });
 }
 
-module.exports = { runAgentTurnForContact, buildToolContext, requiresApprovedKnowledge };
+module.exports = { runAgentTurnForContact, buildToolContext, requiresApprovedKnowledge, appendBroadServiceFollowup };
