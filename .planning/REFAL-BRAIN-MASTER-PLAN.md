@@ -678,7 +678,7 @@ Cyprus vs Dubai/UAE · Estonia · Malta/Bulgaria · USA (MB-J1..J4), each with M
 
 ---
 
-### P3.9 — Fact governance and approval register (imported from CX 2B) `[x]` completed 2026-10-09 **NEW — this is Rule 2**
+### P3.9 — Fact governance and approval register (imported from CX 2B) `[x]` completed 2026-10-10 **NEW — this is Rule 2**
 
 This is the single most important import from Codex. It is what lets REFAL say €999 **and** stay safe.
 
@@ -720,7 +720,40 @@ node scripts/evaluateRag.js > /tmp/rag.log 2>&1; echo "exit=$?"
 ---
 
 **Database changes (apply in order).**
-1. `supabase/migrations/<ts>_refal_fact_governance.sql` — P3.9. Stop the save path forcing `review_status='approved'` and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing `trust_tier` CHECK (CR-023). Must not break the partial unique index behind CR-010.
+1. `supabase/migrations/20261010020000_refal_fact_governance.sql` — P3.9. Stop the save path forcing `review_status='approved'` and deleting non-approved rows (CR-014). Add the governance trust tier as a SEPARATE column; do not widen the existing `trust_tier` CHECK (CR-023). Must not break the partial unique index behind CR-010. **WRITTEN AND APPLIED 2026-10-10.**
+
+> **This file was missed when P3.9 was first ticked, and BOSS caught it in the progress UI.** The
+> fact register (MIG-01) governs each MB **fact**; this one governs each knowledge **document**,
+> which is the layer the conflict register was actually complaining about. P3.9 was reopened and
+> then closed properly.
+>
+> **CR-014 resolved.** `rafa_store_knowledge_revision` no longer deletes sibling documents, so a
+> superseded revision survives as evidence of what was reviewed and when. Revisions increment again
+> instead of being pinned to 1. The review step exists as `rafa_review_knowledge_document`, which
+> refuses an anonymous reviewer.
+>
+> **The default is `pending`, and that nearly caused a regression.** `dashboard/server.js` called the
+> RPC with 7 arguments, which still resolves against the new 9 parameter signature, so dashboard
+> saves would have silently queued into a review screen **that does not exist** and never become
+> searchable. That is exactly the bug the 2026-10-07 migrations were written to fix, recorded in
+> active memory as a deliberate decision. The call site now states `approved` explicitly, with the
+> reasoning inline, and `scripts/emitCorpusSql.js` does the same. **What CR-014 asked for is true:
+> the queue exists, nothing destroys a non-approved revision, and approving is a stated decision
+> rather than something the database does behind the caller's back.** Flipping the dashboard to
+> `pending` is a one word change the moment P12.2 ships the review screen.
+>
+> **CR-023 resolved.** `rafa_knowledge_sources.governance_tier` is a new, separate, nullable column
+> constrained to `regulated / commercial / explanatory`. The existing `trust_tier` CHECK was **not**
+> widened, because the two describe different axes. Backfilled from `metadata->>'brainTrustTier'`,
+> which the M3 ingestion had already written: **87 of 87 sources tiered, 3 distinct values.**
+>
+> **CR-010 unharmed.** `rafa_knowledge_documents_one_approved_per_source_idx` is still present and
+> still enforced; the lifecycle trigger supersedes the previous approved row on promotion.
+>
+> **Verified live:** 87 sources tiered · 87 documents still approved · 577 chunks still embedded ·
+> a re-ingest of `ip-box` returned `unchanged: true` with 3/3 still approved and no new revision ·
+> `node --test scripts/ragMigration.test.js scripts/knowledgeDocumentMetadataMigration.test.js`
+> exit=0 · `cd dashboard && npm test` exit=0, 94 tests.
 
 ---
 

@@ -47,6 +47,11 @@ const { planFile } = require("../src/corpusIngest");
 
 const ROOT = path.resolve(__dirname, "..");
 
+// Who the approval is attributed to. A named value, not 'dashboard-operator',
+// so an audit can tell a generated corpus ingestion apart from a human saving a
+// document in the dashboard.
+const INGEST_REVIEWER = "m3-corpus-ingestion";
+
 function parseArgs(argv) {
   const args = { out: path.join(ROOT, "artifacts", "corpus-sql") };
   for (let i = 0; i < argv.length; i += 1) {
@@ -88,6 +93,18 @@ function renderFile(plan) {
   w(`  enabled = true,`);
   w(`  approved = true;`);
   w();
+  // The last two arguments are NOT optional noise, they are CR-014.
+  //
+  // `rafa_store_knowledge_revision` now defaults to `pending`, because a save
+  // silently approving itself was the conflict P3.9 had to remove. A 7 argument
+  // call still resolves against the new 9 parameter signature, so leaving these
+  // off would quietly queue all 87 documents and take retrieval dark with a
+  // green exit code. That is exactly the class of silent failure this file
+  // exists to avoid.
+  //
+  // Approving here is legitimate and stated rather than assumed: this file is a
+  // generated artifact built from an already-validated corpus, reviewed through
+  // `scripts/validateCorpus.js` and the fact register before it is ever emitted.
   w(`select public.rafa_store_knowledge_revision(`);
   w(`  (select id from public.rafa_knowledge_sources where canonical_url = ${dollarQuote(canonicalUrl)}),`);
   w(`  ${dollarQuote(document.p_title)},`);
@@ -95,8 +112,17 @@ function renderFile(plan) {
   w(`  ${dollarQuote(document.p_content_sha256)},`);
   w(`  ${dollarQuote(document.p_language_code)},`);
   w(`  ${asJsonb(chunks)},`);
-  w(`  ${asJsonb(document.p_metadata)}`);
+  w(`  ${asJsonb(document.p_metadata)},`);
+  w(`  'approved',`);
+  w(`  ${dollarQuote(INGEST_REVIEWER)}`);
   w(`);`);
+  w();
+  // CR-014 keeps superseded revisions instead of deleting them, so the source
+  // now accumulates history. Record the governance tier on the source too
+  // (CR-023), since the column did not exist when the ingestion was written.
+  w(`update public.rafa_knowledge_sources`);
+  w(`   set governance_tier = ${dollarQuote(source.metadata.brainTrustTier)}`);
+  w(` where canonical_url = ${dollarQuote(canonicalUrl)};`);
   w();
 
   return lines.join("\n");

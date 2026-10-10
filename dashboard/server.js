@@ -1428,7 +1428,26 @@ async function storeKnowledgeRevision(sourceId, document, languageCode, metadata
       p_content_sha256: contentSha256,
       p_language_code: languageCode,
       p_chunks: document.chunks,
-      p_metadata: metadata
+      p_metadata: metadata,
+      // P3.9 / CR-014 made `rafa_store_knowledge_revision` default to `pending`,
+      // because a save silently approving itself is the conflict that phase had
+      // to remove. This call site must therefore state its intent EXPLICITLY.
+      //
+      // It states `approved`, deliberately, and that is not a regression of
+      // CR-014. The dashboard has no pending-review screen: the UI copy says
+      // "Active when saved" and `POST /api/knowledge` creates every source with
+      // `approved: true, enabled: true`. Letting the new default apply here
+      // would queue entries into a screen that does not exist, and they would
+      // silently never become searchable, which is precisely the bug the
+      // 2026-10-07 migrations were written to fix.
+      //
+      // What CR-014 actually asked for is now true: the queue EXISTS, nothing
+      // deletes a non-approved revision any more, and approving is a stated
+      // decision rather than something the database does behind the caller's
+      // back. Flipping this to `pending` is a one word change the moment P12.2
+      // ships the review screen.
+      p_review_status: "approved",
+      p_approved_by: "dashboard-operator"
     })
   });
   return result;
