@@ -227,3 +227,32 @@ Current state: humour exists **only as prose** in `config/refal-agent-rules.md:1
 
 **New blockers added to the register:** BLK-13, BLK-14, BLK-15 (register now runs BLK-1 to BLK-15).
 **Corrections to existing entries:** BLK-1 and BLK-2 scope (third gate), BLK-4 premise (sentences already compliant).
+
+---
+
+## Added 2026-10-10 by the M3 phase audit
+
+| ID | Conflict | Where | Status | Severity | Resolution | Owner |
+| --- | --- | --- | --- | --- | --- | --- |
+| **CR-024** | **"MB's verbatim dialogue" versus the no-scripts authoring rule.** P3.8 requires MB-J1..J4 "each with MB's verbatim dialogue", and P3.5 requires "MB's verbatim ROI script" (MB-F55). The M3 authoring standard simultaneously bans sales scripts and persona from the corpus (`CORPUS-AUTHORING-CONTRACT.md` section 4). Both cannot be satisfied literally. | `.planning/REFAL-BRAIN-MASTER-PLAN.md` P3.5 and P3.8 · `knowledge/jurisdiction-*/` · `knowledge/cyprus-cities/` | **Confirmed** | Medium | **The dialogue form is converted to neutral prose; the facts and the posture it carried are kept.** A recitable script in a retrieved chunk is a persona leak: the model would quote REFAL's own sales turn back at a customer as if it were evidence. MB-F55 was additionally **inverted** into a prohibition, which is the correct reading — its five invariants are all refusals, and the corpus now carries them in a `kind: boundary` section that `GUARDRAIL-DELTA.md` cites as the authority for closing regressions G-06 and G-07. **The audit's finding stands on P3.8 specifically:** F55's conversion left a documented trail and P3.8's did not, so the deliverable read as silently unmet. This row is that trail. | M3 (P3.5, P3.8), recorded retrospectively |
+| **CR-025** | **A blocked fact was only enforced at ingest, never at query time.** W3.9.3 requires that changing a register row changes behaviour "with no redeploy", but `filterRetrievableEvidence` had no production caller: flipping a row to `blocked` left the text in `rafa_knowledge_chunks` with a live embedding until somebody re-ran the ingestion. | `src/factRegister.js:240` · `src/ai.js` | **Resolved 2026-10-10** | High | Wired into `src/ai.js` where the evidence bundle is assembled, so a chunk carrying a blocked fact is dropped before the model sees it. Ingest-time dropping is kept as the second layer. With nothing blocked today the filter is a no-op and the bundle is byte-identical. | M3 (P3.9) |
+
+### ✅ RESOLVED 2026-10-10 — CR-010, CR-014, CR-023
+
+All three were closed by `supabase/migrations/20261010020000_refal_fact_governance.sql`, written for
+P3.9 and **applied to the project on 2026-10-10**. The rows above still read in the future tense
+because this file was last touched on 2026-10-09; the M3 phase audit flagged the staleness and this
+section is the correction. The original rows are left in place as the record of what was found.
+
+| ID | Status now | What actually changed |
+| --- | --- | --- |
+| **CR-014** | ✅ **RESOLVED** | `rafa_store_knowledge_revision` no longer forces `review_status='approved'` and **no longer deletes** non-approved rows. The default is now `pending`, revisions increment again instead of being pinned to 1, and `rafa_review_knowledge_document` provides the way out of the queue, refusing an anonymous reviewer. The prose at the top of this file ("Today `review_status` is written as `approved` by the saving operator and anything else is deleted") describes the **pre-2026-10-10** database and is no longer true. |
+| **CR-023** | ✅ **RESOLVED** | `rafa_knowledge_sources.governance_tier` added as a **separate** nullable column constrained to `regulated / commercial / explanatory`. The existing `trust_tier` CHECK was **not** widened, exactly as this register demanded: one column records where content came from, the other how much provenance Rule 2 demands. Backfilled from `metadata->>'brainTrustTier'`, 87 of 87 sources, 3 distinct values. |
+| **CR-010** | ✅ **CONFIRMED INTACT** | Never a defect and deliberately kept (BLK-9). The partial unique index `rafa_knowledge_documents_one_approved_per_source_idx` survives the CR-014 change: at most one **approved** document per source still holds, and the lifecycle trigger supersedes the previous approved row on promotion. Not deleting siblings means superseded revisions now accumulate as history, which is the point. |
+
+**One consequence worth stating plainly.** Because the default became `pending`, every caller had to
+start saying what it means. `dashboard/server.js` states `approved` (it has no review screen, and
+queueing into a screen that does not exist is the bug the 2026-10-07 migrations fixed),
+`scripts/emitCorpusSql.js` states `approved`, and `src/corpusIngest.js` was found **still relying on
+the default** by the P3.10 audit and corrected. A changed default silently re-points every caller
+that was leaning on it.

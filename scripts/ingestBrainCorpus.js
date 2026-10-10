@@ -203,9 +203,19 @@ async function apply(plan, args) {
     const source = after.get(file.source.canonical_url);
     if (!source) throw new Error(`${file.path}: the source row for ${file.source.canonical_url} is not readable after the upsert`);
     const existed = before.has(file.source.canonical_url);
+    // p_chunks is passed EXPLICITLY and does not live on file.document.
+    //
+    // buildDocumentPayload deliberately returns only the document arguments,
+    // because the chunks are also needed on their own for the embedding step.
+    // Spreading file.document alone therefore omitted p_chunks entirely, and
+    // p_chunks has no DEFAULT in the 9-argument signature, so PostgREST could
+    // not resolve the function and --apply would have failed outright.
+    //
+    // Dry run is the default and never reaches this line, so the failure was
+    // invisible behind a green exit code. Found by the P3.10 audit.
     const saved = await rest("rpc/rafa_store_knowledge_revision", {
       method: "POST",
-      body: JSON.stringify({ p_source_id: source.id, ...file.document }),
+      body: JSON.stringify({ p_source_id: source.id, ...file.document, p_chunks: file.chunks }),
     });
     if (!saved || !saved.document_id) throw new Error(`${file.path}: rafa_store_knowledge_revision returned no document_id`);
     results.push({

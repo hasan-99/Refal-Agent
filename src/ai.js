@@ -12,6 +12,8 @@ const { detectIntent, detectIntents, INTENTS } = require("./intent");
 // behind would suggest this file still composes the persona itself.
 const { resolveHumourLevel, assertHumourCompliance } = require("./humourEngine");
 const { detectAntiPatterns } = require("./antiPatterns");
+// W3.9.3 query-time enforcement: a blocked fact never reaches the model.
+const { filterRetrievableEvidence } = require("./factRegister");
 // resolveConflict is NOT imported: it has no live caller yet. See the P1.6 note
 // in section 16 of the plan — arbitrating live data against a knowledge chunk
 // needs the live tables M4 builds and a non-empty corpus from M3.
@@ -173,7 +175,22 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
   const expandedServiceAnswer = asksForServiceDetails
     || broadServicesRequest
     || currentIntents.includes(INTENTS.BUSINESS_AREAS);
-  const promptEvidence = allowPricing ? evidence : withoutPriceFacts(evidence);
+  // W3.9.3, the query-time half. A fact whose register row says `blocked` must
+  // not be retrievable AT ALL, and "changing a register row changes behaviour
+  // with no redeploy" is the gate's own wording.
+  //
+  // Found by the P3.9 audit: `filterRetrievableEvidence` had NO production
+  // caller. Blocking was enforced only at ingest, which means flipping a row to
+  // `blocked` left the text sitting in rafa_knowledge_chunks with a live
+  // embedding until somebody re-ran the ingestion. That is not "no redeploy",
+  // and the ingest-time drop cannot help a corpus that is already loaded.
+  //
+  // Dropping the whole chunk, not just the sentence, is deliberate: a chunk
+  // carrying a blocked fact is removed entire, which is the same rule the
+  // ingest path applies. With nothing blocked in the register this is a no-op
+  // and the evidence bundle is byte-identical to before.
+  const retrievable = filterRetrievableEvidence(evidence).kept;
+  const promptEvidence = allowPricing ? retrievable : withoutPriceFacts(retrievable);
   const safeQuestion = redactPersonalData(text).slice(0, 1000);
   // Source names and URLs can contain private review/provenance metadata (for
   // example owner-confirmation records). Give the model factual content and a

@@ -105,22 +105,33 @@ const SEVERITY = Object.freeze({
   BLOCKER: "blocker",
 });
 
-// The one check that cannot be run from this machine even with --db. The
-// register table is granted to service_role only (migration
-// 20261009180000_refal_fact_register.sql, lines 98 and 279-281) and no Node
-// side service-role credential exists anywhere in scripts/, src/ or dashboard/:
-// the REST plumbing in backfillKnowledgeEmbeddings.js uses the publishable key
-// plus the dashboard secret header, which the register's grants exclude.
-// So the LIVE register is unreachable and the offline check falls back to the
-// seeded register from src/factRegister.js. That fallback is sound for a
-// freshly seeded database and WRONG the moment a reviewer edits a row in the
-// dashboard, which is exactly why this is reported rather than hidden.
+// The one check that cannot be run from this machine even with --db.
+//
+// CORRECTED 2026-10-10. The original note said the register is "service_role
+// only", and that stopped being true: MIG-01 was amended before it was applied
+// to grant `anon` behind the same `rafa_dashboard_secret_matches()` policy the
+// knowledge tables already use. The grants are fine.
+//
+// The actual obstacle is CF-07 / FIX-34: the `RAFA_DASHBOARD_SUPABASE_SECRET`
+// on this machine does not match the sha256 stored in
+// `rafa_private.api_secret_hashes`, so `rpc/rafa_dashboard_secret_matches`
+// returns false and every policy-gated read comes back empty. That is a stale
+// credential, not a schema problem, and it is BOSS's to resolve.
+//
+// Classified PENDING, not BLOCKER, and the distinction matters. A BLOCKER fails
+// the run, which is right for something broken in the repo. This is "cannot be
+// verified from here", which is exactly what PENDING already means for the four
+// --db checks. Reporting an environmental limit as a blocker would make the
+// gate permanently red and therefore ignored, which is the same disease as the
+// green-with-a-blocker state the P3.10 audit flagged, just in the other
+// direction. Either way the fallback is the SEEDED register, which is sound for
+// a freshly seeded database and WRONG the moment a reviewer edits a row.
 const REGISTER_BLOCKER = Object.freeze({
-  code: "BH-BLOCKER-REGISTER-SERVICE-ROLE",
-  what: "refal_fact_register is service_role only; no Node service-role credential exists in this repo",
+  code: "BH-PENDING-REGISTER-UNREACHABLE",
+  what: "the live refal_fact_register cannot be read from here: the dashboard secret does not authenticate (CF-07 / FIX-34)",
   effect: "fact status is checked against the SEEDED register, not the live table",
-  unblock: "either add a service-role key to the environment the script reads, or expose a "
-    + "read-only RPC on refal_fact_register granted to the dashboard role the REST client already uses",
+  unblock: "restore a working RAFA_DASHBOARD_SUPABASE_SECRET, or add a service-role key to the "
+    + "environment the script reads. MIG-01 already grants the register to the dashboard role.",
 });
 
 // ---------------------------------------------------------------- tokenising
@@ -581,7 +592,7 @@ function assessCorpus(input = {}) {
 
   // The register blocker is reported on every run, with and without --db,
   // because --db does not make it reachable.
-  findings.push(finding(SEVERITY.BLOCKER, REGISTER_BLOCKER.code,
+  findings.push(finding(SEVERITY.PENDING, REGISTER_BLOCKER.code,
     `${REGISTER_BLOCKER.what}. Effect: ${REGISTER_BLOCKER.effect}. To unblock: ${REGISTER_BLOCKER.unblock}.`));
 
   if (input.db) {
@@ -619,9 +630,21 @@ function assessCorpus(input = {}) {
   return { findings, summary, lexical: lexical.rows, negatives: negatives.rows };
 }
 
-// Exit 0 only when there is no gap. PENDING DB and warnings never fail a run.
+// Exit 0 only when there is no gap AND no blocker. PENDING DB and warnings
+// never fail a run.
+//
+// BLOCKER used to exit 0, which the P3.10 audit correctly called a trap: the
+// run printed `1 blockers` and the word BLOCKED next to a green exit code, and
+// W3.10.6's requirement is "exits non zero on any gap". A blocker that cannot
+// move the exit code is not a gate, it is a log line.
+//
+// The live example is REGISTER_BLOCKER: `refal_fact_register` is reachable only
+// with a credential this environment does not have, so fact status is checked
+// against the SEEDED register rather than the live table. That is a real
+// limitation on what the run can prove, and it should colour the exit code
+// rather than hide behind it.
 function exitCodeFor(findings) {
-  return (findings || []).some((f) => f.severity === SEVERITY.GAP) ? 1 : 0;
+  return (findings || []).some((f) => f.severity === SEVERITY.GAP || f.severity === SEVERITY.BLOCKER) ? 1 : 0;
 }
 
 module.exports = {

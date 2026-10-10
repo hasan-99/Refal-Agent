@@ -260,25 +260,44 @@ test("with no database snapshot, all four db checks are PENDING and none of them
     negatives: NEGATIVE_QUERIES, register: seedRegister(), expiring: [], db: null, now: "2026-10-09",
   });
   const pending = result.findings.filter((f) => f.severity === SEVERITY.PENDING);
-  assert.equal(pending.length, health.DB_CHECKS.length);
-  for (const row of pending) assert.match(row.message, /PENDING DB/u);
+  // The four --db checks, plus the unreachable live register. All five are
+  // "could not be looked at", none of them is a failure.
+  assert.equal(pending.length, health.DB_CHECKS.length + 1);
+  const dbPending = pending.filter((row) => /PENDING DB/u.test(row.message));
+  assert.equal(dbPending.length, health.DB_CHECKS.length);
   assert.equal(result.summary.databaseChecked, false);
-  assert.equal(result.summary.pending, 4);
+  assert.equal(result.summary.pending, 5);
   assert.equal(health.exitCodeFor(result.findings), 0, "PENDING DB must never fail a run");
 });
 
-test("the service_role blocker on refal_fact_register is reported on every run and is not a gap", () => {
+test("the unreachable live register is reported on every run, as PENDING and never as a gap", () => {
+  // Reclassified 2026-10-10. It used to be a BLOCKER that still exited 0, which
+  // the P3.10 audit rightly called a trap: a blocker that cannot move the exit
+  // code is a log line, not a gate. BLOCKER now fails the run, so this had to
+  // become what it actually is — a check that cannot be performed from this
+  // machine because a credential is stale (CF-07), which is precisely what
+  // PENDING already means for the --db checks.
   for (const db of [null, new Map()]) {
     const result = health.assessCorpus({
       cells: [cell()], entries: reachableQuestions("company-lifecycle", "en"),
       negatives: [], register: seedRegister(), expiring: [], db, now: "2026-10-09",
       expectedEmbeddingModel: "m",
     });
-    const blockers = result.findings.filter((f) => f.severity === SEVERITY.BLOCKER);
-    assert.equal(blockers.length, 1);
-    assert.equal(blockers[0].code, "BH-BLOCKER-REGISTER-SERVICE-ROLE");
-    assert.match(blockers[0].message, /service_role/u);
+    const registerRows = result.findings.filter((f) => f.code === "BH-PENDING-REGISTER-UNREACHABLE");
+    assert.equal(registerRows.length, 1);
+    assert.equal(registerRows[0].severity, SEVERITY.PENDING);
+    assert.match(registerRows[0].message, /does not authenticate/u);
+    assert.equal(result.findings.filter((f) => f.severity === SEVERITY.BLOCKER).length, 0);
   }
+});
+
+test("a BLOCKER fails the run, so it can never be a green log line", () => {
+  // The inverse of the above, and the reason the reclassification is safe: if
+  // something genuinely blocking is ever raised, exitCodeFor must return 1.
+  assert.equal(health.exitCodeFor([{ severity: SEVERITY.BLOCKER, code: "X", message: "m" }]), 1);
+  assert.equal(health.exitCodeFor([{ severity: SEVERITY.GAP, code: "X", message: "m" }]), 1);
+  assert.equal(health.exitCodeFor([{ severity: SEVERITY.PENDING, code: "X", message: "m" }]), 0);
+  assert.equal(health.exitCodeFor([{ severity: SEVERITY.WARNING, code: "X", message: "m" }]), 0);
 });
 
 test("database checks: missing source, unapproved source, missing document, wrong chunk count", () => {
@@ -333,10 +352,14 @@ test("valid_until: past is a gap, inside 7 days is a warning that names the 30 d
 
 // ----------------------------------------------------------- the whole gate
 
-test("exitCodeFor is 1 on any gap and 0 on warnings, pendings and blockers alone", () => {
+test("exitCodeFor fails on a gap OR a blocker, and never on a warning or a pending", () => {
   assert.equal(health.exitCodeFor([]), 0);
-  assert.equal(health.exitCodeFor([{ severity: SEVERITY.WARNING }, { severity: SEVERITY.PENDING }, { severity: SEVERITY.BLOCKER }]), 0);
+  assert.equal(health.exitCodeFor([{ severity: SEVERITY.WARNING }, { severity: SEVERITY.PENDING }]), 0);
   assert.equal(health.exitCodeFor([{ severity: SEVERITY.PENDING }, { severity: SEVERITY.GAP }]), 1);
+  // Changed 2026-10-10: a BLOCKER used to exit 0. W3.10.6 says the gate exits
+  // non-zero on any gap, and a blocker that cannot move the exit code is a log
+  // line rather than a gate.
+  assert.equal(health.exitCodeFor([{ severity: SEVERITY.BLOCKER }]), 1);
 });
 
 test("assessCorpus summarises the cells, the golden questions and the four severities", () => {
@@ -352,7 +375,7 @@ test("assessCorpus summarises the cells, the golden questions and the four sever
   assert.equal(result.summary.goldenQuestions, 30);
   assert.equal(result.summary.goldenReachable, 30);
   assert.equal(result.summary.gaps, 0);
-  assert.equal(result.summary.blockers, 1);
+  assert.equal(result.summary.blockers, 0, "the unreachable register is PENDING now, not a blocker");
   assert.equal(result.summary.negatives, 17);
   assert.match(result.summary.proxy, /PROXY/u);
   for (const lang of LANGUAGES) assert.equal(result.summary.perLang[lang].passing, 1);

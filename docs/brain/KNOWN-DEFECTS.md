@@ -204,3 +204,32 @@ FIX-1, FIX-9, FIX-10 and FIX-12 must be green before any production restart or d
 | **BLK-14** | W0.2.1 sweep — Arabic guarantee leak (fail open) | Blocker (safety) |
 | **BLK-15** | W0.2.1 sweep — unanchored `vat` substring | High |
 | **BLK-16** | P0.3 — no Arabic orthographic normalisation (fail open) | Blocker (safety) |
+
+---
+
+## ✅ FIX-7 and FIX-8 — closed 2026-10-10
+
+This file last stated "Re-measure FIX-7 and FIX-8 after M3 ingestion, not before." **The ingestion
+happened on 2026-10-10** and the measurement was taken. Both are closed. The rows above are left as
+the record of what was found; this section is the outcome.
+
+**FIX-7** (Arabic retrieval returns zero results for services and pricing) and **FIX-8** (Greek
+coverage gaps, no Greek documents per topic) were both "no document, or not findable in this
+language". All 29 Arabic and all 29 Greek documents now exist, validate, and are ingested with
+embeddings.
+
+**Measured live against `rafa_hybrid_search_knowledge`, the path production uses:**
+
+| | ar | en | el | overall |
+| --- | --- | --- | --- | --- |
+| own topic in top 5 | **96.9%** | 93.9% | **98.0%** | **96.2%** |
+
+Arabic and Greek both clear the bar **above English**, which inverts the premise these two defects
+were written on. The standing regression test is `assessParity` in `src/brainHealth.js`, which
+raises `BH-PARITY-AR` / `BH-PARITY-EL` if either language falls behind, plus
+`scripts/verifyLiveRetrieval.js --hybrid --lang ar|el` for the live number.
+
+**The caveat that matters.** English became the weakest language, and the cause is not the corpus:
+`search_vector` uses `to_tsvector('simple', ...)`, which has no stemming and no stopword list, so
+"registration" never matches "register". That is **FIX-35**, open, owned by P10.2 and tracked as
+CF-08. M3 cleared its gate by writing the corpus around the ranking bug rather than by fixing it.

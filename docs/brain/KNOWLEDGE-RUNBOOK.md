@@ -107,7 +107,7 @@ node --test src/brainHealth.test.js                > /tmp/t.log 2>&1; echo "exit
 A topic is added when that first command exits `0` with 3/3 present, 3/3 clean and 3/3 lexically
 healthy.
 
-**Step 7 — ingest.** `node scripts/ingestBrainCorpus.js --topic my-new-topic`, then re-run
+**Step 7 — ingest.** `node scripts/ingestBrainCorpus.js --topic my-new-topic --apply` (**`--apply` is required — dry run is the default and writes nothing**), then re-run
 `node scripts/brainHealth.js --db --topic my-new-topic` and read the `BH-DB-*` lines.
 
 ---
@@ -160,7 +160,7 @@ grep -rn "300,000\|300.000\|٣٠٠" src/factCatalogue.js knowledge/permanent-res
    node scripts/validateCorpus.js --topic permanent-residency > /tmp/vc.log 2>&1; echo "exit=$?"; tail -20 /tmp/vc.log
    node scripts/brainHealth.js --topic permanent-residency    > /tmp/bh.log 2>&1; echo "exit=$?"; tail -30 /tmp/bh.log
    ```
-4. **Re-ingest.** `node scripts/ingestBrainCorpus.js --topic permanent-residency`. Until this runs,
+4. **Re-ingest.** `node scripts/ingestBrainCorpus.js --topic permanent-residency --apply` (**without `--apply` this is a dry run and changes nothing**). Until this runs,
    the database still serves the old number: the corpus file is the source, the chunks are the copy.
 5. **Re-approve the register row**, because the figure changed and the old approval was for the old
    figure. See §3's `refal_reapprove_fact`.
