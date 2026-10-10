@@ -300,6 +300,16 @@ test("lookupActiveOffer sends only its typed filter and emits a bounded approved
   assert.equal("reviewer_email" in found.modelObservation.records[0], false);
 });
 
+test("lookupActiveOffer can safely discover current offers when the model lacks an exact code", async () => {
+  let call;
+  const store = { lookupDynamicData: async (...args) => { call = args; return { ok: true, status: "found", data: [currentDynamicRow()] }; } };
+  const found = await TOOL_REGISTRY.lookupActiveOffer.run({}, { store });
+  assert.deepEqual(call, ["offers", {}]);
+  assert.equal(found.status, "found");
+  assert.equal(found.modelObservation.records[0].code, "formation-package");
+  assert.equal(found.modelObservation.records[0].amount, 999);
+});
+
 test("listCalendarSlots is a typed registry read and returns a safe unavailable observation", async () => {
   const invalid = await TOOL_REGISTRY.listCalendarSlots.run({ start: "2026-10-12T10:00:00Z", extra: "ignored" }, {});
   assert.equal(invalid.reasonCode, "INVALID_LOOKUP_ARGUMENTS");

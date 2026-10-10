@@ -12,9 +12,37 @@ test("parseDecisionJson accepts a plain JSON tool-call object", () => {
   assert.deepEqual(parsed, { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price" } });
 });
 
+test("parseDecisionJson decodes schema-constrained JSON text for tool arguments", () => {
+  const parsed = parseDecisionJson('{"type":"tool","tool":"searchApprovedKnowledge","args":"{\\"query\\":\\"package price\\"}","text":null}');
+  assert.deepEqual(parsed, { type: "tool", tool: "searchApprovedKnowledge", args: { query: "package price" }, text: null });
+  assert.equal(parseDecisionJson('{"type":"tool","tool":"searchApprovedKnowledge","args":"[]","text":null}'), null);
+});
+
 test("parseDecisionJson accepts a respond object and strips a markdown fence if present", () => {
   const parsed = parseDecisionJson('```json\n{"type":"respond","text":"The published price is EUR 1500."}\n```');
   assert.deepEqual(parsed, { type: "respond", text: "The published price is EUR 1500." });
+});
+
+test("parseDecisionJson maps only a well-formed response alias to the guarded respond decision", () => {
+  assert.deepEqual(parseDecisionJson('{"type":"response","text":"The current offer is confirmed."}'), {
+    type: "respond", text: "The current offer is confirmed."
+  });
+  assert.equal(parseDecisionJson('{"type":"response","text":"ok","tool":"upsertLead"}'), null);
+  assert.equal(parseDecisionJson('{"type":"response"}'), null);
+});
+
+test("parseDecisionJson extracts one schema-valid object after model preamble text", () => {
+  const parsed = parseDecisionJson('We need to search first.\n\n{"type":"tool","tool":"searchApprovedKnowledge","args":{"query":"package inclusions"}}');
+  assert.deepEqual(parsed, { type: "tool", tool: "searchApprovedKnowledge", args: { query: "package inclusions" } });
+});
+
+test("parseDecisionJson handles escaped braces in JSON strings and rejects ambiguous objects", () => {
+  assert.deepEqual(parseDecisionJson('Next step: {"type":"respond","text":"Use {the listed} inclusions."}'), {
+    type: "respond", text: "Use {the listed} inclusions."
+  });
+  assert.equal(parseDecisionJson('{"type":"respond","text":"one"} {"type":"respond","text":"two"}'), null);
+  assert.equal(parseDecisionJson('The decision is {"type":"respond","text":"one"}, which is final.'), null);
+  assert.equal(parseDecisionJson('The decision is {"type":"respond","text":"one"} ``` extra'), null);
 });
 
 test("parseDecisionJson rejects malformed JSON", () => {
@@ -262,6 +290,9 @@ test("defaultCallModel sends the actual decision messages and the configured mod
   assert.deepEqual(request.messages, messages);
   assert.equal(typeof request.model, "string");
   assert.ok(request.model.length > 0);
+  assert.equal(request.response_format.type, "json_schema");
+  assert.equal(request.response_format.json_schema.strict, true);
+  assert.deepEqual(request.response_format.json_schema.schema.properties.type.enum, ["tool", "respond", "clarify"]);
 });
 
 test("defaultCallModel throws when no API key is configured, which decideNextStep then turns into a safe fallback", async () => {

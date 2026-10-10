@@ -180,6 +180,7 @@ function validateDynamicReadArgs(name, args) {
   const contract = DYNAMIC_READS[name];
   const clean = allowedArgs(args, contract.fields);
   if (!clean) return null;
+  if (contract.kind === "offers" && Object.keys(clean).length === 0) return {};
   if (contract.kind === "properties") {
     const normalized = {};
     for (const [key, value] of Object.entries(clean)) {
@@ -549,7 +550,7 @@ async function proposeHandover(args, { user, intents = [], language } = {}) {
 
 const TOOL_REGISTRY = Object.freeze({
   lookupActiveOffer: {
-    description: "Read one currently approved, effective offer by its code. Use only current returned data for price or inclusions.",
+    description: "Read currently approved, effective offers. Pass the exact database code when known. If no exact code is present in the conversation or approved knowledge, call with empty args to discover up to four current offers. Never send a display title as a code. Use only returned data for price or inclusions.",
     run: (args, context) => dynamicReadTool("lookupActiveOffer", args, context)
   },
   lookupRenewalFees: {
