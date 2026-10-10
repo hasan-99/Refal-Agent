@@ -112,29 +112,29 @@
 
 <div class="hero">
   <div class="heroTop">
-    <span class="heroPct">36%</span>
-    <span class="heroLbl">complete &nbsp;·&nbsp; 30 of 83 phases</span>
+    <span class="heroPct">35%</span>
+    <span class="heroLbl">complete &nbsp;·&nbsp; 29 of 83 phases</span>
   </div>
   <div class="big">
-    <i class="d" style="width:36.144578313253014%"></i>
-    <i class="p" style="width:2.4096385542168677%"></i>
+    <i class="d" style="width:34.93975903614458%"></i>
+    <i class="p" style="width:3.614457831325301%"></i>
   </div>
   <div class="legend">
-    <span><i class="dot" style="background:var(--done)"></i>Done 30</span>
-    <span><i class="dot" style="background:var(--doing)"></i>In progress 2</span>
+    <span><i class="dot" style="background:var(--done)"></i>Done 29</span>
+    <span><i class="dot" style="background:var(--doing)"></i>In progress 3</span>
     <span><i class="dot" style="background:var(--todo)"></i>Not started 51</span>
   </div>
   <div class="tiles">
     <div class="tile"><b>4/16</b><span>Milestones</span></div>
-    <div class="tile"><b>30/83</b><span>Phases</span></div>
-    <div class="tile"><b>82/118</b><span>Waves done</span></div>
+    <div class="tile"><b>29/83</b><span>Phases</span></div>
+    <div class="tile"><b>86/118</b><span>Waves done</span></div>
     <div class="tile"><b>6</b><span>DB files to run</span></div>
   </div>
 </div>
 
 <div class="here">
   <div class="lbl">▶ You are here</div>
-  <div class="what">P4.2 — Typed tools (CX 6A, 6B) local + live read pass; write/action production smoke pending</div>
+  <div class="what">P4.1 — Schema applied and live-verified; CF-05 deployed composition pending</div>
 </div>
 
 <div class="ctl">
@@ -890,29 +890,29 @@
       <summary>
         <span class="mid">M4</span>
         <span class="mtitle">Dynamic Data and Tools</span>
-        <span class="mwaves">0/7w</span>
-        <span class="mcount">3/5</span>
-        <span class="mbar"><i style="width:60%"></i></span>
-        <span class="mpct">60%</span>
+        <span class="mwaves">4/7w</span>
+        <span class="mcount">2/5</span>
+        <span class="mbar"><i style="width:40%"></i></span>
+        <span class="mpct">40%</span>
       </summary>
       <p class="exit"><strong>Exit criteria.</strong> All six MB-DYN variables served from live tables through typed tools, with a test proving none appear as a literal in any prompt or chunk, and full failure state handling.</p>
       <ul class="phases">
-        <li class="phase done">
+        <li class="phase doing">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P4.1</span>
-          <span class="ptitle">Schema applied and verified 2026-10-10</span>
+          <span class="ptitle">Schema applied and live-verified; CF-05 deployed composition pending</span>
           
-          <span class="pstatus">Done</span>
+          <span class="pstatus">In progress</span>
         </li>
         <li class="phase doing">
           <span class="tick" aria-hidden="true"></span>
           <span class="pid">P4.2</span>
           <span class="ptitle">Typed tools (CX 6A, 6B) local + live read pass; write/action production smoke pending</span>
-          <span class="waves">0/7 waves</span>
+          <span class="waves">4/7 waves</span>
           <span class="pstatus">In progress</span>
         </li>
         <li class="waveWrap">
-          <ul class="waves-list" data-done="0" data-total="7">
+          <ul class="waves-list" data-done="4" data-total="7">
             <li class="wave doing">
               <span class="wtick" aria-hidden="true"></span>
               <span class="wid">W4.2.1</span>
@@ -923,7 +923,7 @@
               <span class="wid">W4.2.2</span>
               <span class="wlabel">Five write/action tools: upsertLead, createHandover, holdOrBookAppoin…</span>
             </li>
-            <li class="wave doing">
+            <li class="wave done">
               <span class="wtick" aria-hidden="true"></span>
               <span class="wid">W4.2.3</span>
               <span class="wlabel">Tool contracts carry: location, currency, VAT treatment, effective da…</span>
@@ -933,17 +933,17 @@
               <span class="wid">W4.2.4</span>
               <span class="wlabel">Tool truth (CX 6C): timeouts, bounded retries, rate limits, idempoten…</span>
             </li>
-            <li class="wave doing">
+            <li class="wave done">
               <span class="wtick" aria-hidden="true"></span>
               <span class="wid">W4.2.5</span>
               <span class="wlabel">Empty table behaviour: empty or all expired → the tool returns &quot;not a…</span>
             </li>
-            <li class="wave doing">
+            <li class="wave done">
               <span class="wtick" aria-hidden="true"></span>
               <span class="wid">W4.2.6</span>
-              <span class="wlabel">Deterministic fallback for the non agent path (src/messageRouter.js).</span>
+              <span class="wlabel">Deterministic fallback for the non-agent path (src/bot</span>
             </li>
-            <li class="wave doing">
+            <li class="wave done">
               <span class="wtick" aria-hidden="true"></span>
               <span class="wid">W4.2.7</span>
               <span class="wlabel">Closes CF-01 (carried from W1</span>
@@ -976,11 +976,11 @@
       <div class="dbblock">
         <div class="dbhead">🗄 Database changes for M4 — apply in this order</div>
         <ol class="dblist">
-          <li class="dbrow">
-            <span class="dbnum">1</span>
-            <code class="dbfile">supabase/migrations/&lt;ts&gt;_refal_dynamic_commercial_data.sql</code>
-            <span class="dbbadge planned">not written yet</span>
-            <span class="dbnote">P4.1. The six commercial tables: refal_offers_and_pricing, refal_annual_renewal_fees, refal_property_inventory, refal_reservation_rules, refal_government_fees, refal_lead_profile. RLS on, revoke from public/anon/authenticated, grant service_role, security invoker, set search_path = &#39;&#39;, set_rafa_updated_at trigger. Removes BLK-12.</span>
+          <li class="dbrow ran">
+            <span class="dbnum">✓</span>
+            <code class="dbfile">supabase/migrations/20261010080201_refal_dynamic_commercial_data.sql</code>
+            <span class="dbbadge ran">executed</span>
+            <span class="dbnote">P4.1; applied live as migration version 20261010150340 on 2026-10-10. The six commercial tables: refal_offers_and_pricing, refal_annual_renewal_fees, refal_property_inventory, refal_reservation_rules, refal_government_fees, refal_lead_profile. RLS on, revoke from public/anon/authenticated, grant service_role, security invoker, set search_path = &#39;&#39;, set_rafa_updated_at trigger. Removes BLK-12.</span>
           </li>
         </ol>
       </div>
@@ -1689,7 +1689,7 @@
     </details>
 
 <footer>
-  Generated 2026-10-10 15:28 UTC · 16 milestones · 83 phases · 118 waves<br>
+  Generated 2026-10-10 15:42 UTC · 16 milestones · 83 phases · 118 waves<br>
   Regenerate after any plan update with <code>npm run plan:ui</code>, then refresh this page.<br>
   Status marks come straight from the plan: <code>[ ]</code> not started · <code>[~]</code> in progress · <code>[x]</code> done.
 </footer>

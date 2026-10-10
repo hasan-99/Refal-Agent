@@ -153,15 +153,18 @@ function validateData(value, schema, { operation, actor, now }) {
 
 async function callGateway(method, kind, body, { fetchImpl, env }) {
   const baseUrl = env.RAFA_API_URL || `${String(env.SUPABASE_URL || "").replace(/\/$/, "")}/functions/v1/rafa-agent-api`;
+  const apiKey = env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_ANON_KEY;
   const secret = env.RAFA_API_SECRET;
-  if (!baseUrl || baseUrl === "/functions/v1/rafa-agent-api" || !secret) throw unavailableError("Dynamic commercial data gateway is not configured.");
+  if (!baseUrl || baseUrl === "/functions/v1/rafa-agent-api" || !apiKey || !secret) throw unavailableError("Dynamic commercial data gateway is not configured.");
   const adminView = method === "GET" ? "?view=admin" : "";
   const url = `${baseUrl.replace(/\/$/, "")}/dynamic-data/${encodeURIComponent(kind)}${adminView}`;
   let response;
   try {
     response = await fetchImpl(url, {
       method,
-      headers: { "content-type": "application/json", "x-rafa-api-secret": secret },
+      // The platform requires an API key header when verify_jwt is enabled.
+      // The Edge handler separately authenticates the server-only shared secret.
+      headers: { "content-type": "application/json", apikey: apiKey, "x-rafa-api-secret": secret },
       ...(body ? { body: JSON.stringify(body) } : {})
     });
   } catch {
