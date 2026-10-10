@@ -13,7 +13,7 @@ const {
   resolveOpenRouterModel
 } = require("./openrouterPrivacy");
 const { routeMessageResult } = require("./messageRouter");
-const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
+const { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn } = require("./knowledgeQuery");
 
 const evidenceFixture = {
   source_name: "Refalco Group Contact",
@@ -330,6 +330,58 @@ test("knowledge retrieval uses only the current question and actual conversation
   assert.doesNotMatch(unrelated, /company registration and formation service/iu);
 
   assert.equal(buildKnowledgeSearchQuery("بدي تفاصيل اكتر", { history: [] }), "بدي تفاصيل اكتر");
+});
+
+test("broad company questions search each knowledge area before composing an answer", () => {
+  const broad = buildKnowledgeSearchQueries("ما هي خدمات الشركة؟", { history: [] }, ["services"]);
+  assert.equal(broad.length, 5);
+  assert.doesNotMatch(broad[0], /ما هي خدمات الشركة/u);
+  assert.match(broad[0], /company formation package/u);
+  assert.match(broad[1], /corporate tax Cyprus/u);
+  assert.match(broad[2], /banking and payment gateways/u);
+  assert.match(broad[3], /permanent residency Cyprus/u);
+  assert.match(broad[4], /buying property in Cyprus/u);
+  const profile = buildKnowledgeSearchQueries("Who are you?", {}, ["company_info"]);
+  assert.match(profile[0], /who Refalco Group is/u);
+  assert.deepEqual(buildKnowledgeSearchQueries("How much is setup?", {}, ["pricing"]), ["How much is setup?"]);
+});
+
+test("broad retrieval supplies one distinct content chunk per facet and skips finding aids", async () => {
+  const calls = [];
+  const retrieval = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"],
+    embedText: async (query) => query.length,
+    embeddingModel: "test-model",
+    store: {
+      searchKnowledge: async (query, embedding, model, count) => {
+        calls.push({ query, embedding, model, count });
+        const index = calls.length;
+        return [
+          { chunk_kind: "aliases", chunk_id: `aid-${index}`, heading: "Aliases", content: "Question phrases" },
+          { chunk_kind: "discovery", chunk_id: `discovery-${index}`, heading: "Discovery prompts", content: "Questions for a specialist" },
+          { chunk_kind: "fact", chunk_id: `content-${index}`, heading: `Facet ${index}`, content: `Approved content ${index}` }
+        ];
+      }
+    }
+  });
+  assert.equal(retrieval.queryCount, 5);
+  assert.equal(retrieval.failures.length, 0);
+  assert.equal(retrieval.complete, true);
+  assert.equal(calls.length, 5);
+  assert.ok(calls.every((call) => call.model === "test-model" && call.count === 6 && call.embedding === call.query.length));
+  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "content-2", "content-3", "content-4", "content-5"]);
+
+  let failedSearch = false;
+  const incomplete = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"],
+    store: { searchKnowledge: async (_query, _embedding, _model, _count) => {
+      if (!failedSearch) { failedSearch = true; throw new Error("unreachable"); }
+      return [];
+    } }
+  });
+  // Deterministic failure coverage: the first facet fails, the rest have no results.
+  assert.equal(incomplete.complete, false);
+  assert.equal(incomplete.failures.length, 1);
 });
 
 test("price answers cannot attach nearby company services to the paid package without explicit evidence", () => {

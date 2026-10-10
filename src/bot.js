@@ -39,7 +39,7 @@ const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
-const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
+const { retrieveKnowledgeForTurn } = require("./knowledgeQuery");
 const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
 const { detectIntent, INTENTS } = require("./intent");
 const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
@@ -403,19 +403,25 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
   response = routed.response;
   if (routed.shouldUseAi) {
     const customerText = routed.metadata?.privacySafeQuestion || String(text || "").trim();
-    const knowledgeSearchQuery = buildKnowledgeSearchQuery(customerText, routed.user, routed.metadata?.intent?.intents);
     let evidence = [];
     let stageAt = performance.now();
-    try {
-      const embedding = await embedText(knowledgeSearchQuery);
-      stage("embedding", stageAt);
-      stageAt = performance.now();
-      evidence = store.searchKnowledge ? await store.searchKnowledge(knowledgeSearchQuery, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
-      stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
-    } catch (error) {
+    const retrieval = await retrieveKnowledgeForTurn(customerText, {
+      user: routed.user,
+      intents: routed.metadata?.intent?.intents || [],
+      store,
+      embedText,
+      embeddingModel: DEFAULT_EMBEDDING_MODEL,
+      matchCount: 6
+    });
+    // A broad answer must not look complete after one of its targeted searches
+    // failed. Keep the existing localized abstention path for an incomplete
+    // retrieval instead of handing the model a partial view as if it were all.
+    evidence = retrieval.complete ? retrieval.evidence : [];
+    for (const error of retrieval.failures) {
       console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
       logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
+    stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length, facetCount: retrieval.queryCount, complete: retrieval.complete });
 
     let dynamicResult = { requested: [], live: [], statuses: [] };
     try {
