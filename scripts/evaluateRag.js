@@ -59,24 +59,16 @@ const cases = [
     expectedFacts: ["€999", "four months"],
     mutablePricing: true
   },
-  {
-    id: "former_services_en",
-    query: "Are LAMAR's former company formation services now provided under Refalco Group services?",
-    expectedSource: "Owner-confirmed Refalco Group services transition",
-    expectedDocumentTitle: "Former LAMAR services now under Refalco Group",
-    expectedHeading: "Former services now under Refalco Group",
-    expectedFacts: ["former Cyprus company-formation services", "now provided under Refalco Group services"],
-    mutablePricing: false
-  },
-  {
-    id: "former_services_ar",
-    query: "هل خدمات تأسيس الشركات السابقة صارت ضمن خدمات الشركة؟",
-    expectedSource: "Owner-confirmed Refalco Group services transition",
-    expectedDocumentTitle: "Former LAMAR services now under Refalco Group",
-    expectedHeading: "الخدمات السابقة أصبحت ضمن خدمات الشركة",
-    expectedFacts: ["خدمات لامار السابقة", "ضمن خدمات الشركة"],
-    mutablePricing: false
-  },
+  // REMOVED 2026-10-10: former_services_en / former_services_ar.
+  // They scored retrieval against expectedDocumentTitle "Former LAMAR services
+  // now under Refalco Group" and expectedSource "Owner-confirmed Refalco Group
+  // services transition". Verified against the live database on 2026-10-10:
+  // BOTH RETURN ZERO ROWS. The M3 corpus is 29 topics x ar/en/el and contains
+  // no such document, so these two cases could only ever score as a miss.
+  // LAMAR is not a current brand; the company-registration price is Refalco's
+  // own. Same defect shape as FIX-28 and as the placeholder-company-name
+  // corruption found after the M1 deployment: an evaluation harness measuring
+  // something that cannot exist.
   {
     id: "group_areas_en",
     query: "What business areas does Refalco Group work in?",

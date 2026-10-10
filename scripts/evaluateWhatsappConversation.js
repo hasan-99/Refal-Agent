@@ -27,14 +27,13 @@ const cases = [
     source: "Refalco Group official website",
     mustMention: /تطوير|البنية التحتية|التقنية|الاستراتيجي/
   },
-  {
-    id: "en-lamar-services-transition",
-    text: "What happened to LAMAR's former Cyprus company-formation services?",
-    language: "english",
-    source: "Owner-confirmed Refalco Group services transition",
-    mustMention: /LAMAR.*Refalco Group|Refalco Group.*LAMAR/i,
-    mustNotMention: /owner|confirmed by|verification|999|price|package/i
-  },
+  // REMOVED 2026-10-10: en-lamar-services-transition. It asserted
+  // mustMention: /LAMAR.*Refalco Group/ -- i.e. the reply was REQUIRED to name
+  // LAMAR -- against source "Owner-confirmed Refalco Group services
+  // transition", which returns ZERO rows from the live database. LAMAR is not
+  // a current brand; company registration is a Refalco service. The guard that
+  // stops her VOLUNTEERING old-brand history is kept and lives at
+  // src/ai.js:316 (containsLegacyBrandHistory + customerAskedAboutLegacyBrand).
   {
     id: "ar-services-page",
     text: "ما هي الخدمات التي تقدمها الشركة؟",

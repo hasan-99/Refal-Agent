@@ -16,9 +16,11 @@ const supportedCases = [
   { id: "services-en-direct", query: "What services does Refalco Group offer?", source: "Refalco Group Services" },
   { id: "services-ar-page", query: "ما هي الخدمات التي تقدمها الشركة؟", source: "Refalco Group Services" },
   { id: "syrian-investment-company-setup", query: "بدي اسجل شركة استثمار ب قبرص", source: "Refalco Group Services" },
-  { id: "company-formation-package", query: "What is included in the Cyprus company formation service?", source: "Refalco Group Services" },
-  { id: "group-affiliation-en", query: "Are LAMAR's former services now provided as Refalco Group services?", source: "Owner-confirmed Refalco Group services transition" },
-  { id: "group-affiliation-ar", query: "هل أصبحت خدمات لامار السابقة تُقدَّم الآن ضمن خدمات الشركة؟", source: "Owner-confirmed Refalco Group services transition" }
+  { id: "company-formation-package", query: "What is included in the Cyprus company formation service?", source: "Refalco Group Services" }
+  // REMOVED 2026-10-10: group-affiliation-en / group-affiliation-ar. Both
+  // scored against source "Owner-confirmed Refalco Group services transition",
+  // which returns ZERO rows from the live database. LAMAR is not a current
+  // brand; company registration is a Refalco service.
 ];
 
 const abstentionCases = [
