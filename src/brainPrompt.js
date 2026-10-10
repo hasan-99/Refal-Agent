@@ -22,9 +22,15 @@ const { LEAD_TIERS } = require("./leadTemperature");
 // W1.7.8 — prompt versioning. Bump PROMPT_VERSION whenever a mandatory block
 // changes, and add a CHANGE_HISTORY entry. M14 rolls back by version, so a
 // prompt regression can be reverted without reverting the code around it.
-const PROMPT_VERSION = "1.7.1";
+const PROMPT_VERSION = "1.8.0";
 
 const CHANGE_HISTORY = Object.freeze([
+  Object.freeze({
+    version: "1.8.0",
+    date: "2026-10-10",
+    phase: "P6.2/P6.3",
+    summary: "Use the computed qualification tier and carry detected buying signals into the shared prompt. Signals guide a guarded next step but never grant appointment or handover consent."
+  }),
   Object.freeze({
     version: "1.7.1",
     date: "2026-10-09",
@@ -106,19 +112,24 @@ function crossSellBlock() {
 // with no path forward. The replacement is tier-aware.
 function bookingOfferBlock(leadTier = "") {
   const tier = String(leadTier).toLowerCase();
+  if (tier === "informational") return ["Answer directly and briefly. Do not push booking or follow-up."];
+  if (tier === "strategic") return ["This is an urgent strategic opportunity. Stop selling and benefit hints; prioritize the senior consultant route. Offer booking only for the customer's requested next step and with consent. Never expose this tier or score."];
   if (tier === LEAD_TIERS.HOT) {
-    return ["The customer is showing a buying signal. Stop selling and move to booking, with their consent."];
+    return ["Stop all selling, cross-sell hooks, and benefit hints. Focus on logistics. Ask for contact details or offer booking only for the customer's requested next step and with consent; never claim confirmation before the system confirms it."];
   }
   if (tier === LEAD_TIERS.WARM) {
     return ["Offer a call flexibly if it genuinely helps, and accept a no without repeating the offer."];
   }
   if (tier === LEAD_TIERS.COLD) {
-    // COLD is an EXPLICIT DECLINE in this system, not merely "not warm yet".
-    // Offering a call to someone who has said no is the single most damaging
-    // version of the unrequested-meeting anti-pattern.
-    return ["The customer has declined contact. Do not offer a call, meeting, or follow-up at all, and do not ask again."];
+    return ["Give general information and ask at most one useful exploratory question. No booking push; any later follow-up remains quiet and requires explicit consent."];
   }
   return ["Do not offer a call or meeting at this stage. If the customer asks, or clearly signals they are ready, offer one then."];
+}
+
+function buyingSignalBlock(buyingSignals = []) {
+  const signals = Array.isArray(buyingSignals) ? buyingSignals : [];
+  if (!signals.length) return [];
+  return ["The current customer message contains a recognized buying signal. Answer the customer's stated question first, then offer the appropriate guarded booking or specialist next step when relevant. A signal is not consent to create an appointment or handover. Use only the existing booking workflow, require the customer's explicit confirmation, and never claim a booking is confirmed until the system confirms it."];
 }
 
 // --- language --------------------------------------------------------------
@@ -238,6 +249,7 @@ function buildBrainPrompt({
   message = "",
   humourLevel = 2,
   leadTier = "",
+  buyingSignals = [],
   variant = "customer"
 } = {}) {
   const lines = [];
@@ -266,6 +278,7 @@ function buildBrainPrompt({
   // resolved it emits the protective default ("do not offer at this stage"),
   // which is the behaviour the removed blanket ban used to provide.
   lines.push(...bookingOfferBlock(leadTier));
+  lines.push(...buyingSignalBlock(buyingSignals));
   lines.push(...complianceBlock());
   lines.push(...memoryBlock());
 
@@ -278,5 +291,6 @@ module.exports = {
   MANDATORY_BLOCKS,
   BLOCKS,
   buildBrainPrompt,
-  bookingOfferBlock
+  bookingOfferBlock,
+  buyingSignalBlock
 };

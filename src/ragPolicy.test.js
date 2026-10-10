@@ -545,9 +545,9 @@ test("W1.7.7: the lead tier reaches the live system prompt and changes the booki
   });
 
   const expectations = [
-    ["hot", /Stop selling and move to booking, with their consent/],
+    ["hot", /Stop all selling, cross-sell hooks, and benefit hints/],
     ["warm", /Offer a call flexibly if it genuinely helps/],
-    ["cold", /has declined contact\. Do not offer a call, meeting, or follow-up at all/],
+    ["cold", /exploratory question.*No booking push/is],
     ["", /Do not offer a call or meeting at this stage/]
   ];
 
@@ -671,7 +671,7 @@ test("WhatsApp, dashboard, Edge, and canonical rules share the consent and inves
     } else {
       // The runtime surfaces express the same tier-awareness as prompt lines.
       assert.match(content, /decided by the booking-offer rule for the current lead tier/, file);
-      assert.match(content, /move to booking, with their consent/, file);
+      assert.match(content, /Stop all selling, cross-sell hooks, and benefit hints/, file);
     }
     assert.match(content, /Persisted customer preferences against proactive booking, contact, or contact-detail capture are binding for future turns/, file);
     assert.match(content, /Do not repeat a specialist, call, meeting, booking, or contact offer already made in recent history/, file);

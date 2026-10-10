@@ -8,9 +8,15 @@
 // generated and drift-tested (src/promptParity.test.js), so the three surfaces
 // cannot disagree about policy the way they did before P1.7.
 
-export const PROMPT_VERSION = "1.7.1";
+export const PROMPT_VERSION = "1.8.0";
 
 export const CHANGE_HISTORY = Object.freeze([
+  {
+    "version": "1.8.0",
+    "date": "2026-10-10",
+    "phase": "P6.2/P6.3",
+    "summary": "Use the computed qualification tier and carry detected buying signals into the shared prompt. Signals guide a guarded next step but never grant appointment or handover consent."
+  },
   {
     "version": "1.7.1",
     "date": "2026-10-09",
@@ -123,13 +129,13 @@ const STATIC_BLOCKS = Object.freeze({
 
 const BOOKING_BY_TIER = Object.freeze({
   "hot": [
-    "The customer is showing a buying signal. Stop selling and move to booking, with their consent."
+    "Stop all selling, cross-sell hooks, and benefit hints. Focus on logistics. Ask for contact details or offer booking only for the customer's requested next step and with consent; never claim confirmation before the system confirms it."
   ],
   "warm": [
     "Offer a call flexibly if it genuinely helps, and accept a no without repeating the offer."
   ],
   "cold": [
-    "The customer has declined contact. Do not offer a call, meeting, or follow-up at all, and do not ask again."
+    "Give general information and ask at most one useful exploratory question. No booking push; any later follow-up remains quiet and requires explicit consent."
   ],
   "unclassified": [
     "Do not offer a call or meeting at this stage. If the customer asks, or clearly signals they are ready, offer one then."

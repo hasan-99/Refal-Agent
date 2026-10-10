@@ -86,11 +86,11 @@ function correctTooManyQuestions(text) {
   return match ? match[0].trim() : null;
 }
 
-function attemptDeterministicCorrection(text, policy, thresholds) {
+function attemptDeterministicCorrection(text, policy, thresholds, context = {}) {
   if (policy.reasons.length !== 1 || policy.reasons[0] !== "too_many_questions") return null;
   const corrected = correctTooManyQuestions(text);
   if (!corrected) return null;
-  const recheck = validateResponse(corrected, thresholds);
+  const recheck = validateResponse(corrected, { ...thresholds, customerMessage: context.currentMessage });
   return recheck.valid ? recheck.text : null;
 }
 
@@ -136,7 +136,7 @@ function checkLanguageEquivalence(text, locale) {
 // so neither is ever mistaken for one the mechanical correction knows how to
 // fix — both only ever go through retry-then-fallback, never a silent text edit.
 function checkDraftPolicy(text, thresholds, observations, locale, context = {}) {
-  const policy = validateResponse(text, thresholds);
+  const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage });
   if (!policy.valid) return policy;
   const conflicts = resolveObservationConflicts(context, observations);
   const evidenceItems = collectApprovedKnowledgeEvidence(observations)
@@ -249,7 +249,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
       const thresholds = MODEL_DRAFT_THRESHOLDS;
       const policy = checkDraftPolicy(validated.text, thresholds, observations, context?.locale, context);
       if (!policy.valid) {
-        const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds);
+        const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds, context);
         if (corrected) {
           return { finished: true, outcome: "responded", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
@@ -275,7 +275,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
     const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context);
     if (!policy.valid) {
-      const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds);
+        const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds, context);
       if (corrected) {
         return { finished: true, outcome: "clarified", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
       }

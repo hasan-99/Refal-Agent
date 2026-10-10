@@ -3,6 +3,10 @@ const { restrictedRefalcoReply, allowsGroundedProgrammeAnswer } = require("./ref
 const { detectIntent, INTENTS } = require("./intent");
 const { classifySafety, safeLocalizedFallback } = require("./safetyPolicy");
 const { qualifyLead, consentFromText, getConsentState } = require("./leadQualification");
+const { detectBuyingSignals } = require("./buyingSignals");
+const { classifyLeadTier } = require("./leadTiers");
+const { detectStrategicEscalation } = require("./strategicEscalation");
+const { scoreQualification } = require("./qualificationEngine");
 const { assessPriority } = require("./priorityRules");
 const { handleComplaint } = require("./complaintWorkflow");
 const {
@@ -23,6 +27,7 @@ const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
 
 const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
 const GREEKLISH_CLOSURE = /^(?=.*\bden\s+(?:exo|eho)\s+kati\s+allo\b)(?=.*\b(?:xreiaso|xreiazomai)\s+kati\b)(?=.*\btha\s+to\s+zit(?:iso|so)\b).{1,260}$/iu;
+const QUALIFICATION_EVIDENCE = Symbol("qualification evidence retained until durable turn insert");
 
 const HELP = [
   "RAFA replies inside WhatsApp from the linked business number.",
@@ -77,6 +82,7 @@ function sameComplianceLock(previous, next) {
 
 async function recordHistory(store, userId, message, response, extra, { bestEffortWorkflowWrites = false } = {}) {
   const metadata = { ...(extra?.metadata || {}) };
+  const qualificationEvidence = extra?.metadata?.[QUALIFICATION_EVIDENCE] || null;
   delete metadata.privacySafeQuestion;
   // W2.5.3. A locked conversation never tracks a new sales hook, so a later
   // "yes" cannot be read as consent to an offer that should not have been made.
@@ -85,7 +91,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   }
   const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
   const consentGranted = metadata.specialistFollowUp?.consented === true && metadata.specialistFollowUp?.purpose === "specialist_follow_up";
-  const responsePolicy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata) });
+  const responsePolicy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata), customerMessage: message });
   const safeResponse = responsePolicy.valid ? response : safeFallbackData({ language, category: "uncertainty" }).text;
   const privacyTurn = metadata.safety?.risks?.includes("privacy");
   const storedMessage = privacyTurn ? "[message omitted: potentially sensitive credentials]" : message;
@@ -101,6 +107,14 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     ...(extra || {}),
     metadata
   });
+  if (!privacyTurn && qualificationEvidence) {
+    const evidence = qualificationEvidence.map((item) => item.sourceRef === "pending-current" ? { ...item, sourceRef: turn?.id || "" } : item);
+    const scored = scoreQualification({ evidence });
+    metadata.qualification = { ...metadata.qualification, ...scored };
+    if (typeof store.updateUser === "function") {
+      try { await store.updateUser(userId, (draft) => { draft.profile = { ...(draft.profile || {}), leadQualification: { ...metadata.qualification, updatedAt: scored.scoredAt, source: "qualification_engine_v1" } }; }); } catch { /* The score snapshot write remains authoritative. */ }
+    }
+  }
   // Agent writes require the source turn to be durable before any tool runs,
   // but auxiliary workflow records must not make the caller retry the whole
   // inbound message after this insert. Keep attempting them and contain only
@@ -141,12 +155,38 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     const validTriggers = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity", "sensitive_or_complex"]);
     for (const trigger of metadata.priority.triggers.filter((value) => validTriggers.has(value))) {
       writes.push(store.createPriorityAlert(userId, {
-        level: metadata.priority.level === "urgent" ? "urgent" : "high",
+        level: metadata.strategicEscalation || metadata.tierAction?.tier === "strategic" || metadata.priority.level === "urgent" ? "urgent" : "high",
         trigger,
-        details: { source: "deterministic", intent: metadata.intent?.primary || "unknown" },
+        details: { source: "deterministic", intent: metadata.intent?.primary || "unknown", ...(metadata.strategicEscalation ? { strategicClass: metadata.strategicEscalation.classId, route: metadata.strategicEscalation.route } : {}) },
         sourceTurnId: turn?.id
       }));
     }
+  } else if (!privacyTurn && metadata.strategicEscalation && typeof store.createPriorityAlert === "function") {
+    writes.push(store.createPriorityAlert(userId, {
+      level: "urgent",
+      trigger: "material_business_opportunity",
+      details: { source: "strategic_escalation", strategicClass: metadata.strategicEscalation.classId, route: metadata.strategicEscalation.route },
+      sourceTurnId: turn?.id
+    }));
+  } else if (!privacyTurn && metadata.tierAction?.tier === "strategic" && typeof store.createPriorityAlert === "function") {
+    writes.push(store.createPriorityAlert(userId, {
+      level: "urgent",
+      trigger: "material_business_opportunity",
+      details: { source: "strategic_tier", route: "senior_consultant" },
+      sourceTurnId: turn?.id
+    }));
+  }
+  if (!privacyTurn && metadata.leadTier && typeof store.saveLeadScore === "function") {
+    writes.push(store.saveLeadScore(userId, {
+      dimensions: metadata.qualification?.dimensions || {},
+      evidenceReferences: metadata.qualification?.evidenceReferences || {},
+      scorerVersion: metadata.qualification?.scorerVersion,
+      evidenceFingerprint: metadata.qualification?.evidenceFingerprint,
+      scoreFloor: metadata.tierAction?.scoreFloor || 0,
+      effectiveTotal: metadata.tierAction?.total,
+      tier: metadata.leadTier,
+      sourceTurnId: turn?.id
+    }));
   }
   if (metadata.complaint && typeof store.createComplaint === "function") {
     writes.push(store.createComplaint(userId, {
@@ -303,14 +343,19 @@ function hasLimitedHandoverScope(text) {
 function handoverFor({ user, userId, incoming, inquiry, inquiryMetadata = {}, classification, language, response }) {
   const sensitiveSource = ["privacy", "prompt_injection"].some((risk) => inquiryMetadata.safety?.risks?.includes(risk));
   const inquirySummary = sensitiveSource ? "[current inquiry omitted for privacy]" : String(inquiry || incoming || "").trim().slice(0, 500);
-  // Consent authorizes a narrowly scoped follow-up for this inquiry. Never
-  // attach stored profile fields, qualification, intake objects, or transcript.
+  // Consent authorizes a narrowly scoped follow-up for this inquiry. Include
+  // only the matching, customer-stated opportunity intake and qualification
+  // snapshot; never attach the broader profile or conversation transcript.
   const normalizedIntent = classification.intents.find((intent) => ![INTENTS.UNKNOWN, INTENTS.GREETING, INTENTS.SMALL_TALK, INTENTS.AGENT_IDENTITY].includes(intent));
   const intents = normalizedIntent ? [normalizedIntent === INTENTS.LAND_DEVELOPMENT ? "development" : normalizedIntent] : [];
   return createHandover({
     input: inquirySummary,
     customer: { name: isPlausibleCustomerName(user.profile?.name) ? user.profile.name : undefined, whatsappContact: userId },
     conversation: { lastMessage: inquirySummary },
+    opportunityIntake: inquiryMetadata.opportunityIntake,
+    qualification: inquiryMetadata.qualification,
+    score: inquiryMetadata.qualification?.total,
+    tier: inquiryMetadata.leadTier,
     need: inquirySummary,
     intents,
     language,
@@ -357,6 +402,20 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
     user.profile = { ...(user.profile || {}), name: capturedName, nameSource: "customer_stated" };
   }
   const qualification = qualifyLead({ history, profile: user.profile || {}, booking: user.booking });
+  const qualificationEvidence = privacyRisk ? [] : [
+    ...history.filter((turn) => turn?.id).map((turn) => ({ text: turn.message || turn.text || "", sourceRef: turn.id })),
+    { text: incoming, sourceRef: "pending-current" }
+  ];
+  const evidenceScore = scoreQualification({ evidence: qualificationEvidence, previous: user.profile?.leadQualification });
+  qualification.dimensions = evidenceScore.dimensions;
+  qualification.total = evidenceScore.total;
+  qualification.evidenceReferences = evidenceScore.evidenceReferences;
+  qualification.scorerVersion = evidenceScore.scorerVersion;
+  qualification.evidenceFingerprint = evidenceScore.evidenceFingerprint;
+  const buyingSignals = privacyRisk ? [] : detectBuyingSignals(incoming);
+  const strategicEscalation = privacyRisk ? null : detectStrategicEscalation(incoming);
+  const scoreFloor = Math.max(buyingSignals.reduce((floor, signal) => Math.max(floor, signal.scoreFloor), 0), strategicEscalation ? 25 : 0);
+  const tierAction = classifyLeadTier(qualification.total, { scoreFloor });
   const correction = privacyRisk ? null : createCorrectionEvent({ userId, text: incoming });
   if (correction?.field && correction.correctedValue && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
@@ -393,22 +452,33 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
       if (Object.keys(opportunityIntakes).length) draft.profile.opportunityIntakes = { ...existingIntakes, ...opportunityIntakes };
     });
   }
+  const metadata = {
+    intent: { primary: classification.primary, intents: classification.intents, isMultiIntent: classification.isMultiIntent, language: classification.language },
+    safety: { restricted: safety.restricted, risks: safety.risks },
+    ...(privacyContinuation ? { privacySafeQuestion: safePrivacyQuestion } : {}),
+    priority: { level: priority.level, triggers: priority.triggers, handoverRequired: priority.handoverRequired },
+    qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds },
+    leadTier: tierAction.tier,
+    tierAction,
+    buyingSignals,
+    ...(strategicEscalation ? { strategicEscalation } : {}),
+    redFlags,
+    opportunityIntake,
+    opportunityIntakes,
+    correction,
+    ...(capturedName ? { customerNameCaptured: true } : {})
+  };
+  Object.defineProperty(metadata, QUALIFICATION_EVIDENCE, { value: qualificationEvidence, enumerable: false, configurable: true });
   return {
     classification,
     safety,
     priority,
     complianceTriggers,
     qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds },
-    metadata: {
-      intent: { primary: classification.primary, intents: classification.intents, isMultiIntent: classification.isMultiIntent, language: classification.language },
-      safety: { restricted: safety.restricted, risks: safety.risks },
-      ...(privacyContinuation ? { privacySafeQuestion: safePrivacyQuestion } : {}),
-      priority: { level: priority.level, triggers: priority.triggers, handoverRequired: priority.handoverRequired },
-      qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds },
-      redFlags
-      , opportunityIntake, opportunityIntakes, correction,
-      ...(capturedName ? { customerNameCaptured: true } : {})
-    }
+    tierAction,
+    buyingSignals,
+    ...(strategicEscalation ? { strategicEscalation } : {}),
+    metadata
   };
 }
 
@@ -433,9 +503,9 @@ function pendingIntakeAnswer({ user, lastTurn, incoming, classification, existin
   return { type: "company_formation", field: "businessActivity" };
 }
 
-function resultWithHistory({ response, user, metadata, handover, history }) {
+function resultWithHistory({ response, user, metadata, handover, history, customerMessage = "" }) {
   const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
-  const policy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata) });
+  const policy = validateResponse(response, { ...LEGACY_RESPONSE_THRESHOLDS, customerMessage, allowVerifiedHandoverClaim: hasVerifiedHandoverClaim(metadata), allowVerifiedBookingClaim: hasVerifiedBookingClaim(metadata) });
   const safeResponse = policy.valid ? response : safeFallbackData({ language, category: "uncertainty" }).text;
   return { response: safeResponse, shouldUseAi: false, user, metadata: { ...metadata, responsePolicy: policy }, handover, ...history };
 }
@@ -660,7 +730,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
     metadata.complianceEscalation.recorded = history.complianceRecorded === true;
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
   const statesNoProactivePreference = NO_PROACTIVE_CONTACT_OR_BOOKING.test(incoming);
@@ -683,7 +753,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     response = replies[requestedLanguage];
     const metadata = { ...prepared.metadata, intent: { ...prepared.metadata.intent, language: requestedLanguage } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
   const lastTurn = user.history?.[user.history.length - 1];
   const nameWasRequested = wasNameRequested(lastTurn);
@@ -698,7 +768,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: "Κατανοητό. Είμαι εδώ αν θέλετε να διευκρινίσω κάποιο σημείο."
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
   const existingNameIsPlausible = isPlausibleCustomerName(user.profile?.name);
 
@@ -731,7 +801,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: `Ευχαριστώ, ${capturedName}. Πρόσθεσα το όνομά σας στο αίτημα αξιολόγησης από ειδικό. Υπάρχει κάποια σημαντική λεπτομέρεια που θέλετε να γνωρίζει η ομάδα;`
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (user.profile?.handover?.required && hasLimitedHandoverScope(incoming) && !["denied", "revoked"].includes(consentFromText(incoming))) {
@@ -748,7 +818,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     });
     const metadata = { ...prepared.metadata, handoverScope: { value: "current_inquiry_only", source: "customer_requested" } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
   const customerNeed = privacyRisk ? null : extractCustomerNeed(incoming);
@@ -766,7 +836,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: "Γεια σας! Είμαι ο ψηφιακός σας βοηθός. Πώς μπορώ να σας βοηθήσω;"
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (classification.intents.includes(INTENTS.PROJECT_ENQUIRY)) {
@@ -776,7 +846,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: "Μπορώ να βοηθήσω να εξετάσουμε αν το έργο σχετίζεται με τους τομείς δραστηριότητας της Refalco Group· η καταλληλότητα χρειάζεται αξιολόγηση ειδικού. Τι είδους έργο σκέφτεστε;"
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   // A no-contact statement is a customer instruction, not an invitation to
@@ -792,7 +862,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: "Κατανοητό. Θα συνεχίσουμε μόνο με ενημέρωση εδώ και δεν θα ζητήσω επικοινωνία από ειδικό."
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (statesNoProactivePreference && !hasInformationQuestion) {
@@ -802,13 +872,13 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: "Κατανοητό. Θα συνεχίσουμε μόνο με πληροφορίες· μπορείτε να ζητήσετε κράτηση ή επικοινωνία όποτε είστε έτοιμοι."
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (GREEKLISH_CLOSURE.test(incoming.trim())) {
     response = "Εντάξει. Είμαι εδώ αν χρειαστείτε κάτι άλλο.";
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   const lastAssistantAskedAboutSpecialist = isFreshSpecialistOffer(lastTurn);
@@ -844,7 +914,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
         specialistFollowUp: { consented: true, purpose: "specialist_follow_up", trackedOffer: false }
       };
       const history = await recordHistory(store, userId, incoming, response, { metadata });
-      return resultWithHistory({ response, user, metadata, history });
+      return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
     }
     response = localized(language, {
       english: `I’ve recorded your request for a specialist to review this inquiry. I can’t confirm when they may respond.${!isPlausibleCustomerName(user.profile?.name) ? " If you want, you can share the name you’d like included; it’s optional." : ""}`,
@@ -878,7 +948,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       user.profile = { ...(user.profile || {}), specialistFollowUp: metadata.specialistFollowUp, handover: handoverState };
     }
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, handover, history });
+    return resultWithHistory({ response, user, metadata, handover, history, customerMessage: incoming });
   }
 
   if (capturedName &&
@@ -889,7 +959,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       greek: `Χαίρω πολύ, ${capturedName}. Πώς μπορώ να βοηθήσω;`
     });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   // Safety and escalation decisions happen before name capture or AI retrieval.
@@ -906,7 +976,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   if (safety.restricted && !prepared.metadata.privacySafeQuestion && !allowsGroundedProgrammeAnswer(incoming)) {
     response = restrictedRefalcoReply(incoming) || safeLocalizedFallback(safety.primary || incoming, language);
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (classification.intents.includes(INTENTS.COMPLAINT)) {
@@ -914,7 +984,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     response = complaint.customerMessage;
     const metadata = { ...prepared.metadata, complaint: { severity: complaint.severity, summary: complaint.internalNote || incoming } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
   const existingState = user.profile?.existingClientState;
@@ -924,7 +994,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   if (isSafeProfileUpdateChannelQuestion(incoming)) {
     response = safeProfileUpdateChannelReply(language);
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
   if (classification.intents.includes(INTENTS.EXISTING_CLIENT) || suppliedExistingClientIdentifier || conciseVerificationAnswer) {
     const current = user.profile?.existingClientState || beginExistingClientFlow();
@@ -936,7 +1006,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     response = existingClientReply(language, state);
     const metadata = { ...prepared.metadata, existingClientVerification: { ...state, identifierProvided: Boolean(identifier) } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
   if (prepared.metadata.correction?.explicit) {
@@ -953,7 +1023,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       });
     const metadata = { ...prepared.metadata };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
   const objection = detectObjection(incoming);
@@ -971,7 +1041,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     const response = matrix?.response || safeFallbackData({ language: languageKey, category: objection.category }).text;
     const metadata = { ...prepared.metadata, objection: { id: matrix?.objection || matrixObjection, source: "m5_objection_matrix" } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
   const smallTalk = normalizeSmallTalk(incoming);
@@ -980,25 +1050,25 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       ? localized(language, { english: "You’re welcome. I’m here if another question comes up.", arabic: "على الرحب والسعة. أنا هنا إذا كان لديك أي سؤال آخر.", greek: "Παρακαλώ. Είμαι εδώ αν προκύψει κάποια άλλη ερώτηση." })
       : localized(language, { english: "Understood. What would you like to know?", arabic: "تمام. ما الذي تود معرفته؟", greek: "Κατανοητό. Τι θα θέλατε να μάθετε;" });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
   if (/^(?:(?:انت|إنت|وانت|وأنت)\s+)?(?:كيفك|كيف حالك|شلونك|شو اخبارك|كيف امورك|كيف صحتك)(?:\s+(?:انت|إنت|يا رفا))?$/iu.test(smallTalk) || /^(?:how are you|how's it going|how do you do)(?:\s+(?:rafa|you))?$/i.test(smallTalk)) {
     const arabic = detectMessageLanguage(incoming) === "arabic";
     response = localized(language, { arabic: "تمام، الحمد لله! وإنت كيفك؟", greek: "Είμαι καλά, ευχαριστώ! Εσείς πώς είστε;", english: "I’m doing well, thanks! How are you?" });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (lower === "help") {
     response = helpText(language);
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (lower === "profile") {
     response = profileText(user);
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   // P2.2 / BLK-2, second gate on the same pre-retrieval path. Same rule.
@@ -1006,7 +1076,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   if (restrictedReply) {
     response = restrictedReply;
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (["start", "hi", "hello", "hey", "مرحبا", "اهلا"].includes(lower)) {
@@ -1014,7 +1084,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       ? localized(language, { arabic: "مرحبًا، كيف يمكنني مساعدتك؟", greek: "Γεια σας, πώς μπορώ να βοηθήσω;", english: "Hi, how can I help?" })
       : localized(language, { arabic: "مرحبًا، أنا رفا. كيف يمكنني مساعدتك؟", greek: "Γεια σας, είμαι η RAFA. Πώς μπορώ να βοηθήσω;", english: "Hi, I’m RAFA. How can I help?" });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   return { response: localized(language, { english: "I’m checking the approved Refalco Group information for you.", arabic: "أتحقق لك من معلومات الشركة المعتمدة.", greek: "Ελέγχω τις εγκεκριμένες πληροφορίες της Refalco Group για εσάς." }), shouldUseAi: true, user, metadata: prepared.metadata };

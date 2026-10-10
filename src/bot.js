@@ -45,6 +45,7 @@ const { detectIntent, INTENTS } = require("./intent");
 const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
 const { appendGroundedHook, guardJurisdictionAnswer, observationPolicyRows, hasInformationalIntent } = require("./salesIntelligence");
 const { selectOfferForTurn } = require("./offerOrchestration");
+const { shouldEnterBookingPath, shouldDeferBookingHandler } = require("./buyingSignals");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -312,12 +313,16 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
   const bookingStartedAt = performance.now();
   // Regulated and privacy-risk messages must reach the safety router first;
   // the booking parser can otherwise persist raw sensitive details.
-  const explicitBookingRequest = prepared.classification.intents.includes(INTENTS.APPOINTMENT);
+  // Owner-approved MB-B1..B5 signals enter the existing guarded booking
+  // conversation even when the intent classifier misses their phrasing. The
+  // booking handler still requires a date/time and never confirms availability
+  // or creates an appointment from a signal alone.
+  const explicitBookingRequest = shouldEnterBookingPath(prepared);
   const bookingSelection = explicitBookingRequest ? selectOfferForTurn({
     candidates: [{ type: "booking", id: "explicit-appointment-request", mode: "action", validated: true }],
     context: { answerComplete: true, explicitBookingRequest: true, explicitBookingConsent: true }
   }) : null;
-  const booking = prepared.safety?.restricted || (explicitBookingRequest && bookingSelection?.type !== "booking")
+  const booking = shouldDeferBookingHandler(prepared, bookingSelection)
     ? null : await handleBookingMessage({ userId, text, store, user });
   stage("booking_gate", bookingStartedAt, { entered: Boolean(booking) });
   if (booking) {
@@ -467,7 +472,8 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
           // always emitted the "do not offer a call at this stage" default,
           // which is BLK-6's behaviour under a new name. The classification is
           // internal and never shown to the customer.
-          leadTier: classifyLeadTemperature({ history: routed.user?.history || [], booking: routed.user?.booking }).status,
+          leadTier: routed.metadata?.leadTier || classifyLeadTemperature({ history: routed.user?.history || [], booking: routed.user?.booking }).status,
+          buyingSignals: routed.metadata?.buyingSignals || [],
           onUsage: async (usage) => {
             try {
               await logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
@@ -640,7 +646,9 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
         userId,
         intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
         language,
-        inboundMessageId: providerMessageId || null
+        inboundMessageId: providerMessageId || null,
+        leadTier: routed.metadata?.leadTier || "",
+        buyingSignals: routed.metadata?.buyingSignals || []
       }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
       if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;

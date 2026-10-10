@@ -250,6 +250,11 @@ class EdgeApiStore {
     return qualification;
   }
 
+  async saveLeadScore(userId, score) {
+    const { score: saved } = await this.persistWorkflow("lead-score", { userId, ...score });
+    return saved;
+  }
+
   async saveIntents(userId, intents, options = {}) {
     const { intents: saved } = await this.persistWorkflow("intents", { userId, intents, sourceTurnId: options.sourceTurnId, confidence: options.confidence, source: options.source });
     return saved || [];
@@ -363,6 +368,14 @@ class EdgeApiStore {
     return this.request("/notifications", { method: "POST", body: JSON.stringify(notification) });
   }
 
+  async createP65TestHandoverNotification(testRunId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(testRunId || ""))) throw new Error("A valid P6.5 test run ID is required.");
+    return this.request("/notifications/test-handover", {
+      method: "POST",
+      body: JSON.stringify({ testRunId })
+    });
+  }
+
   async queueNotificationDraft(notificationId) {
     const { notification } = await this.request(`/notifications/${encodeURIComponent(notificationId)}/send`, { method: "POST", body: JSON.stringify({}) });
     return notification;
@@ -371,6 +384,21 @@ class EdgeApiStore {
   async claimDueNotifications(limit = 25) {
     const { notifications } = await this.request("/notifications/claim", { method: "POST", body: JSON.stringify({ limit }) });
     return notifications || [];
+  }
+
+  async claimNotificationById(notificationId, testRunId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(notificationId || ""))) throw new Error("A valid notification ID is required.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(testRunId || ""))) throw new Error("A valid P6.5 test run ID is required.");
+    const { notification } = await this.request(`/notifications/${encodeURIComponent(notificationId)}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ testRunId })
+    });
+    return notification ? [notification] : [];
+  }
+
+  async getHandoverStatus(handoverId) {
+    const { handover } = await this.request(`/handovers/${encodeURIComponent(handoverId)}`);
+    return handover || null;
   }
 
   async updateNotification(notificationId, patch) {

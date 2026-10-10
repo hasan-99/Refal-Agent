@@ -18,8 +18,14 @@ function buildAgentContext({
   knownCustomerFacts = {},
   currentOpenQuestion = null,
   consentState = "unknown",
-  allowedCapabilities = []
+  allowedCapabilities = [],
+  leadTier = "",
+  buyingSignals = []
 } = {}) {
+  const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
+  const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
+    .map((signal) => typeof signal === "string" ? signal : signal?.id)
+    .filter((id) => /^MB-B[1-5]$/.test(String(id || ""))))];
   return Object.freeze({
     currentMessage: safeTrim(currentMessage, 2000),
     locale: safeTrim(locale, 20) || "unknown",
@@ -37,6 +43,8 @@ function buildAgentContext({
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,
     consentState: safeTrim(consentState, 20) || "unknown",
+    leadTier: safeLeadTier,
+    buyingSignals: Object.freeze(safeBuyingSignals),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))])
   });
 }

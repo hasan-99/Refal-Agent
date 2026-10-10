@@ -64,6 +64,8 @@ async function runAgentTurnForContact({
   currentOpenQuestion,
   consentState,
   allowedCapabilities,
+  leadTier,
+  buyingSignals,
   store,
   user,
   userId,
@@ -89,7 +91,9 @@ async function runAgentTurnForContact({
     knownCustomerFacts,
     currentOpenQuestion,
     consentState,
-    allowedCapabilities
+    allowedCapabilities,
+    leadTier,
+    buyingSignals
   });
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,

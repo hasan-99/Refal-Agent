@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildSafeHistoryInsert, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
-import { containsUnconsentedContactCommitment } from "./responsePolicy.mjs";
+import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate } from "./responsePolicy.mjs";
 // Was a hand-copied regex in this file that had drifted into a fail-open:
 // it let "100% success rate", "موافقة مضمونة" and "Σίγουρη έγκριση" through,
 // and wrongly blocked "I cannot provide tax advice". Now a generated,
@@ -12,6 +12,8 @@ import { validateCustomerLeadFields } from "./dynamicActionValidation.mjs";
 import { persistDynamicActionAlert } from "./dynamicActionAlert.mjs";
 import { attachKnowledgePolicyMetadata } from "./knowledgePolicyMetadata.mjs";
 import { validateSalesOfferMetadata, validateSpecialistOfferMetadata } from "./salesOfferMetadata.mjs";
+import { canRetryHandoverReview, closeHandoverDeliverySafely, ledgerPatchForClosedHandover, ledgerPatchForExistingNotification, ledgerPatchForNotificationResult, ledgerPatchForRetryMismatch } from "./handoverDeliveryState.mjs";
+import { canClaimP65TestNotification, canCreateP65TestNotification, controlledP65Recipient, isSyntheticP65Handover } from "./p65TestRouting.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -220,6 +222,14 @@ Deno.serve(async (req: Request) => {
       return json({ user: await updateUser(decodeURIComponent(parts[1]), body) });
     }
 
+    if (parts[0] === "handovers" && parts[1] && req.method === "GET" && parts.length === 2) {
+      const handoverId = decodeURIComponent(parts[1]);
+      if (!isUuid(handoverId)) throw new HttpError("Invalid handover ID.", 400);
+      const { data, error } = await supabase.from("rafa_handovers").select("id,status").eq("id", handoverId).maybeSingle();
+      if (error) throw error;
+      return json({ handover: data || null });
+    }
+
     if (parts[0] === "contacts" && parts[1] && parts[2] === "history" && req.method === "POST") {
       const userId = decodeURIComponent(parts[1]);
       const body = await req.json();
@@ -364,6 +374,113 @@ Deno.serve(async (req: Request) => {
       return json({ reminder: await updateReminder(decodeURIComponent(parts[1]), body) });
     }
 
+    if (parts[0] === "notifications" && parts[1] === "test-handover" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const testRunId = String(body.testRunId || "").toLowerCase();
+      if (!isUuid(testRunId)) throw new HttpError("A valid test run ID is required.", 400);
+      const recipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
+      if (!recipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
+      const idempotencyKey = `p65-handover:${testRunId}`;
+      const { data: previous, error: previousError } = await supabase.from("rafa_notification_jobs")
+        .select("id,handover_id,kind,recipient,payload,status,idempotency_key")
+        .eq("idempotency_key", idempotencyKey).maybeSingle();
+      if (previousError) throw previousError;
+      if (previous) {
+        const { data: previousHandover, error: previousHandoverError } = await supabase.from("rafa_handovers")
+          .select("id,contact_id,department,priority,status,summary")
+          .eq("id", previous.handover_id).maybeSingle();
+        if (previousHandoverError) throw previousHandoverError;
+        const { data: previousContact, error: previousContactError } = previousHandover
+          ? await supabase.from("rafa_contacts").select("whatsapp_jid").eq("id", previousHandover.contact_id).maybeSingle()
+          : { data: null, error: null };
+        if (previousContactError) throw previousContactError;
+        if (!canCreateP65TestNotification({ kind: previous.kind, testRunId, idempotencyKey, handover: previousHandover, contact: previousContact, recipient: previous.recipient }) || previous.payload?.p65TestRunId !== testRunId) {
+          throw new HttpError("The test idempotency key is already used for a different notification.", 409);
+        }
+        return json({ notification: previous, handover: previousHandover, created: false });
+      }
+
+      const syntheticUserId = `p65test-${testRunId}@lid`;
+      const { handover } = await persistWorkflow("handover", {
+        userId: syntheticUserId,
+        department: "general",
+        priority: "normal",
+        status: "open",
+        summary: {
+          p65TestRunId: testRunId,
+          intent: "p6_5_controlled_delivery_test",
+          need: "Synthetic internal notification verification. Do not contact a customer.",
+          customer: { name: "REFAL P6.5 test" }
+        }
+      });
+      const { data: contact, error: contactError } = await supabase.from("rafa_contacts")
+        .select("whatsapp_jid").eq("id", handover.contact_id).maybeSingle();
+      if (contactError) throw contactError;
+      if (!isSyntheticP65Handover(handover, contact, testRunId)) throw new HttpError("The synthetic handover did not pass its test marker checks.", 409);
+      const payload = {
+        department: "general",
+        priority: "normal",
+        intent: "p6_5_controlled_delivery_test",
+        name: "REFAL P6.5 test",
+        need: "Synthetic internal notification verification. Do not contact a customer.",
+        p65TestRunId: testRunId
+      };
+      const { data: notification, error: notificationError } = await supabase.from("rafa_notification_jobs").insert({
+        handover_id: handover.id,
+        channel: "email",
+        kind: "handover_review",
+        recipient,
+        payload,
+        status: "queued",
+        idempotency_key: idempotencyKey
+      }).select("*").single();
+      if (notificationError?.code === "23505") {
+        const { data: concurrent, error: concurrentError } = await supabase.from("rafa_notification_jobs")
+          .select("id,handover_id,kind,recipient,payload,status,idempotency_key").eq("idempotency_key", idempotencyKey).single();
+        if (concurrentError) throw concurrentError;
+        if (concurrent.kind !== "handover_review" || concurrent.handover_id !== handover.id || concurrent.recipient !== recipient || concurrent.payload?.p65TestRunId !== testRunId) throw new HttpError("The test idempotency key is already used for a different notification.", 409);
+        return json({ notification: concurrent, handover, created: false });
+      }
+      if (notificationError) throw notificationError;
+      return json({ notification, handover, created: true }, 201);
+    }
+
+    if (parts[0] === "notifications" && parts[1] && parts[2] === "claim" && req.method === "POST" && parts.length === 3) {
+      const notificationId = decodeURIComponent(parts[1]);
+      if (!isUuid(notificationId)) throw new HttpError("Invalid notification ID.", 400);
+      const body = await req.json().catch(() => ({}));
+      const testRunId = String(body.testRunId || "").toLowerCase();
+      if (!isUuid(testRunId)) throw new HttpError("A valid test run ID is required.", 400);
+      const configuredRecipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
+      if (!configuredRecipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
+      const { data: candidate, error: candidateError } = await supabase.from("rafa_notification_jobs")
+        .select("id,handover_id,kind,recipient,payload,status")
+        .eq("id", notificationId).maybeSingle();
+      if (candidateError) throw candidateError;
+      if (!candidate || !canClaimP65TestNotification({ ...candidate, requestedId: notificationId, testRunId, configuredRecipient })) {
+        throw new HttpError("Only the matching controlled P6.5 test notification can be claimed by ID.", 409);
+      }
+      const { data: claimedRows, error: claimError } = await supabase.rpc("rafa_claim_notification_by_id", {
+        p_notification_id: notificationId,
+        p_test_run_id: testRunId,
+        p_expected_recipient: configuredRecipient
+      });
+      if (claimError) throw claimError;
+      const notification = (claimedRows || [])[0];
+      if (!notification) throw new HttpError("The requested notification is not currently eligible for claim.", 409);
+      const { data: handover, error: handoverError } = await supabase.from("rafa_handovers")
+        .select("status").eq("id", notification.handover_id).maybeSingle();
+      if (handoverError) throw new HttpError("Handover status verification is unavailable; the notification was not returned.", 503);
+      if (!handover || !canRetryHandoverReview(handover.status)) {
+        const { error: cancelError } = await supabase.from("rafa_notification_jobs")
+          .update({ status: "cancelled", locked_at: null, last_error: "Synthetic test handover is closed." })
+          .eq("id", notificationId).eq("status", "processing");
+        if (cancelError) throw cancelError;
+        throw new HttpError("The synthetic test handover is closed; notification cancelled.", 409);
+      }
+      return json({ notification });
+    }
+
     if (parts[0] === "notifications" && req.method === "GET" && parts.length === 1) {
       const status = url.searchParams.get("status");
       let query = supabase.from("rafa_notification_jobs").select("*").order("created_at", { ascending: false }).limit(500);
@@ -375,9 +492,27 @@ Deno.serve(async (req: Request) => {
 
     if (parts[0] === "notifications" && parts[1] && parts[2] === "retry" && req.method === "POST" && parts.length === 3) {
       if (!isUuid(parts[1])) throw new HttpError("Invalid notification ID.", 400);
+      const { data: candidate, error: candidateError } = await supabase.from("rafa_notification_jobs")
+        .select("id,kind,handover_id,status,payload")
+        .eq("id", parts[1])
+        .in("status", ["failed", "dead"])
+        .maybeSingle();
+      if (candidateError) throw candidateError;
+      if (!candidate) throw new HttpError("Notification is not retryable in its current state.", 409);
+      if (candidate.kind === "handover_review" && candidate.payload?.p65TestRunId) throw new HttpError("Controlled P6.5 deliveries are one-shot and cannot be retried because SMTP outcomes may be ambiguous.", 409);
+      if (candidate.kind === "handover_review" && candidate.handover_id) {
+        const { data: parent, error: parentError } = await supabase.from("rafa_handovers")
+          .select("status").eq("id", candidate.handover_id).maybeSingle();
+        if (parentError) throw parentError;
+        if (!parent || !canRetryHandoverReview(parent.status)) throw new HttpError("A closed handover cannot be retried.", 409);
+      }
       const { data, error } = await supabase.from("rafa_notification_jobs").update({ status: "queued", attempts: 0, next_attempt_at: new Date().toISOString(), locked_at: null, last_error: null }).eq("id", parts[1]).in("status", ["failed", "dead"]).select("*").maybeSingle();
       if (error) throw error;
       if (!data) throw new HttpError("Notification is not retryable in its current state.", 409);
+      if (data.kind === "handover_review" && data.handover_id) {
+        const { error: deliveryError } = await supabase.from("refal_handover_delivery").update({ status: "queued", next_attempt_at: new Date().toISOString(), last_error_code: null, updated_at: new Date().toISOString() }).eq("handover_id", data.handover_id);
+        if (deliveryError) throw deliveryError;
+      }
       await logEvent("notification_admin_retry", { notificationId: data.id, appointmentId: data.appointment_id || null });
       return json({ notification: data });
     }
@@ -404,10 +539,36 @@ Deno.serve(async (req: Request) => {
         payload = { text };
       } else if (kind === "handover_review") {
         channel = "email";
-        recipient = (Deno.env.get("RAFA_HANDOVER_NOTIFY_EMAIL") || Deno.env.get("BOOKING_NOTIFY_EMAIL") || Deno.env.get("ALERT_EMAIL_TO") || Deno.env.get("REPORT_EMAIL_TO") || "hasan.cy99@gmail.com").trim().slice(0, 320);
         handoverId = String(body.handoverId || "");
+        const testRunId = String(body.p65TestRunId || "").toLowerCase();
+        if (testRunId) {
+          recipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
+          if (!recipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
+          const { data: testHandover, error: testHandoverError } = await supabase.from("rafa_handovers")
+            .select("id,contact_id,department,priority,status,summary").eq("id", handoverId).maybeSingle();
+          if (testHandoverError) throw testHandoverError;
+          const { data: testContact, error: testContactError } = testHandover
+            ? await supabase.from("rafa_contacts").select("whatsapp_jid").eq("id", testHandover.contact_id).maybeSingle()
+            : { data: null, error: null };
+          if (testContactError) throw testContactError;
+          const idempotencyKey = String(body.idempotencyKey || "").trim().slice(0, 240);
+          if (!canCreateP65TestNotification({ kind, testRunId, idempotencyKey, handover: testHandover, contact: testContact, recipient })) {
+            throw new HttpError("Controlled recipient routing is limited to the matching synthetic P6.5 handover.", 403);
+          }
+          payload = {
+            department: "general",
+            priority: "normal",
+            intent: "p6_5_controlled_delivery_test",
+            name: "REFAL P6.5 test",
+            need: "Synthetic internal notification verification. Do not contact a customer.",
+            p65TestRunId: testRunId
+          };
+        } else {
+          // Normal production handover notifications remain on the non-deliverable sandbox lane.
+          recipient = "sandbox@refalco.test";
+        }
         if (!isUuid(handoverId) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw new HttpError("A handover and valid admin notification address are required.", 400);
-        payload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? boundedObject(body.payload, 4000) : {};
+        if (!testRunId) payload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? boundedObject(body.payload, 4000) : {};
       } else if (kind === "admin_followup") {
         channel = String(body.channel || "");
         recipient = String(body.recipient || "").trim();
@@ -465,10 +626,37 @@ Deno.serve(async (req: Request) => {
     if (parts[0] === "notifications" && parts[1] === "claim" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const limit = Math.min(100, Math.max(1, Number(body.limit) || 25));
+      // Repair the gap between the durable handover ledger write and the
+      // best-effort notification enqueue. A transient queue outage must not
+      // permanently strand an open, sandbox-routed handover.
+      try { await reconcileHandoverReviewQueue(); }
+      catch (reconcileError) {
+        await logEvent("handover_notification_reconcile_error", { message: String(reconcileError instanceof Error ? reconcileError.message : reconcileError).slice(0, 200) });
+        throw new HttpError("Notification queue reconciliation is unavailable; no notifications were claimed.", 503);
+      }
       const { data, error } = await supabase.rpc("rafa_claim_due_notifications", { p_limit: limit });
       if (error) throw error;
       const notifications = [];
       for (const job of data || []) {
+        if (job.kind === "handover_review" && job.handover_id) {
+          const { data: handover, error: handoverError } = await supabase.from("rafa_handovers")
+            .select("status").eq("id", job.handover_id).maybeSingle();
+          if (handoverError) throw new HttpError("Handover status verification is unavailable; no notifications were returned.", 503);
+          if (!handover || !canRetryHandoverReview(handover.status)) {
+            const { error: cancelError } = await supabase.from("rafa_notification_jobs")
+              .update({ status: "cancelled", locked_at: null, last_error: "Handover is closed or unavailable." })
+              .eq("id", job.id).eq("status", "processing");
+            if (cancelError) throw new HttpError("Closed handover notification could not be cancelled.", 503);
+            const closedPatch = ledgerPatchForClosedHandover(handover?.status) || {
+              status: "closed", closed_at: new Date().toISOString(), closure_reason: "handover_unavailable",
+              next_attempt_at: null, updated_at: new Date().toISOString()
+            };
+            const { error: closeError } = await supabase.from("refal_handover_delivery")
+              .update(closedPatch).eq("handover_id", job.handover_id).neq("status", "closed");
+            if (closeError) throw new HttpError("Closed handover delivery could not be reconciled.", 503);
+            continue;
+          }
+        }
         if (job.kind === "admin_followup") {
           try { await requireFollowUpConsent(job.handover_id); }
           catch (consentError) {
@@ -504,6 +692,12 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await supabase.from("rafa_notification_jobs").update(patch).eq("id", parts[1]).eq("status", "processing").select("*").maybeSingle();
       if (error) throw error;
       if (!data) throw new HttpError("Notification job is no longer claimed.", 409);
+      if (data.handover_id && data.kind === "handover_review") {
+        const now = new Date().toISOString();
+        const deliveryPatch = ledgerPatchForNotificationResult(body.status, data.attempts, now, body.nextAttemptAt || now);
+        const { error: deliveryError } = await supabase.from("refal_handover_delivery").update(deliveryPatch).eq("handover_id", data.handover_id);
+        if (deliveryError) throw deliveryError;
+      }
       return json({ notification: data });
     }
 
@@ -644,6 +838,7 @@ async function generateAgentReply(body: Record<string, any>) {
           // surface's job (dashboard operations) and its data access.
           "Apply the REFAL operating order: understand, help, discover, qualify, build trust, capture, convert, book, handover, follow up.",
           "Be concise, practical, calm, and direct. Answer first when possible; ask only one useful next question and do not over-qualify a clear opportunity.",
+          "Qualification tiers are internal: Informational 0-7, Cold 8-13, Warm 14-19, Hot 20-24, Strategic 25-30. At Informational/Cold, do not push booking. Warm permits a flexible, non-repeated appointment offer. At Hot/Strategic, suppress every cross-sell hook and benefit hint and focus on logistics. Contact requests, follow-up, and booking still require the customer's explicit request or consent; never imply an appointment is confirmed unless the booking system confirms it. Never expose scores, dimensions, or tier labels.",
           // Deliberately states the personality WITHOUT inviting humour. The
           // customer path calibrates humour to a level and enforces it with
           // assertHumourCompliance; this surface has neither, so an
@@ -691,7 +886,7 @@ async function generateAgentReply(body: Record<string, any>) {
   // and allowed there. Unapproved and expired chunks are filtered by
   // isApprovedEvidence inside the gate, so this can only ever unlock a fact the
   // evidence actually carries.
-  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsUnconsentedContactCommitment(reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
+  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsUnconsentedContactCommitment(reply) || containsProhibitedConstructionEstimate(text, reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
   return {
     reply: reply.slice(0, 10000),
     usage: normalizeOpenRouterUsage(result, model)
@@ -1208,7 +1403,7 @@ async function deleteConversationData(userId: string) {
 }
 
 const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk"]);
-const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
+const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "tax", "residency", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
 const WORKFLOW_TRIGGERS = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity"]);
 
 async function runDynamicAction(name: string, body: Record<string, any>) {
@@ -1354,6 +1549,18 @@ function boundedScore(value: unknown) {
 
 async function persistWorkflow(kind: string, body: Record<string, unknown>) {
   const { contact, sourceTurnId } = await workflowContact(body);
+  if (kind === "lead-score") {
+    const dimensions = Object.fromEntries(["need", "value", "timing", "authority", "readiness", "fit"].map((name) => [name, boundedScore((body.dimensions as Record<string, unknown> || {})[name])]));
+    const scoreFloor = Number(body.scoreFloor || 0);
+    const tier = String(body.tier || "");
+    const scorerVersion = String(body.scorerVersion || "").slice(0, 80);
+    const evidenceFingerprint = String(body.evidenceFingerprint || "");
+    if (!Number.isInteger(scoreFloor) || scoreFloor < 0 || scoreFloor > 30 || !["informational", "cold", "warm", "hot", "strategic"].includes(tier) || !scorerVersion || !/^[a-f0-9]{64}$/.test(evidenceFingerprint)) throw new HttpError("Invalid lead score snapshot.", 400);
+    const evidenceRefs = boundedObject(body.evidenceReferences, 6000);
+    const { data, error } = await supabase.from("refal_lead_score").upsert({ contact_id: contact.contactId, ...dimensions, score_floor: scoreFloor, tier, evidence_refs: evidenceRefs, scorer_version: scorerVersion, evidence_fingerprint: evidenceFingerprint, source_turn_id: sourceTurnId }, { onConflict: "contact_id,evidence_fingerprint", ignoreDuplicates: true }).select("*").maybeSingle();
+    if (error) throw error;
+    return { score: data };
+  }
   if (kind === "qualification") {
     const dimensions = Object.fromEntries(["need", "value", "timing", "authority", "readiness", "fit"].map((name) => [name, boundedScore((body.dimensions as Record<string, unknown> || {})[name])]));
     const total = Object.values(dimensions).reduce((sum, value) => sum + Number(value), 0);
@@ -1419,6 +1626,7 @@ async function persistWorkflow(kind: string, body: Record<string, unknown>) {
         const patch = mergeActiveHandover(existing, values, { sourceTurnId });
         const { data, error } = await supabase.from("rafa_handovers").update(patch).eq("id", existing.id).select("*").single();
         if (error) throw error;
+        await queueHandoverDelivery(existing.id, department);
         return { handover: data, merged: true };
       }
     }
@@ -1430,10 +1638,12 @@ async function persistWorkflow(kind: string, body: Record<string, unknown>) {
         const patch = mergeActiveHandover(concurrent, values, { sourceTurnId });
         const { data: updated, error: updateError } = await supabase.from("rafa_handovers").update(patch).eq("id", concurrent.id).select("*").single();
         if (updateError) throw updateError;
+        await queueHandoverDelivery(concurrent.id, department);
         return { handover: updated, merged: true };
       }
     }
     if (error) throw error;
+    await queueHandoverDelivery(data.id, department);
     return { handover: data };
   }
   if (kind === "priority-alert") {
@@ -1476,6 +1686,133 @@ async function logWorkflowAudit(contactId: string | null, event: string, details
   const { data, error } = await supabase.from("rafa_audit_events").insert({ contact_id: contactId, event, actor_type: actorType, details }).select("*").single();
   if (error) throw error;
   return data;
+}
+
+async function queueHandoverDelivery(handoverId: string, department: string) {
+  const { data: existing, error: lookupError } = await supabase.from("refal_handover_delivery").select("id").eq("handover_id", handoverId).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (existing) {
+    const { data, error } = await supabase.from("refal_handover_delivery").update({ department, updated_at: new Date().toISOString() }).eq("handover_id", handoverId).select("*").single();
+    if (error) throw error;
+    return data;
+  }
+  const { data, error } = await supabase.from("refal_handover_delivery").insert({ handover_id: handoverId, department, recipient_lane: "sandbox", status: "queued", next_attempt_at: new Date().toISOString() }).select("*").single();
+  if (error?.code === "23505") return { id: handoverId };
+  if (error) throw error;
+  return data;
+}
+
+async function reconcileHandoverReviewQueue() {
+  // The manual retry endpoint updates the existing job first and the ledger
+  // second. If that second write fails, recover the failed ledger from the
+  // active review job before the normal queued/retry repair pass.
+  const { data: activeReviews, error: activeReviewError } = await supabase.from("rafa_notification_jobs")
+    .select("id,handover_id,status")
+    .eq("kind", "handover_review")
+    .in("status", ["queued", "processing"])
+    .not("handover_id", "is", null)
+    .order("updated_at", { ascending: true })
+    .limit(25);
+  if (activeReviewError) throw activeReviewError;
+  for (const notification of activeReviews || []) {
+    const { data: parent, error: parentError } = await supabase.from("rafa_handovers")
+      .select("status").eq("id", notification.handover_id).maybeSingle();
+    if (parentError) throw parentError;
+    const closedPatch = ledgerPatchForClosedHandover(parent?.status);
+    if (closedPatch) {
+      await closeHandoverDeliverySafely({
+        cancelActiveNotifications: async () => {
+          const { error } = await supabase.from("rafa_notification_jobs")
+            .update({ status: "cancelled", locked_at: null, last_error: "Handover is closed." })
+            .eq("id", notification.id).in("status", ["queued", "processing"]);
+          if (error) throw error;
+        },
+        closeDelivery: async () => {
+          const { error } = await supabase.from("refal_handover_delivery")
+            .update(closedPatch).eq("handover_id", notification.handover_id).neq("status", "closed");
+          if (error) throw error;
+        }
+      });
+      continue;
+    }
+    const retryPatch = ledgerPatchForRetryMismatch(notification.status);
+    if (!retryPatch) continue;
+    const { error: retryReconcileError } = await supabase.from("refal_handover_delivery")
+      .update(retryPatch)
+      .eq("handover_id", notification.handover_id)
+      .eq("status", "failed");
+    if (retryReconcileError) throw retryReconcileError;
+  }
+
+  const { data: pending, error } = await supabase.from("refal_handover_delivery")
+    .select("handover_id,department")
+    .in("status", ["queued", "retry"])
+    .lte("next_attempt_at", new Date().toISOString())
+    .order("updated_at", { ascending: true })
+    .limit(25);
+  if (error) throw error;
+  for (const delivery of pending || []) {
+    const { data: handover, error: handoverError } = await supabase.from("rafa_handovers")
+      .select("id,department,priority,summary,status")
+      .eq("id", delivery.handover_id)
+      .eq("department", delivery.department)
+      .maybeSingle();
+    if (handoverError) throw handoverError;
+    if (!handover) continue;
+    const closedPatch = ledgerPatchForClosedHandover(handover.status);
+    if (closedPatch) {
+      await closeHandoverDeliverySafely({
+        cancelActiveNotifications: async () => {
+          const { error } = await supabase.from("rafa_notification_jobs")
+            .update({ status: "cancelled", locked_at: null, last_error: "Handover is closed." })
+            .eq("handover_id", delivery.handover_id).eq("kind", "handover_review").in("status", ["queued", "processing"]);
+          if (error) throw error;
+        },
+        closeDelivery: async () => {
+          const { error } = await supabase.from("refal_handover_delivery")
+            .update(closedPatch).eq("handover_id", delivery.handover_id).in("status", ["queued", "retry"]);
+          if (error) throw error;
+        }
+      });
+      continue;
+    }
+    const { data: existing, error: existingError } = await supabase.from("rafa_notification_jobs")
+      .select("id,status")
+      .eq("handover_id", delivery.handover_id)
+      .eq("kind", "handover_review")
+      .in("status", ["queued", "processing", "sent", "dead", "cancelled"])
+      .limit(1);
+    if (existingError) throw existingError;
+    const notification = existing?.[0];
+    const reconciliationPatch = notification ? ledgerPatchForExistingNotification(notification.status) : null;
+    if (reconciliationPatch) {
+      const { error: reconcileError } = await supabase.from("refal_handover_delivery")
+        .update(reconciliationPatch)
+        .eq("handover_id", delivery.handover_id)
+        .in("status", ["queued", "retry"]);
+      if (reconcileError) throw reconcileError;
+      continue;
+    }
+    if (notification) continue;
+    const summary = handover.summary && typeof handover.summary === "object" ? handover.summary : {};
+    const customer = summary.customer && typeof summary.customer === "object" ? summary.customer : {};
+    const { error: insertError } = await supabase.from("rafa_notification_jobs").insert({
+      handover_id: handover.id,
+      channel: "email",
+      kind: "handover_review",
+      recipient: "sandbox@refalco.test",
+      status: "queued",
+      idempotency_key: `handover:${handover.id}:admin-review-email`,
+      payload: {
+        department: handover.department,
+        priority: handover.priority || "normal",
+        intent: summary.intent || summary.primaryIntent || "",
+        name: customer.name || "",
+        need: summary.need || summary.opportunity || ""
+      }
+    });
+    if (insertError && insertError.code !== "23505") throw insertError;
+  }
 }
 
 function isUuid(value: string) {

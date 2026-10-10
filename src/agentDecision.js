@@ -20,6 +20,7 @@ const { fetchOpenRouter } = require("./openrouterTransport");
 // BLK-3: identity comes from the one configured profile, never a literal,
 // so this surface cannot drift from the other three on who REFAL works for.
 const { profile } = require("./companyProfile");
+const { bookingOfferBlock, buyingSignalBlock } = require("./brainPrompt");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -242,12 +243,11 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     // W1.7.6 / W1.7.7 — BLK-5 and BLK-6, both carried by this one string. The
     // blanket form banned PRICING outright, which also suppresses a price the
     // customer is entitled to once a tool result supports it, and banned any
-    // booking path at all. Split into the two rules the other three surfaces
-    // use: pricing is evidence-gated, contact is request-gated. The Agent loop
-    // receives no lead tier, so the booking rule uses the same protective
-    // default bookingOfferBlock() emits when no tier is resolved.
+    // booking path at all. Pricing stays evidence-gated; the shared tier and
+    // buying-signal directives below govern contact and booking.
     "- Answer the customer's question first. You may state a price, package or service detail when a tool result supports it; never invent, round or combine one, and never volunteer detail unrelated to what they asked.",
-    "- Do not offer a call, meeting, or specialist handover at this stage. If the customer asks for one, or clearly signals they are ready to proceed, offer it then and wait for a clear yes.",
+    ...bookingOfferBlock(context.leadTier).map((line) => `- ${line}`),
+    ...buyingSignalBlock(context.buyingSignals).map((line) => `- ${line}`),
     "- Never state a fact that is not present in a tool result below or in the recent conversation. If no tool result supports a factual claim the customer needs, call searchApprovedKnowledge first, or say in your response that it is not confirmed.",
     "- A price, number, or claim you state must match the evidence exactly — never invent, round, discount, or combine a number that is not actually present in a tool result. If evidence shows more than one price or conflicting facts for the same question, do not guess which one applies; ask a short clarifying question or say that it is not confirmed which one applies.",
     "- If a tool result or the recent conversation already answers the current question, respond now instead of calling another tool.",

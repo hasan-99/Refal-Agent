@@ -7,6 +7,7 @@ function fakeStore(job, appointment = { id: job.appointment_id, status: job.expe
   return {
     updates,
     claimDueNotifications: async () => [job],
+    getHandoverStatus: async () => ({ id: job.handover_id, status: job.handover_status || "open" }),
     getAppointment: async () => appointment,
     updateNotification: async (id, patch) => updates.push({ id, patch })
   };
@@ -58,6 +59,104 @@ test("handover-review outbox emails admin and records delivery without requiring
   assert.match(sent.subject, /specialist follow-up request/);
   assert.match(sent.text, /Company setup/);
   assert.equal(store.updates[0].patch.status, "sent");
+});
+
+test("handover-review claimed before resolution is cancelled before email delivery", async () => {
+  const job = { id: "handover-closed", handover_id: "handover-closed-id", appointment_id: null, kind: "handover_review", channel: "email", recipient: "sandbox@refalco.test", attempts: 1, handover_status: "resolved", payload: { need: "Internal review" } };
+  const store = fakeStore(job);
+  let sends = 0;
+  const result = await runNotificationCheck({
+    store,
+    mailerFactory: () => ({ sendMail: async () => { sends += 1; return { messageId: "should-not-send" }; } }),
+    env: { SMTP_USER: "agent@example.test", SMTP_PASS: "configured" }
+  });
+  assert.equal(result.sent, 0);
+  assert.equal(sends, 0);
+  assert.equal(store.updates[0].patch.status, "cancelled");
+});
+
+test("isolated P6.5 check claims and sends only the requested synthetic notification", async () => {
+  const testRunId = "3a623eb1-0a75-4df7-9fb8-258a70cc2911";
+  const target = { id: "target-notification", handover_id: "synthetic-handover", appointment_id: null, kind: "handover_review", channel: "email", recipient: "hasan.cy99@gmail.com", attempts: 1, payload: { p65TestRunId: testRunId } };
+  const unrelated = { id: "unrelated-customer", appointment_id: null, kind: "customer_message", channel: "whatsapp", recipient: "35799123456@s.whatsapp.net", attempts: 0, payload: { text: "Never send this." } };
+  const claims = [];
+  const updates = [];
+  let sends = 0;
+  const store = {
+    claimDueNotifications: async () => { throw new Error("batch claimant must not run for an isolated check"); },
+    claimNotificationById: async (id, runId) => {
+      claims.push({ id, runId });
+      assert.equal(id, target.id);
+      assert.equal(runId, testRunId);
+      return claims.length === 1 ? [target] : [];
+    },
+    getHandoverStatus: async () => ({ id: target.handover_id, status: "open" }),
+    getAppointment: async () => null,
+    updateNotification: async (id, patch) => updates.push({ id, patch })
+  };
+  const first = await runNotificationCheck({
+    store,
+    notificationId: target.id,
+    testRunId,
+    mailerFactory: () => ({ sendMail: async (message) => { sends++; assert.equal(message.to, target.recipient); return { messageId: "smtp-test-1" }; } }),
+    env: { SMTP_USER: "agent@example.test", SMTP_PASS: "configured" }
+  });
+  const second = await runNotificationCheck({
+    store,
+    notificationId: target.id,
+    testRunId,
+    mailerFactory: () => ({ sendMail: async () => { sends++; return { messageId: "duplicate" }; } }),
+    env: { SMTP_USER: "agent@example.test", SMTP_PASS: "configured" }
+  });
+  assert.deepEqual(first, { claimed: 1, sent: 1 });
+  assert.deepEqual(second, { claimed: 0, sent: 0 });
+  assert.deepEqual(claims, [{ id: target.id, runId: testRunId }, { id: target.id, runId: testRunId }]);
+  assert.equal(sends, 1, "a repeated isolated claim cannot duplicate a successfully persisted delivery");
+  assert.deepEqual(updates, [{ id: target.id, patch: { status: "sent", sentAt: updates[0].patch.sentAt, providerMessageId: "smtp-test-1" } }]);
+  assert.notEqual(target.id, unrelated.id, "the unrelated customer notification is never selected or processed");
+});
+
+test("isolated P6.5 worker fails closed without a test run marker and rejects non-test jobs", async () => {
+  const job = { id: "customer-job", kind: "customer_message", handover_id: null, appointment_id: null, channel: "whatsapp", recipient: "35799123456@s.whatsapp.net", payload: { text: "Do not send." } };
+  let sends = 0;
+  const store = {
+    updateNotification: async () => {}, getAppointment: async () => null,
+    claimNotificationById: async () => [job]
+  };
+  await assert.rejects(runNotificationCheck({ store, notificationId: job.id }), /test run ID/i);
+  await assert.rejects(runNotificationCheck({ store, notificationId: job.id, testRunId: "3a623eb1-0a75-4df7-9fb8-258a70cc2911" }), /outside the requested P6.5 test/i);
+  assert.equal(sends, 0);
+});
+
+test("an ambiguous isolated SMTP result cannot cause a duplicate retry", async () => {
+  const testRunId = "3a623eb1-0a75-4df7-9fb8-258a70cc2911";
+  const target = { id: "3a623eb1-0a75-4df7-9fb8-258a70cc2922", handover_id: "synthetic-handover", kind: "handover_review", channel: "email", recipient: "hasan.cy99@gmail.com", attempts: 1, payload: { p65TestRunId: testRunId } };
+  for (const deadWriteSucceeds of [true, false]) {
+    let status = "queued";
+    let sends = 0;
+    const store = {
+      claimDueNotifications: async () => { throw new Error("batch claimant must not run"); },
+      claimNotificationById: async () => status === "queued" ? (status = "processing", [target]) : [],
+      getHandoverStatus: async () => ({ status: "open" }),
+      getAppointment: async () => null,
+      updateNotification: async (_id, patch) => {
+        if (patch.status === "sent") throw new Error("status persistence timed out after SMTP accepted the message");
+        if (patch.status === "dead" && !deadWriteSucceeds) throw new Error("terminal status persistence also failed");
+        status = patch.status;
+      }
+    };
+    const options = {
+      store, notificationId: target.id, testRunId,
+      mailerFactory: () => ({ sendMail: async () => { sends++; return { messageId: "accepted-by-provider" }; } }),
+      env: { SMTP_USER: "agent@example.test", SMTP_PASS: "configured" }
+    };
+    const first = await runNotificationCheck(options);
+    const second = await runNotificationCheck(options);
+    assert.deepEqual(first, { claimed: 1, sent: 0 });
+    assert.deepEqual(second, { claimed: 0, sent: 0 });
+    assert.equal(status, deadWriteSucceeds ? "dead" : "processing", "either terminal state or an unreclaimable processing lease prevents a duplicate");
+    assert.equal(sends, 1, "no retry duplicates a provider-accepted email");
+  }
 });
 
 test("approved admin follow-up drafts use the selected WhatsApp or email channel", async () => {

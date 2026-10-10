@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -67,30 +67,34 @@ test("W1.7.6: BLK-5's blanket cross-sell ban is gone, replaced by a conditional 
   assert.match(prompt, /ONE relevant cross-sell hook when its trigger fires/);
 });
 
-test("W1.7.7: BLK-6's blanket call ban is gone, replaced by a tier-aware rule", () => {
-  // Tiers are the four the system actually emits (see leadTemperature.js).
-  // COLD means an EXPLICIT DECLINE here, not "not warm yet", so it gets the
-  // strongest instruction of all — stronger than the no-signal default.
-  assert.match(bookingOfferBlock("cold").join(" "), /declined contact.*do not ask again/is);
+test("W6.2: five score tiers have their distinct action protocol", () => {
+  assert.match(bookingOfferBlock("informational").join(" "), /Do not push booking/i);
+  assert.match(bookingOfferBlock("cold").join(" "), /exploratory question.*No booking push/is);
   // Unclassified / unknown: no offer yet, but the door is open.
   assert.match(bookingOfferBlock("unclassified").join(" "), /Do not offer a call or meeting at this stage/);
   assert.match(bookingOfferBlock("").join(" "), /Do not offer a call or meeting at this stage/);
   // Warm: flexible.
   assert.match(bookingOfferBlock("warm").join(" "), /flexibly/);
   // Hot: move to booking with consent.
-  assert.match(bookingOfferBlock("hot").join(" "), /move to booking, with their consent/);
+  assert.match(bookingOfferBlock("hot").join(" "), /Stop all selling, cross-sell hooks, and benefit hints/);
+  assert.match(bookingOfferBlock("strategic").join(" "), /urgent strategic opportunity.*senior consultant/is);
 
-  // All four tiers must give genuinely different instructions.
-  const tiers = ["cold", "unclassified", "warm", "hot"].map((tier) => bookingOfferBlock(tier).join(" "));
-  assert.equal(new Set(tiers).size, 4, "tiers must not collapse to the same instruction");
+  const tiers = ["informational", "cold", "warm", "hot", "strategic"].map((tier) => bookingOfferBlock(tier).join(" "));
+  assert.equal(new Set(tiers).size, 5, "tiers must not collapse to the same instruction");
 });
 
-test("the booking tiers match the vocabulary leadTemperature actually emits", () => {
-  // Guards against reintroducing invented tiers like "informational" or "hnw",
-  // which looked reasonable but could never be produced by the classifier.
+test("W6.3: recognized buying signals reach the shared prompt with guarded next steps", () => {
+  assert.deepEqual(buyingSignalBlock([]), []);
+  const prompt = buildBrainPrompt({ variant: "customer", leadTier: "hot", buyingSignals: [{ id: "MB-B4" }] }).join("\n");
+  assert.match(prompt, /recognized buying signal.*guarded booking or specialist next step/i);
+  assert.match(prompt, /A signal is not consent to create an appointment or handover/);
+  assert.match(prompt, /never claim a booking is confirmed until the system confirms it/);
+});
+
+test("the prompt accepts both the score-tier vocabulary and legacy temperature labels", () => {
   const { LEAD_TIERS } = require("./leadTemperature");
   assert.deepEqual(Object.values(LEAD_TIERS).sort(), ["cold", "hot", "unclassified", "warm"]);
-  for (const tier of Object.values(LEAD_TIERS)) {
+  for (const tier of [...Object.values(LEAD_TIERS), "informational", "strategic"]) {
     assert.ok(bookingOfferBlock(tier).join(" ").length > 20, `no instruction for tier ${tier}`);
   }
 });
@@ -248,7 +252,7 @@ test("W1.7.7: BLK-6's blanket ban is absent from the ASSEMBLED prompt, not just 
   // And the hot-tier instruction must actually be reachable, which is what the
   // blanket ban used to contradict.
   assert.match(buildBrainPrompt({ variant: "customer", leadTier: "hot" }).join("\n"),
-    /Stop selling and move to booking, with their consent/);
+    /Stop all selling, cross-sell hooks, and benefit hints/);
 });
 
 test("all three surfaces name REFAL and gate facts on approved evidence", () => {
@@ -304,7 +308,7 @@ test("BLK-3/5/6 are absent from the FOURTH prompt surface, the Agent decision st
   assert.match(system, /require current approved knowledge from a tool result/i,
     "the Agent decision prompt stopped gating facts on a tool result");
   // The replacement booking rule must be present, not merely the ban removed.
-  assert.match(system, /Do not offer a call, meeting, or specialist handover at this stage/,
+  assert.match(system, /Do not offer a call or meeting at this stage/,
     "removing BLK-6 here left no contact rule at all, which is a fail-open");
 });
 

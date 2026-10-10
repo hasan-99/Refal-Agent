@@ -848,7 +848,7 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 
 # M6 — Qualification and Executive Handoff
 
-### P6.1 — The six dimension scorer `[ ]`
+### P6.1 — The six dimension scorer `[x]`
 `src/qualificationEngine.js`, extending the existing `src/leadQualification.js` which **already has the right dimension list**.
 
 - **W6.1.1** Evidence anchors 0 to 5 for NEED, VALUE, TIMING, AUTHORITY, READINESS, FIT (MB-D1..D6).
@@ -857,7 +857,9 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 - **W6.1.4** Recompute only on meaningful new evidence. Same conversation → reproducible score and rationale.
 - **W6.1.5** **Leak test**: score, dimension names and tier never appear in a customer reply. Extends the internal reasoning detector in `responsePolicy.js`.
 
-### P6.2 — Tiers and action protocols `[ ]`
+**Current result (2026-10-10):** Local scorer, deterministic evidence references, trait/negation protections, prior-score reuse, customer-output leak checks, Edge persistence path, and PGlite migration validation are implemented and covered. MIG-08 is applied and recorded in live migration history as `20261010190302 / refal_lead_score`; the RLS-enabled table and expected score/evidence columns and foreign keys are present. Updated `rafa-agent-api` is active at v45 with JWT verification enabled. No synthetic customer score row was written for live round-trip testing.
+
+### P6.2 — Tiers and action protocols `[x]`
 
 | Tier | Range | Protocol |
 | --- | --- | --- |
@@ -874,10 +876,14 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 - **W6.2.5** **Boundary tests (imported from CX 8 exit gate):** exact transitions at **7/8, 13/14, 19/20, 24/25**.
 - **W6.2.6** Strategic alerts fire **once**, durably, not repeatedly.
 
-### P6.3 — Instant buying signals `[ ]`
+**Result (2026-10-10):** Exact five-tier boundaries and actions feed the live WhatsApp and Agent prompts; sales hooks are suppressed at Hot/Strategic, consent remains required, tax and residency route distinctly, and strategic alerts use the durable deduplicated alert path. Focused and full-suite tests pass.
+
+### P6.3 — Instant buying signals `[x]`
 `src/buyingSignals.js`, trilingual incl. Arabizi and Greeklish, for MB-B1..B5. Firing raises the score floor and triggers P7 booking.
 
-### P6.4 — Executive Handoff Summary `[ ]`
+**Result (2026-10-10):** MB-B1..B5 detection returns source evidence and raises the computed tier. Allowlisted signal IDs and tier reach both the legacy WhatsApp prompt and bounded Agent decision prompt. Shared rules direct a guarded next step while explicitly denying appointment/handover consent and confirmed-booking claims. Booking remains owned by the guarded P7 workflow.
+
+### P6.4 — Executive Handoff Summary `[x]`
 `src/executiveHandoff.js`, extending the existing `buildRefalLeadSummary`.
 - **W6.4.1** MB 5.2's exact block, byte for byte.
 - **W6.4.2** **Explicit `UNKNOWN` / `NOT PROVIDED`, never an invented detail** (CX 9B).
@@ -885,11 +891,16 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 - **W6.4.4** Carries every CRM field from M8, so the human adviser never re-asks (MB-HO3).
 - **W6.4.5** Golden fixture comparison on exact separators and field names.
 
-### P6.5 — Handover delivery and acknowledgment (CX 9C) `[ ]`
+**Result (2026-10-10):** Exact structured summary is wired into deterministic and Agent handovers, with explicit unknowns, role filtering, Unicode-safe contact masking, sensitive-data redaction, CRM fields, and confirmation only from a system-confirmed appointment. Focused and full-suite tests pass.
+
+### P6.5 — Handover delivery and acknowledgment (CX 9C) `[~]`
 Durable handover records · notification jobs with retries · **dashboard badge and count reconciliation** (repairs FIX-9) · acknowledgment · closure reasons. Test external communication to a **sandbox recipient only** until explicitly enabled. Simulate: notification outage, wrong department, empty contact details, duplicate escalation, missing assignee.
 
-### P6.6 — Strategic escalation `[ ]`
+**Current result (2026-10-10):** MIG-11, the delivery ledger, bounded retry/acknowledgment/closure, dashboard summary reconciliation, and Edge queue/update/retry plumbing are implemented. Local tests cover outage state, wrong-department FK rejection, duplicate prevention, formatting, repeated escalation, and missing assignees. Live history records `20261010190310 / refal_handover_delivery` and `20261010195102 / rafa_notification_claim_by_id`; deployed `rafa-agent-api` is ACTIVE v46 with `verify_jwt=true`. The isolated claim-by-ID route uses a service-role-only RPC without queue reconciliation; normal batch processing is preserved and P6.5-tagged jobs are excluded from that batch. Recipient routing is configured through `RAFA_P65_TEST_RECIPIENT`, without a caller-selected recipient. Focused tests passed 20/20; full `npm run test:all` passed 2,015 root and 105 Dashboard tests; Deno check and independent pre-live implementation audit passed. **Live verification failed and P6.5 remains partial.** Exactly one synthetic notification (`8b24bee9-c917-42e8-b6de-479b9276b69c`, run `e8f97552-73f7-4758-9b1c-6640f852098e`) was created and isolated-claimed. SMTP returned `535 5.7.8 Username and Password not accepted`; persisted job state is `dead`, attempts=1, provider message ID is null, and delivery ledger records one failed attempt. No retry or second send was made. The synthetic handover was resolved and its ledger entry closed; the failed job/evidence were retained. Post-cleanup backing badge aggregates reconcile to zero open handovers and zero delivery issues. No unrelated production notification or customer data was touched. A temporary App Password for the controlled Gmail account was revoked. The worker credential did not authenticate during delivery and its durable local configuration is not verified. Owner decision (2026-10-10): defer the Gmail credential correction and successful live verification until later. P6.5 remains `[~]` and M6 remains incomplete because delivery did not pass. The owner authorizes moving ahead with M7 preparation while this check is deferred; return to P6.5 before claiming M6 complete. Nothing was pushed to `main`.
+### P6.6 — Strategic escalation `[x]`
 Landowner JV, construction tender, HNW €1M+, international partnership. Urgent path, senior consultant, and for construction **no price or estimate from the agent at all** (MB-F62).
+
+**Result (2026-10-10):** Strategic detectors cover land/JV, construction tender, HNW threshold and international partnership cues; verified priority routes to senior review. Construction prices/estimates are blocked by the customer-output gate across EN/AR/EL, including the Edge mirror. Near-miss and negation tests pass.
 
 ---
 
@@ -2044,6 +2055,81 @@ Executed with `.agents/skills/refal-milestone-execute/SKILL.md`, using disjoint 
 
 **Final M5 audit and evidence boundary:** a fresh independent audit compared P5.1–P5.4 to this plan and rechecked runtime wiring, localization, suppression, current evidence, persistence schemas and regression tests. It found and validated the specialist-offer Edge metadata rejection above; after the fix, it reported no remaining confirmed M5 blocker. Edge code is locally type-checked and unit-tested, but was **not deployed** and no live Supabase persistence round-trip was run. No migrations, production writes, customer messages, commit or push were performed in this M5 execution.
 
+### P6.1 — The six dimension scorer — implementation reviewed 2026-10-10 — `[x]`
+Built: Six-dimension evidence scoring, deterministic provenance/fingerprints, previous-score reuse, protected-trait and negation exclusions scoped across English/Arabic/Greek contrast boundaries, customer-output leak protection, and durable Edge score-history persistence.
+Files touched: `src/qualificationEngine.js`, `src/messageRouter.js`, `src/responsePolicy.js`, `supabase/functions/rafa-agent-api/index.ts`, `supabase/migrations/20261010150000_refal_lead_score.sql`, `scripts/m6QualificationMigration.test.mjs`, related tests.
+Verification: `node --test src/qualificationEngine.test.js src/messageRouter.test.js src/responsePolicy.test.js scripts/m6QualificationMigration.test.mjs` exit=0; focused qualification regression suite exit=0 (162 tests); final `npm run test:all` exit=0 (2,003 root + 105 Dashboard).
+Gap scan: COVERED 6 / PARTIAL 0 / MISSING 0. Local scoring and migration acceptance covered; live MIG-08 history, table, RLS, columns, foreign keys, and updated Edge deployment verified. No synthetic customer score row was written.
+Defects logged: Independent audits found trait-clause removal could drop adjacent commercial evidence and negation scope crossed contrastive clauses, suppressing affirmative evidence. Both were reproduced; trait-only rejection remains covered.
+Auto fixes applied: Deterministic evidence ordering, trait-only and negative-only protections, conjunction-safe trait-clause removal, contrast-boundary negation scope, all-match positive-evidence scanning, and previous-score reuse. Added English, Arabic and Greek mixed-turn regressions.
+Fields left for BOSS to fill: None for schema/deployment. A live score-row round-trip was not performed to avoid creating synthetic production customer data.
+Deviations from plan: Store evidence references as source-turn IDs and excerpt hashes, not duplicated raw evidence text.
+Explicitly NOT done: No live score-row round-trip. MIG-08 was applied by the owner-authorized Supabase operation on 2026-10-10 and verified in remote migration history and schema metadata.
+BOSS sign off: Owner authorized Supabase migration and Edge deployment on 2026-10-10; live schema and active function version verified.
+
+### P6.2 — Tiers and action protocols — completed 2026-10-10 — `[x]`
+Built: Five exact score bands and action protocols; tier-aware hook suppression; distinct tax/residency routing; durable deduplicated strategic alerts; computed tier reaches WhatsApp and Agent prompts.
+Files touched: `src/leadTiers.js`, `src/messageRouter.js`, `src/bot.js`, `src/brainPrompt.js`, `src/agentContext.js`, `src/agentDecision.js`, `src/agentRuntime.js`, prompt mirrors, `config/refal-agent-rules.md`, related tests.
+Verification: `node --test src/leadTiers.test.js src/messageRouter.test.js src/agentContext.test.js src/agentDecision.test.js src/promptParity.test.js` exit=0; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard).
+Gap scan: COVERED 6 / PARTIAL 0 / MISSING 0.
+Defects logged: Independent audit found AP-7 missed paraphrased tax and relocation benefits. A fresh M6 audit also reproduced a score-only Strategic lead (25/30, no buying-signal or explicit strategic cue) that wrote no priority alert, violating W6.2.6.
+Auto fixes applied: Prior audit findings for tier wiring and department routing; expanded and independently rechecked Hot/Strategic hook suppression; `recordHistory` now creates an urgent `material_business_opportunity` alert for a Strategic tier when no other alert branch already handles it. The existing Edge workflow upsert reuses the active contact/trigger row, preserving one durable alert.
+Verification: Added a router regression for a score-only 25/30 Strategic lead and an MB-B5 overlap case. Both paths assert exactly one urgent alert write. `node --test --test-name-pattern="a Strategic qualification score|buying signals apply score floors" src/messageRouter.test.js` passed 2/2; combined focused M6 suite passed 186/186; full `npm run test:all` passed 2,003 root and 105 Dashboard tests. Edge active-alert upsert and the partial unique index were independently rechecked; no live write was performed.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: None.
+Explicitly NOT done: No live alert delivery was triggered.
+BOSS sign off: Pending.
+
+### P6.3 — Instant buying signals — completed 2026-10-10 — `[x]`
+Built: MB-B1..B5 trilingual and transliterated signal detection with original-message evidence offsets, score floors, guarded next-step metadata, and prompt wiring through both the legacy WhatsApp and bounded Agent routes.
+Files touched: `src/buyingSignals.js`, `src/messageRouter.js`, `src/bot.js`, `src/ai.js`, `src/brainPrompt.js`, `src/agentContext.js`, `src/agentRuntime.js`, `src/agentDecision.js`, prompt mirrors, related tests.
+Verification: Signal/prompt/Agent tests exit=0; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard); prompt mirror checks exit=0. Independent audit verified all canonical B1–B5 English, Arabic and Greek samples reach the guarded booking request detector; regression coverage verifies mixed landowner/sanctions turns defer from booking in English, Arabic and Greek.
+Gap scan: COVERED 1 / PARTIAL 0 / MISSING 0.
+Defects logged: Independent audit found the booking gate could preempt a compliance-triggered B5 message. Booking dispatch now yields to restricted safety and compliance triggers, including sanctions/source-of-funds cases.
+Auto fixes applied: Signal IDs now reach both customer decision paths; safety/compliance precedence is explicit. A signal never grants appointment/handover consent or confirmed status.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: Signals prompt the existing consent-gated P7 booking workflow; they do not execute or confirm a booking directly.
+Explicitly NOT done: No appointment was created.
+BOSS sign off: Pending.
+
+### P6.4 — Executive Handoff Summary — completed 2026-10-10 — `[x]`
+Built: Structured summary with fixed sections/separators, explicit unknowns, role-based visibility, sensitive-data redaction, Unicode contact masking, all allowlisted typed intake fields attached to the linked inquiry, qualification/routing details, and system-confirmed appointment status.
+Files touched: `src/executiveHandoff.js`, `src/handover.js`, `src/agentTools.js`, related tests.
+Verification: `node --test src/executiveHandoff.test.js src/handover.test.js src/agentTools.test.js src/messageRouter.test.js` exit=0; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard). Runtime adapter test confirms linked inquiry intake and qualification reach the handover summary; unrelated profile fields remain excluded.
+Gap scan: COVERED 5 / PARTIAL 0 / MISSING 0.
+Defects logged: None.
+Auto fixes applied: Independent audit fixes for Unicode phone digits, linked M8 CRM field omissions, and handoff adapter propagation of intake/qualification metadata.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: Handoff includes typed intake/CRM values from the inquiry linked to consent; it deliberately excludes unrelated legacy profile fields without inquiry provenance.
+Explicitly NOT done: No customer-facing handover confirmation is fabricated.
+BOSS sign off: Pending.
+
+### P6.5 — Handover delivery and acknowledgment — implementation reviewed 2026-10-10 — `[~]`
+Built: Sandbox-only delivery ledger, bounded retry/update plumbing, acknowledgment and closure, department-consistent FK, dashboard unresolved/delivery-failure summary, failed-ledger retry recovery, legacy open-handover seeding, and resolved/cancelled handover notification suppression through claim and worker send.
+Files touched: `supabase/migrations/20261010160000_refal_handover_delivery.sql`, `supabase/functions/rafa-agent-api/index.ts`, `supabase/functions/rafa-agent-api/handoverDeliveryState.mjs`, `src/supabaseStore.js`, `src/notificationScheduler.js`, `dashboard/server.js`, `scripts/m6HandoverMigration.test.mjs`, related tests.
+Verification: `node --test scripts/m6HandoverMigration.test.mjs src/handover.test.js src/notificationScheduler.test.js supabase/functions/rafa-agent-api/handoverDeliveryState.test.mjs` exit=0; combined focused M6 suite passed 186/186; final full `npm run test:all` exit=0 (2,003 root + 105 Dashboard); Deno check exit=0.
+Gap scan: COVERED 9 / PARTIAL 1 / MISSING 0. Local evidence covers outage/retry, failed-ledger retry repair, terminal state reconciliation, closed-handover suppression, retry cancellation ordering, open-only legacy seeding, wrong department, duplicate prevention, nullable assignee, and empty contact formatting. Live MIG-11 history, RLS-enabled ledger schema, expected columns/FK, and updated Edge deployment are verified. End-to-end notification delivery and dashboard badge reconciliation remain unverified. Two fresh independent audits verified that the production recipient is hard-coded to non-deliverable `sandbox@refalco.test` and the claim route performs global reconciliation plus a shared claim of up to 25 jobs. Therefore no live invocation is safe until a test-only recipient and isolated claim-by-ID path exist; no notification was sent and no live rows were changed.
+Defects logged: Audits found missing enqueue recovery, ACK/resolve writes missing department/timestamps, terminal notification partial writes, retry partial writes, historical open handovers lacking delivery rows, retrying resolved work, queued jobs surviving dashboard resolution, claim-to-send closure races, and cancellation incorrectly reopening a closed ledger as a failure. Each was reproduced from code/state flow and fixed with idempotent reconciliation, open-row sandbox seeding, retry allowlisting, claim response validation, worker-side parent-status validation, and cancellation-specific closed ledger mapping. Cancellation runs before ledger closure; reconciliation failure aborts claims. No live route/provider integration test exists; Edge/database control flow is independently audited and state helpers plus worker behavior are unit-tested.
+Auto fixes applied: Nullable-assignee and department mismatch assertions; claim-time enqueue and retry repair; sent/dead/cancelled reconciliation; sandbox migration seed for pre-existing open handovers only; retry eligibility limited to open/acknowledged; closed/missing parent notifications cancelled before return; fail-closed reconciliation, post-claim and pre-send status guards; cancellation maps to closed with timestamps/reason; dashboard ACK/resolve timestamp/department fixes; regression tests for retry/closure ordering and resolved-before-send cancellation.
+Fields left for BOSS to fill: Add and independently audit a test-only controlled administrator recipient and claim-by-ID path that cannot reconcile or claim unrelated jobs; then run one synthetic delivery, verify status/provider evidence and dashboard aggregate/ACK reconciliation, and safely clean up synthetic rows while retaining audit evidence.
+Deviations from plan: Recipient stays hard-coded to the sandbox lane; no production notification recipient is enabled.
+Explicitly NOT done: No live notification or external communication; live delivery/badge round-trip was not run. This is an intentional safety stop: the deployed recipient is `sandbox@refalco.test` and the shared claim endpoint can affect unrelated pending jobs. MIG-11 was applied by the owner-authorized Supabase operation on 2026-10-10 and verified in remote migration history and schema metadata.
+BOSS sign off: Owner authorized Supabase migration and Edge deployment on 2026-10-10; live schema and active function version verified. Delivery integration remains partial.
+
+### P6.6 — Strategic escalation — completed 2026-10-10 — `[x]`
+Built: Landowner/JV, construction tender, HNW €1M+, and international partnership cues; urgent senior route; EN/AR/EL construction price/estimate output guard and Edge mirror.
+Files touched: `src/strategicEscalation.js`, `src/responsePolicy.js`, `src/ai.js`, `src/messageRouter.js`, Edge response-policy mirror, related tests.
+Verification: `node --test src/strategicEscalation.test.js src/responsePolicy.test.js supabase/functions/rafa-agent-api/responsePolicy.test.mjs` exit=0; combined focused M6 suite passed 186/186; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard). Regression coverage rejects explicitly negated English, Arabic and Greek signals while retaining affirmative signals after comma and localized contrast boundaries.
+Gap scan: COVERED 4 / PARTIAL 0 / MISSING 0.
+Defects logged: Independent audit found the deterministic `resultWithHistory` validator omitted trusted inbound context; every call now passes the current message so construction tender price/estimate checks run. Prior audits found strategic classes escalated negated cues and overbroad negation suppressed affirmative evidence in contrastive turns. The 2026-10-10 independent P6.6 audit reproduced missed Arabic HNW thresholds for grouped Western/Arabic-Indic/Persian amounts and a false escalation for sub-million decimals; follow-up audit found the Arabic token `ما` inside `استثمار` was misread as negation and suppressed valid evidence.
+Auto fixes applied: Independent audit corrected threshold parsing, landowner cues, and response-output enforcement; added context to the route-level validator. Strategic detector scopes negation to local clauses, evaluates subsequent affirmative matches, normalizes Arabic-Indic/Persian digits plus Arabic thousands/decimal separators, parses numeric `مليون` amounts and amount-before-`يورو`, applies numeric thresholds instead of cue-only matches, and uses Unicode word boundaries for Arabic/Greek negation tokens. Added regressions for grouped amounts, decimal million values, below-threshold values, and affirmative amounts after negated amounts.
+Validated audit findings: Previously, `ميزانيتي 1,000,000 يورو`, `ميزانيتي ١٬٠٠٠٬٠٠٠ يورو`, `لدينا ميزانية €١٬٠٠٠٬٠٠٠`, and `ميزانية الاستثمار ١٫٢ مليون يورو` missed escalation; the initial localized numeric change then exposed false positives at 0.5M and the `استثمار` substring issue. Final tests prove 1.0M/1.2M/1.5M route, 0.5M/0.9M do not, negative-only 1M does not, and affirmative 2M after negated 1M does.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: Strategic facts remain internal routing signals, not customer-facing business claims.
+Explicitly NOT done: No real opportunity was escalated.
+BOSS sign off: Pending.
+
+**M6 closeout status (2026-10-10):** P6.1, P6.2, P6.3, P6.4 and P6.6 are complete; P6.5 is partial. Migrations `20261010190302 / refal_lead_score`, `20261010190310 / refal_handover_delivery`, and `20261010195102 / rafa_notification_claim_by_id` are recorded; `rafa-agent-api` is ACTIVE v46 with `verify_jwt=true`, `import_map=false`. Full `npm run test:all` passed 2,015 root and 105 Dashboard tests; Deno check and independent pre-live P6.5 audit passed. Exactly one isolated synthetic live attempt was made using the controlled recipient. SMTP rejected authentication with `535 5.7.8`; one attempt is persisted as dead/failed with no provider ID. Synthetic handover and delivery ledger were safely closed, while failed job evidence remains; post-cleanup badge backing counts are zero. No duplicate attempt or unrelated production processing occurred. The temporary Gmail App Password was revoked. Successful delivery, provider evidence, dashboard UI badge behavior, and acknowledgment remain unverified. Owner-directed deferral: M7 preparation may proceed; return to P6.5 before marking M6 complete. No completion changes were pushed to `main`.
 ## 17. Standing verification commands
 
 ```bash
@@ -2241,10 +2327,10 @@ CF-01's original "no live caller" condition is closed by M4's tested dynamic-dat
 | **MIG-05** | `refal_reservation_rules` | Deposit amount or percent, refundable, conditions per project | **P4.1** | `RESERVATION_DEPOSIT_RULES`, the P2.4 guard | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
 | **MIG-06** | `refal_government_fees` | Registry, land registry, residency application fees | **P4.1** | `GOVERNMENT_THIRD_PARTY_FEES` | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
 | **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | `[ ]` |
-| **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | `[ ]` |
+| **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | **[x] APPLIED 2026-10-10**, history `20261010190302 / refal_lead_score`; RLS/schema verified |
 | **MIG-09** | `refal_consent` | What, when, language, channel, purpose, scope, source turn, opt out state | **P9.1** | any follow up or outbound action | `[ ]` |
 | **MIG-10** | booking state extensions | The 7 state machine on `rafa_appointments`, notice window, timezone fields | **P7.2** | real bookings | `[ ]` |
-| **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | `[ ]` |
+| **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | **[x] APPLIED 2026-10-10**, history `20261010190310 / refal_handover_delivery`; RLS/schema verified; delivery smoke pending |
 | **MIG-12** | `refal_compliance_events` + `refal_identity_verification` | AML and sanctions escalation records, one time code verification state | **P2.5** | compliance escalation, existing client unlock | `[ ]` |
 | **MIG-13** | `refal_rate_limits` | Shared counters replacing in process memory | **P13.2** | FIX fix 11, surviving a restart | `[ ]` |
 | **MIG-14** | audit extensions | Append only events for consent, score change, human correction, booking confirmation, sensitive access | **P12.4** | dashboard corrections and audit | `[ ]` |

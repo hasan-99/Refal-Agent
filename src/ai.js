@@ -121,7 +121,7 @@ function contentPolicyError(message) {
 // status, neither of which is present in `conversationTurns`. Defaulting to ""
 // yields the protective "do not offer a call at this stage" instruction, so a
 // caller that does not classify is never more permissive, only less informed.
-async function askOpenRouter({ text, evidence, onUsage, includeSources = true, conversationSummary = "", conversationTurns = [], leadTier = "" }) {
+async function askOpenRouter({ text, evidence, onUsage, includeSources = true, conversationSummary = "", conversationTurns = [], leadTier = "", buyingSignals = [] }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey || !Array.isArray(evidence) || evidence.length === 0) return null;
 
@@ -259,6 +259,7 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
                 message: text,
                 humourLevel,
                 leadTier,
+                buyingSignals,
                 variant: "customer"
               }),
               // Computed per turn, so it stays in the caller rather than the
@@ -329,9 +330,10 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     // here with a narrower, English-only regex of its own) — this call
     // already runs that check unconditionally, regardless of which preset is
     // passed, so no separate check is needed below.
-    const responsePolicy = validateResponse(answer, expandedServiceAnswer
-      ? { ...MODEL_DRAFT_THRESHOLDS, maxSentences: 20, maxChars: 1800 }
-      : MODEL_DRAFT_THRESHOLDS);
+    const responsePolicy = validateResponse(answer, {
+      ...(expandedServiceAnswer ? { ...MODEL_DRAFT_THRESHOLDS, maxSentences: 20, maxChars: 1800 } : MODEL_DRAFT_THRESHOLDS),
+      customerMessage: text
+    });
     if (!responsePolicy.valid) {
       if (responsePolicy.reasons.includes("too_long")) throw contentPolicyError(`OpenRouter returned an overlong answer (${answer.length} characters).`);
       if (responsePolicy.reasons.includes("too_many_questions")) throw contentPolicyError("OpenRouter returned too many questions.");

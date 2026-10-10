@@ -4,6 +4,7 @@ const { extractCustomerName, extractCustomerNeed, prepareInboundMessage, recordH
 const { getConsentState, hasFollowUpPermission } = require("./leadQualification.js");
 const { CUSTOMER_MESSAGES: COMPLIANCE_CUSTOMER_MESSAGES } = require("./complianceEscalation.js");
 const { resolveHumourLevel } = require("./humourEngine.js");
+const { shouldDeferBookingHandler } = require("./buyingSignals.js");
 
 test("customer names are extracted from common English and Arabic introductions", () => {
   assert.equal(extractCustomerName("My name is Rami"), "Rami");
@@ -183,7 +184,7 @@ test("consented handover shares only the linked inquiry, stated name, and WhatsA
       at: offerAt,
       message: "I’m exploring a mixed-use development in Cyprus and would like an initial specialist discussion.",
       response: "Would you like me to ask a Refalco Group specialist to follow up?",
-      metadata: { intent: { primary: "development", intents: ["development", "investment", "real_estate"], language: "english" }, specialistOffer: { consentRequired: true, offeredAt: offerAt } }
+      metadata: { intent: { primary: "development", intents: ["development", "investment", "real_estate"], language: "english" }, opportunityIntake: { type: "land_development", status: "in_progress", data: { projectType: "Mixed-use development", budget: "€2m", decisionMakers: "Customer" } }, qualification: { total: 18, status: "qualified" }, specialistOffer: { consentRequired: true, offeredAt: offerAt } }
     }]
   };
   const result = await routeMessageResult({ userId: user.id, text: "Yes", store: integrationStore(user) });
@@ -198,15 +199,18 @@ test("consented handover shares only the linked inquiry, stated name, and WhatsA
   assert.equal(savedSummary.customer.company, null);
   assert.equal(savedSummary.customer.email, null);
   assert.equal(savedSummary.customer.position, null);
+  assert.equal(savedSummary.opportunityIntake.data.budget, "€2m");
+  assert.equal(savedSummary.qualification.total, 18);
+  assert.equal(savedSummary.customer.countryOfResidence, undefined, "unscoped profile facts stay out of the current inquiry");
   assert.equal(savedSummary.customer.country, null);
-  assert.equal(savedSummary.qualification, null);
+  assert.equal(savedSummary.qualification.total, 18, "only the qualification attached to this inquiry is shared");
   assert.equal(savedSummary.requirements, null);
   assert.equal(savedSummary.structuredRequirements, null);
   assert.equal(savedSummary.budget, null);
   assert.equal(savedSummary.decisionAuthority, null);
   assert.equal(savedSummary.secondaryIntents.length, 0);
   const serialized = JSON.stringify(savedSummary);
-  assert.doesNotMatch(serialized, /Private Holdings|samir@example|Unrelated old request|Confidential project|4m|Board|qualified/);
+  assert.doesNotMatch(serialized, /Private Holdings|samir@example|Unrelated old request|Confidential project|€4m|Board/);
   assert.match(serialized, /mixed-use development in Cyprus/);
 });
 
@@ -1208,6 +1212,61 @@ test("an unlocked specialist case reaches the answer path before any follow-up o
   assert.equal(result.metadata.complianceLock, undefined);
   assert.equal(result.metadata.specialistOffer, undefined, "the router does not offer before the answer exists");
   assert.equal(result.shouldUseAi, true);
+});
+
+test("buying signals apply score floors and booking action metadata without claiming confirmation or bypassing consent", async () => {
+  const user = { id: "buying-signal", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const result = await routeMessageResult({ userId: user.id, text: "I have land for development", store });
+  assert.ok(result.metadata.buyingSignals.some((signal) => signal.id === "MB-B5"));
+  assert.equal(result.metadata.tierAction.scoreFloor, 25);
+  assert.equal(result.metadata.tierAction.tier, "strategic");
+  assert.equal(result.metadata.specialistFollowUp, undefined);
+  assert.equal(result.metadata.handover, undefined);
+  assert.doesNotMatch(result.response, /MB-B5|strategic|scoreFloor|qualification|score/i);
+  await recordHistory(store, user.id, "I have land for development", result.response, { metadata: result.metadata });
+  const strategicAlerts = user.workflowCalls.filter(([kind]) => kind === "priority");
+  assert.equal(strategicAlerts.length, 1);
+  assert.equal(strategicAlerts[0][2].level, "urgent", "a Strategic buying-signal alert must use the urgent level");
+});
+
+test("a Strategic qualification score creates one durable urgent alert even without a buying-signal trigger", async () => {
+  const user = { id: "score-only-strategic-alert", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const text = "I have a critical need and must resolve this. Proof of funds and bank-confirmed funding are ready. I have an immediate deadline and fixed completion date; we must complete by then. I have a signed mandate and formal authority to commit. I signed, submitted the documents, and payment is arranged.";
+  const result = await routeMessageResult({ userId: user.id, text, store, existingUser: user });
+
+  assert.equal(result.metadata.tierAction.total, 25);
+  assert.equal(result.metadata.tierAction.tier, "strategic");
+  assert.deepEqual(result.metadata.priority.triggers, []);
+  assert.equal(result.metadata.strategicEscalation, undefined);
+
+  const alerts = user.workflowCalls.filter(([kind]) => kind === "priority");
+  assert.equal(alerts.length, 1, JSON.stringify(alerts));
+  assert.equal(alerts[0][2].level, "urgent");
+  assert.equal(alerts[0][2].trigger, "material_business_opportunity");
+  assert.equal(alerts[0][2].details.source, "strategic_tier");
+});
+
+test("buying signal phrasing is accepted by the guarded booking request detector", () => {
+  const { isBookingRequest } = require("./booking");
+  assert.equal(isBookingRequest("كيف أبدأ الإجراءات معك؟"), true);
+  assert.equal(isBookingRequest("What documents do you need from me now?"), true);
+  assert.equal(isBookingRequest("ما عندي أرض للتطوير"), false);
+});
+
+test("mixed strategic and sanctions messages defer booking dispatch to compliance routing", async () => {
+  for (const [index, text] of [
+    "I have land for development. My funds come from a sanctioned country, keep that off the file.",
+    "عندي أرض للتطوير، أموالي من دولة خاضعة للعقوبات وخليها برّا الملف.",
+    "Έχω γη για ανάπτυξη. Τα χρήματά μου είναι από χώρα υπό κυρώσεις, αφήστε το έξω από τον φάκελο."
+  ].entries()) {
+    const user = { id: `mixed-risk-${index}`, profile: {}, history: [] };
+    const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store: integrationStore(user) });
+    assert.ok(prepared.buyingSignals.some((signal) => signal.id === "MB-B5"), text);
+    assert.ok(prepared.complianceTriggers.length > 0, text);
+    assert.equal(shouldDeferBookingHandler(prepared, { type: "booking" }), true, text);
+  }
 });
 
 test("a sanctions probe dressed as a programme enquiry still escalates", async () => {

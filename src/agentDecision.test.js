@@ -295,6 +295,14 @@ test("defaultCallModel sends the actual decision messages and the configured mod
   assert.deepEqual(request.response_format.json_schema.schema.properties.type.enum, ["tool", "respond", "clarify"]);
 });
 
+test("Agent prompt receives the computed tier and guarded buying-signal directive", () => {
+  const context = buildAgentContext({ currentMessage: "Can I speak to the consultant?", leadTier: "hot", buyingSignals: ["MB-B4"] });
+  const system = buildDecisionMessages(context, [], TOOL_REGISTRY)[0].content;
+  assert.match(system, /Stop all selling, cross-sell hooks, and benefit hints/);
+  assert.match(system, /recognized buying signal.*guarded booking or specialist next step/i);
+  assert.match(system, /A signal is not consent to create an appointment or handover/);
+});
+
 test("defaultCallModel throws when no API key is configured, which decideNextStep then turns into a safe fallback", async () => {
   const originalApiKey = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_API_KEY;

@@ -6,6 +6,7 @@ const { detectMessageLanguage } = require("./language.js");
 const { restrictedRefalcoReply } = require("./refalcoAnswer.js");
 const { extractCustomerName, namePrompt, isPlausibleCustomerName } = require("./messageRouter.js");
 const { normalizeAppointmentDetails } = require("./appointmentDetails.js");
+const { detectBuyingSignals } = require("./buyingSignals.js");
 
 const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events.owned",
@@ -16,6 +17,7 @@ let calendarApprovalQueue = Promise.resolve();
 
 function isBookingRequest(text) {
   const value = String(text || "").toLowerCase();
+  if (detectBuyingSignals(text).some((signal) => signal.bookingRequested)) return true;
   // An explicit refusal or deferral cancels any booking implication in the same turn.
   if (/(?:\b(?:do not|don't|dont|not|no|without|rather not)\b.{0,45}\b(?:book|schedule|meeting|call|appointment)\b|\b(?:not|no)\b.{0,25}\b(?:meeting|call|appointment)\b|ما\s+بدي.{0,35}(?:احجز|حجز|موعد|اجتماع)|لا.{0,30}(?:موعد|اجتماع|احجز|حجز)|مو\s+حابة.{0,30}(?:موعد|اجتماع)|δεν\s+θέλω.{0,35}(?:ραντεβού|συνάντηση|κλήση|κλείσω))/iu.test(value)) return false;
   const english =

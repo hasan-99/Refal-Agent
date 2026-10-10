@@ -21,6 +21,28 @@ test("validates concise two-to-five sentence replies", () => {
   assert.equal(questionCount(text), 1);
 });
 
+test("blocks construction tender prices in English, Arabic and Greek across runtime inputs", () => {
+  const cases = [
+    ["We received a construction tender for a hotel.", "The estimated cost is €2 million."],
+    ["لدينا مناقصة إنشاء لمشروع.", "التكلفة التقديرية مليون يورو."],
+    ["Έχουμε κατασκευαστικό διαγωνισμό.", "Το εκτιμώμενο κόστος είναι €2 εκατομμύρια."]
+  ];
+  for (const [customerMessage, response] of cases) {
+    const result = validateResponse(response, { customerMessage });
+    assert.equal(result.valid, false, response);
+    assert.ok(result.reasons.includes("construction_pricing_prohibited"), response);
+  }
+  assert.equal(validateResponse("A senior consultant can review the tender.", { customerMessage: cases[0][0] }).valid, true);
+});
+
+test("blocks qualification dimension values and tier labels from customer facing output", () => {
+  for (const response of [
+    "Your need score is 5 and value is 4. You are a hot lead.",
+    "أنت عميل ساخن وتقييم الجاهزية 4 من 5.",
+    "Είσαι hot lead με readiness 4/5."
+  ]) assert.ok(validateResponse(response, { minSentences: 0 }).reasons.includes("internal_reasoning"), response);
+});
+
 test("rejects excessive questions, length, internal reasoning, and prohibited claims", () => {
   // REFAL-AGENT-011: DEFAULT_MIN_SENTENCES was lowered from 2 to 0 — no
   // production caller ever relied on the old default (every real caller

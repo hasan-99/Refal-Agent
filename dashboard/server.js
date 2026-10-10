@@ -895,15 +895,25 @@ app.get("/api/notifications", requireAdmin, async (_req, res) => {
 
 app.get("/api/handovers/summary", requireAdmin, async (_req, res) => {
   try {
-    // Count one active queue item per contact; detailed customer data stays in the inbox request.
+    // Page to exhaustion so the badge reflects the durable handover ledger,
+    // including acknowledged requests and every retry/failure past page 1.
+    const readAll = async (path) => {
+      const rows = [];
+      const pageSize = 1000;
+      for (let offset = 0; ; offset += pageSize) {
+        const page = await supabaseRest(path, { headers: { Range: `${offset}-${offset + pageSize - 1}` } });
+        rows.push(...page);
+        if (page.length < pageSize) return rows;
+      }
+    };
     const [openRows, problemRows] = await Promise.all([
-      supabaseRest("rafa_handovers?select=id,contact_id&status=eq.open&order=created_at.desc&limit=100"),
-      supabaseRest("rafa_notification_jobs?select=id&status=in.(failed,dead)&limit=100")
+      readAll("rafa_handovers?select=id,contact_id&status=in.(open,acknowledged)&order=created_at.desc"),
+      readAll("refal_handover_delivery?select=id&status=in.(retry,failed)")
     ]);
     const openCount = countUniqueHandoverContacts(openRows);
     const deliveryIssueCount = problemRows.length;
     res.setHeader("Cache-Control", "no-store");
-    res.json({ openCount, deliveryIssueCount, totalCount: openCount + deliveryIssueCount, capped: openCount === 100 || deliveryIssueCount === 100 });
+    res.json({ openCount, deliveryIssueCount, totalCount: openCount + deliveryIssueCount, capped: false });
   } catch (error) { res.status(502).json({ error: String(error?.message || "Could not load notification count.").slice(0, 250) }); }
 });
 
@@ -951,16 +961,33 @@ app.patch("/api/handovers/:id", requireAdmin, authRateLimit, async (req, res) =>
   const status = String(req.body?.status || "");
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id) || !["acknowledged", "resolved"].includes(status)) return res.status(400).json({ error: "Choose a valid handover status." });
   try {
-    const target = await supabaseRest(`rafa_handovers?id=eq.${encodeURIComponent(req.params.id)}&status=in.(open,acknowledged)&select=id,contact_id&limit=1`);
+    const target = await supabaseRest(`rafa_handovers?id=eq.${encodeURIComponent(req.params.id)}&status=in.(open,acknowledged)&select=id,contact_id,department&limit=1`);
     if (!target.length) return res.status(404).json({ error: "Open specialist request not found." });
     const scope = /^[0-9a-f-]{36}$/i.test(String(target[0].contact_id || ""))
       ? `contact_id=eq.${encodeURIComponent(target[0].contact_id)}`
       : `id=eq.${encodeURIComponent(req.params.id)}`;
-    const rows = await supabaseRest(`rafa_handovers?${scope}&status=in.(open,acknowledged)&select=id,status`, {
+    const rows = await supabaseRest(`rafa_handovers?${scope}&status=in.(open,acknowledged)&select=id,department,status`, {
       method: "PATCH",
       headers: { Prefer: "return=representation" },
       body: JSON.stringify({ status, resolved_at: status === "resolved" ? new Date().toISOString() : null })
     });
+    const changedAt = new Date().toISOString();
+    const closedAt = status === "resolved" ? changedAt : null;
+    for (const handover of rows) {
+      await supabaseRest("refal_handover_delivery?on_conflict=handover_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          handover_id: handover.id,
+          department: handover.department,
+          recipient_lane: "sandbox",
+          status: status === "resolved" ? "closed" : "acknowledged",
+          acknowledged_at: changedAt,
+          ...(status === "resolved" ? { closed_at: closedAt, closure_reason: "operator_resolved" } : {}),
+          updated_at: changedAt
+        })
+      });
+    }
     await logDashboardEvent("handover_admin_status_updated", { handoverId: req.params.id, groupedRequestCount: rows.length, status, actor: req.dashboardUser.email || req.dashboardUser.id });
     res.json({ handover: rows[0], updatedCount: rows.length });
   } catch (error) { res.status(502).json({ error: String(error?.message || "Could not update specialist request.").slice(0, 250) }); }
@@ -1988,6 +2015,7 @@ async function askDashboardAgent({ text, messages, model: sessionModel, memories
               "If the operator asks a general-knowledge question unrelated to Refalco Group or dashboard operations, briefly redirect to Refalco Group; do not answer from general knowledge.",
               "For Refalco Group facts, rely only on retrieved approved knowledge; do not invent facts, prices, availability, deadlines, legal/tax/immigration outcomes, bank approval, permits, or expected investment returns. Answer service/package/fee questions only when asked. Keep internal source names, owner confirmations, review status, and verification steps private. Do not claim legal registration/status or provide legal/tax/immigration advice.",
               "Silently classify intent, multiple intents, need, value, timing, authority, readiness, and fit. Flag high-value, sensitive, complex, complaint, existing-client, development, construction, investment, and partnership cases internally. A priority label is internal only; create a customer handover or follow-up only after the customer gives clear consent by affirming a tracked offer or directly asking for specialist contact. Link consent to its source turn and recheck it before outbound follow-up.",
+              "When drafting a customer reply, use internal tiers only: Informational 0-7, Cold 8-13, Warm 14-19, Hot 20-24, Strategic 25-30. Informational/Cold must not push booking; Warm permits a flexible, non-repeated appointment offer. At Hot/Strategic suppress every cross-sell hook and benefit hint and focus on logistics. Tiers and buying signals never grant consent or confirm a booking. Never expose scores, dimensions, or tier labels.",
               "Do not mention internal source names, owner confirmations, review status, or verification steps. Include source links only when the operator asks for provenance or needs to verify a material conflict.",
               "Retrieved approved company knowledge:",
               evidence?.length ? evidence.map((item, index) => `[${index + 1}] ${item.source_name} (${item.source_url})\n${item.heading || ""}\n${item.content}`).join("\n\n") : "No approved company knowledge retrieved.",
