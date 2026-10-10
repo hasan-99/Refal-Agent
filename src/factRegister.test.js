@@ -308,3 +308,44 @@ test("MB-F9 holds the package price row without holding the number", () => {
   assert.ok(row.highRisk);
   assert.ok(!/999/u.test(row.claimText), "the claim text must not freeze the figure either");
 });
+
+// --------------------------------------------------------------- CF-04 / FIX
+// The finding aid must never leave as evidence. These two tests are a pair on
+// purpose: the first fails if the guard is removed, the second fails if the
+// guard turns into a block-everything filter. Section 21's bar for closing a
+// carry-forward row is exactly that, because a gate that drops all evidence
+// would "pass" the first test on its own and reopen BLK-1 through a new door.
+
+test("CF-04: a finding aid is never returned as evidence, whichever shape it arrives in", () => {
+  const chunks = [
+    { chunk_kind: "aliases", content: "who are you | company profile | وين مكاتبكم" }, // RPC shape
+    { metadata: { kind: "aliases" }, content: "title\nheading\nalias phrases" },        // ingest shape
+    { chunkKind: "aliases", content: "camelCase caller" },                              // defensive
+    { chunk_kind: "fact", metadata: { facts: ["MB-C1"] }, content: "Operational roots in 2000." },
+  ];
+  const { kept, dropped } = filterRetrievableEvidence(chunks);
+
+  assert.equal(kept.length, 1, "only the fact-bearing chunk may survive");
+  assert.equal(kept[0].chunk_kind, "fact");
+  assert.equal(dropped.length, 3);
+  assert.ok(dropped.every((d) => d.reason === "finding_aid"), "each drop must say why it was dropped");
+  assert.ok(
+    !kept.some((c) => /alias|company profile/iu.test(String(c.content))),
+    "an alias list reaching the model is what made REFAL recite her own index back at a customer"
+  );
+});
+
+test("CF-04: the guard drops ONLY finding aids, so real sections still reach the model", () => {
+  const chunks = [
+    { chunk_kind: "fact", metadata: { facts: ["MB-C1"] }, content: "Operational roots in 2000." },
+    { chunk_kind: "fact", metadata: { facts: ["MB-C3"] }, content: "47 development projects." },
+    { chunk_kind: "boundary", metadata: { facts: ["MB-C5"] }, content: "Not a narrow registration office." },
+    { chunk_kind: "example", metadata: { facts: ["MB-C1"] }, content: "How to verify us." },
+    { chunk_kind: "discovery", metadata: { facts: ["MB-C5"] }, content: "What is the company for?" },
+    { content: "a chunk from a caller that sends no kind at all" },
+  ];
+  const { kept, dropped } = filterRetrievableEvidence(chunks);
+
+  assert.equal(kept.length, chunks.length, "no non-alias chunk may be dropped by the CF-04 guard");
+  assert.equal(dropped.length, 0);
+});

@@ -237,14 +237,44 @@ function chunkFactIds(chunk) {
   return list.map(normalizeFactId).filter(isFactId);
 }
 
+// CF-04. Chunk 0 of every document is a FINDING AID: the title, the section
+// headings and the author's alias phrases. It exists so a dialect question can
+// locate the document at all, and it carries no facts. It is a card catalogue,
+// not content.
+//
+// It must never reach the model. A customer question matches a list of customer
+// questions almost perfectly, so the aid routinely OUT-RANKS the real sections;
+// the model then receives a block of question phrases, is forbidden by the M2
+// claim gate from stating any number it cannot see in evidence, and recites the
+// alias list back. That shipped: on 2026-10-10 "انت مين وشو عندكم خدمات"
+// returned the company-profile finding aid at rank 0.70 with no fact chunk at
+// all, and the reply was the alias list read aloud.
+//
+// The primary fix is sibling expansion in the search RPCs (migration
+// 20261010140000), which swaps an aid for its own document's real chunks. This
+// is the second line of defence, and it is deliberate rather than redundant:
+// the RPC fix cannot be exercised by the offline suite, four callers reach the
+// search, and an older deployed RPC would reopen the defect silently. Here it
+// is one assertion on the single path the composer actually uses.
+const FINDING_AID_KIND = "aliases";
+
+function isFindingAid(chunk) {
+  const kind = chunk?.chunk_kind ?? chunk?.chunkKind ?? chunk?.metadata?.kind ?? "";
+  return String(kind) === FINDING_AID_KIND;
+}
+
 function filterRetrievableEvidence(chunks, { register, now } = {}) {
   const reg = register || seedRegister();
   const kept = [];
   const dropped = [];
   for (const chunk of Array.isArray(chunks) ? chunks : []) {
+    if (isFindingAid(chunk)) {
+      dropped.push({ chunk, blocked: [], reason: "finding_aid" });
+      continue;
+    }
     const ids = chunkFactIds(chunk);
     const blocked = ids.filter((id) => effectiveStatus(reg.get(id), now) === STATUS.BLOCKED);
-    if (blocked.length) dropped.push({ chunk, blocked });
+    if (blocked.length) dropped.push({ chunk, blocked, reason: "blocked_fact" });
     else kept.push(chunk);
   }
   return { kept, dropped };
@@ -353,6 +383,6 @@ module.exports = {
   addDays, daysBetween, nowIsoDay, cadenceForFact,
   seedRow, seedRegister, applyOverrides,
   effectiveStatus, factBehaviour, isStatable, isRetrievable,
-  chunkFactIds, filterRetrievableEvidence, classifyEvidence,
+  chunkFactIds, filterRetrievableEvidence, classifyEvidence, isFindingAid, FINDING_AID_KIND,
   factsExpiringWithin, expiredFacts, reapprove, auditRegister,
 };
