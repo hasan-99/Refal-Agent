@@ -6,7 +6,7 @@ import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
 const NOW = new Date("2026-10-10T12:00:00.000Z");
 const ADMIN = { id: "11111111-1111-4111-8111-111111111111", email: "admin@refalco.com", role: "admin" };
 
-async function withApp({ fetchImpl, env = { RAFA_API_URL: "https://example.supabase.co/functions/v1/rafa-agent-api", RAFA_API_SECRET: "server-secret" } } = {}, run) {
+async function withApp({ fetchImpl, env = { RAFA_API_URL: "https://example.supabase.co/functions/v1/rafa-agent-api", SUPABASE_PUBLISHABLE_KEY: "sb_publishable-test", RAFA_API_SECRET: "server-secret" } } = {}, run) {
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -51,6 +51,8 @@ test("GET lists all gateway rows and uses the private Edge gateway contract", as
     assert.deepEqual(await response.json(), { rows: [{ id: "draft-row", review_status: "draft" }], status: "ok" });
     assert.equal(calls[0][0], "https://example.supabase.co/functions/v1/rafa-agent-api/dynamic-data/offers?view=admin");
     assert.equal(calls[0][1].method, "GET");
+    assert.equal(calls[0][1].headers.apikey, "sb_publishable-test");
+    assert.equal(calls[0][1].headers.Authorization, undefined, "the publishable API key is not a user JWT");
     assert.equal(calls[0][1].headers["x-rafa-api-secret"], "server-secret");
   });
 });

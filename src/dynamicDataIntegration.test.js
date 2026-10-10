@@ -4,6 +4,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { buildDecisionMessages } = require("./agentDecision");
+const { runAgentTurn } = require("./agentLoop");
+const { buildAgentContext } = require("./agentContext");
 
 test("CF-05: changed current offers win, while expired or missing offers suppress frozen prices", async () => {
   const now = Date.now();
@@ -48,4 +50,54 @@ test("CF-05: changed current offers win, while expired or missing offers suppres
       assert.match(prompt, /Stale approved chunks excluded by source precedence: approved-formation-doc/u, scenario.name);
     }
   }
+});
+
+test("CF-05 integration: real Agent loop composes approved inclusions with the current live offer", async () => {
+  const now = Date.now();
+  const currentOffer = {
+    code: "formation-package", title_en: "Cyprus company formation package", amount: 999, currency: "EUR",
+    vat_note: "plus VAT", inclusions: ["Company incorporation", "Company name reservation"], eligibility: null,
+    active: true, review_status: "approved", effective_from: new Date(now - 60_000).toISOString(),
+    valid_until: new Date(now + 86400000).toISOString(), verified_at: new Date(now - 60_000).toISOString(),
+    updated_at: new Date(now - 60_000).toISOString()
+  };
+  const store = {
+    async searchKnowledge() { return [{
+      chunk_id: "approved-formation-doc", sourceRef: "approved-formation-doc",
+      document_title: "Company formation package", heading: "What is included",
+      content: "The Cyprus company formation package includes incorporation and name reservation. The historical published package price was EUR 899.",
+      review_status: "approved", valid_until: new Date(now + 86400000 * 30).toISOString()
+    }]; },
+    async lookupDynamicData(kind) {
+      return kind === "offers" ? { ok: true, status: "found", data: [currentOffer] }
+        : { ok: true, status: "found", data: [] };
+    }
+  };
+  const decisions = [
+    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation package inclusions" } },
+    { type: "tool", tool: "lookupActiveOffer", args: { code: "formation-package" } },
+    { type: "respond", text: "The package includes company incorporation and name reservation. The current price is EUR 999 plus VAT." }
+  ];
+  let decisionIndex = 0;
+  let composedMessages = "";
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "What is included in the current company formation package and how much does it cost?",
+    locale: "english"
+  }), {
+    tools: TOOL_REGISTRY,
+    toolContext: { store, embedText: async () => null },
+    decideNextStep: async ({ context: agentContext, observations }) => {
+      composedMessages = buildDecisionMessages(agentContext, observations).map((message) => message.content).join("\n");
+      return decisions[Math.min(decisionIndex++, decisions.length - 1)];
+    }
+  });
+
+  assert.equal(result.outcome, "responded", `${result.reason || ""} ${JSON.stringify(result.steps)}`);
+  assert.match(result.response, /EUR 999/u);
+  assert.match(result.response, /name reservation/iu);
+  assert.match(composedMessages, /Company name reservation/u);
+  assert.match(composedMessages, /"amount":999/u);
+  assert.doesNotMatch(composedMessages, /EUR 899/u);
+  assert.match(composedMessages, /Stale approved chunks excluded by source precedence: approved-formation-doc/u);
+  assert.deepEqual(result.steps.map((step) => step.tool), ["searchApprovedKnowledge", "lookupActiveOffer"]);
 });

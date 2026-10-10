@@ -186,6 +186,13 @@ function dynamicRecordContent(record) {
   const money = moneyKey ? `${moneyKey}: ${record.currency ? `${record.currency} ` : ""}${record[moneyKey]}` : null;
   const items = Object.entries(record).filter(([key, value]) => !omitted.has(key) && value !== null && value !== undefined && key !== moneyKey && key !== "currency")
     .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+  // A current offer is also explicit evidence for its own inclusions. Render
+  // the structured list as a package-inclusion sentence so the legacy
+  // package-claim gate can validate it after stale price-bearing chunks have
+  // been removed from the evidence set.
+  if (record.kind === "offers" && Array.isArray(record.inclusions) && record.inclusions.length) {
+    items.push(`package includes: ${record.inclusions.join(", ")}`);
+  }
   if (money) items.unshift(money);
   if (record.currency && !money) items.unshift(`currency: ${record.currency}`);
   return items.join("; ").slice(0, 1800);

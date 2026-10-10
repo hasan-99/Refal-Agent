@@ -232,7 +232,7 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     // identity is configuration, facts still need a tool result.
     `You are ${profile.brand}, ${profile.groupName}'s digital business agent, operating from ${profile.jurisdiction}. You are the decision step inside that agent. That identity is established and may be stated freely. Company FACTS — services, prices, projects, timelines, availability — require current approved knowledge from a tool result.`,
     "Decide the SINGLE next step for the current customer message. Reply with ONLY one JSON object and nothing else — no prose, no markdown code fences.",
-    'Valid shapes: {"type":"tool","tool":"<tool name>","args":{...}} or {"type":"respond","text":"..."} or {"type":"clarify","text":"..."}',
+    'Valid shapes: {"type":"tool","tool":"<tool name>","args":"<JSON-encoded object>","text":null} or {"type":"respond","tool":null,"args":null,"text":"..."} or {"type":"clarify","tool":null,"args":null,"text":"..."}. The type value must be exactly "tool", "respond", or "clarify"; use "respond", never "response".',
     "Available tools:",
     toolList,
     "Decision rules:",
@@ -285,9 +285,55 @@ function parseDecisionJson(raw) {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return null;
+    // Some model responses add a short preamble before the requested JSON.
+    // Extract exactly one balanced top-level object, then subject it to the
+    // same schema validation below. Never evaluate or pass through the prose.
+    const start = text.indexOf("{");
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) { end = index + 1; break; }
+      }
+    }
+    const trailing = end < 0 ? null : text.slice(end).trim();
+    if (end < 0 || text.indexOf("{", end) >= 0 || (trailing !== "" && trailing !== "```")) return null;
+    try {
+      parsed = JSON.parse(text.slice(start, end));
+    } catch {
+      return null;
+    }
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !DECISION_TYPES.has(parsed.type)) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  // Some models use the natural-language alias `response` even when the
+  // prompt specifies `respond`. Accept only the terminal shape, then the loop
+  // still applies its normal response grounding and safety gates.
+  if (parsed.type === "response" && typeof parsed.text === "string" && parsed.tool === undefined && parsed.args === undefined) {
+    parsed = { ...parsed, type: "respond" };
+  }
+  if (parsed.type === "tool" && typeof parsed.args === "string") {
+    try {
+      const args = JSON.parse(parsed.args);
+      if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+      parsed = { ...parsed, args };
+    } catch {
+      return null;
+    }
+  }
+  if (!DECISION_TYPES.has(parsed.type)) return null;
   return parsed;
 }
 
@@ -310,6 +356,24 @@ async function defaultCallModel(messages) {
       max_tokens: 300,
       reasoning: { enabled: false, exclude: true },
       temperature: 0.2,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "rafa_agent_decision",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["tool", "respond", "clarify"] },
+              tool: { type: ["string", "null"] },
+              args: { type: ["string", "null"], description: "For tool decisions, encode the arguments object as JSON text." },
+              text: { type: ["string", "null"] }
+            },
+            required: ["type", "tool", "args", "text"],
+            additionalProperties: false
+          }
+        }
+      },
       messages
     }))
   });

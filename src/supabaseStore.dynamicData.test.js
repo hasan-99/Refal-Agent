@@ -30,6 +30,29 @@ test("dynamic action writes use the idempotent route and never retry after an am
   } finally { global.fetch = originalFetch; }
 });
 
+test("dynamic action rate-limit rejection is definitive, safe, and not returned as pending", async () => {
+  const instance = store();
+  let calls = 0;
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: "Please wait before repeating this request." }), {
+      status: 429,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  try {
+    const result = await instance.performDynamicAction("upsertLead", { userId: "contact" });
+    assert.deepEqual(result, {
+      ok: false,
+      status: "error",
+      reasonCode: "ACTION_RATE_LIMITED",
+      userSafeSummary: "Please wait before trying that again."
+    });
+    assert.equal(calls, 1);
+  } finally { global.fetch = originalFetch; }
+});
+
 test("safe GET requests retry transient failures within a fixed bound", async () => {
   const instance = store();
   let calls = 0;
