@@ -392,6 +392,55 @@ function safeField(value, max) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
 }
 
+const BRAIN_FACT_ID = /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u;
+const KNOWLEDGE_LANGUAGES = Object.freeze({ arabic: "ar", english: "en", greek: "el" });
+
+function knowledgeLanguageCode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return KNOWLEDGE_LANGUAGES[normalized] || (Object.hasOwn({ ar: true, en: true, el: true }, normalized) ? normalized : null);
+}
+
+function dateOnly(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(value.trim());
+  if (match) return match[1];
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : null;
+}
+
+// Fact-linked chunks require a complete, current register record for every
+// linked fact before they can reach the Agent model. A document-level approval
+// is not enough because the register can independently block or expire one
+// fact inside an otherwise approved document.
+function factLinkedChunkIsCurrent(row, language, now = new Date()) {
+  const kind = row?.chunk_kind ?? row?.chunkKind ?? row?.metadata?.kind;
+  if (String(kind || "") === "aliases") return false;
+
+  const metadata = row?.policyMetadata;
+  const factIds = Array.isArray(metadata?.facts) ? metadata.facts : [];
+  if (!factIds.length) return true;
+
+  const languageCode = knowledgeLanguageCode(language);
+  if (!languageCode) return false;
+  const registerRows = Array.isArray(metadata?.factRegisterRows) ? metadata.factRegisterRows : [];
+  const rowsById = new Map(registerRows.filter((item) => item && typeof item.id === "string").map((item) => [item.id, item]));
+  const today = now.toISOString().slice(0, 10);
+
+  return factIds.every((rawId) => {
+    const id = String(rawId || "").trim();
+    if (!BRAIN_FACT_ID.test(id)) return false;
+    const fact = rowsById.get(id);
+    if (!fact || fact.status !== "approved") return false;
+    const effectiveFrom = fact.effectiveFrom == null ? null : dateOnly(fact.effectiveFrom);
+    const reviewAt = dateOnly(fact.expiryOrReviewAt);
+    const approvedLanguages = Array.isArray(fact.approvedLanguages) ? fact.approvedLanguages : [];
+    if ((fact.effectiveFrom != null && !effectiveFrom) || !reviewAt) return false;
+    return (!effectiveFrom || effectiveFrom <= today)
+      && reviewAt > today
+      && approvedLanguages.includes(languageCode);
+  });
+}
+
 // Builds the explicit "approved_knowledge" model observation from already
 // trust-filtered search rows. Deliberately does NOT run the customer-input
 // style `redactSensitiveData` label-proximity redaction on this content:
@@ -459,7 +508,7 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
   return { type: "approved_knowledge", status, evidence, truncated, policyEvidence, factRegisterRows: [...factRegisterRows.values()] };
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6 } = {}) {
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
@@ -480,7 +529,11 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
   }
 
-  const evidence = Array.isArray(results) ? results : [];
+  // The RPC enforces source/document approval and expiry. Apply the separate
+  // fact-register gate here, before the bounded model observation is built.
+  // Finding aids are never customer evidence, even if a legacy RPC returns one.
+  const evidence = (Array.isArray(results) ? results : [])
+    .filter((row) => factLinkedChunkIsCurrent(row, language));
   if (evidence.length === 0) {
     return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
   }

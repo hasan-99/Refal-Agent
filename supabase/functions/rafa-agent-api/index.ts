@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { hasConfirmationEventId, isAllowedAppointmentTransition, updateAppointmentIfStatusMatches } from "./appointmentStateMachine.mjs";
 import { buildSafeHistoryInsert, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
 import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate } from "./responsePolicy.mjs";
 // Was a hand-copied regex in this file that had drifted into a fail-open:
@@ -587,14 +588,14 @@ Deno.serve(async (req: Request) => {
       if (!idempotencyKey) throw new HttpError("An idempotency key is required.", 400);
       if (kind === "owner_review") {
         if (!appointmentId || !isUuid(appointmentId)) throw new HttpError("A valid appointment ID is required.", 400);
-        if (expectedStatus !== "pending_review") throw new HttpError("Admin review email must be tied to a pending appointment.", 400);
+        if (!["pending_review", "pending_calendar", "creating"].includes(expectedStatus)) throw new HttpError("Admin review email must be tied to a pending appointment.", 400);
       }
       if (kind === "admin_followup" || kind === "handover_review") {
         if (!handoverId) throw new HttpError("A valid handover is required.", 400);
       } else if (kind === "customer_message" && (!appointmentId || !isUuid(appointmentId))) {
         throw new HttpError("A valid appointment ID is required.", 400);
       }
-      if (appointmentId && !["pending_review", "confirmed", "rejected", "rescheduled", "cancelled"].includes(expectedStatus)) throw new HttpError("A valid expected appointment status is required.", 400);
+      if (appointmentId && !["pending_review", "pending_calendar", "creating", "confirmed", "rejected", "rescheduled", "cancelled"].includes(expectedStatus)) throw new HttpError("A valid expected appointment status is required.", 400);
       const { data, error } = await supabase.from("rafa_notification_jobs").insert({
         appointment_id: appointmentId, handover_id: handoverId, channel, kind, recipient, payload, status,
         expected_appointment_status: expectedStatus || null, idempotency_key: idempotencyKey
@@ -1209,17 +1210,19 @@ async function createAppointment(body: Record<string, any>) {
   const purpose = String(body.purpose || "").trim();
   const calendarId = String(body.calendarId || "").trim();
   const timezone = String(body.timezone || "").trim();
+  const requestedStatus = String(body.status || "pending_review");
   if (!userId || userId.length > 200 || !idempotencyKey || idempotencyKey.length > 200) throw new HttpError("A user and valid idempotency key are required.", 400);
   if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) throw new HttpError("A valid appointment start and end are required.", 400);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 240 || Math.abs((endsAt.getTime() - startsAt.getTime()) / 60000 - durationMinutes) > 0.01) throw new HttpError("Appointment duration does not match its start and end.", 400);
   if (!purpose || purpose.length > 1000 || !calendarId || calendarId.length > 320 || !timezone || timezone.length > 80) throw new HttpError("Purpose, calendar, and timezone are required.", 400);
+  if (!["pending_review", "awaiting_customer_confirmation"].includes(requestedStatus)) throw new HttpError("Invalid initial appointment status.", 400);
   try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch { throw new HttpError("Invalid appointment timezone.", 400); }
 
   const contact = await ensureUser(userId);
   const values = {
     contact_id: contact.contactId,
     whatsapp_jid: userId,
-    status: "pending_review",
+    status: requestedStatus,
     starts_at: startsAt.toISOString(),
     ends_at: endsAt.toISOString(),
     timezone,
@@ -1247,24 +1250,19 @@ async function createAppointment(body: Record<string, any>) {
 async function updateAppointment(appointmentId: string, body: Record<string, any>) {
   if (!isUuid(appointmentId)) throw new HttpError("Invalid appointment ID.", 400);
   const { data: current, error: currentError } = await supabase.from("rafa_appointments")
-    .select("id,status").eq("id", appointmentId).maybeSingle();
+    .select("id,status,metadata").eq("id", appointmentId).maybeSingle();
   if (currentError) throw currentError;
   if (!current) throw new HttpError("Appointment not found.", 404);
 
   const patch: Record<string, unknown> = {};
-  const transitions: Record<string, string[]> = {
-    pending_review: ["confirmed", "rejected", "rescheduled", "cancelled"],
-    pending_calendar: ["pending_review", "confirmed", "failed"],
-    confirmed: ["rescheduled", "cancelled", "completed"],
-    rescheduled: ["pending_review", "cancelled"],
-    rejected: ["pending_review", "cancelled"],
-    failed: ["pending_calendar", "pending_review", "cancelled"],
-    cancelled: [],
-    completed: []
-  };
   if (body.status !== undefined) {
     const next = String(body.status);
-    if (next !== current.status && !(transitions[current.status] || []).includes(next)) throw new HttpError(`Invalid appointment status transition: ${current.status} to ${next}.`, 409);
+    if (!isAllowedAppointmentTransition(current.status, next)) {
+      const message = next === current.status && next === "creating"
+        ? "This appointment is already being created."
+        : `Invalid appointment status transition: ${current.status} to ${next}.`;
+      throw new HttpError(message, 409);
+    }
     patch.status = next;
     if (next === "confirmed") patch.confirmed_at = body.confirmedAt || new Date().toISOString();
     if (next === "cancelled") patch.cancelled_at = body.cancelledAt || new Date().toISOString();
@@ -1298,12 +1296,16 @@ async function updateAppointment(appointmentId: string, body: Record<string, any
     if (reason.length > 500) throw new HttpError("Review reason is too long.", 400);
     patch.review_reason = reason || null;
   }
-  if (body.status === "confirmed" && !String(body.googleEventId || "").trim()) throw new HttpError("A Google Calendar event ID is required before confirmation.", 400);
+  if (body.metadata !== undefined) {
+    if (!body.metadata || typeof body.metadata !== "object" || Array.isArray(body.metadata)) throw new HttpError("Appointment metadata must be an object.", 400);
+    patch.metadata = boundedObject({ ...(current.metadata || {}), ...body.metadata }, 6000);
+  }
+  if (!hasConfirmationEventId(body.status, body.googleEventId)) throw new HttpError("A Google Calendar event ID is required before confirmation.", 400);
   if (!Object.keys(patch).length) throw new HttpError("No supported appointment changes were supplied.", 400);
-  let { data, error } = await supabase.from("rafa_appointments").update(patch).eq("id", appointmentId).eq("status", current.status).select("*").single();
+  let { data, error } = await updateAppointmentIfStatusMatches(supabase, appointmentId, current.status, patch);
   if (error && "google_meet_url" in patch && /google_meet_url/i.test(error.message || "")) {
     delete patch.google_meet_url;
-    ({ data, error } = await supabase.from("rafa_appointments").update(patch).eq("id", appointmentId).eq("status", current.status).select("*").single());
+    ({ data, error } = await updateAppointmentIfStatusMatches(supabase, appointmentId, current.status, patch));
   }
   if (error?.code === "PGRST116") throw new HttpError("Appointment changed while this action was being processed; refresh and try again.", 409);
   if (error) throw error;

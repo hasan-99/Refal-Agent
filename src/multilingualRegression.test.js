@@ -273,56 +273,61 @@ test("[014-9] a later revocation overrides an earlier grant, independent of whic
 
 // --- 10. Booking request -------------------------------------------------------
 
-test("[014-10] a booking request flows to pending-review in the customer's own language, never a self-confirmed claim, EN/AR/EL", async (t) => {
+test("[014-10] a booking request creates a live confirmed event only after exact time confirmation, EN/AR/EL", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
-  google.calendar = () => ({ freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) } });
+  google.calendar = () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) },
+    events: { insert: async ({ requestBody }) => ({ data: { ...requestBody, id: "fixture-event", htmlLink: "https://calendar.google.com/calendar/event?eid=fixture", hangoutLink: "https://meet.google.com/abc-defg-hij" } }) }
+  });
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss Refalco Group services", confirm: "yes", expect: /appointment request has been sent for review/i },
-    arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات الشركة", confirm: "نعم", expect: /طلب الموعد للمراجعة/ },
-    // normalizeArabicBookingText translates Arabic weekday words before
-    // chrono parsing; no equivalent Greek word-normalizer exists yet (a
-    // real, separate gap documented in the progress doc, not fixed here),
-    // so the Greek fixture uses an explicit date chrono can parse directly.
-    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της Refalco Group", confirm: "ναι", expect: /αίτημα ραντεβού σας στάλθηκε για έλεγχο/ }
+    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss Refalco Group services", confirm: "yes 10:00", genericConfirm: "yes", expect: /meeting is booked/i },
+    arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات الشركة", confirm: "نعم 10:00", genericConfirm: "نعم", expect: /تم تأكيد الموعد/ },
+    // The booking parser accepts natural Greek weekday/month wording; its
+    // direct parser coverage is in booking.test.js. This integration fixture
+    // keeps an explicit ISO date so the full state transition is unambiguous.
+    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της Refalco Group", confirm: "ναι 10:00", genericConfirm: "ναι", expect: /Το ραντεβού σας έχει κλειστεί/ }
   };
-  for (const [locale, { start, details, confirm, expect }] of Object.entries(CASES)) {
+  for (const [locale, { start, details, confirm, genericConfirm, expect }] of Object.entries(CASES)) {
     const user = { id: `booking-${locale}`, phone: "35799000000", profile: { name: "Test" }, booking: null };
     const appointmentId = `${locale}-appt-id`;
-    const persisted = { id: appointmentId, status: "pending_review", created_at: "2026-01-02T08:00:00.000Z" };
+    const persisted = { id: appointmentId, status: "awaiting_customer_confirmation", created_at: "2026-01-02T08:00:00.000Z", metadata: {} };
     const store = {
       ensureUser: async () => user,
       getBookingPolicy: async () => BOOKING_POLICY,
       updateUser: async (_id, update) => { update(user); return user; },
-      createAppointment: async (value) => { Object.assign(persisted, { starts_at: value.startsAt, ends_at: value.endsAt }); return { appointment: persisted, created: true }; },
-      updateAppointment: async (_id, value) => { Object.assign(persisted, value); return persisted; },
+      createAppointment: async (value) => { Object.assign(persisted, { status: value.status, starts_at: value.startsAt, ends_at: value.endsAt, metadata: value.metadata }); return { appointment: persisted, created: true }; },
+      updateAppointment: async (_id, value) => { Object.assign(persisted, value, { status: value.status || persisted.status }); return persisted; },
       createReminder: async () => {}
     };
     const now = new Date("2026-01-02T08:00:00.000Z");
     await handleBookingMessage({ userId: user.id, text: start, store, now });
     const proposed = await handleBookingMessage({ userId: user.id, text: details, store, now });
     assert.doesNotMatch(proposed.response, /confirmed|تم تأكيد|επιβεβαιώθηκε/i, locale);
+    const generic = await handleBookingMessage({ userId: user.id, text: genericConfirm, store, now });
+    assert.doesNotMatch(generic.response, expect, locale);
+    assert.equal(persisted.status, "awaiting_customer_confirmation", locale);
     const confirmed = await handleBookingMessage({ userId: user.id, text: confirm, store, now });
     assert.match(confirmed.response, expect, locale);
-    assert.doesNotMatch(confirmed.response, /confirmed\.|تم تأكيد الموعد|Επιβεβαιώθηκε\./, locale);
-    assert.equal(persisted.status, "pending_review", locale);
+    assert.match(confirmed.response, /Confirmed|تم تأكيد الموعد|Επιβεβαιώθηκε\./i, locale);
+    assert.equal(persisted.status, "confirmed", locale);
   }
 });
 
 // --- 11. Booking failure --------------------------------------------------------
 
-test("[014-11] a calendar access failure never claims success, in the customer's language, EN/AR/EL", async (t) => {
+test("[014-11] a calendar access failure offers a truthful pending-request path in the customer's language, EN/AR/EL", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
   google.calendar = () => ({ freebusy: { query: async () => { throw new Error("invalid_grant"); } } });
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { text: "I'd like to book a meeting", expect: /cannot currently access Refalco Group's calendar/i },
-    arabic: { text: "أريد حجز اجتماع", expect: /تعذر الوصول إلى تقويم الشركة/ },
-    greek: { text: "Θέλω να κλείσω ραντεβού", expect: /Δεν είναι δυνατή αυτή τη στιγμή η πρόσβαση στο ημερολόγιο/ }
+    english: { text: "I'd like to book a meeting", expect: /verify calendar availability right now/i },
+    arabic: { text: "أريد حجز اجتماع", expect: /لا أستطيع التحقق من توفر التقويم/ },
+    greek: { text: "Θέλω να κλείσω ραντεβού", expect: /Δεν μπορώ να επαληθεύσω τη διαθεσιμότητα/ }
   };
   for (const [locale, { text, expect }] of Object.entries(CASES)) {
     const user = { id: `bookfail-${locale}`, profile: {}, booking: null };
@@ -330,6 +335,7 @@ test("[014-11] a calendar access failure never claims success, in the customer's
     const result = await handleBookingMessage({ userId: user.id, text, store });
     assert.match(result.response, expect, locale);
     assert.doesNotMatch(result.response, /confirmed|تم تأكيد|επιβεβαιώθηκε/i, locale);
+    assert.equal(user.booking.calendarUnavailable, true, locale);
   }
 });
 

@@ -312,13 +312,13 @@ test("M5 governance metadata remains separate from model prompt text and joins o
     valid_until: "2026-12-31T00:00:00Z",
     policyMetadata: {
       topic: "jurisdiction-dubai",
-      facts: ["MB-J0", "MB-J1", "not-an-id"],
-      factRegisterRows: [{ id: "MB-J1", status: "approved", reviewer: "BOSS", verifiedAt: "2026-10-01", expiryOrReviewAt: "2026-12-31" }],
+      facts: ["MB-J0", "MB-J1"],
+      factRegisterRows: ["MB-J0", "MB-J1"].map((id) => ({ id, status: "approved", reviewer: "BOSS", verifiedAt: "2026-10-01", effectiveFrom: "2026-01-01", expiryOrReviewAt: "2026-12-31", approvedLanguages: ["ar", "en", "el"] })),
       reviewStatus: "approved",
       validUntil: "2026-12-31T00:00:00Z"
     }
   }] };
-  const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null });
+  const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null, language: "english" });
   const [modelEvidence] = result.modelObservation.evidence;
   assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
   assert.doesNotMatch(formatApprovedKnowledgeEvidence(result.modelObservation), /jurisdiction-dubai|MB-J1|BOSS|reviewer/i);
@@ -326,7 +326,51 @@ test("M5 governance metadata remains separate from model prompt text and joins o
   const [policyEvidence] = collectApprovedKnowledgeEvidence(observations);
   assert.equal(policyEvidence.review_status, "approved");
   assert.deepEqual(policyEvidence.metadata.facts, ["MB-J0", "MB-J1"]);
-  assert.deepEqual(collectFactRegisterRows(observations).map((row) => row.id), ["MB-J1"]);
+  assert.deepEqual(collectFactRegisterRows(observations).map((row) => row.id), ["MB-J0", "MB-J1"]);
+});
+
+test("fact-linked evidence is withheld unless every register row is approved, current, effective, and approved for the customer language", async () => {
+  const now = new Date();
+  const future = new Date(now.getTime() + 10 * 86400000).toISOString().slice(0, 10);
+  const past = new Date(now.getTime() - 10 * 86400000).toISOString().slice(0, 10);
+  const baseFact = { id: "MB-J1", status: "approved", verifiedAt: past, effectiveFrom: past, expiryOrReviewAt: future, approvedLanguages: ["en"] };
+  const makeRow = (fact, extra = {}) => ({
+    document_title: "Jurisdiction facts", heading: "Cyprus", content: "Fact-linked content must be gated.",
+    chunk_id: "chunk-fact", review_status: "approved", valid_until: future,
+    policyMetadata: { facts: ["MB-J1"], factRegisterRows: [fact], reviewStatus: "approved", validUntil: future },
+    ...extra
+  });
+  const cases = [
+    ["blocked status", { ...baseFact, status: "blocked" }, "english"],
+    ["pending status", { ...baseFact, status: "pending" }, "english"],
+    ["review date elapsed", { ...baseFact, expiryOrReviewAt: past }, "english"],
+    ["review date missing", { ...baseFact, expiryOrReviewAt: null }, "english"],
+    ["not yet effective", { ...baseFact, effectiveFrom: future }, "english"],
+    ["malformed effective date", { ...baseFact, effectiveFrom: "not-a-date" }, "english"],
+    ["customer language not approved", baseFact, "arabic"],
+    ["register row missing", null, "english"]
+  ];
+
+  for (const [label, fact, language] of cases) {
+    const store = { searchKnowledge: async () => [makeRow(fact)] };
+    const result = await searchApprovedKnowledge({ query: "Cyprus" }, { store, embedText: async () => null, language });
+    assert.deepEqual(result.modelObservation.evidence, [], label);
+    assert.equal(result.status, "no_evidence", label);
+  }
+
+  const approvedStore = { searchKnowledge: async () => [makeRow(baseFact)] };
+  const approved = await searchApprovedKnowledge({ query: "Cyprus" }, { store: approvedStore, embedText: async () => null, language: "english" });
+  assert.equal(approved.modelObservation.evidence.length, 1);
+});
+
+test("knowledge search filters finding aids and fact-linked chunks without changing unlinked approved evidence", async () => {
+  const store = { searchKnowledge: async () => [
+    { chunk_kind: "aliases", heading: "Finding aid", content: "Customer question aliases.", chunk_id: "aid-1", review_status: "approved" },
+    { metadata: { kind: "aliases" }, heading: "Legacy finding aid", content: "More aliases.", chunk_id: "aid-2", review_status: "approved" },
+    { heading: "Approved unlinked document", content: "Approved content without a fact-register link.", chunk_id: "free-1", review_status: "approved" }
+  ] };
+  const result = await searchApprovedKnowledge({ query: "services" }, { store, embedText: async () => null, language: "english" });
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["free-1"]);
 });
 
 test("raw row metadata cannot authorize M5 evidence when server enrichment is absent", async () => {

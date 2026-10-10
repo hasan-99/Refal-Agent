@@ -1651,6 +1651,11 @@ function Bookings({ isAdmin }) {
   const [calendarTestBusy, setCalendarTestBusy] = useState(false);
   const [calendarTestMessage, setCalendarTestMessage] = useState("");
   const [calendarTestError, setCalendarTestError] = useState(false);
+  const [calendarOAuthBusy, setCalendarOAuthBusy] = useState(false);
+  const [calendarOAuthSetup, setCalendarOAuthSetup] = useState(null);
+  const [calendarOAuthSubmitted, setCalendarOAuthSubmitted] = useState(false);
+  const [calendarOAuthMessage, setCalendarOAuthMessage] = useState("");
+  const calendarOAuthFormRef = useRef(null);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1658,12 +1663,14 @@ function Bookings({ isAdmin }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [reviewing, setReviewing] = useState("");
 
+  useEffect(() => () => calendarOAuthFormRef.current?.reset(), []);
+
   useEffect(() => {
     if (!readiness) return;
     setPolicy(readiness.policy || {
       timezone: "Europe/Nicosia", calendarId: "primary", weekdays: [1, 2, 3, 4, 5],
-      startTime: "10:00", endTime: "15:00", durationMinutes: "", durationOwnerConfirmed: false,
-      minimumNoticeHours: "", reminderHours: [], createMeetLink: false
+      startTime: "10:00", endTime: "15:00", durationMinutes: 60, durationOwnerConfirmed: true,
+      minimumNoticeHours: 24, reminderHours: [24, 1], createMeetLink: false
     });
   }, [readiness]);
 
@@ -1692,6 +1699,16 @@ function Bookings({ isAdmin }) {
       setCalendarTestMessage(cause.message || "Could not verify Google Calendar access.");
       setCalendarTestError(true);
     } finally { setCalendarTestBusy(false); }
+  };
+
+  const startCalendarAuthorization = async () => {
+    setCalendarOAuthBusy(true); setCalendarOAuthMessage(""); setCalendarOAuthSetup(null); setCalendarOAuthSubmitted(false);
+    try {
+      const result = await api("/api/bookings/calendar-oauth/start", { method: "POST", body: JSON.stringify({}) });
+      setCalendarOAuthSetup(result);
+      setCalendarOAuthMessage("Setup helper ready. Paste the OAuth JSON below; the browser sends it directly to the local helper, not the dashboard server.");
+    } catch (cause) { setCalendarOAuthMessage(cause.message || "Could not start Google Calendar authorization."); }
+    finally { setCalendarOAuthBusy(false); }
   };
 
   const reviewAppointment = async (booking, action) => {
@@ -1752,11 +1769,11 @@ function Bookings({ isAdmin }) {
     <div className="page-stack bookings-page">
       {isAdmin && pendingReviewCount > 0 && <div className="booking-error" role="status"><Clock3 size={16} /><span>{pendingReviewCount} appointment{pendingReviewCount === 1 ? "" : "s"} need admin review.</span></div>}
       {isAdmin && deliveryProblems.length > 0 && <section className="panel"><PanelTitle icon={Bell} title="Notification delivery issues" /><div className="simple-list">{deliveryProblems.slice(0, 10).map((job) => <div key={job.id}><strong>{notificationJobLabel(job)} · {job.status}</strong><small>{job.last_error || "Delivery failed."} · {job.attempts} attempt(s)</small>{job.status === "dead" && <button className="ghost" disabled={reviewing === job.id} onClick={() => retryNotification(job)}>{reviewing === job.id ? "Queueing…" : "Retry"}</button>}</div>)}</div></section>}
-      {readiness && !readiness.active && <section className="booking-readiness" role="status">
+      {readiness && <section className={`booking-readiness${readiness.active ? " is-ready" : " is-blocked"}`} role="status" aria-live="polite">
         <div className="booking-readiness-icon"><ShieldCheck size={19} /></div>
         <div className="booking-readiness-copy">
-          <strong>Calendar booking is not enabled</strong>
-          <span>Appointments are paused until REFAL's calendar access and booking rules are ready.</span>
+          <strong>{readiness.active ? "Calendar booking is ready" : "Calendar booking is not enabled"}</strong>
+          <span>{readiness.active ? "Calendar access and booking rules are ready." : "Appointments are paused until the items below are ready."}</span>
           <div className="booking-readiness-tags">
             <span className={readiness.calendarCredentials ? "ready" : "missing"}>{readiness.calendarCredentials ? "Worker credentials configured" : "REFAL worker authorization missing"}</span>
             <span className={readiness.calendarAccessVerified ? "ready" : "missing"}>{readiness.calendarAccessVerified ? `Calendar access verified ${formatDate(readiness.calendarAccessCheckedAt)}` : "Calendar access not verified"}</span>
@@ -1764,12 +1781,25 @@ function Bookings({ isAdmin }) {
             <span className={readiness.policy?.minimumNoticeHours != null ? "ready" : "missing"}>{readiness.policy?.minimumNoticeHours != null ? "Booking notice set" : "Minimum notice not set"}</span>
             <span className={readiness.policy?.reminderHours?.length ? "ready" : "missing"}>{readiness.policy?.reminderHours?.length ? "Reminder schedule set" : "Reminder schedule not set"}</span>
           </div>
-          <small>Your personal Google Calendar connection does not authorize the WhatsApp worker. Configure worker credentials, then test access here before relying on calendar bookings.</small>
+          {readiness.active && readiness.policy && !readiness.policy.createMeetLink && <small>Google Meet link creation is disabled; confirmed appointments will not include a Meet link.</small>}
+          {!readiness.active && <small>Your personal Google Calendar connection does not authorize the WhatsApp worker. Configure worker credentials, then test access here before relying on calendar bookings.</small>}
         </div>
       </section>}
       {isAdmin && policy && <section className="panel booking-policy" id="booking-policy">
         <PanelTitle icon={Settings} title="Booking policy" />
-        <p className="booking-policy-intro">Rules are stored in Supabase. Google credentials remain in the server secret store.</p>
+        <p className="booking-policy-intro">Rules are stored in Supabase. OAuth credentials go directly from your browser to a loopback helper, then are stored for the WhatsApp worker only.</p>
+        {!readiness?.calendarCredentials && <div className="calendar-oauth-setup">
+          {!calendarOAuthSetup || readiness?.calendarAuthorizationStatus === "error" ? <button className="ghost" type="button" disabled={calendarOAuthBusy} onClick={startCalendarAuthorization}>{calendarOAuthBusy ? "Starting secure authorization…" : "Set up Google Calendar"}</button> : calendarOAuthSubmitted ? <p>OAuth JSON was sent directly to the local helper. Complete Google's consent in the new tab, then refresh status.</p> : <form ref={calendarOAuthFormRef} action={calendarOAuthSetup.submissionUrl} method="post" target="refal-calendar-authorization" encType="application/x-www-form-urlencoded" onSubmit={() => { setCalendarOAuthSubmitted(true); setCalendarOAuthMessage("OAuth JSON was submitted directly to the local helper. Complete consent in the new tab."); window.setTimeout(() => calendarOAuthFormRef.current?.reset(), 100); }}>
+            <input type="hidden" name="token" value={calendarOAuthSetup.setupToken} />
+            <label className="field">Google OAuth client JSON<textarea name="clientJson" rows="5" required maxLength={1024 * 1024} disabled={calendarOAuthSubmitted} autoComplete="off" spellCheck="false" placeholder="Paste the downloaded OAuth client JSON. It must include the REFAL loopback redirect URI." /></label>
+            <button className="ghost" type="submit" disabled={calendarOAuthSubmitted}>Continue to authorization</button>
+          </form>}
+          {calendarOAuthMessage && <span role="status">{calendarOAuthMessage}</span>}
+          {calendarOAuthSetup && <button className="ghost" type="button" onClick={reloadReadiness}>Refresh authorization status</button>}
+          <small>Google consent is required. REFAL requests calendar event and availability access only. This local onboarding flow requires the dashboard browser and helper to run on the same machine.</small>
+        </div>}
+        {readiness?.calendarAuthorizationStatus === "configured_worker_restart_needed" && <p className="booking-policy-intro">Authorization is saved. Reconnect the WhatsApp worker so it loads the new worker credentials.</p>}
+        {readiness?.calendarAuthorizationStatus === "configured_worker_restarting" && <p className="booking-policy-intro">Authorization is saved. The connected WhatsApp worker is restarting with the new credentials.</p>}
         <div className="form-grid">
           <label className="field">Calendar ID<input value={policy.calendarId || ""} onChange={(event) => setPolicy({ ...policy, calendarId: event.target.value })} /></label>
           <label className="field">Time zone<input value={policy.timezone || ""} onChange={(event) => setPolicy({ ...policy, timezone: event.target.value })} /></label>

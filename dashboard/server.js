@@ -19,6 +19,8 @@ import { countUniqueHandoverContacts } from "./handoverGrouping.js";
 import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
+import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
+import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,9 +35,10 @@ const { embedText, embedTexts, normalizeOpenRouterUsage, DEFAULT_EMBEDDING_MODEL
 const { containsProhibitedClaim, restrictedRefalcoReply } = require("../src/refalcoAnswer.js");
 const { containsUnconsentedContactCommitment } = require("../src/responsePolicy.js");
 const { buildBrainPrompt: buildOperatorPrompt } = require("../src/brainPrompt.js");
-const { approvePendingAppointment, changeAppointmentStatus, formatBookingTime, hasCalendarConfig, hasOAuthCalendarCredentials, suggestAvailableTimes, verifyCalendarAccess } = require("../src/booking.js");
-const { createCalendarReadinessTracker } = require("../src/calendarReadiness.js");
+const { formatBookingTime, suggestAvailableTimes } = require("../src/booking.js");
+const { createCalendarReadinessTracker, isBookingPolicyReady } = require("../src/calendarReadiness.js");
 const { validateBookingPolicy } = require("../src/bookingPolicy.js");
+const { workerCredentialsReady } = require("../scripts/googleCalendarCredentialStore.js");
 const { dashboardFailureReply } = await import("./agentFallback.js");
 const {
   DEFAULT_OPENROUTER_MODEL,
@@ -44,9 +47,10 @@ const {
 } = require("../src/openrouterPrivacy.js");
 const dashboardRoot = __dirname;
 const botRoot = path.resolve(dashboardRoot, "..");
+stripWorkerCalendarCredentials(process.env);
 
-loadEnv(path.join(botRoot, ".env"));
-loadEnv(path.join(botRoot, ".env.rafa"));
+loadDashboardEnv(path.join(botRoot, ".env"));
+loadDashboardEnv(path.join(botRoot, ".env.rafa"));
 const store = createStore();
 const whatsappController = createWhatsAppController({ botRoot });
 
@@ -67,6 +71,7 @@ const port = Number(process.env.DASHBOARD_PORT || 8787);
 const authAttemptBuckets = new Map();
 const limitAgentChat = createAgentRateLimit();
 const calendarReadiness = createCalendarReadinessTracker();
+const calendarOnboarding = createCalendarCredentialOnboarding({ botRoot, onConfigured: () => whatsappController.restart() });
 let openRouterCreditsCache = { expiresAt: 0, value: null };
 
 app.disable("x-powered-by");
@@ -1065,7 +1070,7 @@ app.post("/api/bookings/:id/review", requireAdmin, authRateLimit, async (req, re
   const reason = String(req.body?.reason || "").trim().slice(0, 500);
   try {
     if (action === "approve") {
-      const result = await approvePendingAppointment({ store, appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id });
+      const result = await calendarOnboarding.review({ action, appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id });
       let notificationError = result.reminderError || "";
       try {
         const when = new Intl.DateTimeFormat("en-GB", { timeZone: result.policy.timezone, dateStyle: "full", timeStyle: "short" }).format(result.event.start?.dateTime ? new Date(result.event.start.dateTime) : new Date(result.appointment.starts_at));
@@ -1089,7 +1094,8 @@ app.post("/api/bookings/:id/review", requireAdmin, authRateLimit, async (req, re
       const appointment = await store.getAppointment(req.params.id);
       if (!appointment) return res.status(404).json({ error: "Appointment was not found." });
       const nextStatus = action === "cancel" ? "cancelled" : "rescheduled";
-      const updated = await changeAppointmentStatus({ store, appointmentId: appointment.id, status: nextStatus, actor: req.dashboardUser.email || req.dashboardUser.id, reason, now: new Date() });
+      const result = await calendarOnboarding.review({ action, appointmentId: appointment.id, reviewer: req.dashboardUser.email || req.dashboardUser.id, reason });
+      const updated = result.updated;
       let notificationError = "";
       try {
         const contact = await store.getUser(appointment.whatsapp_jid, { includeHistory: true });
@@ -1161,18 +1167,29 @@ app.get("/api/bookings/readiness", async (_req, res) => {
     const policy = await store.getBookingPolicy();
     const valid = policy ? (() => { try { return validateBookingPolicy(policy); } catch { return null; } })() : null;
     const access = calendarReadiness.get(valid?.calendarId);
+    const credentialsReady = workerCredentialsReady();
+    const policyReady = isBookingPolicyReady(valid);
     res.json({
-      active: hasCalendarConfig(valid) && Boolean(access), policy: valid,
+      active: credentialsReady && policyReady && Boolean(access), policy: valid,
       calendarAccessVerified: Boolean(access), calendarAccessCheckedAt: access?.checkedAt || null,
-      calendarCredentials: Boolean(hasOAuthCalendarCredentials() || (process.env.GOOGLE_CALENDAR_CLIENT_EMAIL && process.env.GOOGLE_CALENDAR_PRIVATE_KEY))
+      calendarCredentials: credentialsReady,
+      calendarAuthorizationStatus: calendarOnboarding.status
     });
   } catch (error) { res.status(502).json({ error: error.message }); }
+});
+
+app.post("/api/bookings/calendar-oauth/start", requireAdmin, authRateLimit, async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const started = await calendarOnboarding.start();
+    res.json(started);
+  } catch (error) { res.status(400).json({ error: error.message || "Calendar authorization could not start." }); }
 });
 
 app.post("/api/bookings/test-calendar", requireAdmin, async (_req, res) => {
   try {
     const policy = validateBookingPolicy(await store.getBookingPolicy());
-    const access = await verifyCalendarAccess(policy);
+    const access = await calendarOnboarding.verify(policy);
     calendarReadiness.markVerified(access);
     res.json({ access });
   } catch (error) {
@@ -1497,22 +1514,6 @@ async function indexKnowledgeDocument(documentId) {
     return { embeddedChunks, embeddingWarning: "" };
   } catch (error) {
     return { embeddedChunks: 0, embeddingWarning: String(error.message || "Embedding failed").slice(0, 240) };
-  }
-}
-
-function loadEnv(filePath) {
-  if (!fs.existsSync(filePath)) return;
-  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const index = trimmed.indexOf("=");
-    if (index === -1) continue;
-    const key = trimmed.slice(0, index).trim();
-    let value = trimmed.slice(index + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (key && process.env[key] === undefined) process.env[key] = value;
   }
 }
 

@@ -36,13 +36,14 @@ const {
   formatBookingTime,
   hasCalendarConfig,
   isAvailable,
-  suggestAvailableTimes
+  listCalendarSlots
 } = require("./booking");
 const { validateBookingPolicy } = require("./bookingPolicy");
 const { normalizeAppointmentDetails } = require("./appointmentDetails");
 const { ok, fail } = require("./agentToolResult");
 
-const MAX_SUGGESTIONS = 3;
+// P7.3 / MB-A2: offer at most two live choices at a time.
+const MAX_SUGGESTIONS = 2;
 // The statuses the legacy customer path routes to administrator review.
 const ADMIN_REVIEW_STATUSES = Object.freeze(["pending_calendar", "failed", "rejected", "rescheduled"]);
 const IDEMPOTENCY_PREFIX = "agent-booking";
@@ -184,7 +185,7 @@ async function getBookingAvailability(args, toolContext = {}) {
   if (args?.start === undefined || args?.start === null || String(args.start).trim() === "") {
     let slots;
     try {
-      slots = await suggestAvailableTimes(policy, { now, count: MAX_SUGGESTIONS });
+      slots = await listCalendarSlots(policy, { now, count: MAX_SUGGESTIONS });
     } catch (error) {
       return fail("error", "CALENDAR_UNAVAILABLE", { message: String(error?.message || error).slice(0, 200) });
     }

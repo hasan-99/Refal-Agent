@@ -53,6 +53,21 @@ const COMPANY_OVERVIEW_RETRIEVAL_TERMS = [
   "Refalco Group company overview: company formation and structuring, tax and accounting, investment, real estate and property development, comprehensive investment and structural solutions.",
   "تأسيس الشركات والهيكلة، ملفات الضريبة والمحاسبة، الملفات الاستثمارية، العقار والتطوير، حلول استثمارية وهيكلية شاملة."
 ].join(" ");
+// A broad services question needs more than one nearest-neighbour sample.
+// Search the approved corpus along three customer-useful facets before the
+// first model decision, while keeping every observation under the tool's
+// existing evidence budget.
+const BROAD_COMPANY_RETRIEVAL_FACETS = Object.freeze([
+  "Cyprus company formation and lifecycle: company structures, name reservation, secretary, registered office, shareholders, directors, ownership changes, dormant company and liquidation",
+  "Cyprus business tax and operations: corporate tax, IP Box, dividends versus salary, holding versus trading, VAT, EORI and payroll",
+  "Cyprus company banking and payment gateways: corporate bank account, KYC, AML, Stripe and PayPal",
+  "Cyprus residency and relocation: permanent residency, non-dom, source of funds, source of wealth, relocation checklist, schools and healthcare",
+  "Cyprus property purchase: buyer journey, off-plan versus completed property, property VAT and cities",
+  "Cyprus landowners, development and construction: land development, partnership, planning permits, density, tenders and BOQ",
+  "Cyprus legal and intellectual property: trademarks, shareholder agreements, employment, development contracts and GDPR",
+  "Jurisdiction comparison: Cyprus compared with Dubai, Estonia, Malta, Bulgaria and USA for company setup and operations",
+  "Refalco Group company profile, identity and approved track record"
+]);
 function requiresApprovedKnowledge(intents) {
   return Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
 }
@@ -91,26 +106,31 @@ async function initialKnowledgeObservation(currentMessage, intents, recentConver
   if (!directKnowledgeIntent && !contextualQuery) return [];
   const tool = tools?.searchApprovedKnowledge;
   const message = String(currentMessage || "").trim().slice(0, 1000);
-  let query = contextualQuery || message;
-  if (Array.isArray(intents) && intents.some((intent) => BROAD_COMPANY_INTENTS.has(intent))) {
-    query = `${query}\n${COMPANY_OVERVIEW_RETRIEVAL_TERMS}`;
+  const broad = Array.isArray(intents) && intents.some((intent) => BROAD_COMPANY_INTENTS.has(intent));
+  const baseQuery = contextualQuery || message;
+  const queries = broad
+    ? BROAD_COMPANY_RETRIEVAL_FACETS.map((facet, index) =>
+      `${baseQuery}\n${index === 0 ? COMPANY_OVERVIEW_RETRIEVAL_TERMS : ""}\n${facet}`)
+    : [baseQuery];
+  const observations = [];
+  for (const [index, rawQuery] of queries.entries()) {
+    const args = { query: rawQuery.slice(0, 1800) };
+    let result;
+    try {
+      if (typeof tool?.run !== "function") throw new Error("Approved knowledge search is unavailable.");
+      result = await tool.run(args, toolContext);
+    } catch (error) {
+      result = {
+        ok: false,
+        status: "error",
+        reasonCode: "RETRIEVAL_FAILED",
+        message: String(error?.message || error).slice(0, 200),
+        modelObservation: { type: "approved_knowledge", status: "error", evidence: [], truncated: false }
+      };
+    }
+    observations.push({ step: 0, tool: "searchApprovedKnowledge", args, result, retrievalFacet: broad ? index + 1 : null });
   }
-  query = query.slice(0, 1800);
-  const args = { query };
-  let result;
-  try {
-    if (typeof tool?.run !== "function") throw new Error("Approved knowledge search is unavailable.");
-    result = await tool.run(args, toolContext);
-  } catch (error) {
-    result = {
-      ok: false,
-      status: "error",
-      reasonCode: "RETRIEVAL_FAILED",
-      message: String(error?.message || error).slice(0, 200),
-      modelObservation: { type: "approved_knowledge", status: "error", evidence: [], truncated: false }
-    };
-  }
-  return [{ step: 0, tool: "searchApprovedKnowledge", args, result }];
+  return observations;
 }
 
 // Everything a tool might need, bound once per turn. Deliberately narrow:

@@ -347,9 +347,10 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     await refreshLeadTemperature(userId);
     stage("lead_temperature", stageStartedAt);
 
-    if (booking.appointment?.status === "pending_review" && booking.details && booking.user) {
+    if (["pending_review", "pending_calendar", "creating"].includes(booking.appointment?.status) && booking.details && booking.user) {
       try {
         const appointmentId = booking.appointment.id;
+        const expectedAppointmentStatus = booking.appointment.status;
         const payload = {
           name: booking.user.profile?.name || "",
           phone: booking.user.phone || String(userId || "").replace(/@.+$/, ""),
@@ -361,7 +362,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
         await store.createNotification({
           appointmentId,
           kind: "owner_review",
-          expectedAppointmentStatus: "pending_review",
+          expectedAppointmentStatus,
           idempotencyKey: `${appointmentId}:owner-review-email`,
           payload
         });
@@ -370,7 +371,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
             appointmentId,
             kind: "customer_message",
             recipient: process.env.OWNER_WHATSAPP_JID,
-            expectedAppointmentStatus: "pending_review",
+            expectedAppointmentStatus,
             idempotencyKey: `${appointmentId}:owner-review-whatsapp`,
             payload: { text: `New WhatsApp appointment request for review: ${payload.name || payload.phone}, ${payload.startsAt} (${payload.timezone}). ${payload.purpose}` }
           });

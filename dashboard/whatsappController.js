@@ -4,6 +4,14 @@ import { normalizeWhatsAppNumber } from "./phoneNumber.js";
 
 export { normalizeWhatsAppNumber };
 
+const WORKER_ONLY_CALENDAR_KEYS = ["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET", "GOOGLE_CALENDAR_REFRESH_TOKEN", "GOOGLE_CALENDAR_CLIENT_EMAIL", "GOOGLE_CALENDAR_PRIVATE_KEY"];
+
+function workerEnvironment(source, additions) {
+  const env = { ...source };
+  for (const key of WORKER_ONLY_CALENDAR_KEYS) delete env[key];
+  return { ...env, ...additions };
+}
+
 export function createWhatsAppController({ botRoot, spawn = nodeSpawn, timers = globalThis, replyEditTimeoutMs = 15000 }) {
   let child = null;
   let state = "disconnected";
@@ -143,9 +151,9 @@ export function createWhatsAppController({ botRoot, spawn = nodeSpawn, timers = 
     state = "connecting";
     workerConnected = false;
     try {
-      child = spawn(process.execPath, ["src/bot.js"], {
+      child = spawn(process.execPath, ["scripts/dashboardManagedWorker.js"], {
         cwd: botRoot,
-        env: { ...process.env, RAFA_PHONE_NUMBER: normalized, RAFA_PAIRING_METHOD: method, RAFA_DASHBOARD_MANAGED: "true" },
+        env: workerEnvironment(process.env, { RAFA_PHONE_NUMBER: normalized, RAFA_PAIRING_METHOD: method, RAFA_DASHBOARD_MANAGED: "true" }),
         stdio: ["ignore", "ignore", "pipe", "ipc"]
       });
     } catch (cause) {
@@ -222,6 +230,24 @@ export function createWhatsAppController({ botRoot, spawn = nodeSpawn, timers = 
     return snapshot();
   }
 
+  function restart() {
+    if (!child || state !== "connected") return Promise.resolve({ restarted: false, reason: "worker_not_connected" });
+    const worker = child;
+    const number = phoneNumber;
+    const method = pairingMethod;
+    return new Promise((resolve) => {
+      const timer = timers.setTimeout(() => {
+        if (child === worker) worker.kill();
+      }, 5000);
+      worker.once("exit", () => {
+        timers.clearTimeout(timer);
+        try { resolve({ restarted: true, state: connect(number, method).state }); }
+        catch { resolve({ restarted: false, reason: "worker_restart_failed" }); }
+      });
+      disconnect();
+    });
+  }
+
   function deliverReplyEdit({ userId, text, mode, messageKey = null } = {}) {
     if (!child || !workerConnected || state !== "connected") {
       return Promise.reject(new Error("WhatsApp worker is not connected."));
@@ -283,5 +309,5 @@ export function createWhatsAppController({ botRoot, spawn = nodeSpawn, timers = 
     });
   }
 
-  return { connect, disconnect, snapshot, deliverReplyEdit, deliverCustomerText };
+  return { connect, disconnect, restart, snapshot, deliverReplyEdit, deliverCustomerText };
 }

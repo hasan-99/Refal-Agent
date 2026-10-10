@@ -491,6 +491,10 @@ input[type="checkbox"] { accent-color: #16836f; }
 .booking-policy-actions span { color: var(--muted); font-size: 11px; }
 .booking-policy-actions .calendar-check-success { color: #246d92; }
 .booking-policy-actions .calendar-check-error { color: #a13f3a; }
+.calendar-oauth-setup { display: grid; gap: 8px; margin: 12px 0 18px; padding: 13px; border: 1px solid #d7e4eb; border-radius: 6px; background: #f7fafc; }
+.calendar-oauth-setup textarea { width: 100%; min-height: 100px; padding: 9px; resize: vertical; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.calendar-oauth-setup small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.calendar-oauth-setup a { color: #246d92; font-size: 11px; font-weight: 700; }
 .booking-contact, .booking-time { display: grid; gap: 3px; }
 .booking-contact strong, .booking-time strong { font-size: 11px; }
 .booking-contact small, .booking-time small { color: var(--muted); font-size: 10px; }
@@ -818,6 +822,10 @@ input[type="checkbox"] { accent-color: #328db8; }
 .booking-empty-action:hover { border-color: #8fb8cd; background: #eaf5fa; }
 .booking-readiness { border-color: #d4e3eb; background: #f4f9fc; }
 .booking-readiness-icon { color: #287da8; background: #e5f2f8; }
+.booking-readiness.is-ready { border-color: #cce3d7; background: #f3faf6; }
+.booking-readiness.is-ready .booking-readiness-icon { color: #17694f; background: #e3f3ea; }
+.booking-readiness.is-blocked { border-color: #ead8bb; background: #fffaf1; }
+.booking-readiness.is-blocked .booking-readiness-icon { color: #98621e; background: #f8ecd6; }
 
 .agent-rail:not(.collapsed) {
   border-color: #d5e2e9;

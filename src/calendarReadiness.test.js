@@ -1,6 +1,22 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
-const { createCalendarReadinessTracker } = require("./calendarReadiness.js");
+const { createCalendarReadinessTracker, isBookingPolicyReady } = require("./calendarReadiness.js");
+
+test("Meet-link preference does not block otherwise complete calendar booking readiness", () => {
+  const policy = {
+    durationOwnerConfirmed: true,
+    durationMinutes: 60,
+    minimumNoticeHours: 24,
+    reminderHours: [24, 1],
+    createMeetLink: false
+  };
+
+  assert.equal(isBookingPolicyReady(policy), true);
+  assert.equal(isBookingPolicyReady({ ...policy, createMeetLink: true }), true);
+  assert.equal(isBookingPolicyReady({ ...policy, durationOwnerConfirmed: false }), false);
+  assert.equal(isBookingPolicyReady({ ...policy, minimumNoticeHours: null }), false);
+  assert.equal(isBookingPolicyReady({ ...policy, reminderHours: [] }), false);
+});
 
 test("Calendar readiness requires a recent verification for the selected calendar", () => {
   const tracker = createCalendarReadinessTracker(60_000);

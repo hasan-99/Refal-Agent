@@ -160,7 +160,7 @@ test("getBookingAvailability with no slot returns suggested times formatted by t
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "suggestions");
-  assert.ok(result.data.length > 0 && result.data.length <= 3);
+  assert.ok(result.data.length > 0 && result.data.length <= 2);
   assert.equal(result.userSafeSummary.length, result.data.length);
   assert.match(result.userSafeSummary[0], /\d{2}:\d{2}/);
 });

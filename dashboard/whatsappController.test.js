@@ -44,13 +44,21 @@ test("normalizes international numbers and rejects ambiguous or invalid input", 
 
 test("connect launches one managed worker with the requested number and streams pairing state", () => {
   const { controller, children } = harness();
+  const previousClientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
+  const previousClientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
+  process.env.GOOGLE_CALENDAR_CLIENT_ID = "dashboard-must-not-forward-this";
+  process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "dashboard-must-not-forward-this-either";
   const result = controller.connect("+357 99123456");
+  if (previousClientId === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_ID; else process.env.GOOGLE_CALENDAR_CLIENT_ID = previousClientId;
+  if (previousClientSecret === undefined) delete process.env.GOOGLE_CALENDAR_CLIENT_SECRET; else process.env.GOOGLE_CALENDAR_CLIENT_SECRET = previousClientSecret;
   assert.equal(result.state, "connecting");
   assert.equal(result.phoneNumber, "+35799123456");
   assert.equal(children.length, 1);
   assert.equal(children[0].args[2].env.RAFA_PHONE_NUMBER, "+35799123456");
   assert.equal(children[0].args[2].env.RAFA_PAIRING_METHOD, "code");
   assert.equal(children[0].args[2].env.RAFA_DASHBOARD_MANAGED, "true");
+  assert.equal(children[0].args[2].env.GOOGLE_CALENDAR_CLIENT_ID, undefined);
+  assert.equal(children[0].args[2].env.GOOGLE_CALENDAR_CLIENT_SECRET, undefined);
 
   children[0].emit("message", { type: "pairing-code", code: "ABCD-EFGH" });
   assert.equal(controller.snapshot().state, "pairing");
@@ -74,6 +82,20 @@ test("QR pairing state stays ephemeral and carries the expected account number",
   children[0].emit("message", { type: "connection", connection: "open", phoneNumber: "+35799260049" });
   assert.equal(controller.snapshot().state, "connected");
   assert.equal(controller.snapshot().pairingQr, "");
+});
+
+test("restarts the connected managed worker with freshly loaded worker-only credentials", async () => {
+  const { controller, children } = harness();
+  controller.connect("+35799123456", "qr");
+  markConnected(children[0]);
+  const restarting = controller.restart();
+  children[0].emit("exit", 0);
+  const result = await restarting;
+  assert.equal(result.restarted, true);
+  assert.equal(children.length, 2);
+  assert.equal(children[1].args[1][0], "scripts/dashboardManagedWorker.js");
+  assert.equal(children[1].args[2].env.RAFA_PHONE_NUMBER, "+35799123456");
+  assert.equal(children[1].args[2].env.RAFA_PAIRING_METHOD, "qr");
 });
 
 test("rejects unsupported pairing methods before starting a worker", () => {

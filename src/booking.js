@@ -56,7 +56,7 @@ function appointmentChangeIntent(text) {
 
 function parseBookingDetails(text, policy, now = new Date()) {
   if (!policy) return null;
-  const input = normalizeArabicBookingText(text);
+  const input = normalizeBookingText(text);
   const referenceOffset = timezoneOffsetMinutes(now, policy.timezone);
   const parsed = chrono.parse(input, { instant: now, timezone: referenceOffset }, { forwardDate: true })[0];
   if (!parsed || !parsed.start.isCertain("hour")) return null;
@@ -163,6 +163,14 @@ function hasCalendarConfig(policy) {
   );
 }
 
+function hasBookingPolicy(policy) {
+  try { policy = validateBookingPolicy(policy); } catch { return false; }
+  try { new Intl.DateTimeFormat("en", { timeZone: policy.timezone }); }
+  catch { return false; }
+  return Boolean(calendarId(policy) && policy.durationOwnerConfirmed && policy.durationMinutes &&
+    policy.minimumNoticeHours !== null && policy.reminderHours.length);
+}
+
 async function scheduleBookingReminders({ store, appointment, userId, now, policy }) {
   if (typeof store.createReminder !== "function") throw new Error("The durable Supabase reminder queue is unavailable.");
   const offsets = [...new Set([...(policy.reminderHours || []), 1])];
@@ -234,7 +242,7 @@ async function changeAppointmentStatus({ store, appointmentId, status, actor = "
   const appointment = await store.getAppointment(appointmentId);
   if (!appointment) throw new Error("Appointment was not found.");
   if (appointment.status === status) return appointment;
-  if (!["confirmed", "pending_review"].includes(appointment.status)) throw new Error("Only a confirmed or pending appointment can be changed.");
+  if (!["confirmed", "pending_review", "awaiting_customer_confirmation", "creating", "pending_calendar"].includes(appointment.status)) throw new Error("Only an active appointment can be changed.");
   let calendarChanged = false;
   if (appointment.status === "confirmed" && appointment.google_event_id) {
     try {
@@ -343,15 +351,18 @@ async function isAvailable({ start, end }, policy) {
   return busy.length === 0;
 }
 
-async function suggestAvailableTimes(policyValue, { now = new Date(), count = 3, horizonDays = 21 } = {}) {
+// Shared trusted slot-listing capability for both deterministic WhatsApp
+// booking and the Agent tool registry. Callers may narrow the date horizon
+// and count, but availability always comes from Google Calendar free/busy.
+async function listCalendarSlots(policyValue, { now = new Date(), count = 3, horizonDays = 21, firstDayOffset = 1 } = {}) {
   const policy = validateBookingPolicy(policyValue);
   const today = partsAt(now, policy.timezone);
-  const firstDay = Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day)) + 86400000;
+  const firstDay = Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day)) + firstDayOffset * 86400000;
   const startMinute = Number(policy.startTime.slice(0, 2)) * 60 + Number(policy.startTime.slice(3));
   const endMinute = Number(policy.endTime.slice(0, 2)) * 60 + Number(policy.endTime.slice(3));
   const candidates = [];
-  for (let dayOffset = 1; dayOffset <= horizonDays && candidates.length < 500; dayOffset++) {
-    const day = new Date(firstDay + (dayOffset - 1) * 86400000);
+  for (let dayOffset = 0; dayOffset < horizonDays && candidates.length < 500; dayOffset++) {
+    const day = new Date(firstDay + dayOffset * 86400000);
     const weekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay();
     if (!policy.weekdays.includes(weekday)) continue;
     const year = day.getUTCFullYear();
@@ -463,12 +474,12 @@ function formatBookingTime(date, policy, language = "english") {
 }
 
 function bookingPrompt(policy, language = "english") {
-  if (language === "arabic") return `أرسل اليوم والوقت المفضلين بين ${policy.startTime} و${policy.endTime} (${policy.timezone}) مع سبب مختصر، أو اختر موعدك مباشرة من هنا: ${CUSTOMER_BOOKING_URL}`;
-  if (language === "greek") return `Στείλτε την προτιμώμενη ημέρα και ώρα μεταξύ ${policy.startTime} και ${policy.endTime} (${policy.timezone}), μαζί με σύντομο σκοπό συνάντησης, ή επιλέξτε ώρα απευθείας εδώ: ${CUSTOMER_BOOKING_URL}`;
-  return `Send your preferred weekday and time between ${policy.startTime} and ${policy.endTime} (${policy.timezone}), plus a brief meeting purpose, or choose a time directly here: ${CUSTOMER_BOOKING_URL}`;
+  if (language === "arabic") return `هل يناسبك غدًا أو يوم عمل لاحق؟ أجب «غدًا» أو أرسل تاريخًا لاحقًا لأعرض لك حتى موعدين متاحين بين ${policy.startTime} و${policy.endTime} (${policy.timezone})، أو اختر موعدك مباشرة من هنا: ${CUSTOMER_BOOKING_URL}`;
+  if (language === "greek") return `Σας εξυπηρετεί αύριο ή κάποια επόμενη εργάσιμη ημέρα; Απαντήστε «αύριο» ή στείλτε μια μεταγενέστερη ημερομηνία για να σας δείξω έως δύο διαθέσιμες ώρες μεταξύ ${policy.startTime} και ${policy.endTime} (${policy.timezone}), ή επιλέξτε ώρα εδώ: ${CUSTOMER_BOOKING_URL}`;
+  return `Would tomorrow or a later working day suit you better? Reply “tomorrow” or send a later date and I’ll show up to two currently available times between ${policy.startTime} and ${policy.endTime} (${policy.timezone}), or choose a time directly here: ${CUSTOMER_BOOKING_URL}`;
 }
 
-function normalizeArabicBookingText(text) {
+function normalizeBookingText(text) {
   const weekdays = [
     [/الاثنين|الإثنين/g, "Monday"],
     [/الثلاثاء/g, "Tuesday"],
@@ -492,7 +503,38 @@ function normalizeArabicBookingText(text) {
     .replace(/صباحًا|صباحاً|صباحا|الصبح/g, "AM")
     .replace(/مساءً|مساءاً|مساءا|مساء|المساء/g, "PM");
   for (const [pattern, replacement] of [...weekdays, ...months]) value = value.replace(pattern, replacement);
+  const greekWords = [
+    [/στις|στο/giu, "at"],
+    [/δευτέρα/giu, "Monday"], [/τρίτη/giu, "Tuesday"], [/τετάρτη/giu, "Wednesday"],
+    [/πέμπτη/giu, "Thursday"], [/παρασκευή/giu, "Friday"], [/σάββατο/giu, "Saturday"],
+    [/κυριακή/giu, "Sunday"], [/αύριο/giu, "tomorrow"], [/σήμερα/giu, "today"],
+    [/ιανουαρίου|ιανουάριος/giu, "January"], [/φεβρουαρίου|φεβρουάριος/giu, "February"],
+    [/μαρτίου|μάρτιος/giu, "March"], [/απριλίου|απρίλιος/giu, "April"],
+    [/μαΐου|μαΐος/giu, "May"], [/ιουνίου|ιούνιος/giu, "June"],
+    [/ιουλίου|ιούλιος/giu, "July"], [/αυγούστου|αύγουστος/giu, "August"],
+    [/σεπτεμβρίου|σεπτέμβριος/giu, "September"], [/οκτωβρίου|οκτώβριος/giu, "October"],
+    [/νοεμβρίου|νοέμβριος/giu, "November"], [/δεκεμβρίου|δεκέμβριος/giu, "December"]
+  ];
+  for (const [pattern, replacement] of greekWords) value = value.replace(pattern, replacement);
   return value;
+}
+
+function isResumeYes(text) { return /^(?:yes|yeah|yep|ναι|نαι|نαι|نعم|أجل)[.!،\s]*$/iu.test(String(text || "").trim()); }
+function isResumeNo(text) { return /^(?:no|nope|όχι|οχι|لا)[.!،\s]*$/iu.test(String(text || "").trim()); }
+
+function bookingDayOffset(text, policy, now) {
+  const input = normalizeBookingText(text).trim();
+  if (/^tomorrow[.!،\s]*$/iu.test(input)) return 1;
+  if (/^today[.!،\s]*$/iu.test(input)) return 0;
+  if (!/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/. -]\d{1,2}(?:[/. -]\d{2,4})?\b/iu.test(input)) return null;
+  const parsed = chrono.parse(input, { instant: now, timezone: timezoneOffsetMinutes(now, policy.timezone) }, { forwardDate: true })[0];
+  if (!parsed || parsed.start.isCertain("hour")) return null;
+  const requested = partsAt(parsed.start.date(), policy.timezone);
+  const current = partsAt(now, policy.timezone);
+  const requestedDay = Date.UTC(Number(requested.year), Number(requested.month) - 1, Number(requested.day));
+  const currentDay = Date.UTC(Number(current.year), Number(current.month) - 1, Number(current.day));
+  const offset = Math.round((requestedDay - currentDay) / 86400000);
+  return offset >= 0 && offset <= 366 ? offset : null;
 }
 
 async function handleBookingMessage({ userId, text, store, user: existingUser = null, now = new Date() }) {
@@ -519,7 +561,7 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
     };
   }
 
-  if (["awaiting_details", "awaiting_confirmation"].includes(bookingState)) {
+  if (["awaiting_details", "awaiting_confirmation", "awaiting_slot_choice"].includes(bookingState)) {
     const startedAt = Date.parse(user.booking?.startedAt || "");
     // Unfinished conversational drafts should not hijack future messages. A
     // confirmed/pending appointment is unaffected; only temporary draft states
@@ -532,9 +574,70 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
 
   if (!bookingState && !isBookingRequest(text) && !changeIntent) return null;
 
-  if (bookingState === "awaiting_details" && !isBookingDetailsReply(text, !isPlausibleCustomerName(user.profile?.name) && !user.profile?.nameOverride) && !changeIntent && !isBookingRequest(text)) return null;
+  // An informational turn can be answered without discarding the draft. If a
+  // later date-like message arrives, ask once whether it resumes that draft;
+  // date-shaped content alone must not silently switch the conversation back.
+  if (bookingState === "awaiting_details" && user.booking?.interrupted) {
+    if (user.booking?.resumePrompted) {
+      if (isResumeYes(text)) {
+        text = user.booking.pendingDetailsReply || "";
+        await store.updateUser(userId, (draft) => {
+          draft.booking = { ...draft.booking, interrupted: false, resumePrompted: false, pendingDetailsReply: null };
+        });
+        user.booking = { ...user.booking, interrupted: false, resumePrompted: false, pendingDetailsReply: null };
+      } else {
+        await store.updateUser(userId, (draft) => { draft.booking = null; });
+        return null;
+      }
+    } else if (isBookingDetailsReply(text, false)) {
+      await store.updateUser(userId, (draft) => {
+        draft.booking = { ...draft.booking, resumePrompted: true, pendingDetailsReply: String(text).slice(0, 1000) };
+      });
+      return {
+        response: language === "arabic" ? "هل تريد متابعة طلب الموعد السابق بهذا الوقت؟ أجب بنعم أو لا." :
+          language === "greek" ? "Θέλετε να συνεχίσουμε το προηγούμενο αίτημα ραντεβού με αυτή την ώρα; Απαντήστε ναι ή όχι." :
+            "Would you like to resume the earlier appointment request with this time? Please reply yes or no.",
+        event: null
+      };
+    }
+  }
+
+  if (bookingState === "awaiting_slot_choice" && user.booking?.interrupted) {
+    if (user.booking?.resumePrompted) {
+      if (isResumeYes(text)) {
+        text = user.booking.pendingSlotChoice || "";
+        await store.updateUser(userId, (draft) => {
+          draft.booking = { ...draft.booking, interrupted: false, resumePrompted: false, pendingSlotChoice: null };
+        });
+        user.booking = { ...user.booking, interrupted: false, resumePrompted: false, pendingSlotChoice: null };
+      } else if (isResumeNo(text)) {
+        await store.updateUser(userId, (draft) => { draft.booking = null; });
+        return null;
+      } else {
+        // A question during the disambiguation turn is still an informational
+        // turn. Keep both the original draft and the pending choice intact.
+        return null;
+      }
+    } else if (slotChoiceIndex(text, user.booking?.slotOptions) >= 0) {
+      await store.updateUser(userId, (draft) => {
+        draft.booking = { ...draft.booking, resumePrompted: true, pendingSlotChoice: String(text).trim() };
+      });
+      return {
+        response: language === "arabic" ? "هل تريد متابعة طلب الموعد السابق؟ أجب بنعم أو لا." :
+          language === "greek" ? "Θέλετε να συνεχίσετε το προηγούμενο αίτημα ραντεβού; Απαντήστε ναι ή όχι." :
+            "Would you like to resume the earlier appointment request? Please reply yes or no.",
+        event: null
+      };
+    }
+  }
+
+  if (bookingState === "awaiting_details" && !isBookingDetailsReply(text, !isPlausibleCustomerName(user.profile?.name) && !user.profile?.nameOverride) && !changeIntent && !isBookingRequest(text)) {
+    await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, interrupted: true }; });
+    user.booking = { ...user.booking, interrupted: true };
+    return null;
+  }
   if (bookingState === "awaiting_confirmation" && !isBookingConfirmationReply(text) && !changeIntent && !isBookingRequest(text)) return null;
-  if (bookingState && !["awaiting_details", "awaiting_confirmation"].includes(bookingState) && !changeIntent && !isBookingRequest(text)) return null;
+  if (bookingState && !["awaiting_details", "awaiting_confirmation", "awaiting_slot_choice"].includes(bookingState) && !changeIntent && !isBookingRequest(text)) return null;
 
   if (changeIntent) {
     if (!user.booking?.appointmentId) {
@@ -562,7 +665,7 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
 
   if (restrictedReply) return { response: restrictedReply, event: null };
 
-  if (!hasCalendarConfig(policy)) {
+  if (!hasBookingPolicy(policy)) {
     return {
       response: language === "arabic"
         ? `الحجز المباشر غير متاح حاليًا. يمكنك اختيار موعدك من هنا: ${CUSTOMER_BOOKING_URL}`
@@ -573,30 +676,62 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
     };
   }
 
-  if (!bookingState) {
+  let calendarUnavailable = Boolean(user.booking?.calendarUnavailable);
+  if (!bookingState && hasCalendarConfig(policy)) {
     try {
       await verifyCalendarAccess(policy, now);
     } catch {
-      return { response: calendarAccessFailure(language), event: null };
+      calendarUnavailable = true;
     }
+  }
+  if (!hasCalendarConfig(policy)) calendarUnavailable = true;
+
+  if (bookingState === "awaiting_slot_choice") {
+    const options = Array.isArray(user.booking?.slotOptions) ? user.booking.slotOptions : [];
+    const index = slotChoiceIndex(text, options);
+    if (index < 0 || !options[index]) {
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, interrupted: true }; });
+      user.booking = { ...user.booking, interrupted: true };
+      return null;
+    }
+    await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "awaiting_details", selectedSlot: options[index], slotOptions: undefined }; });
+    user.booking = { ...user.booking, status: "awaiting_details", selectedSlot: options[index] };
+    return { response: language === "arabic" ? "ما الغرض المختصر من الاجتماع؟" : language === "greek" ? "Ποιος είναι ο σύντομος σκοπός της συνάντησης;" : "What is the brief purpose of the meeting?", event: null };
   }
 
   if (!bookingState) {
     await store.updateUser(userId, (draft) => {
-      draft.booking = { status: "awaiting_details", startedAt: now.toISOString(), idempotencyKey: randomUUID() };
+      draft.booking = { status: "awaiting_details", startedAt: now.toISOString(), idempotencyKey: randomUUID(), calendarUnavailable };
     });
-    const prompt = bookingPrompt(policy, language);
-    return { response: isPlausibleCustomerName(user.profile?.name) ? prompt : `${prompt}\n\n${namePrompt(language)}`, event: null };
+    const reply = calendarUnavailable
+      ? (language === "arabic" ? `لا أستطيع التحقق من توفر التقويم الآن. أرسل التاريخ والوقت اللذين تفضلهما بين ${policy.startTime} و${policy.endTime} (${policy.timezone}) مع سبب مختصر، وسأطلب من الفريق مراجعتهما دون تأكيد الموعد.` : language === "greek" ? `Δεν μπορώ να επαληθεύσω τη διαθεσιμότητα του ημερολογίου τώρα. Στείλτε την ημερομηνία και ώρα που προτιμάτε μεταξύ ${policy.startTime} και ${policy.endTime} (${policy.timezone}) μαζί με σύντομο σκοπό, και θα ζητήσω από την ομάδα να τα ελέγξει χωρίς να επιβεβαιώσω το ραντεβού.` : `I can’t verify calendar availability right now. Send your preferred date and time between ${policy.startTime} and ${policy.endTime} (${policy.timezone}), plus a brief purpose, and I’ll ask the team to review it without confirming the appointment.`)
+      : bookingPrompt(policy, language);
+    return { response: isPlausibleCustomerName(user.profile?.name) ? reply : `${reply}\n\n${namePrompt(language)}`, event: null };
   }
 
   if (bookingState === "awaiting_details") {
+    const dayPreference = bookingDayOffset(text, policy, now);
+    if (dayPreference !== null) {
+      if (calendarUnavailable) return { response: language === "arabic" ? "لا أستطيع عرض مواعيد مؤكدة الآن. أرسل وقتك المفضل وسأطلب من الفريق مراجعته دون ادعاء توفره." : language === "greek" ? "Δεν μπορώ να εμφανίσω επιβεβαιωμένες ώρες τώρα. Στείλτε την προτιμώμενη ώρα και θα ζητήσω από την ομάδα να την ελέγξει χωρίς να ισχυριστώ ότι είναι διαθέσιμη." : "I can’t show verified times right now. Send your preferred time and I’ll ask the team to review it without claiming it is available.", event: null };
+      let slots = [];
+      try { slots = await listCalendarSlots(policy, { now, count: 2, firstDayOffset: dayPreference, horizonDays: 1 }); }
+      catch { calendarUnavailable = true; }
+      if (calendarUnavailable) return { response: language === "arabic" ? "تعذر التحقق من التقويم الآن. أرسل وقتك المفضل لطلب مراجعته من الفريق." : language === "greek" ? "Δεν ήταν δυνατή η επαλήθευση του ημερολογίου. Στείλτε την ώρα που προτιμάτε για έλεγχο από την ομάδα." : "I couldn’t verify the calendar just now. Send your preferred time for the team to review.", event: null };
+      if (!slots.length) return { response: language === "arabic" ? "لا توجد مواعيد متاحة مؤكدة في ذلك اليوم. اختر اليوم الآخر أو أرسل تاريخًا ووقتًا آخر." : language === "greek" ? "Δεν βρέθηκαν διαθέσιμες επιβεβαιωμένες ώρες εκείνη την ημέρα. Επιλέξτε την άλλη ημέρα ή στείλτε άλλη ημερομηνία και ώρα." : "I couldn’t find a verified available time that day. Choose the other day or send another date and time.", event: null };
+      const slotOptions = slots.map(({ start, end }) => ({ start: start.toISOString(), end: end.toISOString() }));
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "awaiting_slot_choice", slotOptions }; });
+      const listed = slotOptions.map((slot, i) => `${i + 1}. ${formatBookingTime(new Date(slot.start), policy, language)}`).join(language === "arabic" ? "، " : "; ");
+      return { response: language === "arabic" ? `هذه مواعيد متاحة حاليًا: ${listed}. اختر 1 أو 2.` : language === "greek" ? `Αυτές οι ώρες είναι διαθέσιμες τώρα: ${listed}. Επιλέξτε 1 ή 2.` : `These times are currently available: ${listed}. Choose 1 or 2.`, event: null, slots: slotOptions };
+    }
     const name = !isPlausibleCustomerName(user.profile?.name) ? (extractCustomerName(text) || extractBookingNameReply(text)) : null;
     if (name && typeof store.updateUser === "function") {
       await store.updateUser(userId, (draft) => { draft.profile = { ...(draft.profile || {}), name }; });
       const acknowledgment = language === "arabic" ? `تشرفت بك يا ${name}.` : language === "greek" ? `Χάρηκα για τη γνωριμία, ${name}.` : `Nice to meet you, ${name}.`;
       return { response: `${acknowledgment} ${bookingPrompt(policy, language)}`, event: null };
     }
-    const details = parseBookingDetails(text, policy, now);
+    const details = user.booking?.selectedSlot
+      ? { start: new Date(user.booking.selectedSlot.start), end: new Date(user.booking.selectedSlot.end), purpose: String(text || "").trim() }
+      : parseBookingDetails(text, policy, now);
     if (!details) {
       return {
         response: language === "arabic"
@@ -649,10 +784,12 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
       event: null
     };
 
-    let available;
-    try { available = await isAvailable(details, policy); }
-    catch { return { response: calendarAccessFailure(language), event: null }; }
-    if (!available) {
+    let available = false;
+    if (!calendarUnavailable) {
+      try { available = await isAvailable(details, policy); }
+      catch { calendarUnavailable = true; }
+    }
+    if (!available && !calendarUnavailable) {
       return {
         response: language === "arabic"
           ? `هذا الموعد غير متاح. ${bookingPrompt(policy, language)}`
@@ -663,23 +800,66 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
       };
     }
 
+    if (typeof store.createAppointment !== "function") {
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "failed" }; });
+      return { response: language === "arabic" ? "تعذر حفظ طلب الموعد بأمان. لم يتم تأكيد أي موعد." : language === "greek" ? "Δεν ήταν δυνατή η ασφαλής αποθήκευση του αιτήματος. Δεν επιβεβαιώθηκε ραντεβού." : "I couldn’t safely save the appointment request. No appointment was confirmed.", event: null };
+    }
+    const appointmentDetails = normalizeAppointmentDetails({ user, purpose: details.purpose, timezone: policy.timezone, language, format: user.profile?.meetingFormat });
+    let created;
+    try {
+      created = await store.createAppointment({
+        userId,
+        startsAt: details.start.toISOString(),
+        endsAt: details.end.toISOString(),
+        timezone: policy.timezone,
+        durationMinutes: policy.durationMinutes,
+        purpose: details.purpose,
+        idempotencyKey: user.booking.idempotencyKey || randomUUID(),
+        calendarId: calendarId(policy),
+        status: "awaiting_customer_confirmation",
+        metadata: { appointmentDetails, availabilityVerified: !calendarUnavailable }
+      });
+    } catch (error) {
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "failed" }; });
+      return { response: language === "arabic" ? "تعذر حفظ طلب الموعد. لم يتم تأكيد أي موعد؛ حاول مرة أخرى لاحقًا." : language === "greek" ? "Δεν ήταν δυνατή η αποθήκευση του αιτήματος. Δεν έχει επιβεβαιωθεί ραντεβού· δοκιμάστε ξανά αργότερα." : "I couldn’t save the appointment request. No appointment is confirmed; please try again later.", event: null, error };
+    }
+    const appointment = created?.appointment || created;
+    if (!appointment?.id || appointment.conflict || appointment.status !== "awaiting_customer_confirmation") {
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "failed" }; });
+      return { response: language === "arabic" ? "لم أتمكن من حفظ طلب الموعد في الحالة الصحيحة. لم يتم تأكيد موعد." : language === "greek" ? "Δεν αποθηκεύτηκε το αίτημα στη σωστή κατάσταση. Δεν επιβεβαιώθηκε ραντεβού." : "I couldn’t save the appointment request in the correct state. No appointment was confirmed.", event: null };
+    }
+
     await store.updateUser(userId, (draft) => {
       draft.booking = {
         status: "awaiting_confirmation",
         startedAt: user.booking.startedAt,
         idempotencyKey: user.booking.idempotencyKey || randomUUID(),
+        appointmentId: appointment.id,
         start: details.start.toISOString(),
         end: details.end.toISOString(),
-        purpose: details.purpose
+        purpose: details.purpose,
+        calendarUnavailable
       };
     });
 
+    if (calendarUnavailable) {
+      const time = formatBookingTime(details.start, policy, language);
+      return {
+        response: language === "arabic"
+          ? `لا أستطيع تأكيد توفر ${time}. هل تريد مني إرسال طلب لهذا الوقت إلى الفريق لمراجعته؟ أجب بنعم أو لا.`
+          : language === "greek"
+            ? `Δεν μπορώ να επιβεβαιώσω ότι η ώρα ${time} είναι διαθέσιμη. Θέλετε να στείλω αίτημα για αυτή την ώρα στην ομάδα για έλεγχο; Απαντήστε ναι ή όχι.`
+            : `I can’t verify that ${time} is available. Would you like me to send a request for this exact time to the team for review? Please reply yes or no.`,
+        event: null
+      };
+    }
+
     return {
       response: language === "arabic"
-        ? `الموعد متاح: ${formatBookingTime(details.start, policy, language)} لمدة ${policy.durationMinutes} دقيقة. الغرض: ${details.purpose}. أجب بنعم للتأكيد أو لا لاختيار وقت آخر.`
+        ? `الموعد متاح: ${formatBookingTime(details.start, policy, language)} لمدة ${policy.durationMinutes} دقيقة. الغرض: ${details.purpose}. للتأكيد على هذا الوقت المحدد، أجب بنعم، ${exactBookingTime(details.start, policy)}، أو أجب لا لاختيار وقت آخر.`
         : language === "greek"
-          ? `Βρήκα διαθέσιμη ώρα: ${formatBookingTime(details.start, policy, language)} για ${policy.durationMinutes} λεπτά. Σκοπός: ${details.purpose}. Απαντήστε ναι για επιβεβαίωση ή όχι για άλλη ώρα.`
-          : `I found that time available: ${formatBookingTime(details.start, policy, language)} for ${policy.durationMinutes} minutes. Purpose: ${details.purpose}. Reply yes to confirm or no to choose another time.`,
+          ? `Βρήκα διαθέσιμη ώρα: ${formatBookingTime(details.start, policy, language)} για ${policy.durationMinutes} λεπτά. Σκοπός: ${details.purpose}. Για επιβεβαίωση αυτής της ώρας, απαντήστε «ναι, ${exactBookingTime(details.start, policy)}», ή όχι για άλλη ώρα.`
+        : `I found that time available: ${formatBookingTime(details.start, policy, language)} for ${policy.durationMinutes} minutes. Purpose: ${details.purpose}. To confirm this exact time, reply yes with the time (for example, “yes, 11:00”); reply no to choose another time.`,
       event: null
     };
   }
@@ -687,11 +867,19 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
   if (bookingState === "awaiting_confirmation") {
     const answer = String(text || "").trim().toLowerCase();
     if (/^(no|nope|cancel|لا|مش|όχι|άκυρο|ακύρωση)$/.test(answer)) {
+      if (user.booking.appointmentId) {
+        try { await store.updateAppointment(user.booking.appointmentId, { status: "cancelled", cancelledAt: now.toISOString() }); }
+        catch (error) {
+          return { response: language === "arabic" ? "تعذر إلغاء طلب الموعد في النظام الآن. لم يتم إنشاء حدث تقويم." : language === "greek" ? "Δεν ήταν δυνατή η ακύρωση του αιτήματος τώρα. Δεν δημιουργήθηκε συμβάν ημερολογίου." : "I couldn’t cancel the appointment request in the system just now. No calendar event was created.", event: null, error };
+        }
+      }
       await store.updateUser(userId, (draft) => { draft.booking = null; });
       return { response: language === "arabic" ? `لا مشكلة. ${bookingPrompt(policy, language)}` : language === "greek" ? `Κανένα πρόβλημα. ${bookingPrompt(policy, language)}` : `No problem. ${bookingPrompt(policy, language)}`, event: null };
     }
-    if (!/^(yes|yeah|yep|confirm|confirmed|نعم|اي|أيوه|ναι|επιβεβαίωση|επιβεβαιώνω)$/.test(answer)) {
-      return { response: language === "arabic" ? "أجب بنعم لتأكيد الموعد أو لا لاختيار وقت آخر." : language === "greek" ? "Απαντήστε ναι για να επιβεβαιώσετε αυτή την ώρα, ή όχι για να επιλέξετε άλλη." : "Please reply yes to confirm this time, or no to choose another.", event: null };
+    if (!isExactBookingConfirmation(text, new Date(user.booking.start), policy)) {
+      const time = formatBookingTime(new Date(user.booking.start), policy, language);
+      const exactTime = exactBookingTime(new Date(user.booking.start), policy);
+      return { response: language === "arabic" ? `للتأكيد، أعد إرسال «نعم، ${exactTime}» مع وقت الموعد المحدد (${time})، أو أجب لا لاختيار وقت آخر.` : language === "greek" ? `Για επιβεβαίωση, απαντήστε «ναι, ${exactTime}» με την ακριβή ώρα (${time}), ή όχι για άλλη ώρα.` : `To confirm, reply yes with the exact appointment time (${exactTime}), or no to choose another time.`, event: null };
     }
 
     const details = {
@@ -701,81 +889,99 @@ async function handleBookingMessage({ userId, text, store, user: existingUser = 
     };
     const issue = appointmentWindowIssue(details.start, details.end, policy, now);
     if (issue) {
+      if (user.booking.appointmentId) await store.updateAppointment(user.booking.appointmentId, { status: "failed" });
       await store.updateUser(userId, (draft) => { draft.booking = { status: "awaiting_details", startedAt: now.toISOString(), idempotencyKey: randomUUID() }; });
       return { response: language === "arabic" ? `لم يعد الوقت المقترح ضمن مواعيد الحجز. ${bookingPrompt(policy, language)}` : language === "greek" ? `Αυτή η προτεινόμενη ώρα δεν είναι πλέον εντός του παραθύρου κράτησης. ${bookingPrompt(policy, language)}` : `That proposed time is no longer within the booking window. ${bookingPrompt(policy, language)}`, event: null };
     }
-    let available;
-    try { available = await isAvailable(details, policy); }
-    catch { return { response: calendarAccessFailure(language), event: null }; }
-    if (!available) {
+    let available = false;
+    let calendarUnavailable = Boolean(user.booking.calendarUnavailable);
+    if (!calendarUnavailable) {
+      try { available = await isAvailable(details, policy); }
+      catch { calendarUnavailable = true; }
+    }
+    if (!available && !calendarUnavailable) {
+      if (user.booking.appointmentId) await store.updateAppointment(user.booking.appointmentId, { status: "failed" });
       await store.updateUser(userId, (draft) => { draft.booking = { status: "awaiting_details", startedAt: now.toISOString(), idempotencyKey: randomUUID() }; });
       return { response: language === "arabic" ? `لم يعد هذا الموعد متاحًا. ${bookingPrompt(policy, language)}` : language === "greek" ? `Αυτή η ώρα δεν είναι πλέον διαθέσιμη. ${bookingPrompt(policy, language)}` : `That time is no longer available. ${bookingPrompt(policy, language)}`, event: null };
     }
 
-    if (typeof store.createAppointment !== "function" || typeof store.updateAppointment !== "function") {
+    if (typeof store.updateAppointment !== "function" || !user.booking.appointmentId) {
       throw new Error("The durable Supabase appointment store is unavailable.");
     }
-    const appointmentDetails = normalizeAppointmentDetails({ user, purpose: details.purpose, timezone: policy.timezone, language, format: user.profile?.meetingFormat });
-    if (!appointmentDetails.ready) throw new Error("Required appointment details are missing.");
-    let { appointment } = await store.createAppointment({
-      userId,
-      startsAt: details.start.toISOString(),
-      endsAt: details.end.toISOString(),
-      timezone: policy.timezone,
-      durationMinutes: policy.durationMinutes,
-      purpose: details.purpose,
-      idempotencyKey: user.booking.idempotencyKey || randomUUID(),
-      calendarId: calendarId(policy),
-      metadata: { appointmentDetails }
-    });
-    if (!appointment?.id) throw new Error("Could not create a durable appointment record.");
-
-    if (["pending_calendar", "failed", "rejected", "rescheduled"].includes(appointment.status)) {
-      appointment = await store.updateAppointment(appointment.id, { status: "pending_review" });
+    let appointment;
+    try { appointment = await store.updateAppointment(user.booking.appointmentId, { status: "creating" }); }
+    catch (error) {
+      let current = null;
+      if (typeof store.getAppointment === "function") {
+        try { current = await store.getAppointment(user.booking.appointmentId); } catch { /* Preserve the guarded conflict response. */ }
+      }
+      if (current?.status === "confirmed" && current.google_event_id) {
+        await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "booked", appointmentId: current.id, eventId: current.google_event_id, bookedAt: current.confirmed_at }; });
+        return { response: bookingConfirmationMessage(details.start, policy, language, current.google_meet_url || ""), event: null, appointment: current };
+      }
+      if (current?.status === "pending_calendar") {
+        await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "pending_calendar", appointmentId: current.id }; });
+        return { response: language === "arabic" ? "طلب هذا الموعد قيد مراجعة الفريق. لم يتم تأكيد الموعد." : language === "greek" ? "Το αίτημα ραντεβού βρίσκεται υπό έλεγχο από την ομάδα. Δεν έχει επιβεβαιωθεί." : "The appointment request is under team review. It is not confirmed.", event: null, appointment: current, details, user, policy };
+      }
+      if (current?.status === "creating") {
+        await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "creating", appointmentId: current.id }; });
+        return { response: language === "arabic" ? "طلبك قيد المعالجة الآن. لم أؤكد الموعد بعد." : language === "greek" ? "Το αίτημά σας βρίσκεται σε επεξεργασία. Δεν έχει επιβεβαιωθεί ακόμη." : "Your request is being processed. The appointment is not confirmed yet.", event: null };
+      }
+      throw error;
     }
-    if (!appointment?.id) throw new Error("Could not save the appointment for administrator review.");
-
-    if (appointment.status === "pending_review") {
-      await store.updateUser(userId, (draft) => {
-        draft.booking = {
-          ...draft.booking,
-          status: "pending_review",
-          appointmentId: appointment.id,
-          requestedAt: appointment.created_at || now.toISOString()
-        };
-      });
+    await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "creating" }; });
+    if (!appointment?.id || appointment.status !== "creating") {
+      return { response: language === "arabic" ? "تعذر بدء حفظ الموعد بأمان. لم يتم تأكيد أي موعد." : language === "greek" ? "Δεν ήταν δυνατή η ασφαλής έναρξη αποθήκευσης του ραντεβού. Δεν επιβεβαιώθηκε ραντεβού." : "I couldn’t safely start saving the appointment. No appointment was confirmed.", event: null };
+    }
+    if (calendarUnavailable) {
+      appointment = await store.updateAppointment(appointment.id, { status: "pending_calendar", metadata: { ...(appointment.metadata || {}), availabilityVerified: false } });
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "pending_calendar", appointmentId: appointment.id }; });
+      if (appointment?.status !== "pending_calendar") throw new Error("Could not save the appointment for calendar review.");
       return {
         response: language === "arabic"
-          ? `تم إرسال طلب الموعد للمراجعة. سأرسل لك التفاصيل بعد تأكيده من فريق الشركة.`
+          ? `أُرسل طلبك للموعد المفضل ${formatBookingTime(details.start, policy, language)} إلى الفريق للمراجعة. لم يتم التحقق من توفر الوقت أو تأكيد الموعد.`
           : language === "greek"
-            ? `Το αίτημα ραντεβού σας στάλθηκε για έλεγχο. Θα σας στείλω τις λεπτομέρειες μόλις το επιβεβαιώσει η ομάδα της Refalco Group.`
-            : `Your appointment request has been sent for review. I’ll send the details once Refalco Group team confirms it.`,
-        event: null,
-        appointment,
-        details,
-        user,
-        policy
+            ? `Το αίτημά σας για την προτιμώμενη ώρα ${formatBookingTime(details.start, policy, language)} στάλθηκε στην ομάδα για έλεγχο. Η διαθεσιμότητα δεν επαληθεύτηκε και το ραντεβού δεν έχει επιβεβαιωθεί.`
+            : `Your request for ${formatBookingTime(details.start, policy, language)} has been sent to the team for review. Availability was not verified and the appointment is not confirmed.`,
+        event: null, appointment, details, user, policy
       };
     }
 
-    if (appointment.status === "confirmed" && appointment.google_event_id) {
-      await scheduleBookingReminders({ store, appointment, userId, now, policy });
-      await store.updateUser(userId, (draft) => {
-        draft.booking = { ...draft.booking, status: "booked", bookedAt: appointment.confirmed_at, eventId: appointment.google_event_id, appointmentId: appointment.id };
-      });
-      return { response: bookingConfirmationMessage(details.start, policy, language, appointment.google_meet_url), event: null };
-    }
-
     const eventId = `rafa${appointment.id.replace(/-/g, "")}`;
-    const event = await createBookingEvent({ user, userId, details, eventId, policy });
-    const savedAppointment = await store.updateAppointment(appointment.id, {
-      status: "confirmed",
-      googleEventId: event.id,
-      googleEventUrl: event.htmlLink || "",
-      googleMeetUrl: event.meetLink || "",
-      confirmedAt: now.toISOString()
-    });
-    if (savedAppointment?.status !== "confirmed") throw new Error("The calendar event exists but its appointment record could not be confirmed.");
+    let event;
+    try {
+      event = await createBookingEvent({ user, userId, details, eventId, policy });
+    } catch (error) {
+      appointment = await store.updateAppointment(appointment.id, { status: "pending_calendar", metadata: { ...(appointment.metadata || {}), availabilityVerified: true, calendarError: String(error?.message || error).slice(0, 200) } });
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "pending_calendar", appointmentId: appointment.id }; });
+      return { response: language === "arabic" ? "تعذر إنشاء حدث التقويم. أرسلت طلبك للفريق للمراجعة؛ لم يتم تأكيد الموعد." : language === "greek" ? "Δεν ήταν δυνατή η δημιουργία συμβάντος ημερολογίου. Έστειλα το αίτημα στην ομάδα για έλεγχο· το ραντεβού δεν έχει επιβεβαιωθεί." : "I couldn’t create the calendar event. I’ve sent your request to the team for review; the appointment is not confirmed.", event: null, appointment, details, user, policy, error };
+    }
+    let savedAppointment;
+    try {
+      savedAppointment = await store.updateAppointment(appointment.id, {
+        status: "confirmed",
+        googleEventId: event.id,
+        googleEventUrl: event.htmlLink || "",
+        googleMeetUrl: event.meetLink || "",
+        confirmedAt: now.toISOString()
+      });
+    } catch (error) {
+      try {
+        savedAppointment = await store.updateAppointment(appointment.id, {
+          status: "pending_calendar",
+          googleEventId: event.id,
+          googleEventUrl: event.htmlLink || "",
+          googleMeetUrl: event.meetLink || "",
+          metadata: { ...(appointment.metadata || {}), availabilityVerified: true, reconciliationRequired: true }
+        });
+      } catch { savedAppointment = null; }
+      await store.updateUser(userId, (draft) => { draft.booking = { ...draft.booking, status: "pending_calendar", appointmentId: appointment.id }; });
+      return { response: language === "arabic" ? "تم إنشاء حدث التقويم لكن تعذر حفظ التأكيد. أبلغت الفريق للمراجعة؛ لم أتمكن من تأكيد الموعد." : language === "greek" ? "Δημιουργήθηκε συμβάν ημερολογίου, αλλά δεν αποθηκεύτηκε η επιβεβαίωση. Ενημέρωσα την ομάδα για έλεγχο· δεν μπορώ να επιβεβαιώσω το ραντεβού." : "The calendar event was created, but I couldn’t save the confirmation. I’ve flagged it for review; I can’t confirm the appointment.", event: null, appointment: savedAppointment || { ...appointment, status: "creating", google_event_id: event.id, metadata: { ...(appointment.metadata || {}), reconciliationRequired: true } }, details, user, policy, error };
+    }
+    if (savedAppointment?.status !== "confirmed") {
+      try { await store.updateAppointment(appointment.id, { status: "pending_calendar", googleEventId: event.id, googleEventUrl: event.htmlLink || "", googleMeetUrl: event.meetLink || "", metadata: { ...(appointment.metadata || {}), availabilityVerified: true, reconciliationRequired: true } }); } catch { /* Durable creating state remains visible for reconciliation. */ }
+      return { response: language === "arabic" ? "تم إنشاء حدث التقويم لكن تعذر حفظ التأكيد. أبلغت الفريق للمراجعة؛ لم أتمكن من تأكيد الموعد." : language === "greek" ? "Δημιουργήθηκε συμβάν ημερολογίου, αλλά δεν αποθηκεύτηκε η επιβεβαίωση. Ενημέρωσα την ομάδα για έλεγχο· δεν μπορώ να επιβεβαιώσω το ραντεβού." : "The calendar event was created, but I couldn’t save the confirmation. I’ve flagged it for review; I can’t confirm the appointment.", event: null, appointment: { ...appointment, google_event_id: event.id, status: "pending_calendar" }, details, user, policy };
+    }
     await scheduleBookingReminders({ store, appointment: savedAppointment, userId, now, policy });
     await store.updateUser(userId, (draft) => {
         draft.booking = { ...draft.booking, status: "booked", bookedAt: now.toISOString(), eventId: event.id, meetLink: event.meetLink || "", appointmentId: appointment.id };
@@ -822,7 +1028,27 @@ function isBookingDetailsReply(text, allowContextualName = false) {
 }
 
 function isBookingConfirmationReply(text) {
-  return /^(?:yes|yeah|yep|no|nope|cancel|confirm|confirmed|that works|sounds good|نعم|اي|أيوه|لا|مش|الغاء|إلغاء|ναι|όχι|άκυρο|ακύρωση|επιβεβαίωση|επιβεβαιώνω)[.!،\s]*$/iu.test(String(text || "").trim());
+  const value = String(text || "").trim();
+  const affirmative = "(?:yes|yeah|yep|confirm|confirmed|نعم|اي|أيوه|ναι|επιβεβαίωση|επιβεβαιώνω)";
+  return new RegExp(`^(?:${affirmative}|${affirmative}[,.،\\s]*(?:at\\s*)?[0-9٠-٩]{1,2}[:٫][0-9٠-٩]{2}|no|nope|cancel|that works|sounds good|لا|مش|الغاء|إلغاء|όχι|άκυρο|ακύρωση)[.!،\\s]*$`, "iu").test(value);
+}
+
+function slotChoiceIndex(text, options) {
+  const choice = String(text || "").trim();
+  const index = /^(?:1|one|١|ένα)$/iu.test(choice) ? 0 : /^(?:2|two|٢|δύο)$/iu.test(choice) ? 1 : -1;
+  return Array.isArray(options) && options[index] ? index : -1;
+}
+
+function exactBookingTime(start, policy) {
+  const local = partsAt(start, policy.timezone);
+  return `${local.hour}:${local.minute}`;
+}
+
+function isExactBookingConfirmation(text, start, policy) {
+  const raw = normalizeBookingText(String(text || "")).toLocaleLowerCase();
+  const local = partsAt(start, policy.timezone);
+  const match = raw.match(/^(?:yes|yeah|yep|confirm|confirmed|نعم|اي|أيوه|ναι|επιβεβαιώνω|επιβεβαίωση)[,،\s]+(?:at\s*)?(\d{1,2})[:٫](\d{2})$/iu);
+  return Boolean(match && String(Number(match[1])).padStart(2, "0") === local.hour && match[2] === local.minute);
 }
 
 function bookingConfirmationMessage(start, policy, language = "english", meetLink = "") {
@@ -856,7 +1082,9 @@ module.exports = {
   calendarId,
   isBookingRequest,
   extractBookingNameReply,
-  suggestAvailableTimes,
+  listCalendarSlots,
+  // Backwards-compatible alias for older internal callers.
+  suggestAvailableTimes: listCalendarSlots,
   appointmentWindowIssue,
   appointmentChangeIntent,
   approvePendingAppointment,

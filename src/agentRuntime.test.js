@@ -43,15 +43,25 @@ test("RAG is never invoked when the Agent's decision never asks for it (e.g. a s
   assert.equal(searchCalls, 0, "a plain acknowledgement must never trigger a knowledge search");
 });
 
-test("factual services intents retrieve approved knowledge before the model decides, even if it tries to answer immediately", async () => {
+test("broad services intents retrieve overview, scope, and current-conditions evidence before the model decides", async () => {
   let searchCalls = 0;
   let observationsSeenByModel = null;
   const store = {
     searchKnowledge: async (query) => {
       searchCalls += 1;
       assert.match(query, /^What services do you offer\?/);
-      assert.match(query, /company formation and structuring/);
-      assert.match(query, /العقار والتطوير/u);
+      if (searchCalls === 1) {
+        assert.match(query, /company formation and structuring/);
+        assert.match(query, /العقار والتطوير/u);
+      }
+      if (searchCalls === 2) assert.match(query, /business tax and operations/);
+      if (searchCalls === 3) assert.match(query, /company banking and payment gateways/);
+      if (searchCalls === 4) assert.match(query, /residency and relocation/);
+      if (searchCalls === 5) assert.match(query, /property purchase/);
+      if (searchCalls === 6) assert.match(query, /landowners, development and construction/);
+      if (searchCalls === 7) assert.match(query, /legal and intellectual property/);
+      if (searchCalls === 8) assert.match(query, /Jurisdiction comparison/);
+      if (searchCalls === 9) assert.match(query, /Refalco Group company profile/);
       return [{ heading: "Company formation", content: "We provide company formation support." }];
     }
   };
@@ -70,7 +80,8 @@ test("factual services intents retrieve approved knowledge before the model deci
     embedText: async () => [1]
   }, { decideNextStep: decide });
 
-  assert.equal(searchCalls, 1);
+  assert.equal(searchCalls, 9);
+  assert.equal(observationsSeenByModel.length, 9);
   assert.equal(observationsSeenByModel[0].tool, "searchApprovedKnowledge");
   assert.equal(observationsSeenByModel[0].result.modelObservation.status, "found");
   assert.equal(result.outcome, "responded");

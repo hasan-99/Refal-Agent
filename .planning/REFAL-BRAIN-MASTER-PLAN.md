@@ -908,19 +908,23 @@ Landowner JV, construction tender, HNW €1M+, international partnership. Urgent
 
 **Why this is its own milestone.** Plan A had one thin phase. Codex specified the real policy. Booking is where a wrong answer creates a real world commitment, so it gets full treatment.
 
-### P7.1 — Calendar readiness, built and shipped working `[ ]`
+### P7.1 — Calendar readiness, built and shipped working `[~]`
 
-Codex left booking dormant waiting for four decisions. **This plan ships all four with working defaults and a settings screen**, so booking goes live the moment BOSS pastes one credential.
+**Execution record (2026-10-11; starting revision `c4dfa80d2712b67c770080a24326e32fc6d16c32`; initial worktree clean):** The dashboard has editable 60-minute, 24-hour notice, and 24h/1h reminder defaults; policy defaults are also seeded durably by MIG-10 without overwriting owner settings. Readiness names each required condition, including credentials, successful calendar access, duration, notice, and reminders. Independent audit found that `createMeetLink=false` incorrectly made readiness inactive despite all required conditions being met and no displayed cause; a regression failed before the fix, then passed after readiness stopped treating optional Meet-link creation as a booking gate. The UI now tells admins that confirmed appointments will not include a Meet link when they disable it. Admin OAuth setup posts client JSON from the browser directly to a one-use-token loopback helper; credentials are stored in ignored `.secrets` with owner-only permissions and loaded only by the managed bot worker. Admin approve/cancel/reschedule execute in the isolated helper. Route audit confirmed OAuth start, test-calendar, policy writes, and review actions all have administrator middleware. Final `npm run test:all` passes (root **2,040/2,040**; dashboard **111/111**); dashboard production build passes. The loopback flow requires browser and helper on the same host, and no real Google consent was performed. Current read-only inspection confirms MIG-10 is unapplied, so durable defaults and live booking remain behind §20's owner-run migration gate. No live write or deployment was performed.
+
+Codex left booking dormant waiting for four decisions. **This plan supplies all four with working defaults and a settings screen**; live booking requires the owner to apply MIG-10 and complete Google authorization.
 
 | Wave | Work |
 | --- | --- |
 | **W7.1.1** | **Ship working defaults**: appointment duration **60 minutes** · minimum notice **24 hours** · reminders at **1 day** and **1 hour** before. All editable in the dashboard (M12), none hardcoded. |
 | **W7.1.2** | **Build the settings screen** so BOSS changes duration, notice, business hours and reminders without a developer. |
 | **W7.1.3** | **Build the readiness check** `verifyCalendarAccess` (already exists in `src/calendarReadiness.js`), surfaced as a green or red badge in the dashboard with the exact missing item named. |
-| **W7.1.4** | **The one field**: paste the Google OAuth credential into the dashboard once. The existing `scripts/authorizeGoogleCalendar.js` handles the flow. Worker and dashboard secrets stay separate; tokens never in code, chat or logs. |
+| **W7.1.4** | **The one field**: paste the Google OAuth client JSON into the dashboard once and authorize it. The isolated loopback helper handles the flow. Worker and dashboard secrets stay separate; tokens never in code, chat or logs. |
 | **W7.1.5** | Until the credential is pasted, REFAL does not invent slots. She says a specialist will confirm the time and creates a pending request. **She still books the lead, she just does not claim a confirmed slot.** The customer journey never dead ends. |
 
-### P7.2 — Booking state machine `[ ]`
+### P7.2 — Booking state machine `[~]`
+
+**Execution record (2026-10-11):** Main WhatsApp booking now follows the bounded date-choice → at most two live slots → numbered choice → purpose → exact-time confirmation flow. It applies Europe/Nicosia weekdays/hours, rejects same-day and out-of-window requests, rechecks availability immediately before creation, uses durable `awaiting_customer_confirmation` → `creating` → `confirmed` / `pending_calendar` / `failed` / `cancelled` appointment transitions, and only confirms after the event and row update both succeed. Edge transition allowlisting, required event ID, and status-guarded updates have direct unit coverage; `npx --yes deno check supabase/functions/rafa-agent-api/index.ts` passes. `supabase/config.toml` now explicitly configures the `rafa-agent-api` entrypoint with JWT verification enabled, and TOML parsing succeeds. PGlite applies MIG-10 twice, checking all seven workflow states and unknown-state rejection, exact seed values, preservation of an existing owner 30-minute policy, RLS, and service-role-only grants. The named-file migration script preview confirmed target project `anhharmjtmqndhzenicb` and exact MIG-10 path without sending SQL. Read-only live inspection on 2026-10-11 confirms MIG-10 is absent, the database still has only legacy appointment statuses and index predicate, and the existing 30-minute owner policy is intact. Active remote `rafa-agent-api` is version 47 with `verify_jwt=true`; deployed source does not contain M7 appointment-state transitions. Local deployment is prepared with the canonical entrypoint and sibling imports; the current official Management API requires `edge_functions_write` and accepts uploaded function files plus metadata ([deploy API](https://supabase.com/docs/reference/api/v1-deploy-a-function)). Deployment and smoke verification remain behind the plan's approval gate. Synthetic review bridge coverage validates isolated admin approve/cancel/reschedule. Final `npm run test:all` passes (root **2,040/2,040**; dashboard **111/111**). MIG-10 remains unapplied under §20 and the Edge Function remains undeployed; live database writes and deployed behavior are unverified.
 - Timezone **`Europe/Nicosia`**, weekdays only, **10:00 to 15:00**.
 - Reject past dates and **same day** requests. Enforce the configured notice window.
 - Offer **no more than two verified slots** at a time. **Recheck availability immediately before booking.**
@@ -928,17 +932,23 @@ Codex left booking dormant waiting for four decisions. **This plan ships all fou
 - States: `draft → awaiting_customer_confirmation → creating → confirmed | pending_calendar | failed | cancelled`. Each explained truthfully.
 - **Never claim the event, the Meet link or the reminders exist until the APIs confirm them.**
 
-### P7.3 — Two choice offering flow `[ ]`
-MB-A1 step 1: "does today or tomorrow suit you better" (never an open "when would you like"). MB-A2 step 2, **from the live API**: "I have 11:30 or 3:00, which is easier". Slots come only from `listCalendarSlots`.
+### P7.3 — Two choice offering flow `[~]`
+MB-A1 step 1: ask whether tomorrow or a later working day/date suits the customer (never offer today because same-day requests are rejected and the minimum notice is 24 hours; never ask an open "when would you like"). MB-A2 step 2, **from the live API**: "I have 11:30 or 3:00, which is easier". Slots come only from `listCalendarSlots`.
 
-### P7.4 — Conversation flow separation (repairs FIX-3, FIX-4) `[ ]`
+**Execution record (2026-10-11):** Main WhatsApp route is wired to the booking path; localized prompts offer tomorrow or a later working day/date, and relative weekday replies generate no more than two date-specific calendar-verified options. A final audit confirmed the primary deterministic flow had called the lower-level suggestion helper directly while the Agent registry exposed `listCalendarSlots`; the shared calendar capability is now explicitly named `listCalendarSlots` and is used by both the deterministic flow and Agent booking tool. Behavioral regressions cover date-specific suggestions and the tool's trusted availability result in English, Arabic, and Greek. Final `npm run test:all` passes (root **2,040/2,040**; dashboard **111/111**). The live calendar criterion remains open behind MIG-10 and real credential setup.
+
+### P7.4 — Conversation flow separation (repairs FIX-3, FIX-4) `[x]`
 - Answer informational questions **during** a booking draft without losing the draft.
 - The draft does **not** capture every message.
 - A new topic does **not** silently resume an old booking. One short disambiguating question only if necessary.
 - If the calendar fails, create visible pending work for an admin and tell the customer accurately.
 
-### P7.5 — Booking test suite `[ ]`
+**Execution record (2026-10-11):** Tests cover answering information during an unfinished draft and during its resume prompt without losing the draft, one-time disambiguation before resuming a date-like reply, stale draft handling, calendar failure, and durable pending work. Customer language distinguishes unverified/pending requests from confirmed appointments. Final `npm run test:all` passes (root **2,040/2,040**; dashboard **111/111**); no live calendar event was created.
+
+### P7.5 — Booking test suite `[x]`
 Timezone and **DST** conversion · date language parsing in AR/EN/EL · boundary times · notice window · stale slot · explicit confirmation · duplicate booking · cancellation · API failure · topic switch. **Live event creation stays disabled during tests.**
+
+**Execution record (2026-10-11):** Root booking, integration, multilingual, dashboard security, and Edge transition coverage includes Nicosia timezone/DST ambiguity, AR/EN/EL date parsing and prompts, schedule and notice boundaries, stale availability, exact confirmation, idempotency, cancellation, API failure, topic interruption, and the optional Meet-link readiness case. PGlite migration behavior is separately covered; tests use fakes/local PGlite and do not create a live event. Final `npm run test:all` passes (root **2,040/2,040**; dashboard **111/111**); dashboard production build and Deno check pass.
 
 ---
 
@@ -1164,7 +1174,7 @@ Full matrix in [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.m
 | **OP-01** | Fact approval register: source, reviewer, verified, effective, expiry, status | R-09, 2B | **P3.9** | `[x]` |
 | **OP-02** | Policy precedence ladder, 6 levels, enforced in code | 1C | **P1.6** | `[ ]` |
 | **OP-03** | Booking policy: Europe/Nicosia, weekdays 10:00-15:00, no same day, notice window, fresh recheck, explicit exact confirmation, 7 states | R-20, P10 | **M7** | `[ ]` |
-| **OP-04** | Booking never blocks unrelated Q&A; a new message never resumes an old booking | R-21 | **P7.4** | `[ ]` |
+| **OP-04** | Booking never blocks unrelated Q&A; a new message never resumes an old booking | R-21 | **P7.4** | `[x]` |
 | **OP-05** | Follow up consent scope, trilingual opt out, scheduler suppression, no untrue timing promise | R-22, P11 | **M9** | `[ ]` |
 | **OP-06** | Existing client account data fail closed until approved independent verification | R-19 | **P2.5** | `[x]` |
 | **OP-07** | A greeting is never a name; platform metadata is not consent | R-11 | **P8.2** | `[ ]` |
@@ -2329,7 +2339,7 @@ CF-01's original "no live caller" condition is closed by M4's tested dynamic-dat
 | **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | `[ ]` |
 | **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | **[x] APPLIED 2026-10-10**, history `20261010190302 / refal_lead_score`; RLS/schema verified |
 | **MIG-09** | `refal_consent` | What, when, language, channel, purpose, scope, source turn, opt out state | **P9.1** | any follow up or outbound action | `[ ]` |
-| **MIG-10** | booking state extensions | The 7 state machine on `rafa_appointments`, notice window, timezone fields | **P7.2** | real bookings | `[ ]` |
+| **MIG-10** | `20261010210717_refal_booking_state_machine_m7.sql` | Seven workflow states, status index, durable default booking policy | **P7.2** | real bookings | **[ ] PREPARED AND PGlite-VERIFIED; read-only verified absent remotely 2026-10-11; NOT APPLIED (owner gate)** |
 | **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | **[x] APPLIED 2026-10-10**, history `20261010190310 / refal_handover_delivery`; RLS/schema verified; delivery smoke pending |
 | **MIG-12** | `refal_compliance_events` + `refal_identity_verification` | AML and sanctions escalation records, one time code verification state | **P2.5** | compliance escalation, existing client unlock | `[ ]` |
 | **MIG-13** | `refal_rate_limits` | Shared counters replacing in process memory | **P13.2** | FIX fix 11, surviving a restart | `[ ]` |

@@ -1,5 +1,11 @@
 const DEFAULT_VERIFICATION_TTL_MS = 15 * 60 * 1000;
 
+function isBookingPolicyReady(policy) {
+  return Boolean(policy && policy.durationOwnerConfirmed && policy.durationMinutes &&
+    policy.minimumNoticeHours !== null && policy.minimumNoticeHours !== undefined &&
+    Array.isArray(policy.reminderHours) && policy.reminderHours.length);
+}
+
 function createCalendarReadinessTracker(ttlMs = DEFAULT_VERIFICATION_TTL_MS) {
   let verification = null;
   return {
@@ -19,4 +25,4 @@ function createCalendarReadinessTracker(ttlMs = DEFAULT_VERIFICATION_TTL_MS) {
   };
 }
 
-module.exports = { DEFAULT_VERIFICATION_TTL_MS, createCalendarReadinessTracker };
+module.exports = { DEFAULT_VERIFICATION_TTL_MS, createCalendarReadinessTracker, isBookingPolicyReady };
