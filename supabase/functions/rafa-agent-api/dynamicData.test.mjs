@@ -46,6 +46,22 @@ test("unsupported tables and invalid edits fail before touching the gateway", as
   assert.equal(client.state.calls.length, 0);
 });
 
+test("action rate limiting is a definitive 429 before receipt creation or side effects", async () => {
+  let executed = false;
+  const client = { async rpc(name) {
+    assert.equal(name, "refal_claim_dynamic_action");
+    return { data: null, error: { code: "P0001", message: "M4 action rate limit exceeded" } };
+  } };
+  await assert.rejects(performDynamicAction(client, "upsertLead", {
+    userId: "123@s.whatsapp.net",
+    contactId: "contact-1",
+    sourceTurnId: "8ed4acd5-d3cb-4c8e-aa2a-6651414a564a",
+    idempotencyKey: "turn-rate-limit",
+    args: { profile: { name: "Test" } }
+  }, async () => { executed = true; return { id: "contact-1" }; }), { statusCode: 429 });
+  assert.equal(executed, false);
+});
+
 test("typed mutations delegate to the audited RPC and require a reason", async () => {
   const client = fakeClient();
   const row = await mutateDynamicData(client, "offers", {

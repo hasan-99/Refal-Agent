@@ -300,6 +300,17 @@ test("lookupActiveOffer sends only its typed filter and emits a bounded approved
   assert.equal("reviewer_email" in found.modelObservation.records[0], false);
 });
 
+test("listCalendarSlots is a typed registry read and returns a safe unavailable observation", async () => {
+  const invalid = await TOOL_REGISTRY.listCalendarSlots.run({ start: "2026-10-12T10:00:00Z", extra: "ignored" }, {});
+  assert.equal(invalid.reasonCode, "INVALID_LOOKUP_ARGUMENTS");
+
+  const unavailable = await TOOL_REGISTRY.listCalendarSlots.run({}, {});
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.reasonCode, "POLICY_UNAVAILABLE");
+  assert.equal(unavailable.modelObservation.source, "trusted_calendar_read");
+  assert.deepEqual(unavailable.modelObservation.records, []);
+});
+
 test("dynamic reads return unavailable for empty, expired, future, inactive, malformed, or unavailable rows", async () => {
   const cases = [
     [],
@@ -419,6 +430,26 @@ test("ambiguous action failures remain pending and a resolved response without p
   assert.equal(noReceipt.ok, false);
   assert.equal(noReceipt.status, "pending");
   assert.equal(noReceipt.reasonCode, "PERSISTENCE_UNCONFIRMED");
+});
+
+test("a definitive dynamic action rate-limit rejection is reported as a failure, not a pending save", async () => {
+  const result = await TOOL_REGISTRY.upsertLead.run({ fields: { name: "Rami" } }, {
+    userId: "contact-1",
+    sourceTurnId: "turn-1",
+    allowedCapabilities: ["upsertLead"],
+    store: {
+      performDynamicAction: async () => ({
+        ok: false,
+        status: "error",
+        reasonCode: "ACTION_RATE_LIMITED",
+        userSafeSummary: "Please wait before trying that again."
+      })
+    }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "error");
+  assert.equal(result.reasonCode, "ACTION_RATE_LIMITED");
+  assert.match(result.userSafeSummary, /wait before trying/i);
 });
 
 test("hung dynamic reads become unavailable and hung writes remain pending without retry", async () => {

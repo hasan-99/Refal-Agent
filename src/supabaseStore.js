@@ -17,7 +17,9 @@ function requireRafaApiConfig() {
 async function parseResponse(response) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.error || `RAFA API request failed: ${response.status}`);
+    const error = new Error(body.error || `RAFA API request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -85,13 +87,28 @@ class EdgeApiStore {
 
   async performDynamicAction(name, payload = {}) {
     if (!["upsertLead", "createHandover", "scheduleFollowUp", "recordComplianceEvent"].includes(name)) throw new Error("Unsupported dynamic action.");
-    return this.request(`/dynamic-actions/${encodeURIComponent(name)}`, {
-      method: "POST",
-      // Ambiguous write timeouts are not retried here. The durable Edge receipt
-      // remains pending until reconciliation proves whether it persisted.
-      timeoutMs: 10000,
-      body: JSON.stringify(payload)
-    });
+    try {
+      return await this.request(`/dynamic-actions/${encodeURIComponent(name)}`, {
+        method: "POST",
+        // Ambiguous write timeouts are not retried here. The durable Edge receipt
+        // remains pending until reconciliation proves whether it persisted.
+        timeoutMs: 10000,
+        body: JSON.stringify(payload)
+      });
+    } catch (error) {
+      // The Edge gateway returns 429 only when the durable claim RPC rejects
+      // before creating a receipt or running the action. This is definitive,
+      // unlike a timeout after submission, so do not misreport it as pending.
+      if (error?.status === 429) {
+        return {
+          ok: false,
+          status: "error",
+          reasonCode: "ACTION_RATE_LIMITED",
+          userSafeSummary: "Please wait before trying that again."
+        };
+      }
+      throw error;
+    }
   }
 
   async hydrate() {
