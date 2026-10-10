@@ -12,7 +12,8 @@ const {
   EVENTS
 } = require("./existingClientWorkflow");
 const { createHandover } = require("./handover");
-const { detectObjection, objectionResponse } = require("./objectionWorkflow");
+const { detectObjection } = require("./objectionWorkflow");
+const { identifyObjection } = require("./objectionMatrix");
 const { safeFallbackData, validateResponse, hasVerifiedHandoverClaim, hasVerifiedBookingClaim, LEGACY_RESPONSE_THRESHOLDS } = require("./responsePolicy");
 const { createCorrectionEvent } = require("./correctionWorkflow");
 const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./opportunityIntake");
@@ -958,29 +959,17 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const objection = detectObjection(incoming);
   // A hesitation cue must not swallow a concrete question in the same message.
   // Answer the requested fact first; the reply can still stay low pressure.
-  const asksConcretePrice = classification.intents.includes(INTENTS.PRICING);
-  const asksConcreteQuestion = asksConcretePrice || /[?؟;]|\b(?:what|which|how|when|where|can you|could you|do you)\b|(?:شو|كيف|متى|وين|فيكن|ممكن|ما هي)|(?:τι|πώς|πότε|πόσο|πού|μπορείτε)/iu.test(incoming);
-  if (objection.isObjection && !asksConcreteQuestion) {
+  // Pricing intent alone includes statements like "the price feels high";
+  // preserve only an actual price question from the deterministic objection
+  // matrix so O1/O2 can answer with the current package inclusions.
+  const asksConcretePrice = classification.intents.includes(INTENTS.PRICING) && /[?؟]|\b(?:how much|what(?:'s| is) the price|is the price|does it include)\b|كم|قديش|πόσο/iu.test(incoming);
+  const asksSeparateFact = /\b(?:and|but)\s+(?:where|what|which|when|how|can you|could you)\b|(?:و|بس)\s*(?:وين|أين|شو|ماذا|كيف|متى|هل|ممكن)|και\s+(?:πού|τι|ποιος|ποια|πότε|πώς|μπορείτε)/iu.test(incoming);
+  const matrixObjection = identifyObjection(incoming);
+  if (matrixObjection && !asksSeparateFact && !(asksConcretePrice && ["O1", "O2"].includes(matrixObjection))) {
     const languageKey = language === "arabic" ? "ar" : language === "greek" ? "el" : "en";
-    const response = safeFallbackData({ language: languageKey, category: objection.category }).text;
-    const metadata = { ...prepared.metadata, objection: objectionResponse({ text: incoming, language: languageKey }) };
-    const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history });
-  }
-
-  // Offer specialist follow-up for material non-formation cases only when the
-  // customer has not declined it. Company setup stays in the answer-first flow.
-  // W2.5.3. Once the compliance lock is on, REFAL stops offering. A customer
-  // who asks for a specialist outright is still heard further up; what is
-  // suppressed is the proactive hook, for the rest of the conversation.
-  const followUpDeclined = storedConsentState === "denied" || storedConsentState === "revoked";
-  if (priority.handoverRequired && !followUpDeclined && !complianceLocked && !user.profile?.conversationPreferences?.noProactiveBookingOrContact && !classification.intents.includes(INTENTS.COMPANY_FORMATION)) {
-    response = localized(language, {
-      english: "This sounds like a substantial business matter. I can help with the basics here, or—with your permission—ask a Refalco Group specialist to follow up. Which would you prefer?",
-      arabic: "واضح إن الموضوع مهم. فيني ساعدك بالمعلومات الأساسية هون، أو إذا بتحب أطلب من مختصّ من الشركة يتابع معك. شو بتفضّل؟",
-      greek: "Ακούγεται σημαντικό επιχειρηματικό θέμα. Μπορώ να σας δώσω βασικές πληροφορίες εδώ ή, αν θέλετε, να ζητήσω επικοινωνία από ειδικό της Refalco Group. Τι προτιμάτε;"
-    });
-    const metadata = { ...prepared.metadata, specialistOffer: { offered: true, consentRequired: true, offeredAt: new Date().toISOString() } };
+    const matrix = await require("./salesIntelligence").buildObjectionAnswer({ text: incoming, language: languageKey, store });
+    const response = matrix?.response || safeFallbackData({ language: languageKey, category: objection.category }).text;
+    const metadata = { ...prepared.metadata, objection: { id: matrix?.objection || matrixObjection, source: "m5_objection_matrix" } };
     const history = await recordHistory(store, userId, incoming, response, { metadata });
     return resultWithHistory({ response, user, metadata, history });
   }

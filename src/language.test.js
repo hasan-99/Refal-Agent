@@ -13,6 +13,8 @@ test("detects script Arabic, Syrian Arabizi, and Greek reliably", () => {
   assert.equal(detectMessageLanguage("Den exo kati allo gia tin ora. An xreiaso kati, tha to zitiso."), "greek");
   assert.equal(detectMessageLanguage("Poso kostizei? Min peis kati an den einai sigouro."), "greek");
   assert.equal(detectMessageLanguage("Nai, pes mou analytika ti perilamvanei to paketo."), "greek");
+  assert.equal(detectMessageLanguage("ftiaxno efarmogi kai logismiko"), "greek");
+  assert.equal(detectMessageLanguage("barmeje SaaS"), "arabic");
   assert.equal(detectMessageLanguage("Meta tin kata8esi, poio einai to synithismeno xroniko diastima mexri tin egkrisi?"), "greek");
   assert.equal(detectMessageLanguage("Ποιες υπηρεσίες προσφέρει η Refalco Group;"), "greek");
   assert.equal(detectMessageLanguage("What services does Refalco Group provide?"), "english");

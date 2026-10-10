@@ -807,7 +807,7 @@ Typed forms with effective dates for offers, renewal fees, property, reservation
 
 # M5 — Sales Intelligence
 
-### P5.1 — Cross sell hook matrix `[ ]`
+### P5.1 — Cross sell hook matrix `[x]`
 
 | ID | Trigger | Offer | Guard |
 | --- | --- | --- | --- |
@@ -823,7 +823,7 @@ Typed forms with effective dates for offers, renewal fees, property, reservation
 - **W5.1.3** **Suppression**: at most one hook per reply · never at humour level 0 · never when the customer declined · never repeat an already offered hook · **never before the question is answered** · stop if the customer declines, stays informational, complains, or is in a sensitive state (CX 8C).
 - **W5.1.4** Evidence gated: H1 cannot fire if the IP Box document is missing or expired.
 
-### P5.2 — Objection matrix `[ ]`
+### P5.2 — Objection matrix `[x]`
 
 | ID | Objection | Core move |
 | --- | --- | --- |
@@ -838,10 +838,10 @@ Typed forms with effective dates for offers, renewal fees, property, reservation
 - **W5.2.3** O1 and O2 pull **live** package inclusions from `refal_offers_and_pricing`, never a frozen list.
 - **W5.2.4** **Imported from CX 8C:** rewrite MB's objection examples to remove multiple questions, manipulative hidden motive assumptions, pressure, and unsupported competitor accusations. *"Usually 'let me think' hides a small question"* reads as pushy to an HNW investor. Keep the warmth, drop the presumption. Each rewrite is reviewed against the One Question Rule.
 
-### P5.3 — Jurisdiction benchmarking `[ ]`
+### P5.3 — Jurisdiction benchmarking `[x]`
 `src/jurisdictionBenchmark.js` driving topics 26-29 from P3.8. Tone guard rejects any draft that disparages another jurisdiction. Every comparison ends with MB's discovery question, because the honest answer is always "it depends where your clients, your bank and your family are".
 
-### P5.4 — Offer orchestration `[ ]`
+### P5.4 — Offer orchestration `[x]`
 One place decides per turn what REFAL may offer: hook, objection response, specialist, booking, or nothing. Resolves M5's eagerness against the consent and no repeat rules, **which always win**. Consumes `policyPrecedence` from P1.6.
 
 ---
@@ -2007,6 +2007,42 @@ Requested execution: all five phases and seven P4.2 waves, independent phase aud
 **Dependency detail:** CF-05 now has a real `runAgentTurn` regression proving validated current-offer inclusions and price pass the grounding gate after stale price-bearing evidence is removed. A safe synthetic run against deployed approved knowledge and the live offer also passed through the current local Agent runtime, returning the approved inclusions and EUR 999 plus VAT; only read tools were exposed, and no customer was contacted or data written. Root cause: structured `inclusions` were not rendered as package-linked evidence required by the existing package-claim gate; `src/groundingPolicy.js` now derives “package includes” evidence only from the validated current offer. CF-05 is closed based on a synthetic no-send turn through the current Agent runtime using the configured model, live approved knowledge and live offer reads; no customer was contacted or production data written. Preserve corpus coverage thresholds.
 
 **Baseline:** independent verifier ran root tests (1,785 pass, 2 mirror-generation failures), dashboard tests (94 pass), and dashboard build (pass) before implementation. Root cause: generated mirrors had inconsistent line endings; fixed and covered by normalization. Baseline details: `docs/brain/M4-BASELINE.md`.
+
+---
+
+### M5 — Sales Intelligence — execution completed 2026-10-10 — `[x]`
+
+Executed with `.agents/skills/refal-milestone-execute/SKILL.md`, using disjoint implementation and independent audit assignments, followed by coordinator integration and a fresh cross-phase audit. P5.1–P5.4 are individually audited and verified below. No M5 database migration was required by the plan.
+
+**P5.1 — Cross sell hook matrix — `[x]`**
+
+- **Built:** `src/salesHooks.js` and runtime composition in `src/salesIntelligence.js`; Arabic, English, Greek, Arabizi and Greeklish trigger/phrase handling; evidence/currentness checks; suppression for answered-state, humour, no-repeat, no-contact, complaints, sensitive and informational requests; persisted hook IDs through Edge metadata allowlist.
+- **Defects validated and fixed:** mapped language detector values (`arabic`/`greek`) to native hook locales; added missing developer trigger; integrated hooks in legacy and Agent response paths; informational service, company, identity, pricing and contact requests now suppress cross-sells; transliteration language detection now mirrors Greeklish and Arabizi.
+- **Verification:** `node --test src/salesHooks.test.js src/salesIntelligence.test.js src/language.test.js src/salesOfferMetadata.test.mjs` → exit 0, **23/23**. Hook composer and Edge metadata tests pass.
+- **Independent audit:** P5.1 re-audit passed; no remaining in-scope defect reported.
+
+**P5.2 — Objection matrix — `[x]`**
+
+- **Built:** `src/objectionMatrix.js`; five trilingual, one-question, non-pushy responses; live `formation-package` lookup for O1/O2; evidence-gated O5 credibility facts and humour cap; `messageRouter.js` runtime bridge.
+- **Defects validated and fixed:** removed the legacy router-category gate that stranded O2/O3/O4 and question-form O5; preserved direct factual and mixed questions; added Greek reliable-adjective morphology and English/Arabic/Greek trust-plus-office route regressions.
+- **Verification:** objection matrix, objection workflow and route tests passed; final independent targeted route probes passed **3/3**, matrix/sales intelligence **15/15**, and combined route/workflow suite **84/84**.
+- **Independent audit:** P5.2 final audit passed; no remaining in-scope defect reported.
+
+**P5.3 — Jurisdiction benchmarking — `[x]`**
+
+- **Built:** `src/jurisdictionBenchmark.js` and runtime guard in both legacy and Agent answer paths; all four corpus topics with English, Arabic and Greek cases; current approved topic/fact evidence; localized discovery-question fallback; non-disparagement and unsupported-claim rejection.
+- **Defects validated and fixed:** wired the guard to both production response paths; enriched Edge retrieval with bounded server-side topic and current fact-register metadata; fail closed when governance lookups or current rows are missing; fixed corpus fact splitting and tone checks.
+- **Verification:** jurisdiction, runtime composition and Edge enrichment tests passed **24/24**; independent audit exercised all **12** topic/locale corpus cases and the missing, stale, blocked, pending and language-mismatch fail-closed paths. `npx --yes deno check supabase/functions/rafa-agent-api/index.ts` passed.
+- **Independent audit:** P5.3 and final M5 cross-phase audits passed; no remaining in-scope defect reported.
+
+**P5.4 — Offer orchestration — `[x]`**
+
+- **Built:** `src/offerOrchestration.js` selects one eligible booking, specialist, objection, jurisdiction or hook candidate; enforces strict answer completion, one-question, priority, policy precedence, consent and suppression gates. Explicit booking requests pass the selector before the existing deterministic booking owner. Specialist follow-up now composes after the answer in both response paths; hook and specialist metadata persist for no-repeat checks.
+- **Defects validated and fixed:** removed the pre-answer specialist return and its hardcoded `answerComplete`; added persisted specialist-offer repeat suppression; added the narrow Edge `specialistOffer` metadata contract (`offered`, `consentRequired`, parseable `offeredAt` only) after the independent audit proved Agent turn PATCHes were rejected; Edge tests cover valid and forged payloads.
+- **Verification:** `node --test src/offerOrchestration.test.js src/salesIntelligence.test.js src/messageRouter.test.js src/bot.test.js` → exit 0, **96/96**; Edge metadata validation tests → exit 0, **3/3**. Full `npm test` → exit 0, **1,916/1,916**. `npm run test:all` → exit 0, including Dashboard **105/105**. Deno check and `git diff --check` passed.
+- **Independent audit:** P5.4 audit and fresh M5 cross-phase audit passed after the Edge persistence fix. No remaining confirmed in-scope defect.
+
+**Final M5 audit and evidence boundary:** a fresh independent audit compared P5.1–P5.4 to this plan and rechecked runtime wiring, localization, suppression, current evidence, persistence schemas and regression tests. It found and validated the specialist-offer Edge metadata rejection above; after the fix, it reported no remaining confirmed M5 blocker. Edge code is locally type-checked and unit-tested, but was **not deployed** and no live Supabase persistence round-trip was run. No migrations, production writes, customer messages, commit or push were performed in this M5 execution.
 
 ## 17. Standing verification commands
 

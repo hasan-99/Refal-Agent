@@ -134,10 +134,33 @@ function collectApprovedKnowledgeEvidence(observations) {
   for (const observation of Array.isArray(observations) ? observations : []) {
     const modelObservation = observation?.result?.modelObservation;
     if (modelObservation?.type === "approved_knowledge" && Array.isArray(modelObservation.evidence)) {
-      items.push(...modelObservation.evidence);
+      const metadataByRef = new Map((Array.isArray(modelObservation.policyEvidence) ? modelObservation.policyEvidence : [])
+        .filter((item) => item?.sourceRef)
+        .map((item) => [item.sourceRef, item]));
+      for (const item of modelObservation.evidence) {
+        const policy = metadataByRef.get(item?.sourceRef);
+        items.push(policy ? {
+          ...item,
+          review_status: policy.review_status,
+          valid_until: policy.valid_until,
+          metadata: policy.metadata || {}
+        } : item);
+      }
     }
   }
   return items;
+}
+
+function collectFactRegisterRows(observations) {
+  const rows = new Map();
+  for (const observation of Array.isArray(observations) ? observations : []) {
+    const modelObservation = observation?.result?.modelObservation;
+    if (modelObservation?.type !== "approved_knowledge" || !Array.isArray(modelObservation.factRegisterRows)) continue;
+    for (const row of modelObservation.factRegisterRows) {
+      if (typeof row?.id === "string" && /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(row.id)) rows.set(row.id, row);
+    }
+  }
+  return [...rows.values()];
 }
 
 const DYNAMIC_TOOL_KINDS = Object.freeze({
@@ -680,6 +703,7 @@ module.exports = {
   containsRawUrlClaim,
   // shared evidence helpers
   collectApprovedKnowledgeEvidence,
+  collectFactRegisterRows,
   collectDynamicDataEvidence,
   validDynamicRecord,
   combinedEvidenceText,

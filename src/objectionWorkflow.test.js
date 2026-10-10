@@ -12,6 +12,7 @@ test("covers every owner objection category", () => {
   assert.deepEqual(Object.keys(examples).sort(), [...CATEGORIES].sort());
   for (const [category, message] of Object.entries(examples)) assert.ok(detectObjection(message).categories.includes(category));
   assert.equal(detectObjection("Den exo apofasisei akoma, sigkrinw epiloges").category, "not_ready");
+  assert.ok(detectObjection("Πώς ξέρω ότι είστε αξιόπιστοι;").categories.includes("trust"));
 });
 
 test("returns one safe, localized next question for an objection", () => {

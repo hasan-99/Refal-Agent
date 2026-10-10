@@ -10,6 +10,8 @@ import { buildBrainPrompt as buildOperatorPrompt } from "./brainPrompt.mjs";
 import { listDynamicData, mutateDynamicData, performDynamicAction } from "./dynamicData.mjs";
 import { validateCustomerLeadFields } from "./dynamicActionValidation.mjs";
 import { persistDynamicActionAlert } from "./dynamicActionAlert.mjs";
+import { attachKnowledgePolicyMetadata } from "./knowledgePolicyMetadata.mjs";
+import { validateSalesOfferMetadata, validateSpecialistOfferMetadata } from "./salesOfferMetadata.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -148,7 +150,9 @@ Deno.serve(async (req: Request) => {
           p_match_count: matchCount
         });
       if (error) throw error;
-      return json({ results: data || [] });
+      // Governance metadata is fetched server-side for deterministic M5 policy
+      // checks. It is carried separately from the model-safe evidence block.
+      return json({ results: await attachKnowledgePolicyMetadata(supabase, data || []) });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {
@@ -941,8 +945,8 @@ function validateHistoryMetadataPatch(value: unknown, userId: string) {
   if (value === undefined) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError("Metadata must be an object.", 400);
   const patch = value as Record<string, unknown>;
-  const allowedSections = new Set(["delivery", "editability", "whatsapp"]);
-  if (Object.keys(patch).some((key) => !allowedSections.has(key))) throw new HttpError("Only delivery and editability metadata can be updated.", 400);
+  const allowedSections = new Set(["delivery", "editability", "whatsapp", "salesOffer", "specialistOffer"]);
+  if (Object.keys(patch).some((key) => !allowedSections.has(key))) throw new HttpError("Unsupported history metadata section.", 400);
 
   const deliveryFields: Record<string, (value: unknown) => boolean> = {
     action: (item) => typeof item === "string" && ["platform_edit", "correction_resend"].includes(item),
@@ -978,6 +982,18 @@ function validateHistoryMetadataPatch(value: unknown, userId: string) {
   const result: Record<string, Record<string, unknown>> = {};
   for (const [section, fields] of Object.entries(patch)) {
     if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new HttpError(`Metadata ${section} must be an object.`, 400);
+    if (section === "salesOffer") {
+      const validated = validateSalesOfferMetadata(fields);
+      if (!validated) throw new HttpError("Invalid sales offer metadata.", 400);
+      result[section] = validated;
+      continue;
+    }
+    if (section === "specialistOffer") {
+      const validated = validateSpecialistOfferMetadata(fields);
+      if (!validated) throw new HttpError("Invalid specialist offer metadata.", 400);
+      result[section] = validated;
+      continue;
+    }
     const input = fields as Record<string, unknown>;
     const validators = section === "delivery" ? deliveryFields : section === "editability" ? editabilityFields : whatsappFields;
     if (Object.keys(input).some((key) => !validators[key])) throw new HttpError(`Unsupported ${section} metadata field.`, 400);

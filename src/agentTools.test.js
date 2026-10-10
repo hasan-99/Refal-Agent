@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomerFact, proposeHandover, buildApprovedKnowledgeObservation, MAX_RAG_EVIDENCE_ITEMS, MAX_RAG_EVIDENCE_TOTAL_CHARS } = require("./agentTools");
+const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
+const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
 
 test("searchApprovedKnowledge rejects an empty query without calling the store", async () => {
   let called = false;
@@ -298,6 +300,45 @@ test("lookupActiveOffer sends only its typed filter and emits a bounded approved
   assert.equal(found.modelObservation.records[0].currency, "EUR");
   assert.equal("id" in found.modelObservation.records[0], false);
   assert.equal("reviewer_email" in found.modelObservation.records[0], false);
+});
+
+test("M5 governance metadata remains separate from model prompt text and joins only by opaque chunk reference", async () => {
+  const store = { searchKnowledge: async () => [{
+    document_title: "Jurisdiction comparison",
+    heading: "Cyprus and Dubai",
+    content: "Approved comparison content.",
+    chunk_id: "chunk-j1",
+    review_status: "approved",
+    valid_until: "2026-12-31T00:00:00Z",
+    policyMetadata: {
+      topic: "jurisdiction-dubai",
+      facts: ["MB-J0", "MB-J1", "not-an-id"],
+      factRegisterRows: [{ id: "MB-J1", status: "approved", reviewer: "BOSS", verifiedAt: "2026-10-01", expiryOrReviewAt: "2026-12-31" }],
+      reviewStatus: "approved",
+      validUntil: "2026-12-31T00:00:00Z"
+    }
+  }] };
+  const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null });
+  const [modelEvidence] = result.modelObservation.evidence;
+  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
+  assert.doesNotMatch(formatApprovedKnowledgeEvidence(result.modelObservation), /jurisdiction-dubai|MB-J1|BOSS|reviewer/i);
+  const observations = [{ result }];
+  const [policyEvidence] = collectApprovedKnowledgeEvidence(observations);
+  assert.equal(policyEvidence.review_status, "approved");
+  assert.deepEqual(policyEvidence.metadata.facts, ["MB-J0", "MB-J1"]);
+  assert.deepEqual(collectFactRegisterRows(observations).map((row) => row.id), ["MB-J1"]);
+});
+
+test("raw row metadata cannot authorize M5 evidence when server enrichment is absent", async () => {
+  const store = { searchKnowledge: async () => [{
+    content: "Untrusted adapter row.", chunk_id: "chunk-raw", review_status: "approved",
+    metadata: { topic: "jurisdiction-dubai", facts: ["MB-J0", "MB-J1"] }
+  }] };
+  const result = await searchApprovedKnowledge({ query: "Dubai" }, { store, embedText: async () => null });
+  const observations = [{ result }];
+  const [evidence] = collectApprovedKnowledgeEvidence(observations);
+  assert.deepEqual(evidence.metadata, { topic: null, facts: [] });
+  assert.deepEqual(collectFactRegisterRows(observations), []);
 });
 
 test("lookupActiveOffer can safely discover current offers when the model lacks an exact code", async () => {

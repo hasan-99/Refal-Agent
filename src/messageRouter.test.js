@@ -436,6 +436,44 @@ test("a comparison objection does not swallow a direct package-price question", 
   assert.equal(result.metadata.objection, undefined);
 });
 
+test("all five M5 objections reach the response matrix and record their IDs", async () => {
+  const probes = [
+    ["O1", "The €999 price feels expensive."],
+    ["O2", "I found an offer for €500."],
+    ["O3", "I need to think about it."],
+    ["O4", "Send me everything on WhatsApp."],
+    ["O5", "How do I know you are reliable?"]
+  ];
+  for (const [id, text] of probes) {
+    const user = { id: `m5-objection-${id}`, profile: {}, history: [] };
+    const result = await routeMessageResult({
+      userId: user.id, text, store: integrationStore(user), existingUser: user
+    });
+    assert.equal(result.shouldUseAi, false, `${id} route`);
+    assert.equal(result.metadata.objection.id, id, `${id} metadata`);
+    assert.ok(result.response.length > 20, `${id} response`);
+  }
+  const o1 = await routeMessageResult({
+    userId: "m5-objection-tone", text: "The €999 price feels expensive.",
+    store: integrationStore({ id: "m5-objection-tone", profile: {}, history: [] }),
+    existingUser: { id: "m5-objection-tone", profile: {}, history: [] }
+  });
+  assert.doesNotMatch(o1.response, /usually hides|what are you really|move forward/iu);
+});
+
+test("a trust objection does not swallow a separate factual question", async () => {
+  for (const [id, text] of [
+    ["en", "How do I know you are reliable, and where is your office?"],
+    ["ar", "كيف أتأكد أنكم موثوقون، وأين مكتبكم؟"],
+    ["el", "Πώς ξέρω ότι είστε αξιόπιστοι και πού βρίσκεται το γραφείο;"]
+  ]) {
+    const user = { id: `m5-trust-plus-office-${id}`, profile: {}, history: [] };
+    const result = await routeMessageResult({ userId: user.id, text, store: integrationStore(user), existingUser: user });
+    assert.equal(result.shouldUseAi, true, id);
+    assert.equal(result.metadata.objection, undefined, id);
+  }
+});
+
 test("a stored no-pressure preference does not suppress a direct Greek timeline question", async () => {
   const user = {
     id: "no-pressure-greek-question",
@@ -748,27 +786,24 @@ test("recordHistory strips an unconsented handover before persisting the turn", 
   assert.equal(user.workflowCalls.some(([kind]) => kind === "notification"), false);
 });
 
-test("routeMessageResult offers consent-based follow-up for a high-value multi-intent lead without persisting early", async () => {
+test("routeMessageResult leaves high-value cases on the answer path before any follow-up offer", async () => {
   const user = { id: "35799123456@s.whatsapp.net", phone: "35799123456", profile: {}, history: [] };
   const result = await routeMessageResult({
     userId: user.id,
     text: "We need a large land development and a strategic partnership",
     store: integrationStore(user)
   });
-  assert.equal(result.shouldUseAi, false);
+  assert.equal(result.shouldUseAi, true);
   assert.equal(result.metadata.intent.isMultiIntent, true);
   assert.ok(result.metadata.intent.intents.includes("land_development"));
   assert.ok(result.metadata.intent.intents.includes("partnership"));
   assert.ok(result.metadata.qualification.dimensions && Object.keys(result.metadata.qualification.dimensions).length === 6);
-  assert.equal(result.metadata.specialistOffer?.consentRequired, true);
+  assert.equal(result.metadata.specialistOffer, undefined);
   assert.equal(result.handover, undefined);
-  assert.match(result.response, /specialist/i);
+  assert.doesNotMatch(result.response, /specialist/i);
   assert.doesNotMatch(result.response, /Priority|qualification|score|REFAL LEAD SUMMARY/i);
-  assert.equal(user.history[0].metadata.handover, undefined);
-  assert.ok(user.workflowCalls.some(([kind]) => kind === "qualification"));
-  assert.ok(user.workflowCalls.some(([kind]) => kind === "intents"));
-  assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false);
-  assert.ok(user.workflowCalls.some(([kind]) => kind === "priority"));
+  assert.equal(user.history.length, 0, "the answer path has not persisted a premature specialist offer");
+  assert.equal(user.workflowCalls.some(([kind]) => ["handover", "priority"].includes(kind)), false);
 });
 
 test("the word team in earlier assistant text and generic تمام never create a handover", async () => {
@@ -1166,12 +1201,13 @@ test("the compliance lock survives the turn that set it and suppresses every lat
   assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false);
 });
 
-test("an unlocked conversation still receives the proactive specialist offer", async () => {
+test("an unlocked specialist case reaches the answer path before any follow-up offer", async () => {
   const user = { id: "compliance-control-offer", profile: {}, history: [] };
   const store = complianceIntegrationStore(user);
   const result = await routeMessageResult({ userId: user.id, text: "We need a large land development and a strategic partnership", store, existingUser: user });
   assert.equal(result.metadata.complianceLock, undefined);
-  assert.equal(result.metadata.specialistOffer?.offered, true, "the hook is suppressed only by the lock, never by default");
+  assert.equal(result.metadata.specialistOffer, undefined, "the router does not offer before the answer exists");
+  assert.equal(result.shouldUseAi, true);
 });
 
 test("a sanctions probe dressed as a programme enquiry still escalates", async () => {

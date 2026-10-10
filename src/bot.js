@@ -43,6 +43,8 @@ const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
 const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
 const { detectIntent, INTENTS } = require("./intent");
 const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
+const { appendGroundedHook, guardJurisdictionAnswer, observationPolicyRows, hasInformationalIntent } = require("./salesIntelligence");
+const { selectOfferForTurn } = require("./offerOrchestration");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -310,7 +312,13 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
   const bookingStartedAt = performance.now();
   // Regulated and privacy-risk messages must reach the safety router first;
   // the booking parser can otherwise persist raw sensitive details.
-  const booking = prepared.safety?.restricted ? null : await handleBookingMessage({ userId, text, store, user });
+  const explicitBookingRequest = prepared.classification.intents.includes(INTENTS.APPOINTMENT);
+  const bookingSelection = explicitBookingRequest ? selectOfferForTurn({
+    candidates: [{ type: "booking", id: "explicit-appointment-request", mode: "action", validated: true }],
+    context: { answerComplete: true, explicitBookingRequest: true, explicitBookingConsent: true }
+  }) : null;
+  const booking = prepared.safety?.restricted || (explicitBookingRequest && bookingSelection?.type !== "booking")
+    ? null : await handleBookingMessage({ userId, text, store, user });
   stage("booking_gate", bookingStartedAt, { entered: Boolean(booking) });
   if (booking) {
     response = booking.response;
@@ -497,6 +505,29 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     }
 
     response = removeCustomerCitations(response);
+    const m5Safety = guardJurisdictionAnswer({
+      message: customerText, response, rows: evidence, language: detectMessageLanguage(customerText)
+    });
+    response = m5Safety.response;
+    const hookResult = appendGroundedHook({
+      message: customerText, response, language: detectMessageLanguage(customerText),
+      history: routed.user?.history || [], user: routed.user, rows: evidence,
+      specialistEligible: routed.metadata?.priority?.handoverRequired === true,
+      answerComplete: Boolean(grounded?.answer || modelResponseUsed),
+      suppressed: {
+        informational: hasInformationalIntent(routed.metadata?.intent?.intents),
+        complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
+        sensitive: Boolean(routed.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
+        declined: false,
+        optOut: ["denied", "revoked"].includes(getConsentState({ user: routed.user || {}, history: routed.user?.history || [] })),
+        pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(routed.user?.booking?.status),
+        handoverActive: Boolean(routed.user?.profile?.handover?.status === "active"),
+        complianceLock: Boolean(routed.metadata?.complianceLock?.active)
+      }
+    });
+    response = hookResult.response;
+    if (hookResult.salesOffer) routed.metadata.salesOffer = hookResult.salesOffer;
+    if (hookResult.specialistOffer) routed.metadata.specialistOffer = hookResult.specialistOffer;
     if (routed.metadata?.privacySafeQuestion) {
       const reminder = {
         arabic: "ولحماية خصوصيتك، لا تبعت كلمات مرور أو بيانات بطاقات أو دخول هون.",
@@ -575,6 +606,8 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
   const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
   const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
   const language = prepared.classification?.language || user?.profile?.language || "english";
+  let selectedSalesOffer = null;
+  let selectedSpecialistOffer = null;
   const result = await runAgentAfterPreflight({
     prepared,
     routed,
@@ -610,9 +643,32 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
         inboundMessageId: providerMessageId || null
       }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
-      return decision.send ? decision.responseText : null;
+      if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
+      const policyRows = observationPolicyRows(agentResult.steps);
+      const jurisdiction = guardJurisdictionAnswer({ message: text, response: decision.responseText, rows: policyRows, language });
+      let response = jurisdiction.response;
+      const hook = appendGroundedHook({
+        message: text, response, language, history: history.filter((turn) => turn.id !== sourceTurnId),
+        user: currentUser, rows: policyRows,
+        specialistEligible: routed.metadata?.priority?.handoverRequired === true,
+        answerComplete: true,
+        suppressed: {
+          informational: hasInformationalIntent(routed.metadata?.intent?.intents),
+          complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
+          sensitive: Boolean(prepared.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
+          optOut: ["denied", "revoked"].includes(consentState),
+          pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(currentUser?.booking?.status),
+          handoverActive: Boolean(currentUser?.profile?.handover?.status === "active"),
+          complianceLock: Boolean(routed.metadata?.complianceLock?.active)
+        }
+      });
+      response = hook.response;
+      selectedSalesOffer = hook.salesOffer;
+      selectedSpecialistOffer = hook.specialistOffer;
+      return response;
     },
-    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId, patch),
+    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId,
+      selectedSalesOffer || selectedSpecialistOffer ? { ...patch, metadata: { ...(selectedSalesOffer ? { salesOffer: selectedSalesOffer } : {}), ...(selectedSpecialistOffer ? { specialistOffer: selectedSpecialistOffer } : {}) } } : patch),
     send: async (response, turn) => {
       await setTyping(socket, chatId, false);
       await sendStoredTextReply(socket, chatId, response, userId, turn);

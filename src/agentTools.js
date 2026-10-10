@@ -122,6 +122,10 @@ function dynamicRecord(kind, row) {
   }
   const shared = {
     kind,
+    // `lookupDynamic()` has already required `row.active === true`; expose
+    // that verified state so downstream policy consumers do not have to infer
+    // it from omitted source columns.
+    active: true,
     location: trimString(row.location, 40),
     currency: trimString(row.currency, 3),
     vatTreatment: trimString(row.vat_note || row.vat_rate_note),
@@ -401,6 +405,8 @@ function safeField(value, max) {
 function buildApprovedKnowledgeObservation(status, rows = []) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const evidence = [];
+  const policyEvidence = [];
+  const factRegisterRows = new Map();
   let totalContentChars = 0;
   let truncated = safeRows.length > MAX_RAG_EVIDENCE_ITEMS;
 
@@ -420,6 +426,18 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
     const content = rawContent.slice(0, perItemLimit);
     const contentTruncated = rawContent.length > content.length;
     totalContentChars += content.length;
+    const trustedPolicy = row?.policyMetadata && typeof row.policyMetadata === "object" ? row.policyMetadata : {};
+    // Governance metadata is trusted only after the server-side enrichment
+    // lookup succeeds. Raw search rows (or future adapters) cannot authorize
+    // hooks/comparisons by supplying their own topic/fact labels.
+    const policyFacts = Array.isArray(trustedPolicy.facts) ? trustedPolicy.facts : [];
+    const factIds = policyFacts.map((id) => String(id || "").trim())
+      .filter((id) => /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(id)).slice(0, 24);
+    const ref = safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS);
+    for (const fact of (Array.isArray(trustedPolicy.factRegisterRows) ? trustedPolicy.factRegisterRows : [])) {
+      const id = String(fact?.id || "");
+      if (/^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(id)) factRegisterRows.set(id, fact);
+    }
     evidence.push({
       title: safeField(row?.document_title || row?.source_name, MAX_RAG_EVIDENCE_TITLE_CHARS) || "Approved information",
       section: safeField(row?.heading, MAX_RAG_EVIDENCE_SECTION_CHARS),
@@ -428,11 +446,17 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
       // Opaque chunk/document identifiers only (never a reviewer name,
       // approval timestamp, or other workflow metadata) — safe for internal
       // source traceability, never customer/profile data.
-      sourceRef: safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS)
+      sourceRef: ref
+    });
+    policyEvidence.push({
+      sourceRef: ref,
+      review_status: trustedPolicy.reviewStatus === "approved" ? "approved" : row?.review_status === "approved" ? "approved" : null,
+      valid_until: typeof trustedPolicy.validUntil === "string" ? trustedPolicy.validUntil.slice(0, 40) : typeof row?.valid_until === "string" ? row.valid_until.slice(0, 40) : null,
+      metadata: { topic: safeField(trustedPolicy.topic, 80), facts: factIds }
     });
   }
 
-  return { type: "approved_knowledge", status, evidence, truncated };
+  return { type: "approved_knowledge", status, evidence, truncated, policyEvidence, factRegisterRows: [...factRegisterRows.values()] };
 }
 
 async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6 } = {}) {
