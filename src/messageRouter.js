@@ -159,7 +159,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     }));
   }
   if (!privacyTurn && metadata.intent?.intents?.length && typeof store.saveIntents === "function") {
-    queueWrite("saveIntents", store.saveIntents(userId, metadata.intent.intents, { sourceTurnId: turn?.id, source: "deterministic" }));
+    queueWrite("saveIntents", store.saveIntents(userId, metadata.intent.intents, { sourceTurnId: turn?.id, source: metadata.intent.source === "contextual_model" ? "system" : "deterministic" }));
   }
   if ((explicitOptOut || consentDecision === "denied" || consentGranted || metadata.automatedReminderConsent) && typeof store.saveConsent === "function") {
     const state = explicitOptOut ? "revoked" : metadata.automatedReminderConsent?.state || (consentDecision === "denied" ? "denied" : "granted");

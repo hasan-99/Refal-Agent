@@ -4,6 +4,12 @@ const { formatApprovedKnowledgeEvidence, formatDynamicDataEvidence, buildDecisio
 
 const privateFixture = "My name is Ahmad. Contact me at ahmad@example.test or +357 99123456. IBAN CY17002001280000001200527600; passport number P1234567.";
 
+test("evidence UUIDs that resemble financial identifiers remain exact while free-text secrets are redacted", () => {
+  const sourceRef = "27b21d5d-6cce-4a77-aa38-139a24d617e9";
+  const formatted = formatApprovedKnowledgeEvidence({ type: "approved_knowledge", evidence: [{ sourceRef, content: "Approved conditions." }] });
+  assert.ok(formatted.includes(sourceRef));
+});
+
 test("approved knowledge is still scrubbed for PII at the model prompt boundary", () => {
   const formatted = formatApprovedKnowledgeEvidence({
     type: "approved_knowledge",

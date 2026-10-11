@@ -10,7 +10,7 @@ async function main() {
   const descriptor = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../artifacts/verified-qa-contact.json")));
   const store = createStore();
   const user = await store.getUser(descriptor.jid);
-  const startedAt = user.profile.qaSessionStartedAt;
+  const startedAt = user.profile.qaInitialVerificationStartedAt || user.profile.qaSessionStartedAt;
   if (!startedAt || user.profile.qaControlledDiagnostics !== true || user.profile.followUpBlocked !== true) throw new Error("Verified QA session required.");
   const events = await store.listEvents({ limit: 5000 });
   const inspections = await store.listControlledInspections(user.id);
@@ -24,7 +24,10 @@ async function main() {
   fs.writeFileSync(path.resolve(__dirname, "../artifacts/whatsapp-postrestart-transcript.json"), JSON.stringify({ startedAt, followUpBlocked: user.profile.followUpBlocked, turns }, null, 2));
   console.log(JSON.stringify({ count: turns.length, turns: turns.slice(-1).map((turn) => ({
     id: turn.id, message: turn.message, response: turn.response, deliveredAt: turn.deliveredAt, traceId: turn.traceId,
-    events: turn.events.map((event) => ({ event: event.event, ...event.fields })), inspections: turn.inspections
+    events: turn.events.map((event) => { const f=event.fields || event; return { event: event.event, stage:f.stage, step:f.step,
+      outcome:f.outcome, status:f.status, durationMs:f.durationMs, evidenceCount:f.evidenceCount,
+      errorCode:f.errorCode, reasonCode:f.reasonCode, validationReasons:f.validationReasons }; }),
+    inspections: turn.inspections.map((item) => ({ id:item.id, reasons:item.inspection.reasonCodes, draft:item.inspection.draft }))
   })) }));
 }
 main().catch((error) => { console.error(error.name, error.code || error.status || "INSPECTION_FAILED"); process.exitCode = 1; });
