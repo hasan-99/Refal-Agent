@@ -8,9 +8,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 // it, then rebuild all evidence fields from the database before giving evidence
 // to either the model or the deterministic claim gate.
 async function resolveTrustedKnowledgeEvidence(supabase, suppliedEvidence, { now = new Date() } = {}) {
-  const supplied = Array.isArray(suppliedEvidence) ? suppliedEvidence.slice(0, 8) : [];
+  const supplied = Array.isArray(suppliedEvidence) ? suppliedEvidence.slice(0, 40) : [];
   const chunkIds = [...new Set(supplied.map((item) => String(item?.chunk_id || "").trim()).filter((id) => UUID.test(id)))];
   if (!chunkIds.length) return [];
+
+  // Use precisely the same authorized, complete section resolver as search.
+  if (typeof supabase?.rpc === "function") {
+    const { data, error } = await supabase.rpc("rafa_expand_knowledge_sections", { p_chunk_ids: chunkIds, p_max_chunks: 200 });
+    if (error) throw error;
+    const enriched = await attachKnowledgePolicyMetadata(supabase, data || []);
+    return enriched.filter((row) => !(row.policyMetadata?.factRegisterRows || []).some((fact) => fact.status === "blocked"));
+  }
 
   const chunksResult = await supabase.from("rafa_knowledge_chunks")
     .select("id,document_id,chunk_index,heading,content,metadata")
@@ -21,7 +29,7 @@ async function resolveTrustedKnowledgeEvidence(supabase, suppliedEvidence, { now
   if (!documentIds.length) return [];
 
   const documentsResult = await supabase.from("rafa_knowledge_documents")
-    .select("id,source_id,title,review_status,valid_until,fetched_at")
+    .select("id,source_id,title,review_status,valid_until,fetched_at,canonical_content,revision")
     .in("id", documentIds);
   if (documentsResult?.error) throw documentsResult.error;
   const documents = Array.isArray(documentsResult?.data) ? documentsResult.data : [];
@@ -53,6 +61,7 @@ async function resolveTrustedKnowledgeEvidence(supabase, suppliedEvidence, { now
     // approved source, with expiry checked below.
     if (String(chunk.metadata?.kind || "") === "aliases") return [];
     if (!document || document.review_status !== "approved" || !source?.enabled || !source?.approved) return [];
+    if (/(?:[$€£]\s*[0-9٠-٩]|(?:EUR|USD|GBP)\s*[0-9٠-٩]|[0-9٠-٩][0-9٠-٩.,\s]*(?:EUR|USD|GBP|euros?|dollars?|pounds?|يورو|دولار|جنيه|ευρώ))/iu.test(String(document.canonical_content || "")) && !document.valid_until) return [];
     if (document.valid_until !== null && document.valid_until !== undefined) {
       const expiry = Date.parse(document.valid_until);
       if (!Number.isFinite(expiry) || !Number.isFinite(nowTime) || expiry <= nowTime) return [];
@@ -77,7 +86,7 @@ async function resolveTrustedKnowledgeEvidence(supabase, suppliedEvidence, { now
   // Fact-register rows are fetched only to honor an explicit owner block.
   // Missing or incomplete rows do not add an approval requirement to content
   // already verified through its approved revision and active source.
-  return await attachKnowledgePolicyMetadata(supabase, canonicalRows);
+  return (await attachKnowledgePolicyMetadata(supabase, canonicalRows)).filter((row) => !(row.policyMetadata?.factRegisterRows || []).some((fact) => fact.status === "blocked"));
 }
 
 export { resolveTrustedKnowledgeEvidence };

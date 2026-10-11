@@ -4,13 +4,7 @@ const EMAIL_VALUE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
 const WHATSAPP_JID = /\b\d{5,20}@[a-z0-9.-]+\b/giu;
 const PHONE_VALUE = /(?<![A-Za-z0-9])\+?\d(?:[\d ().-]{5,}\d)(?![A-Za-z0-9])/gu;
 const { redactSensitiveData } = require("./sensitiveData");
-const AGENT_TRACE_FIELDS = new Set([
-  "traceId", "stage", "durationMs", "outcome", "reasonCode", "status", "tool", "toolName",
-  "query", "searchQueries", "searchRound", "resultCount", "evidenceCount", "evidenceChars", "evidenceIds", "documentIds",
-  "sectionIds", "chunkIds", "evidencePassed", "validationReasons", "policyCode",
-  "step", "stepCount", "maxSteps", "toolCallCount", "toolCallLimit", "retryCount", "knowledgeStatus", "toolsUsed", "toolCalls", "ok", "fallbackUsed", "finalOutcome", "responseLength", "draftRejected", "rejectionReasonCodes", "deterministicCorrectionUsed", "ragUsed", "ragResultStatus", "limit", "shadowMode", "reason", "outputChars",
-  "limitReached", "terminationCause", "model", "providerStatus", "errorCode", "timingMs"
-]);
+const { sanitizeAgentTraceFields } = require("./agentTracePrivacy");
 // Telemetry is metadata, not a general-purpose event payload. Unknown keys
 // can contain customer text even when their values do not resemble PII, so
 // retain only the scalar labels and measurements emitted by current callers.
@@ -73,33 +67,6 @@ function buildOperationalEvent(event, fields = {}) {
   // from accidentally passing customer text as the event name.
   const safeEvent = /^[A-Za-z][A-Za-z0-9_.-]{0,99}$/u.test(eventName) ? eventName : "unknown";
   return { event: safeEvent, fields: safeEvent.startsWith("agent_") ? sanitizeAgentTraceFields(fields) : (sanitizeOperationalValue(fields) || {}) };
-}
-
-function sanitizeAgentTraceFields(fields = {}) {
-  const clean = {};
-  for (const [key, value] of Object.entries(fields || {})) {
-    if (!AGENT_TRACE_FIELDS.has(key)) continue;
-    if (typeof value === "number" && Number.isFinite(value)) clean[key] = value;
-    else if (typeof value === "boolean" || value === null) clean[key] = value;
-    else if (typeof value === "string") {
-      let safe = redactString(redactSensitiveData(value));
-      if (key === "query") safe = safe.replace(/[\r\n\t]+/gu, " ").slice(0, 240);
-      else if (["outcome", "reasonCode", "status", "tool", "toolName", "stage", "terminationCause", "errorCode", "providerStatus"].includes(key)) {
-        if (!/^[A-Za-z0-9_.:/-]{1,120}$/u.test(safe)) continue;
-        safe = safe.slice(0, 120);
-      } else safe = safe.slice(0, 180);
-      clean[key] = safe;
-    } else if (key === "searchQueries" && Array.isArray(value)) {
-      clean[key] = value.slice(0, 4).filter((item) => typeof item === "string")
-        .map((item) => redactString(redactSensitiveData(item)).replace(/[\r\n\t]+/gu, " ").slice(0, 240));
-    } else if (Array.isArray(value) && /(?:Ids|Reasons)$/u.test(key)) {
-      clean[key] = value.slice(0, 30).filter((item) => typeof item === "string")
-        .map((item) => redactString(redactSensitiveData(item)).slice(0, 120));
-    } else if (Array.isArray(value) && ["toolsUsed", "toolCalls"].includes(key)) {
-      clean[key] = value.slice(0, 20).filter((item) => typeof item === "string" && /^[A-Za-z0-9_.-]{1,80}$/u.test(item));
-    }
-  }
-  return clean;
 }
 
 function safeErrorDiagnostics(error) {

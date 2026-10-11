@@ -1,5 +1,24 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+
+test("later relevant evidence replaces weaker evidence without deleting omitted candidate sections", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const observation = (id, relevance, size) => ({ result: { modelObservation: { type: "approved_knowledge", evidence: [{ sourceRef: id, title: "Section", content: "x".repeat(size), relevance }], policyEvidence: [{ sourceRef: id, review_status: "approved" }] } } });
+  const observations = [observation("weak", 1, 350)];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(observation("strong", 3, 350));
+  const selected = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(selected.retainedIds, ["strong"]);
+  assert.deepEqual(selected.replacedIds, ["weak"]);
+  assert.equal(observations[0].result.modelObservation.candidateEvidence[0].content.length, 350);
+  assert.equal(observations[1].result.modelObservation.policyEvidence[0].sourceRef, "strong");
+  observations.push(observation("another", 2, 350));
+  const omitted = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.equal(omitted.newCandidateCount, 1);
+  assert.equal(omitted.newEvidenceCount, 0);
+  assert.ok(omitted.excludedIds.includes("another"));
+  assert.equal(observations[2].result.modelObservation.candidateEvidence.length, 1);
+});
 const { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 
@@ -170,7 +189,7 @@ test("knowledge evidence stays within one cumulative prompt budget across search
     decideNextStep: async ({ observations, step }) => {
       const evidence = observations.flatMap((item) => item?.result?.modelObservation?.evidence || []);
       const chars = evidence.reduce((total, item) => total + item.content.length + item.title.length + (item.section || "").length + 48, 0);
-      assert.ok(chars <= 6000, `decision evidence exceeded budget: ${chars}`);
+      assert.ok(chars <= 10000, `decision evidence exceeded budget: ${chars}`);
       if (step === 3) secondEvidenceChars = chars;
       if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "service overview" } };
       if (step === 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "more service information" } };
@@ -178,7 +197,7 @@ test("knowledge evidence stays within one cumulative prompt budget across search
     }
   });
   assert.equal(round, 2);
-  assert.ok(secondEvidenceChars <= 6000);
+  assert.ok(secondEvidenceChars <= 10000);
   assert.equal(result.outcome, "responded");
 });
 

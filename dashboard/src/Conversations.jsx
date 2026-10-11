@@ -364,6 +364,17 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
   const [contactDraft, setContactDraft] = useState({ nameOverride: "", phoneOverride: "" });
   const [contactSaving, setContactSaving] = useState(false);
   const [contactNotice, setContactNotice] = useState("");
+  const [inspections, setInspections] = useState(null);
+  const [inspectionError, setInspectionError] = useState("");
+  const loadInspections = async () => {
+    setInspectionError("");
+    try {
+      const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/diagnostics`, { credentials: "include" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Controlled diagnostics unavailable.");
+      setInspections(payload.inspections || []);
+    } catch (cause) { setInspectionError(cause.message); }
+  };
   const contactName = detail?.user?.name || detail?.user?.pushName || detail?.user?.phone || id;
   const contactPhone = detail?.user?.phone || "WhatsApp conversation";
 
@@ -426,6 +437,22 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
     </form>}
     {contactNotice && <p className="conversation-contact-notice" role="status">{contactNotice}</p>}
     {detail && <WorkflowSummary workflow={detail.user?.workflow} isAdmin={isAdmin} />}
+    {isAdmin && detail && <details className="conversation-diagnostics">
+      <summary>Controlled test diagnostics</summary>
+      <button type="button" onClick={loadInspections}>Load rejected drafts and evidence</button>
+      {inspectionError && <p role="alert">{inspectionError}</p>}
+      {inspections && inspections.length === 0 && <p>No rejected drafts recorded.</p>}
+      {inspections?.map((record) => <details key={record.id}>
+        <summary>{record.at} · step {record.inspection?.step} · {record.inspection?.reasonCodes?.join(", ")}</summary>
+        <p dir="auto">{record.inspection?.draft}</p>
+        <p>Trace: {record.inspection?.traceId}</p>
+        {record.inspection?.claims?.map((claim, index) => <p key={index} dir="auto">{claim.sentence} ({claim.reasons.join(", ")})</p>)}
+        {record.inspection?.evidence?.map((item, index) => <details key={index}>
+          <summary>{item.title} · {item.section} · {item.sourceRef}</summary>
+          <pre style={{ whiteSpace: "pre-wrap" }} dir="auto">{item.content}</pre>
+        </details>)}
+      </details>)}
+    </details>}
     {loading && <div className="conversation-detail-state"><span className="conversation-spinner" />Loading conversation</div>}
     {error && <div className="conversation-alert" role="alert"><span>{error}</span><button type="button" onClick={onBack}>Back to inbox</button></div>}
     {detail && !loading && <div className="conversation-thread-wrap">

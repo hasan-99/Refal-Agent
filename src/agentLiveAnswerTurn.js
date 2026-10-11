@@ -9,36 +9,46 @@ const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
-const { detectIntent, INTENTS } = require("./intent");
 const { runAgentAfterPreflight, safeAgentSourceMessage } = require("./agentWhatsAppAdapter");
-const { appendGroundedHook, guardJurisdictionAnswer, observationPolicyRows, hasInformationalIntent } = require("./salesIntelligence");
 const { buildRecentConversation } = require("./agentShadow");
 const { refreshCustomerTopicSummaryFromStore } = require("./conversationMemory");
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
 const { deriveOpenQuestion } = require("./openQuestion");
+const { randomUUID } = require("node:crypto");
+const { sanitizeControlledInspection } = require("./controlledDiagnostics");
 
-async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMessageId = null } = {}, {
+async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMessageId = null, traceId = randomUUID() } = {}, {
   store,
   logEvent = async () => {},
   setTyping = async () => {},
   sendStoredTextReply = async () => {},
   agentOptions = {},
+  preflightOptions = {},
   embedText,
   toolRegistry = TOOL_REGISTRY
 } = {}) {
   if (!store) throw new TypeError("Agent live answer turn requires a store.");
   await setTyping(socket, chatId, true);
   const user = await store.ensureUser(userId);
+  const controlled = user?.profile?.qaControlledDiagnostics === true && user?.profile?.followUpBlocked === true;
+  const sessionStartForPreflight = controlled ? Date.parse(user?.profile?.qaSessionStartedAt || "") : NaN;
+  const preflightUser = Number.isFinite(sessionStartForPreflight) ? { ...user,
+    history: (user.history || []).filter((turn) => Date.parse(turn.at) >= sessionStartForPreflight) } : user;
+  const activeRegistry = controlled ? Object.fromEntries(Object.entries(toolRegistry).filter(([name]) =>
+    ["searchApprovedKnowledge", "lookupActiveOffer", "lookupRenewalFees", "lookupGovernmentFees", "searchPropertyInventory", "lookupReservationRules"].includes(name))) : toolRegistry;
   const bookingState = user?.booking?.status;
-  if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || detectIntent(text).intents.includes(INTENTS.APPOINTMENT)) {
-    throw new Error("Appointment turn remains owned by the deterministic booking workflow.");
+  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user: preflightUser, store, contextual: true,
+    ...preflightOptions, onModelCall: (measurement) => logEvent("agent_model_call", { ...measurement, traceId }) });
+  prepared.metadata.traceId = traceId;
+  if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || prepared.classification?.operation === "booking_request") {
+    const error = new Error("Appointment turn remains owned by the deterministic booking workflow.");
+    error.code = "BOOKING_WORKFLOW_REQUIRED";
+    error.preparedInbound = prepared;
+    throw error;
   }
-  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
   const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
   const language = prepared.classification?.language || user?.profile?.language || "english";
   const agentMessage = safeAgentSourceMessage(text, prepared, routed);
-  let selectedSalesOffer = null;
-  let selectedSpecialistOffer = null;
   const result = await runAgentAfterPreflight({
     prepared, routed, userId, sourceMessage: String(agentMessage || ""), locale: language,
     metadata: prepared.metadata || {}, pendingResponse: "Your message is being processed."
@@ -47,7 +57,8 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
     runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
       const currentUser = await store.getUser(userId);
       const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
-      const priorHistory = history.filter((turn) => turn.id !== sourceTurnId);
+      const sessionStart = controlled ? Date.parse(currentUser?.profile?.qaSessionStartedAt || "") : NaN;
+      const priorHistory = history.filter((turn) => turn.id !== sourceTurnId && (!Number.isFinite(sessionStart) || Date.parse(turn.at) >= sessionStart));
       const conversationState = getConversationState(currentUser || {});
       const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
       const commitState = createCommitState();
@@ -59,20 +70,42 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         consentState, allowedCapabilities, sourceTurnId, store, user: currentUser, userId,
         intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
         language, inboundMessageId: providerMessageId || null,
-        leadTier: routed.metadata?.leadTier || "", buyingSignals: routed.metadata?.buyingSignals || []
+        leadTier: routed.metadata?.leadTier || "", buyingSignals: routed.metadata?.buyingSignals || [],
+        conversationPreferences: currentUser?.profile?.conversationPreferences || {},
+        contextualWorkflow: prepared.classification?.operation || "none"
       }, {
-        tools: buildCommitTrackingToolRegistry(toolRegistry, commitState),
-        onModelCall: (measurement) => logEvent("agent_model_call", measurement),
-        onToolCall: ({ step, tool, args, result, durationMs, evidenceCount, evidenceChars, evidenceIds, skipped }) => logEvent("agent_tool_call", {
-          step, tool, query: args?.query, searchQueries: result?.trace?.searchQueries, status: result?.status || (result?.ok ? "ok" : "error"),
+        ...agentOptions,
+        tools: buildCommitTrackingToolRegistry(activeRegistry, commitState),
+        onModelCall: async (measurement) => {
+          await logEvent("agent_model_call", { ...measurement, traceId, sourceTurnId });
+          await agentOptions.onModelCall?.(measurement);
+        },
+        onToolCall: async ({ step, tool, args, result, durationMs, evidenceCount, evidenceChars, evidenceIds, skipped, ...measurements }) => {
+          await logEvent("agent_tool_call", {
+          traceId, sourceTurnId, step, tool, query: args?.query, searchQueries: result?.trace?.searchQueries, status: result?.status || (result?.ok ? "ok" : "error"),
           reasonCode: result?.reasonCode, durationMs, evidenceCount, evidenceChars, evidenceIds,
+          ...measurements, ...(result?.trace || {}),
           resultCount: Array.isArray(result?.data) ? result.data.length : evidenceCount,
           ...(skipped ? { outcome: "skipped" } : {})
-        }),
-        onPolicyRejection: ({ step, type, reasonCodes }) => logEvent("agent_policy_rejected", {
-          step, tool: type, validationReasons: reasonCodes
-        }),
+          });
+          await agentOptions.onToolCall?.({ step, tool, args, result, durationMs, evidenceCount, evidenceChars, evidenceIds, skipped, ...measurements });
+        },
+        onPolicyRejection: async ({ step, type, reasonCodes, draft, evidence, claims }) => {
+          await logEvent("agent_policy_rejected", { traceId, sourceTurnId, step, tool: type, validationReasons: reasonCodes });
+          await agentOptions.onPolicyRejection?.({ step, type, reasonCodes, draft, evidence, claims });
+          if (controlled && typeof store.saveControlledInspection === "function") {
+            const inspection = sanitizeControlledInspection({ traceId, step, type, reasonCodes, draft, evidence, claims },
+              [userId, currentUser?.phone, currentUser?.profile?.name]);
+            if (inspection) {
+              try {
+                const saved = await store.saveControlledInspection(userId, sourceTurnId, inspection);
+                await logEvent("agent_inspection_saved", { traceId, step, inspectionId: saved?.inspectionId });
+              } catch (error) { await logEvent("agent_inspection_persistence_failed", { traceId, step, ...safeErrorDiagnostics(error) }); }
+            }
+          }
+        },
         onModelUsage: (usage) => logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
+          traceId, sourceTurnId,
           source: "whatsapp-agent",
           model: usage.model,
           promptTokens: usage.promptTokens,
@@ -81,14 +114,16 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
           costUsd: usage.costUsd,
           providerReported: usage.providerReported
         }),
-        ...agentOptions,
         ...(embedText ? { embedText } : {})
       });
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
+      await logEvent("agent_turn_completed", { traceId, sourceTurnId, outcome: agentResult.outcome,
+        stepCount: agentResult.stepCount, toolsUsed: agentResult.toolsUsed, terminationCause: agentResult.reason || "validated_answer" });
       if (!decision.send) {
         const failedStep = Array.isArray(agentResult.steps) ? agentResult.steps.find((step) => step?.result?.ok === false) : null;
         const knowledgeStep = Array.isArray(agentResult.steps) ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge") : null;
         await logEvent("agent_turn_not_clean", {
+          traceId,
           outcome: String(agentResult.outcome || "unknown").slice(0, 40),
           reasonCode: /^[A-Za-z0-9_:,-]{1,100}$/u.test(String(agentResult.reason || ""))
             ? String(agentResult.reason).slice(0, 100) : String(failedStep?.result?.reasonCode || "not_clean").slice(0, 80),
@@ -98,30 +133,9 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         });
       }
       if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
-      const policyRows = observationPolicyRows(agentResult.steps);
-      const jurisdiction = guardJurisdictionAnswer({ message: agentMessage, response: decision.responseText, rows: policyRows, language });
-      const hook = appendGroundedHook({
-        message: agentMessage, response: jurisdiction.response, language,
-        history: history.filter((turn) => turn.id !== sourceTurnId), user: currentUser, rows: policyRows,
-        specialistEligible: routed.metadata?.priority?.handoverRequired === true, answerComplete: true,
-        suppressed: {
-          informational: hasInformationalIntent(routed.metadata?.intent?.intents),
-          complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
-          sensitive: Boolean(prepared.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
-          optOut: ["denied", "revoked"].includes(consentState),
-          pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(currentUser?.booking?.status),
-          handoverActive: Boolean(currentUser?.profile?.handover?.status === "active"),
-          complianceLock: Boolean(routed.metadata?.complianceLock?.active)
-        }
-      });
-      selectedSalesOffer = hook.salesOffer;
-      selectedSpecialistOffer = hook.specialistOffer;
-      return hook.response;
+      return decision.responseText;
     },
-    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId,
-      selectedSalesOffer || selectedSpecialistOffer
-        ? { ...patch, metadata: { ...(selectedSalesOffer ? { salesOffer: selectedSalesOffer } : {}), ...(selectedSpecialistOffer ? { specialistOffer: selectedSpecialistOffer } : {}) } }
-        : patch),
+    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId, patch),
     afterTurnPersisted: async ({ turnId, message }) => {
       try { await refreshCustomerTopicSummaryFromStore({ store, userId, currentMessage: message, sourceTurnId: turnId }); }
       catch (error) { await logEvent("conversation_summary_error", safeErrorDiagnostics(error)); }

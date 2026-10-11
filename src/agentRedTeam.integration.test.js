@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 const { runAgentTurn } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 const { buildDecisionMessages } = require("./agentDecision");

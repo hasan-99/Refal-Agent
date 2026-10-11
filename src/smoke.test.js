@@ -84,8 +84,8 @@ const trackedTurn = await routeMessageResult({
     addHistory: async () => ({ id: "turn-123", metadata: {} })
   }
 });
-assert.equal(trackedTurn.turnId, "turn-123");
-assert.equal(trackedTurn.turn.id, "turn-123");
+assert.equal(trackedTurn.shouldUseAi, true);
+assert.equal(trackedTurn.turn, undefined, "greeting is generated and persisted by the model composition");
 
 const firstGreeting = await routeMessage({
   userId,
@@ -94,7 +94,7 @@ const firstGreeting = await routeMessage({
   company,
   now: new Date("2026-01-05T07:00:00.000Z")
 });
-assert.match(firstGreeting, /digital assistant/i);
+assert.ok(typeof firstGreeting === "string");
 const rafaQuestion = await routeMessageResult({ userId, text: "Could you tell me about a project for families?", store });
 assert.equal(rafaQuestion.shouldUseAi, true);
 assert.match(await routeMessage({ userId, text: "profile", store }), /Name: not set/);
@@ -124,7 +124,7 @@ assert.equal(store.getUser(userId).profile.name, undefined);
 
 assert.equal(store.deleteUser(userId), true);
 assert.equal(store.getUser(userId), null);
-assert.match(await routeMessage({ userId, text: "hello", store }), /digital assistant/i);
+assert.equal((await routeMessageResult({ userId, text: "hello", store })).shouldUseAi, true);
 
 assert.equal(detectMessageLanguage("Tell me about Refalco Group projects"), "english");
 assert.equal(detectMessageLanguage("شو مشاريع الشركة؟"), "arabic");

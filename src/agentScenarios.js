@@ -20,7 +20,7 @@
 // reach a real customer, a real Google Calendar, or real Supabase data.
 
 const { runAgentTurn } = require("./agentLoop");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { __resetBookingToolState } = require("./agentBookingTools");
 const { summarizeAgentTurn, languageSignalsFrom } = require("./agentObservability");
@@ -391,18 +391,18 @@ SCENARIOS.push({
 
 SCENARIOS.push({
   id: "C03", category: "clarification", locale: "english",
-  description: "A two-question draft is deterministically corrected to one question (Ticket 005 behavior).",
+  description: "A two-question draft is regenerated from actionable validation feedback.",
   featureTags: ["clarification"],
   run: () => runInfo({
     message: "I want to set up a company.",
     locale: "english",
-    decisions: [{ type: "respond", text: "What is your budget? When would you like to start?" }]
+    decisions: [{ type: "respond", text: "What is your budget? When would you like to start?" }, { type: "clarify", text: "What business activity are you considering?" }]
   }),
   expected: { maxQuestions: 1,
     custom: ({ result, telemetry }) => {
       const failures = [];
       if (!(result.outcome === "responded" || result.outcome === "clarified")) failures.push(`expected a successful correction, got outcome "${result.outcome}"`);
-      if (!result.corrected) failures.push("expected result.corrected to be true (deterministic truncation applied)");
+      if (result.stepCount !== 2) failures.push("expected one rejection followed by a corrected model decision");
       if (telemetry.questionCount !== 1) failures.push(`expected exactly 1 question after correction, got ${telemetry.questionCount}`);
       return failures;
     } }

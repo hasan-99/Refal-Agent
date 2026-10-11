@@ -45,10 +45,9 @@ test("metadata enrichment skips invalid chunk ids and fails closed when governan
   assert.equal(called, false);
   assert.equal(rows[0].policyMetadata, null);
 
-  const failed = await attachKnowledgePolicyMetadata({
+  await assert.rejects(attachKnowledgePolicyMetadata({
     from() { return { select() { return this; }, in() { return Promise.resolve({ data: null, error: new Error("unavailable") }); } }; }
-  }, [{ chunk_id: CHUNK }]);
-  assert.equal(failed[0].policyMetadata, null);
+  }, [{ chunk_id: CHUNK }]), { code: "KNOWLEDGE_METADATA_UNAVAILABLE" });
 });
 
 test("policy metadata rejects malformed topic and fact identifiers", () => {

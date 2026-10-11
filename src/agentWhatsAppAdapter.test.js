@@ -8,7 +8,7 @@ const {
   runAgentAfterPreflight
 } = require("./agentWhatsAppAdapter");
 const { runRoutedTurn } = require("./turnRouting");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 const { prepareInboundMessage, routeMessageResult } = require("./messageRouter");
 
 function eligibleInput(overrides = {}) {

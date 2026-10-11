@@ -190,6 +190,8 @@ const BANNER = (sources) => `// GENERATED FILE — do not edit by hand.
 `;
 
 const TARGETS = [
+  { file: "controlledDiagnostics.mjs", sources: ["src/controlledDiagnostics.js"], build() { return mirrorModule(path.join(REPO, "src", "controlledDiagnostics.js"), { importMap: { "./agentTracePrivacy": "./agentTracePrivacy.mjs" } }); } },
+  { file: "agentTracePrivacy.mjs", sources: ["src/agentTracePrivacy.js"], build() { return mirrorModule(path.join(REPO, "src", "agentTracePrivacy.js")); } },
   {
     file: "sensitiveOutputPolicy.mjs",
     sources: ["src/sensitiveOutputPolicy.js"],

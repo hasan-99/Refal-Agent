@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { saveCustomerFact } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 
 test("customer facts saved to a contact profile reach the live Agent pre-send gate", async () => {
   const user = { id: "contact-1", profile: {}, history: [] };

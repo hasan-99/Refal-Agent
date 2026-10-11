@@ -741,6 +741,13 @@ app.get("/api/conversations/:userId", async (req, res) => {
   }
 });
 
+app.get("/api/conversations/:userId/diagnostics", requireAdmin, async (req, res) => {
+  try {
+    const inspections = await store.listControlledInspections(req.params.userId);
+    res.json({ inspections });
+  } catch (error) { res.status(Number(error.status) || 502).json({ error: "Controlled diagnostics unavailable." }); }
+});
+
 app.delete("/api/conversations/:userId", requireAdmin, authRateLimit, async (req, res) => {
   const userId = String(req.params.userId || "").trim();
   try {

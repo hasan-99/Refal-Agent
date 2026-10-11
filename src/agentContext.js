@@ -20,7 +20,9 @@ function buildAgentContext({
   consentState = "unknown",
   allowedCapabilities = [],
   leadTier = "",
-  buyingSignals = []
+  buyingSignals = [],
+  conversationPreferences = {},
+  contextualWorkflow = "none"
 } = {}) {
   const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
   const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
@@ -43,6 +45,8 @@ function buildAgentContext({
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,
     consentState: safeTrim(consentState, 20) || "unknown",
+    conversationPreferences: Object.freeze({ noProactiveBookingOrContact: conversationPreferences.noProactiveBookingOrContact === true }),
+    contextualWorkflow: safeTrim(contextualWorkflow, 40),
     leadTier: safeLeadTier,
     buyingSignals: Object.freeze(safeBuyingSignals),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))])

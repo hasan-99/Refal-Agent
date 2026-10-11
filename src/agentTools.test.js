@@ -4,6 +4,46 @@ const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomer
 const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
 const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
 
+test("contextual selection receives conversation and ranks relevant complete sections rather than duplicated generic hits", async () => {
+  const source = [
+    { chunk_id: "weak", content: "Dividend tax outcomes depend on residence.", heading: "Dividend tax", rank: 0.03 },
+    { chunk_id: "useful", content: "The team assists with ongoing accounts and statutory filings. Additional regulated work requires specialist review.", heading: "Operating support", rank: 0.02 }
+  ];
+  const history = [{ message: "I have already incorporated my software studio.", response: "A previous request failed technically." }];
+  let selectionInput;
+  const result = await searchApprovedKnowledge({ query: "support after incorporation" }, {
+    currentMessage: "Και μετά; Πώς συνεχίζετε να μας υποστηρίζετε;", user: { history },
+    store: { searchKnowledge: async () => source }, embedText: async () => null,
+    selectKnowledgeEvidence: async (input) => { selectionInput = input; return { selections: [{ id: "1", relevance: 3 }], status: "contextual_model_selection" }; }
+  });
+  assert.deepEqual(selectionInput.history, history);
+  assert.match(selectionInput.currentMessage, /Πώς/);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["useful"]);
+  assert.match(result.modelObservation.evidence[0].content, /requires specialist review/);
+  assert.deepEqual(result.trace.excludedIds, ["weak"]);
+});
+
+test("evidence selection validates opaque references and never exposes forged model evidence", async () => {
+  const { selectKnowledgeSections } = require("./knowledgeSelection");
+  for (const currentMessage of ["بدنا نغيّر الملكية بعد فترة، كيف؟", "Could our ownership change down the road?", "Μπορούμε να αλλάξουμε τους μετόχους αργότερα;"]) {
+    const result = await selectKnowledgeSections({ currentMessage, candidates: [{ title: "Ownership", section: "Changes", content: "Changes require documents and review." }] }, {
+      callModel: async (messages) => { assert.match(messages[1].content, /Ownership/); return { selections: [{ id: "0", relevance: 3 }, { id: "999", relevance: 3 }, { id: "0", relevance: 2 }] }; }
+    });
+    assert.deepEqual(result.selections, [{ id: "0", relevance: 3 }]);
+  }
+});
+
+test("selection provider failure remains a technical error with candidate diagnostics", async () => {
+  const result = await searchApprovedKnowledge({ query: "current assistance" }, {
+    store: { searchKnowledge: async () => [{ chunk_id: "supported", content: "Approved information." }] }, embedText: async () => null,
+    selectKnowledgeEvidence: async () => { throw Object.assign(new Error("provider unavailable"), { code: "PROVIDER_TIMEOUT" }); }
+  });
+  assert.equal(result.status, "error");
+  assert.equal(result.reasonCode, "EVIDENCE_SELECTION_FAILED");
+  assert.equal(result.trace.providerErrorCode, "PROVIDER_TIMEOUT");
+  assert.deepEqual(result.trace.candidateIds, ["supported"]);
+});
+
 test("searchApprovedKnowledge rejects an empty query without calling the store", async () => {
   let called = false;
   const store = { searchKnowledge: async () => { called = true; return []; } };
@@ -72,7 +112,7 @@ test("searchApprovedKnowledge found result exposes approved chunk content throug
   assert.equal(item.sourceRef, "chunk-123");
   // Internal approval-workflow metadata must never leak into the model-safe
   // surface, even though it is present on the raw row.
-  assert.deepEqual(Object.keys(item).sort(), ["content", "contentTruncated", "language", "section", "sourceRef", "sourceRefs", "title"]);
+  assert.deepEqual(Object.keys(item).sort(), ["content", "contentTruncated", "language", "relevance", "retrievalRank", "section", "selectionOrder", "sourceRef", "sourceRefs", "title"]);
 });
 
 test("searchApprovedKnowledge rank-fuses model interpretation with the original client wording", async () => {
@@ -122,7 +162,7 @@ test("searchApprovedKnowledge bounds the number of evidence items", async () => 
   assert.equal(result.modelObservation.truncated, true);
 });
 
-test("searchApprovedKnowledge bounds total evidence content size and marks per-item truncation", async () => {
+test("searchApprovedKnowledge bounds rendered evidence while preserving complete omitted sections in its candidate pool", async () => {
   const longContent = "A".repeat(5000);
   const rows = [
     { heading: "Doc 1", content: longContent },
@@ -134,7 +174,9 @@ test("searchApprovedKnowledge bounds total evidence content size and marks per-i
   const result = await searchApprovedKnowledge({ query: "long docs" }, { store, embedText: async () => null });
   const totalContentChars = result.modelObservation.evidence.reduce((sum, item) => sum + item.content.length, 0);
   assert.ok(totalContentChars <= MAX_RAG_EVIDENCE_TOTAL_CHARS, `expected total content chars (${totalContentChars}) to stay within the bound`);
-  assert.ok(result.modelObservation.evidence.some((item) => item.contentTruncated === true));
+  assert.equal(result.modelObservation.evidence.length, 3);
+  assert.ok(result.modelObservation.evidence.every((item) => !item.contentTruncated && item.content === longContent));
+  assert.equal(result.modelObservation.candidateEvidence.length, 4);
 });
 
 test("searchApprovedKnowledge preserves Arabic and Greek evidence content unchanged (within bounds)", async () => {
@@ -457,7 +499,7 @@ test("M5 governance metadata remains separate from model prompt text and joins o
   }] };
   const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null, language: "english" });
   const [modelEvidence] = result.modelObservation.evidence;
-  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "language", "section", "sourceRef", "sourceRefs", "title"]);
+  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "language", "relevance", "retrievalRank", "section", "selectionOrder", "sourceRef", "sourceRefs", "title"]);
   assert.doesNotMatch(formatApprovedKnowledgeEvidence(result.modelObservation), /jurisdiction-dubai|MB-J1|BOSS|reviewer/i);
   const observations = [{ result }];
   const [policyEvidence] = collectApprovedKnowledgeEvidence(observations);

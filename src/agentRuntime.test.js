@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { runAgentTurnForContact, buildToolContext } = require("./agentRuntime");
+const { buildToolContext } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 
 function scriptedDecider(decisions) {

@@ -22,6 +22,7 @@ import { CRM_PROFILE_GROUPS, crmRowToAgentFacts, isExplicitCrmCorrection, isSelf
 import { claimInboundMessage, completeInboundMessage } from "./inboundMessageReceipts.mjs";
 import { isAllowedReminderTransition, reminderPatchForState } from "./reminderDeliveryState.mjs";
 import { redactAuditEventFields, sanitizeAgentOperationalFields } from "./auditEventPrivacy.mjs";
+import { sanitizeControlledInspection } from "./controlledDiagnostics.mjs";
 import { containsSensitiveOutputValue } from "./sensitiveOutputPolicy.mjs";
 import { fetchJsonWithTimeout, ProviderTimeoutError } from "./providerTransport.mjs";
 import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
@@ -783,11 +784,40 @@ Deno.serve(async (req: Request) => {
       return json(await deleteConversationData(decodeURIComponent(parts[1])));
     }
 
+    if (parts[0] === "controlled-diagnostics" && req.method === "POST") {
+      const body = await req.json();
+      if (!isUuid(String(body.sourceTurnId || ""))) throw new HttpError("Persisted source turn required.", 400);
+      const contact = await getUser(String(body.userId || ""), false);
+      if (!contact?.contactId || contact.profile?.qaControlledDiagnostics !== true || contact.profile?.followUpBlocked !== true) {
+        throw new HttpError("Contact is not enrolled for controlled diagnostics.", 403);
+      }
+      const { data: turn, error: turnError } = await supabase.from("rafa_conversation_turns").select("id")
+        .eq("id", body.sourceTurnId).eq("contact_id", contact.contactId).maybeSingle();
+      if (turnError) throw turnError;
+      if (!turn) throw new HttpError("Source turn not found.", 404);
+      if (JSON.stringify(body.inspection || {}).length > 100000) throw new HttpError("Inspection exceeds size limit.", 413);
+      const inspection = sanitizeControlledInspection(body.inspection, [contact.id, contact.phone, contact.profile?.name]);
+      if (!inspection) throw new HttpError("Invalid controlled inspection.", 400);
+      const { data, error } = await supabase.from("rafa_events").insert({ event: "agent_controlled_inspection",
+        fields: { sourceTurnId: turn.id, contactId: contact.contactId, inspection }, at: new Date().toISOString() }).select("id").single();
+      if (error) throw error;
+      return json({ inspectionId: data.id });
+    }
+    if (parts[0] === "controlled-diagnostics" && parts[1] && req.method === "GET") {
+      const contact = await getUser(decodeURIComponent(parts[1]), false);
+      if (!contact?.contactId || contact.profile?.qaControlledDiagnostics !== true) throw new HttpError("Controlled diagnostics unavailable.", 404);
+      const { data, error } = await supabase.from("rafa_events").select("id,at,fields")
+        .eq("event", "agent_controlled_inspection").contains("fields", { contactId: contact.contactId }).order("at", { ascending: true }).limit(100);
+      if (error) throw error;
+      return json({ inspections: (data || []).map((row) => ({ id: row.id, at: row.at, sourceTurnId: row.fields.sourceTurnId,
+        inspection: sanitizeControlledInspection(row.fields.inspection, [contact.id, contact.phone, contact.profile?.name]) })) });
+    }
     if (parts[0] === "events" && req.method === "POST") {
       const body = await req.json();
       const event = String(body.event || "unknown").trim();
       const fields = body.fields ?? {};
       if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(event)) throw new HttpError("Invalid event name.", 400);
+      if (event === "agent_controlled_inspection") throw new HttpError("Use controlled diagnostics endpoint.", 400);
       if (!fields || typeof fields !== "object" || Array.isArray(fields) || JSON.stringify(fields).length > 8192) {
         throw new HttpError("Event fields must be an object no larger than 8 KB.", 413);
       }
@@ -1516,7 +1546,7 @@ async function deleteConversationData(userId: string) {
   return { deleted: Boolean(contact) || Boolean(count), deletedTurns: count || 0 };
 }
 
-const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk"]);
+const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk", "agent_identity", "language_capability", "business_areas", "project_enquiry", "land_development"]);
 const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "tax", "residency", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
 const WORKFLOW_TRIGGERS = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity"]);
 
@@ -2076,13 +2106,15 @@ async function listEvents(limit: number) {
   const { data, error } = await supabase
     .from("rafa_events")
     .select("event,fields,at")
+    .neq("event", "agent_controlled_inspection")
     .order("at", { ascending: false })
     .limit(limit);
   if (error) throw error;
   return (data || []).map((row) => ({
     at: row.at,
+    ...(row.fields || {}),
     event: row.event,
-    ...(row.fields || {})
+    fields: row.fields || {}
   })).reverse();
 }
 
@@ -2102,6 +2134,7 @@ function rowToUser(row: Record<string, any>, history: unknown[]) {
     id: row.whatsapp_jid,
     phone: row.phone || String(row.whatsapp_jid || "").replace(/@.+$/, ""),
     profile: row.profile || {},
+    followUpBlocked: row.profile?.followUpBlocked === true,
     step: row.step,
     whatsapp: row.whatsapp || {},
     booking: row.booking || undefined,

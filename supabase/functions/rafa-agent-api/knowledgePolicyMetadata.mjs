@@ -46,7 +46,9 @@ async function attachKnowledgePolicyMetadata(supabase, rows) {
   if (!chunkIds.length || !supabase?.from) return results.map((row) => ({ ...row, policyMetadata: null }));
 
   const chunksResult = await supabase.from("rafa_knowledge_chunks").select("id,metadata").in("id", chunkIds);
-  if (chunksResult?.error || !Array.isArray(chunksResult?.data)) return results.map((row) => ({ ...row, policyMetadata: null }));
+  if (chunksResult?.error || !Array.isArray(chunksResult?.data) || chunkIds.some((id) => !chunksResult.data.some((row) => row.id === id))) {
+    throw Object.assign(new Error("Knowledge governance metadata is unavailable."), { code: "KNOWLEDGE_METADATA_UNAVAILABLE" });
+  }
   const chunkById = new Map(chunksResult.data.map((chunk) => [chunk.id, chunk.metadata || {}]));
   const factIds = cleanIds(chunksResult.data.flatMap((chunk) => [
     ...(Array.isArray(chunk?.metadata?.facts) ? chunk.metadata.facts : []),
@@ -58,7 +60,8 @@ async function attachKnowledgePolicyMetadata(supabase, rows) {
     const factsResult = await supabase.from("refal_fact_register")
       .select("fact_id,status,reviewer,verified_at,effective_from,expiry_or_review_at,approved_languages")
       .in("fact_id", factIds);
-    if (!factsResult?.error && Array.isArray(factsResult?.data)) factRows = factsResult.data;
+    if (factsResult?.error || !Array.isArray(factsResult?.data)) throw Object.assign(new Error("Knowledge block verification is unavailable."), { code: "KNOWLEDGE_BLOCK_CHECK_UNAVAILABLE" });
+    factRows = factsResult.data;
   }
 
   return results.map((row) => ({

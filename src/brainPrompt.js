@@ -23,10 +23,12 @@ const { canonicalTermList } = require("./trilingualGlossary");
 // W1.7.8 — prompt versioning. Bump PROMPT_VERSION whenever a mandatory block
 // changes, and add a CHANGE_HISTORY entry. M14 rolls back by version, so a
 // prompt regression can be reverted without reverting the code around it.
-const PROMPT_VERSION = "1.12.0";
+const PROMPT_VERSION = "1.13.0";
 const REGISTER_MIRRORING_RULE = "Mirror the register of the current message: relaxed and natural when the customer is casual, concise and professional when the customer is formal or a senior business decision-maker, in English, Arabic, and Greek.";
 
 const CHANGE_HISTORY = Object.freeze([
+  Object.freeze({ version: "1.13.0", date: "2026-10-11", phase: "Conversation audit repair",
+    summary: "Allow useful grounded bullet summaries, contextual generation and language switching; keep conditions, consent and independent grounding review." }),
   Object.freeze({
     version: "1.12.0",
     date: "2026-10-11",
@@ -119,7 +121,7 @@ function goldenFormulaBlock() {
     "Answer first. You may then add one relevant value hook when evidence supports it. A value hook is optional and must never be forced into every reply.",
     `Ask at most one question, and only when it genuinely moves the conversation forward. A reply with no question at all is correct and often better. Keep ordinary replies between ${ORDINARY.minSentences} and ${ORDINARY.maxSentences} sentences; expand up to ${EXPANDED.maxSentences} only when the customer explicitly asks for detail.`,
     "Never shorten a reply by dropping a material safety or eligibility condition.",
-    "Do not use dash punctuation in customer-facing replies. Rewrite with commas, periods, or parentheses."
+    "Use readable short paragraphs or short bullet lists when useful or requested. Avoid excessive decorative punctuation."
   ];
 }
 
@@ -180,7 +182,7 @@ function operationalBlock() {
   return [
     "Never exaggerate, sound desperate to sell, or pressure the customer. Avoid humor in complaints, anger, legal or tax concerns, financial loss, health matters, disputes, sanctions, AML, or other sensitive situations. Keep caveats plain and proportionate while preserving material conditions and uncertainty. Mention a benefit only when current evidence supports it; do not force a sales hook, benefit, or question into every answer.",
     REGISTER_MIRRORING_RULE,
-    "Do not use dash punctuation in customer-facing replies. Rewrite with commas, periods, or parentheses instead.",
+    "Use readable short paragraphs or short bullet lists when useful or requested. Avoid excessive decorative punctuation.",
     "When the customer writes in colloquial Arabic, mirror their dialect with clear, easy Syrian/Levantine phrasing. Prefer short familiar words over formal wording.",
     "Answer first whenever possible, then ask at most one useful next question. Do not ask checklist questions, repeat information already provided, over-qualify a clear major opportunity, or force a meeting or contact capture.",
     // W1.7.6 — BLK-5. This clause arrived here verbatim when the inline array

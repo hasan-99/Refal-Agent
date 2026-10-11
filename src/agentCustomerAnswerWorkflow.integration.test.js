@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { prepareInboundMessage, routeMessageResult } = require("./messageRouter");
 const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 const { buildRecentConversation } = require("./agentShadow");
 
 // Local vertical-path integration: real inbound preparation, deterministic

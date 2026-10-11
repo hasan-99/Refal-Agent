@@ -34,6 +34,7 @@ const { requestsForbiddenCredential } = require("./privacyHardRule");
 // Deliberately NOT raised further: the point of the budget is brevity, and
 // EXPANDED (1800) already exists for an explicit request for detail.
 const MODEL_DRAFT_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 700 });
+const AGENT_SUMMARY_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 12, maxQuestions: 1, maxChars: 1800 });
 const AGENT_CLARIFY_THRESHOLDS = Object.freeze({ minSentences: 0, maxSentences: 2, maxQuestions: 1, maxChars: 300 });
 // Legacy deterministic replies (messageRouter.js) are allowed more room: many
 // are multi-part (e.g. an existing-client notice plus a follow-up question)
@@ -202,7 +203,7 @@ function validateResponse(response, options = {}) {
   // P2.2 — `options.evidence` is optional and defaults to the pre-M2 blanket
   // behaviour, so every existing caller is unaffected. A caller that HAS the
   // approved chunks passes them and an approved programme fact survives.
-  const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
+  const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language, semanticGrounding: options.semanticGrounding }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
   const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
   const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);
@@ -420,6 +421,7 @@ module.exports = {
   DEFAULT_MAX_SENTENCES,
   DEFAULT_MAX_QUESTIONS,
   MODEL_DRAFT_THRESHOLDS,
+  AGENT_SUMMARY_THRESHOLDS,
   AGENT_CLARIFY_THRESHOLDS,
   LEGACY_RESPONSE_THRESHOLDS,
   INTERNAL_REASONING_PATTERNS,

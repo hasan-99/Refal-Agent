@@ -302,6 +302,17 @@ class EdgeApiStore {
     });
   }
 
+  async saveControlledInspection(userId, sourceTurnId, inspection) {
+    return this.request("/controlled-diagnostics", {
+      method: "POST", body: JSON.stringify({ userId, sourceTurnId, inspection })
+    });
+  }
+
+  async listControlledInspections(userId) {
+    const { inspections } = await this.request(`/controlled-diagnostics/${encodeURIComponent(userId)}`);
+    return inspections || [];
+  }
+
   async persistWorkflow(kind, payload) {
     return this.request(`/workflows/${encodeURIComponent(kind)}`, {
       method: "POST",

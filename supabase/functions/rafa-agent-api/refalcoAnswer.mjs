@@ -78,6 +78,10 @@ export function containsProhibitedClaim(text, options = {}) {
   // src/guardrailRegression.test.js asserts implication (legacy blocked implies
   // this blocks) rather than equality.
   if (containsUnconditionalProhibition(text, options)) return true;
+  // The live Agent uses an independent semantic assessor for factual support.
+  // Lexical overlap is not entailment: it rejects translation and accepts
+  // negated or unrelated claims. Hard prohibitions above always remain active.
+  if (options.semanticGrounding === true) return false;
   const supplied = Array.isArray(options?.evidence) ? options.evidence.filter(isApprovedEvidence) : [];
   if (!supplied.length) return containsProhibitedClaimLegacy(text);
   const claimText = removeSafeDisclaimerClauses(String(text || "").replace(/https?:\/\/\S+/giu, "[source]"));

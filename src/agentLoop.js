@@ -8,14 +8,15 @@
 // deterministic `responsePolicy.validateResponse` already used elsewhere in
 // the codebase, before it is allowed to leave this function.
 
-const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS } = require("./responsePolicy");
+const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS, AGENT_SUMMARY_THRESHOLDS } = require("./responsePolicy");
 // REFAL-AGENT-028: deterministic factual-grounding gate, additive to the
 // existing responsePolicy check below — never a replacement for it. Checked
 // only once the ordinary policy check already passed, so every existing
 // rejection reason/path is untouched; this can only add a NEW rejection
 // reason, never remove one.
 const { validateFactualGrounding, collectApprovedKnowledgeEvidence, collectDynamicDataEvidence } = require("./groundingPolicy");
-const { resolveObservationConflicts } = require("./agentDecision");
+const { resolveObservationConflicts, canonicalKnowledgeEvidence, buildDecisionMessages } = require("./agentDecision");
+const { MAX_PROMPT_TOKEN_CEILING, promptTokenUpperBound } = require("./promptBudget");
 // M1 close — the three output gates the Agent path was missing. Each had
 // exactly one caller in the repo (src/ai.js), so flipping the Agent flag
 // silently dropped every M1 guard while their unit tests stayed green.
@@ -106,7 +107,9 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
     step,
     tool: "responsePolicyCheck",
     args: { attemptedType: decisionType },
-    result: { ok: false, status: "policy_rejected", reasonCode: diagnosticCodes.join(",") }
+    result: { ok: false, status: "policy_rejected", reasonCode: diagnosticCodes.join(","),
+      draft: policy.text, blockedClaims: policy.blockedClaims || [],
+      correction: "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. Do not repeat this draft or search unless it will resolve the specific missing support." }
   };
 }
 
@@ -125,44 +128,58 @@ function diagnosticPolicyCodes(text, policy, evidenceItems, locale) {
 // All search rounds share one decision prompt budget. Keep complete section
 // evidence when possible, deduplicate chunks returned by subsequent searches,
 // and expose only this same bounded evidence to both the model and validators.
-function boundAccumulatedKnowledgeEvidence(observations, maxChars = 6000) {
-  const retainedRefs = new Set();
-  let used = 0;
-  let truncated = false;
-  const candidates = [];
-  for (const observation of observations) {
-    const model = observation?.result?.modelObservation;
-    if (model?.type !== "approved_knowledge" || !Array.isArray(model.evidence)) continue;
-    truncated ||= Boolean(model.truncated);
-    candidates.push({ observation, model });
-  }
-  const retained = [];
-  let newEvidenceCount = 0;
-  for (const { observation, model } of candidates) {
-    const source = model.evidence;
-    const evidence = [];
-    for (const item of source) {
-      const refs = Array.isArray(item.sourceRefs) && item.sourceRefs.length ? item.sourceRefs : [item.sourceRef].filter(Boolean);
-      if (refs.some((ref) => retainedRefs.has(ref))) { truncated = true; continue; }
-      const overhead = String(item.title || "").length + String(item.section || "").length + String(item.sourceRef || "").length + 48;
-      const content = String(item.content || "");
-      const available = maxChars - used - overhead;
-      if (available <= 0) { truncated = true; continue; }
-      const clipped = content.length > available;
-      if (clipped && retained.length) { truncated = true; continue; }
-      const safe = clipped ? { ...item, content: content.slice(0, available), contentTruncated: true } : item;
-      evidence.push(safe);
-      retained.push({ observation, sourceRef: item.sourceRef });
-      if (observation === candidates.at(-1)?.observation) newEvidenceCount += 1;
-      refs.forEach((ref) => retainedRefs.add(ref));
-      used += overhead + safe.content.length;
-      if (clipped) truncated = true;
+function boundAccumulatedKnowledgeEvidence(observations, maxChars = 10000, maxBytes = Infinity) {
+  const rounds = observations.filter((item) => item?.result?.modelObservation?.type === "approved_knowledge");
+  const latest = rounds.at(-1);
+  const previousIds = new Set(rounds.slice(0, -1).flatMap((round) => round.result.modelObservation.evidence || []).map((item) => item.sourceRef));
+  const priorCandidateIds = new Set(rounds.slice(0, -1).flatMap((round) => round.result.modelObservation.candidateEvidence || round.result.modelObservation.evidence || []).map((item) => item.sourceRef));
+  const pool = new Map();
+  for (const [roundIndex, round] of rounds.entries()) {
+    const model = round.result.modelObservation;
+    model.candidateEvidence ||= (model.evidence || []).map((item) => ({ ...item }));
+    model.candidatePolicyEvidence ||= (model.policyEvidence || []).map((item) => ({ ...item }));
+    for (const item of model.candidateEvidence) {
+      const key = item.sourceRef || JSON.stringify([item.title, item.section, item.content]);
+      const candidate = { item, round, roundIndex };
+      const existing = pool.get(key);
+      if (!existing || Number(item.relevance || 1) >= Number(existing.item.relevance || 1)) pool.set(key, candidate);
     }
-    model.evidence = evidence;
-    model.truncated = truncated;
-    model.policyEvidence = (model.policyEvidence || []).filter((policy) => evidence.some((item) => item.sourceRef === policy.sourceRef));
   }
-  return { evidenceCount: retained.length, newEvidenceCount, evidenceChars: used, truncated };
+  const ranked = [...pool.values()].sort((a, b) => Number(b.item.relevance || 1) - Number(a.item.relevance || 1)
+    || b.roundIndex - a.roundIndex || Number(a.item.selectionOrder || 0) - Number(b.item.selectionOrder || 0));
+  let used = 0;
+  let usedBytes = 0;
+  const retained = [];
+  const excluded = [];
+  for (const candidate of ranked) {
+    const item = candidate.item;
+    const chars = String(item.content || "").length + String(item.title || "").length + String(item.section || "").length + String(item.sourceRef || "").length + 48;
+    const bytes = Buffer.byteLength(JSON.stringify({ content: item.content, title: item.title, section: item.section, ref: item.sourceRef }), "utf8") + 240;
+    if (item.contentTruncated || used + chars > maxChars || usedBytes + bytes > maxBytes) { excluded.push(item.sourceRef); continue; }
+    usedBytes += bytes;
+    used += chars; retained.push(candidate);
+  }
+  for (const round of rounds) {
+    const model = round.result.modelObservation;
+    model.evidence = retained.filter((candidate) => candidate.round === round).map((candidate) => candidate.item);
+    model.policyEvidence = model.candidatePolicyEvidence.filter((policy) => model.evidence.some((item) => item.sourceRef === policy.sourceRef));
+    model.truncated = excluded.length > 0;
+  }
+  const newCandidateCount = (latest?.result.modelObservation.candidateEvidence || []).filter((item) => !priorCandidateIds.has(item.sourceRef)).length;
+  return { evidenceCount: retained.length, newEvidenceCount: retained.filter((candidate) => candidate.round === latest && !previousIds.has(candidate.item.sourceRef)).length,
+    newCandidateCount, candidateCount: pool.size, evidenceChars: used, truncated: excluded.length > 0,
+    retainedIds: retained.map((candidate) => candidate.item.sourceRef), excludedIds: excluded,
+    replacedIds: [...previousIds].filter((id) => !retained.some((candidate) => candidate.item.sourceRef === id)) };
+}
+
+function budgetCurrentEvidence(context, observations, tools) {
+  const emptyEvidence = observations.map((round) => round?.result?.modelObservation?.type === "approved_knowledge"
+    ? { ...round, result: { ...round.result, modelObservation: { ...round.result.modelObservation, evidence: [] } } } : round);
+  // Reserve the structured response schema, request framing and formatting.
+  // Complete sections are retained or omitted, and both reviewers share them.
+  const availableBytes = Math.max(0, MAX_PROMPT_TOKEN_CEILING - 3000
+    - promptTokenUpperBound(buildDecisionMessages(context, emptyEvidence, tools)));
+  return boundAccumulatedKnowledgeEvidence(observations, 10000, availableBytes);
 }
 
 // REFAL-AGENT-026 — mirrors legacy ai.js's own short-text exemption
@@ -194,19 +211,34 @@ function checkLanguageEquivalence(text, locale) {
 // grounding nor a language-mismatch reason ever equals "too_many_questions",
 // so neither is ever mistaken for one the mechanical correction knows how to
 // fix — both only ever go through retry-then-fallback, never a silent text edit.
-function checkDraftPolicy(text, thresholds, observations, locale, context = {}) {
+function currentDraftEvidence(observations, context = {}) {
   const conflicts = resolveObservationConflicts(context, observations);
-  const evidenceItems = collectApprovedKnowledgeEvidence(observations)
-    .filter((item) => !item.sourceRef || !conflicts.staleRefs.has(item.sourceRef));
-  const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage, evidence: evidenceItems, language: locale });
+  return canonicalKnowledgeEvidence(collectApprovedKnowledgeEvidence(observations)
+    .filter((item) => !item.sourceRef || !conflicts.staleRefs.has(item.sourceRef)));
+}
+
+function draftProgressKey(text, observations, context) {
+  return JSON.stringify([String(text).normalize("NFKC").replace(/\s+/gu, " ").trim(), currentDraftEvidence(observations, context).map((item) => [item.sourceRef, item.content])]);
+}
+
+async function checkDraftPolicy(text, thresholds, observations, locale, context = {}, assessDraft = null, step = 0) {
+  const evidenceItems = currentDraftEvidence(observations, context);
+  const semanticGrounding = typeof assessDraft === "function";
+  const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage, evidence: evidenceItems, language: locale, semanticGrounding });
   if (!policy.valid) return policy;
   const repeatedFields = findRepeatedQuestion(text, context.knownCustomerFacts);
   if (repeatedFields.length) return { ...policy, valid: false, reasons: repeatedFields.map((field) => `never_reask:${field}`) };
   const dynamicEvidenceItems = collectDynamicDataEvidence(observations);
-  const grounding = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems });
+  const grounding = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems, semanticGrounding });
   if (!grounding.valid) return { ...policy, valid: false, reasons: grounding.reasons };
-  const language = checkLanguageEquivalence(text, locale);
-  if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };
+  if (semanticGrounding) {
+    const review = await assessDraft({ text, evidenceItems, dynamicEvidenceItems, context, step });
+    if (!review?.valid) return { ...policy, valid: false, reasons: review?.reasons || ["grounding_verdict_invalid"],
+      blockedClaims: review?.blockedClaims || [], technicalFailure: review?.technicalFailure === true, errorCode: review?.errorCode };
+  } else {
+    const language = checkLanguageEquivalence(text, locale);
+    if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };
+  }
 
   // M1 close — the Agent path was running THREE fewer output gates than the
   // legacy path. detectAntiPatterns, assertHumourCompliance and
@@ -228,7 +260,7 @@ function checkDraftPolicy(text, thresholds, observations, locale, context = {}) 
   const humourLevel = resolveHumourLevel({
     message,
     history,
-    intents: detectIntents(message),
+    intents: Array.isArray(context.intents) ? context.intents : [],
     language: detectMessageLanguage(message)
   }).level;
   const humour = assertHumourCompliance(text, humourLevel);
@@ -259,11 +291,12 @@ function checkDraftPolicy(text, thresholds, observations, locale, context = {}) 
 //   tools: { [name]: { run(args, toolContext) } }       -- the deterministic tool registry
 //   toolContext: extra data (store, user, etc.) passed through to every tool.run call
 //   maxSteps: bounded step budget, default 4 (never unlimited)
-async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [], onToolCall = async () => {}, onPolicyRejection = async () => {} } = {}) {
+async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [], onToolCall = async () => {}, onPolicyRejection = async () => {} } = {}) {
   if (typeof decideNextStep !== "function") throw new Error("runAgentTurn requires a decideNextStep function.");
   const observations = Array.isArray(initialObservations) ? [...initialObservations] : [];
   const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
   let knowledgeSearchExhausted = false;
+  const rejectedDrafts = new Map();
 
   for (let step = 1; step <= maxSteps; step += 1) {
     let rawDecision;
@@ -273,6 +306,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
       const availableTools = step === maxSteps && maxSteps > 1 ? {}
         : knowledgeSearchExhausted ? Object.fromEntries(Object.entries(tools).filter(([name]) => name !== "searchApprovedKnowledge"))
           : tools;
+      budgetCurrentEvidence(context, observations, availableTools);
       rawDecision = await decideNextStep({ context, observations, step, tools: availableTools });
     } catch (error) {
       return {
@@ -282,8 +316,13 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
         steps: observations,
         toolsUsed,
         stepCount: step,
-        reason: String(error?.message || error).slice(0, 200)
+        reason: /^[A-Z][A-Z0-9_.-]{0,49}$/u.test(String(error?.code || "")) ? error.code : "MODEL_CALL_FAILED"
       };
+    }
+
+    if (rawDecision?.technicalFailure === true) {
+      return { finished: true, outcome: "decision_failed", response: safeFallback(context), steps: observations,
+        toolsUsed, stepCount: step, reason: rawDecision.errorCode || "MODEL_CALL_FAILED" };
     }
 
     if (step === maxSteps && maxSteps > 1 && rawDecision?.type === "tool") {
@@ -346,9 +385,9 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
       }
       const observation = { step, tool: validated.tool, args: validated.args, result };
       observations.push(observation);
-      const evidenceBudget = validated.tool === "searchApprovedKnowledge" ? boundAccumulatedKnowledgeEvidence(observations) : null;
+      const evidenceBudget = validated.tool === "searchApprovedKnowledge" ? budgetCurrentEvidence(context, observations, tools) : null;
       if (validated.tool === "searchApprovedKnowledge" && result?.ok === true
-        && result.status === "found" && evidenceBudget?.newEvidenceCount === 0) {
+        && result.status === "found" && evidenceBudget?.newCandidateCount === 0 && evidenceBudget?.newEvidenceCount === 0 && !evidenceBudget?.replacedIds?.length) {
         knowledgeSearchExhausted = true;
         if (result.status === "found") {
           observation.result.status = "no_new_evidence";
@@ -359,18 +398,29 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
       const evidence = result?.modelObservation?.evidence || [];
       try { await onToolCall({ step, tool: validated.tool, args: validated.args, result, durationMs: Math.max(0, Math.round(performance.now() - toolStartedAt)),
         evidenceCount: evidenceBudget?.evidenceCount ?? evidence.length, evidenceChars: evidenceBudget?.evidenceChars,
+        candidateCount: result.trace?.candidateCount ?? evidenceBudget?.candidateCount, newCandidateCount: evidenceBudget?.newCandidateCount,
+        retainedIds: evidenceBudget?.retainedIds, excludedIds: [...(result.trace?.excludedIds || []), ...(evidenceBudget?.excludedIds || [])], replacedIds: evidenceBudget?.replacedIds,
+        candidateIds: result.trace?.candidateIds, selectionDurationMs: result.trace?.selectionDurationMs, selectionStatus: result.trace?.selectionStatus,
         evidenceIds: observations.flatMap((item) => item?.result?.modelObservation?.evidence || []).map((item) => item.sourceRef).filter(Boolean) }); } catch {}
       if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
       continue;
     }
 
     if (validated.type === "respond") {
-      const thresholds = MODEL_DRAFT_THRESHOLDS;
-      const policy = checkDraftPolicy(validated.text, thresholds, observations, context?.locale, context);
+      const thresholds = assessDraft ? AGENT_SUMMARY_THRESHOLDS : MODEL_DRAFT_THRESHOLDS;
+      const progressKey = draftProgressKey(validated.text, observations, context);
+      const policy = rejectedDrafts.has(progressKey)
+        ? { ...rejectedDrafts.get(progressKey), valid: false, text: validated.text, reasons: [...rejectedDrafts.get(progressKey).reasons, "repeated_rejected_draft"] }
+        : await checkDraftPolicy(validated.text, thresholds, observations, context?.locale, context, assessDraft, step);
       if (!policy.valid) {
-        const evidenceItems = collectApprovedKnowledgeEvidence(observations);
-        try { await onPolicyRejection({ step, type: "respond", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale) }); } catch {}
-        const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds, { ...context, observations });
+        rejectedDrafts.set(progressKey, policy);
+        const evidenceItems = currentDraftEvidence(observations, context);
+        try { await onPolicyRejection({ step, type: "respond", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
+        if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft")) return {
+          finished: true, outcome: policy.technicalFailure ? "validation_failed" : "response_rejected", response: safeFallback(context),
+          steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || policy.reasons.join(",")
+        };
+        const corrected = assessDraft ? null : attemptDeterministicCorrection(validated.text, policy, thresholds, { ...context, observations });
         if (corrected) {
           return { finished: true, outcome: "responded", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
@@ -394,11 +444,19 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     // clarify: at most one question, no minimum length requirement — a short
     // single clarifying question is exactly what this path is for.
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
-    const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context);
+    const progressKey = draftProgressKey(validated.text, observations, context);
+    const policy = rejectedDrafts.has(progressKey)
+      ? { ...rejectedDrafts.get(progressKey), valid: false, text: validated.text, reasons: [...rejectedDrafts.get(progressKey).reasons, "repeated_rejected_draft"] }
+      : await checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context, assessDraft, step);
     if (!policy.valid) {
-      const evidenceItems = collectApprovedKnowledgeEvidence(observations);
-      try { await onPolicyRejection({ step, type: "clarify", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale) }); } catch {}
-      const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds, { ...context, observations });
+      rejectedDrafts.set(progressKey, policy);
+      const evidenceItems = currentDraftEvidence(observations, context);
+      try { await onPolicyRejection({ step, type: "clarify", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
+      if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft")) return {
+        finished: true, outcome: policy.technicalFailure ? "validation_failed" : "clarify_rejected", response: safeFallback(context),
+        steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || policy.reasons.join(",")
+      };
+      const corrected = assessDraft ? null : attemptDeterministicCorrection(validated.text, policy, clarifyThresholds, { ...context, observations });
       if (corrected) {
         return { finished: true, outcome: "clarified", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
       }
@@ -429,4 +487,4 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
   };
 }
 
-module.exports = { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS };
+module.exports = { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS, boundAccumulatedKnowledgeEvidence };

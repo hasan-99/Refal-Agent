@@ -172,6 +172,7 @@ async function runShadowAgentTurn({
 } = {}, {
   tools = TOOL_REGISTRY,
   decideNextStep = defaultDecideNextStep,
+  assessDraft,
   maxSteps = DEFAULT_MAX_STEPS,
   env = process.env
 } = {}) {
@@ -231,7 +232,7 @@ async function runShadowAgentTurn({
         embeddingModel,
         matchCount
       },
-      { tools: buildShadowToolRegistry(tools), decideNextStep, maxSteps }
+      { tools: buildShadowToolRegistry(tools), decideNextStep, maxSteps, ...(assessDraft ? { assessDraft } : {}) }
     );
 
     const durationMs = Math.round(performance.now() - startedAt);

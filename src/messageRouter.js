@@ -1,4 +1,4 @@
-const { detectMessageLanguage, detectExplicitLanguageRequest } = require("./language");
+const { detectMessageLanguage } = require("./language");
 const { restrictedRefalcoReply, allowsGroundedProgrammeAnswer } = require("./refalcoAnswer");
 const { detectIntent, INTENTS } = require("./intent");
 const { classifySafety, safeLocalizedFallback } = require("./safetyPolicy");
@@ -16,17 +16,15 @@ const {
   EVENTS
 } = require("./existingClientWorkflow");
 const { createHandover } = require("./handover");
-const { detectObjection } = require("./objectionWorkflow");
-const { identifyObjection } = require("./objectionMatrix");
 const { safeFallbackData, validateResponse, hasVerifiedHandoverClaim, hasVerifiedBookingClaim, LEGACY_RESPONSE_THRESHOLDS } = require("./responsePolicy");
 const { createCorrectionEvent } = require("./correctionWorkflow");
 const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./opportunityIntake");
 const { assessRedFlags } = require("./redFlagRules");
 const { detectComplianceEscalation, buildComplianceEscalation, applyComplianceLock, isComplianceLocked } = require("./complianceEscalation");
 const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
+const { safeErrorDiagnostics } = require("./operationalTelemetry");
 
 const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
-const GREEKLISH_CLOSURE = /^(?=.*\bden\s+(?:exo|eho)\s+kati\s+allo\b)(?=.*\b(?:xreiaso|xreiazomai)\s+kati\b)(?=.*\btha\s+to\s+zit(?:iso|so)\b).{1,260}$/iu;
 const QUALIFICATION_EVIDENCE = Symbol("qualification evidence retained until durable turn insert");
 
 const HELP = [
@@ -83,6 +81,7 @@ function sameComplianceLock(previous, next) {
 async function recordHistory(store, userId, message, response, extra, { bestEffortWorkflowWrites = false } = {}) {
   const metadata = { ...(extra?.metadata || {}) };
   const qualificationEvidence = extra?.metadata?.[QUALIFICATION_EVIDENCE] || null;
+  delete metadata[QUALIFICATION_EVIDENCE];
   delete metadata.privacySafeQuestion;
   const language = metadata?.intent?.language === "arabic" ? "ar" : metadata?.intent?.language === "greek" ? "el" : "en";
   // W2.5.3. A locked conversation never tracks a new sales hook, so a later
@@ -98,7 +97,8 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   const safeResponse = responsePolicy.valid ? response : safeFallbackData({ language, category: "uncertainty" }).text;
   const privacyTurn = metadata.safety?.risks?.includes("privacy");
   const storedMessage = privacyTurn ? "[message omitted: potentially sensitive credentials]" : message;
-  const consentDecision = consentFromText(message);
+  const contextualOperation = metadata.intent?.source === "contextual_model" ? metadata.intent.operation : null;
+  const consentDecision = contextualOperation === "stop_contact" ? "revoked" : contextualOperation === "decline_contact" ? "denied" : contextualOperation !== null ? "unknown" : consentFromText(message);
   const explicitOptOut = consentDecision === "revoked";
   const handover = consentGranted ? metadata.handover : null;
   if (metadata.automatedReminderConsent) {
@@ -145,11 +145,13 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   // Once it exists, these persistence operations are independent; serial awaits
   // added one full Edge Function round-trip per record to every eligible turn.
   const writes = [];
+  const writeNames = [];
+  const queueWrite = (name, promise) => { writeNames.push(name); writes.push(promise); };
   let handoverWrite = null;
   let complianceAuditWrite = null;
   const qualification = metadata.qualification;
   if (!privacyTurn && qualification && typeof store.saveQualification === "function") {
-    writes.push(store.saveQualification(userId, qualification.dimensions || {}, {
+    queueWrite("saveQualification", store.saveQualification(userId, qualification.dimensions || {}, {
       thresholds: qualification.thresholds,
       priority: metadata.priority?.level && metadata.priority.level !== "normal",
       priorityReason: metadata.priority?.triggers?.[0],
@@ -157,17 +159,17 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     }));
   }
   if (!privacyTurn && metadata.intent?.intents?.length && typeof store.saveIntents === "function") {
-    writes.push(store.saveIntents(userId, metadata.intent.intents, { sourceTurnId: turn?.id, source: "deterministic" }));
+    queueWrite("saveIntents", store.saveIntents(userId, metadata.intent.intents, { sourceTurnId: turn?.id, source: "deterministic" }));
   }
   if ((explicitOptOut || consentDecision === "denied" || consentGranted || metadata.automatedReminderConsent) && typeof store.saveConsent === "function") {
     const state = explicitOptOut ? "revoked" : metadata.automatedReminderConsent?.state || (consentDecision === "denied" ? "denied" : "granted");
     if (explicitOptOut) {
-      writes.push(store.saveConsent(userId, "revoked", { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
-      writes.push(store.saveConsent(userId, "revoked", { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent?.offerSourceTurnId || null, language, channel: "whatsapp" }));
+      queueWrite("saveConsent", store.saveConsent(userId, "revoked", { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
+      queueWrite("saveConsent", store.saveConsent(userId, "revoked", { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent?.offerSourceTurnId || null, language, channel: "whatsapp" }));
     } else if (metadata.automatedReminderConsent) {
-      writes.push(store.saveConsent(userId, state, { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent.offerSourceTurnId || null, language: metadata.automatedReminderConsent.language || language, channel: "whatsapp" }));
+      queueWrite("saveConsent", store.saveConsent(userId, state, { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent.offerSourceTurnId || null, language: metadata.automatedReminderConsent.language || language, channel: "whatsapp" }));
     } else {
-      writes.push(store.saveConsent(userId, state, { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
+      queueWrite("saveConsent", store.saveConsent(userId, state, { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
     }
   }
   if (handover && typeof store.createHandover === "function") {
@@ -177,12 +179,12 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
       summary: handover.summary || {},
       sourceTurnId: turn?.id
     });
-    writes.push(handoverWrite);
+    queueWrite("createHandover", handoverWrite);
   }
   if (!privacyTurn && metadata.priority?.triggers?.length && typeof store.createPriorityAlert === "function") {
     const validTriggers = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity", "sensitive_or_complex"]);
     for (const trigger of metadata.priority.triggers.filter((value) => validTriggers.has(value))) {
-      writes.push(store.createPriorityAlert(userId, {
+      queueWrite("createPriorityAlert", store.createPriorityAlert(userId, {
         level: metadata.strategicEscalation || metadata.tierAction?.tier === "strategic" || metadata.priority.level === "urgent" ? "urgent" : "high",
         trigger,
         details: { source: "deterministic", intent: metadata.intent?.primary || "unknown", ...(metadata.strategicEscalation ? { strategicClass: metadata.strategicEscalation.classId, route: metadata.strategicEscalation.route } : {}) },
@@ -190,14 +192,14 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
       }));
     }
   } else if (!privacyTurn && metadata.strategicEscalation && typeof store.createPriorityAlert === "function") {
-    writes.push(store.createPriorityAlert(userId, {
+    queueWrite("createPriorityAlert", store.createPriorityAlert(userId, {
       level: "urgent",
       trigger: "material_business_opportunity",
       details: { source: "strategic_escalation", strategicClass: metadata.strategicEscalation.classId, route: metadata.strategicEscalation.route },
       sourceTurnId: turn?.id
     }));
   } else if (!privacyTurn && metadata.tierAction?.tier === "strategic" && typeof store.createPriorityAlert === "function") {
-    writes.push(store.createPriorityAlert(userId, {
+    queueWrite("createPriorityAlert", store.createPriorityAlert(userId, {
       level: "urgent",
       trigger: "material_business_opportunity",
       details: { source: "strategic_tier", route: "senior_consultant" },
@@ -205,7 +207,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     }));
   }
   if (!privacyTurn && metadata.leadTier && typeof store.saveLeadScore === "function") {
-    writes.push(store.saveLeadScore(userId, {
+    queueWrite("saveLeadScore", store.saveLeadScore(userId, {
       dimensions: metadata.qualification?.dimensions || {},
       evidenceReferences: metadata.qualification?.evidenceReferences || {},
       scorerVersion: metadata.qualification?.scorerVersion,
@@ -217,7 +219,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     }));
   }
   if (metadata.complaint && typeof store.createComplaint === "function") {
-    writes.push(store.createComplaint(userId, {
+    queueWrite("createComplaint", store.createComplaint(userId, {
       severity: metadata.complaint.severity === "urgent" ? "urgent" : "high",
       summary: metadata.complaint.summary || String(message || "").slice(0, 2000),
       sourceTurnId: turn?.id
@@ -230,10 +232,10 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   // the privacy rule redacted from the turn.
   if (metadata.complianceEscalation?.record && typeof store.logAuditEvent === "function") {
     complianceAuditWrite = store.logAuditEvent(userId, "compliance_escalation", { ...metadata.complianceEscalation.record, sourceTurnId: turn?.id || null }, "system");
-    writes.push(complianceAuditWrite);
+    queueWrite("logComplianceAudit", complianceAuditWrite);
   }
   if (metadata.complianceEscalation?.record && typeof store.createPriorityAlert === "function") {
-    writes.push(store.createPriorityAlert(userId, {
+    queueWrite("createPriorityAlert", store.createPriorityAlert(userId, {
       level: "urgent",
       trigger: "safety_or_threat",
       details: { source: "compliance_escalation", language: metadata.complianceEscalation.record.language },
@@ -242,7 +244,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   }
   if (metadata.existingClientVerification && typeof store.saveExistingClientVerification === "function") {
     const state = metadata.existingClientVerification;
-    writes.push(store.saveExistingClientVerification(userId, {
+    queueWrite("saveExistingClientVerification", store.saveExistingClientVerification(userId, {
       state: state.state,
       attempts: state.attempts,
       identifierProvided: Boolean(state.identifierProvided)
@@ -251,15 +253,20 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   if (metadata.opportunityIntakes && typeof store.saveOpportunityIntake === "function") {
     writes.push(...Object.values(metadata.opportunityIntakes).map((intake) => store.saveOpportunityIntake(userId, intake, { sourceTurnId: turn?.id })));
   } else if (metadata.opportunityIntake && typeof store.saveOpportunityIntake === "function") {
-    writes.push(store.saveOpportunityIntake(userId, metadata.opportunityIntake, { sourceTurnId: turn?.id }));
+    queueWrite("saveOpportunityIntake", store.saveOpportunityIntake(userId, metadata.opportunityIntake, { sourceTurnId: turn?.id }));
   }
   if (metadata.correction && typeof store.logAuditEvent === "function") {
-    writes.push(store.logAuditEvent(userId, "customer_correction", { ...metadata.correction, sourceTurnId: turn?.id }, "customer"));
+    queueWrite("logAuditEvent", store.logAuditEvent(userId, "customer_correction", { ...metadata.correction, sourceTurnId: turn?.id }, "customer"));
   }
   if (!privacyTurn && metadata.redFlags?.flags?.length && typeof store.logAuditEvent === "function") {
-    writes.push(store.logAuditEvent(userId, "red_flags_detected", metadata.redFlags, "system"));
+    queueWrite("logAuditEvent", store.logAuditEvent(userId, "red_flags_detected", metadata.redFlags, "system"));
   }
-  await Promise.all(writes);
+  const writeResults = await Promise.allSettled(writes);
+  const workflowFailures = writeResults.flatMap((result, index) => result.status === "rejected" ? [{ operation: writeNames[index] || "workflow", error: result.reason }] : []);
+  for (const failure of workflowFailures) {
+    try { await store.logEvent?.("agent_workflow_persistence_failed", { sourceTurnId: turn?.id || null, tool: failure.operation, reasonCode: "WORKFLOW_WRITE_FAILED", ...safeErrorDiagnostics(failure.error) }); } catch { /* Diagnostic failure cannot retry a durable source turn. */ }
+  }
+  if (workflowFailures.length && !bestEffortWorkflowWrites) throw workflowFailures[0].error;
   // Anti Regression Checklist, line 4: no action is claimed before the tool
   // confirms it. `complianceRecorded` is derived from the row the store handed
   // back, never from the fact that a write was attempted.
@@ -307,13 +314,14 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   return {
     turn,
     turnId: turn?.id || null,
+    workflowError: workflowFailures.length > 0,
     ...(metadata.complianceEscalation?.record
       ? { complianceRecorded: Boolean(complianceAuditRecord), complianceRecordId: complianceAuditRecord?.id || null }
       : {})
   };
   } catch (error) {
     if (!bestEffortWorkflowWrites) throw error;
-    console.error("Agent source-turn workflow persistence failed after turn insert.");
+    console.error("Agent source-turn workflow persistence failed after turn insert.", safeErrorDiagnostics(error));
     return { turn, turnId: turn?.id || null, workflows: [], workflowError: true };
   }
 }
@@ -407,7 +415,7 @@ function handoverFor({ user, userId, incoming, inquiry, inquiryMetadata = {}, cl
   });
 }
 
-async function prepareInboundMessage({ userId, incoming, user, store }) {
+async function prepareInboundMessage({ userId, incoming, user, store, contextual = false, classifyMessage, onModelCall, onUsage }) {
   const safety = classifySafety(incoming);
   const privacyRisk = safety.risks.includes("privacy");
   const safePrivacyQuestion = privacyRisk && safety.risks.every((risk) => risk === "privacy")
@@ -415,7 +423,9 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
     : "";
   const privacyContinuation = safePrivacyQuestion.length >= 8;
   const routingText = privacyContinuation ? safePrivacyQuestion : incoming;
-  const classification = detectIntent(routingText);
+  const classification = contextual
+    ? await (classifyMessage || require("./contextualPreflight").classifyContextualMessage)({ message: routingText, user }, { onModelCall, onUsage })
+    : detectIntent(routingText);
   const priority = assessPriority({ text: routingText, intents: classification.intents });
   const redFlags = assessRedFlags(routingText, { profile: user.profile || {} });
   // MB-SEC2. Resolved here, on the FULL incoming text rather than the privacy
@@ -426,7 +436,7 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
   const history = [...(user.history || []), { message: incoming }];
   const lastTurn = user.history?.[user.history.length - 1];
   const askedForName = wasNameRequested(lastTurn);
-  const capturedName = privacyRisk || complianceTriggers.length ? null : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
+  const capturedName = contextual || privacyRisk || complianceTriggers.length ? null : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
   if (user.profile?.name && !isPlausibleCustomerName(user.profile.name) && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
       draft.profile = { ...(draft.profile || {}) };
@@ -496,11 +506,13 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
     });
   }
   const metadata = {
-    intent: { primary: classification.primary, intents: classification.intents, isMultiIntent: classification.isMultiIntent, language: classification.language },
+    intent: { primary: classification.primary, intents: classification.intents, isMultiIntent: classification.isMultiIntent, language: classification.language,
+      ...(contextual ? { source: "contextual_model", operation: classification.operation } : {}) },
     safety: { restricted: safety.restricted, risks: safety.risks },
     ...(privacyContinuation ? { privacySafeQuestion: safePrivacyQuestion } : {}),
     priority: { level: priority.level, triggers: priority.triggers, handoverRequired: priority.handoverRequired },
-    qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds },
+    qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds,
+      scorerVersion: qualification.scorerVersion, evidenceFingerprint: qualification.evidenceFingerprint, evidenceReferences: qualification.evidenceReferences },
     leadTier: tierAction.tier,
     tierAction,
     buyingSignals,
@@ -511,7 +523,9 @@ async function prepareInboundMessage({ userId, incoming, user, store }) {
     correction,
     ...(capturedName ? { customerNameCaptured: true } : {})
   };
-  Object.defineProperty(metadata, QUALIFICATION_EVIDENCE, { value: qualificationEvidence, enumerable: false, configurable: true });
+  // Enumerable symbols survive in-process spreads but JSON never serializes
+  // them. recordHistory consumes and removes this evidence after insertion.
+  Object.defineProperty(metadata, QUALIFICATION_EVIDENCE, { value: qualificationEvidence, enumerable: true, configurable: true });
   return {
     classification,
     safety,
@@ -655,19 +669,6 @@ function wasNameRequested(turn) {
   return /(?:what(?:'s| is) your name|may i (?:know|have) your name|name should i (?:include|use)|\bname\b.{0,70}\b(?:optional|if you want|if you'd like)\b|ما اسم(?:ك| حضرتك)?|شو اسم(?:ك)?|ما الاسم|ما الاسم الذي|الاسم.{0,70}اختياري|كيف ينادونك|πώς σας λένε|ποιο όνομα|όνομα.{0,70}προαιρετικό|ποιο είναι το όνομά σας)/iu.test(String(turn?.response || ""));
 }
 
-function normalizeEchoText(value) {
-  return String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, "");
-}
-
-function echoesRecentAssistantReply(incoming, history = []) {
-  const normalizedIncoming = normalizeEchoText(incoming);
-  if (normalizedIncoming.length < 80 || !Array.isArray(history)) return false;
-  return history.slice(-6).some((turn) => {
-    const priorReply = turn?.response || (turn?.role === "assistant" ? turn.content : "");
-    return normalizeEchoText(priorReply) === normalizedIncoming;
-  });
-}
-
 function extractCustomerNeed(text) {
   const value = String(text || "").trim();
   const match = value.match(/^(?:i am interested in|i'm interested in|i’d like help with|i'd like help with|i want help with|i need help with|i need|looking for)\s+(.+)$/i) ||
@@ -693,6 +694,71 @@ function normalizeSmallTalk(text) {
     .replace(/[؟?!.،,\s]+$/gu, "")
     .trim()
     .toLowerCase();
+}
+
+async function routeContextualMessageResult({ userId, incoming, user, store, prepared }) {
+  const { classification, safety } = prepared;
+  const metadata = prepared.metadata;
+  // Credential containment and injection refusal remain deterministic. A
+  // regulated topic alone never prevents approved knowledge retrieval.
+  if (safety.risks.includes("prompt_injection") || (safety.risks.includes("privacy") && !metadata.privacySafeQuestion)) {
+    const response = safeLocalizedFallback(safety.risks.includes("prompt_injection") ? "prompt_injection" : "privacy", classification.language);
+    const history = await recordHistory(store, userId, incoming, response, { metadata });
+    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
+  }
+  const operation = classification.operation;
+  if (classification.noProactiveBookingOrContact || ["decline_contact", "stop_contact"].includes(operation)) {
+    const conversationPreferences = { ...(user.profile?.conversationPreferences || {}), noProactiveBookingOrContact: true };
+    await store.updateUser?.(userId, (draft) => { draft.profile = { ...(draft.profile || {}), conversationPreferences }; });
+    user.profile = { ...(user.profile || {}), conversationPreferences };
+  }
+  const offerTurn = typeof classification.offerSourceTurnId === "string"
+    ? user.history?.find((turn) => turn.id === classification.offerSourceTurnId) : null;
+  const offerAt = Date.parse(offerTurn?.metadata?.specialistOffer?.offeredAt || offerTurn?.at || "");
+  const declinedAt = Date.parse(user.consent?.followUpUpdatedAt || user.consent?.updatedAt || "");
+  const declined = ["denied", "revoked"].includes(getConsentState({ user }));
+  const lastTurn = user.history?.at(-1);
+  const offerFresh = Number.isFinite(offerAt) && offerAt <= Date.now() + 5 * 60 * 1000 && Date.now() - offerAt <= 24 * 60 * 60 * 1000;
+  const acceptedOffer = operation === "accept_specialist_offer" && offerTurn === lastTurn
+    && offerTurn?.metadata?.specialistOffer?.consentRequired === true && offerFresh
+    && (!declined || (Number.isFinite(declinedAt) && offerAt > declinedAt));
+  const directRequest = operation === "specialist_request" && !classification.noProactiveBookingOrContact;
+  const controlledTest = user.profile?.qaControlledDiagnostics === true && user.profile?.followUpBlocked === true;
+  if (!controlledTest && !safety.restricted && (acceptedOffer || directRequest)) {
+    const inquiryTurn = acceptedOffer ? offerTurn : null;
+    const handover = handoverFor({ user, userId, incoming, inquiry: inquiryTurn?.message || incoming,
+      inquiryMetadata: inquiryTurn?.metadata || metadata, classification, language: classification.language, response: "" });
+    metadata.handover = handover;
+    metadata.specialistFollowUp = { consented: true, purpose: "specialist_follow_up", trackedOffer: acceptedOffer,
+      offerSourceTurnId: inquiryTurn?.id || null, requestedAt: new Date().toISOString() };
+  }
+  const reminderAt = Date.parse(lastTurn?.metadata?.automatedReminderOffer?.offeredAt || lastTurn?.at || "");
+  if (!controlledTest && operation === "accept_reminder_offer" && offerTurn === lastTurn
+    && lastTurn?.metadata?.automatedReminderOffer?.purpose === "automated_reminder"
+    && Number.isFinite(reminderAt) && reminderAt <= Date.now() + 5 * 60 * 1000 && Date.now() - reminderAt <= 24 * 60 * 60 * 1000
+    && !classification.noProactiveBookingOrContact && user.consent?.automatedReminder !== "revoked") {
+    metadata.automatedReminderConsent = { state: "granted", purpose: "automated_reminder", scope: "automated_reminder",
+      offerSourceTurnId: lastTurn.id, language: classification.language === "arabic" ? "ar" : classification.language === "greek" ? "el" : "en", channel: "whatsapp" };
+  }
+  if (classification.intents.includes(INTENTS.COMPLAINT)) {
+    const complaint = handleComplaint({ text: incoming, language: classification.language, customer: user.profile, notes: incoming });
+    metadata.complaint = { severity: complaint.severity, summary: complaint.internalNote || incoming };
+  }
+  if (classification.intents.includes(INTENTS.EXISTING_CLIENT)) {
+    const state = transitionExistingClientState(user.profile?.existingClientState || beginExistingClientFlow(), EVENTS.detect);
+    await store.updateUser?.(userId, (draft) => { draft.profile = { ...(draft.profile || {}), existingClientState: state }; });
+    user.profile = { ...(user.profile || {}), existingClientState: state };
+    metadata.existingClientVerification = { ...state, identifierProvided: false };
+  }
+  // The model receives this operational context only after the source turn
+  // and any authorized workflows are persisted. It generates the reply.
+  metadata.contextualWorkflow = {
+    operation, noProactiveBookingOrContact: user.profile?.conversationPreferences?.noProactiveBookingOrContact === true,
+    existingClientState: user.profile?.existingClientState?.state || null,
+    requestedSpecialistContact: Boolean(metadata.specialistFollowUp?.consented),
+    requestedReminderConsent: Boolean(metadata.automatedReminderConsent)
+  };
+  return { response: "", shouldUseAi: true, user, metadata };
 }
 
 async function routeMessageResult({ userId, text, store, existingUser = null, preparedInbound = null }) {
@@ -776,6 +842,9 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
+  if (classification.source === "contextual_model") {
+    return routeContextualMessageResult({ userId, incoming: prepared.metadata.privacySafeQuestion || incoming, user, store, prepared });
+  }
   const statesNoProactivePreference = NO_PROACTIVE_CONTACT_OR_BOOKING.test(incoming);
   if (statesNoProactivePreference) {
     const conversationPreferences = { ...(user.profile?.conversationPreferences || {}), noProactiveBookingOrContact: true };
@@ -785,18 +854,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   if (prepared.metadata.privacySafeQuestion) {
     incoming = prepared.metadata.privacySafeQuestion;
     lower = incoming.toLowerCase();
-  }
-  const requestedLanguage = detectExplicitLanguageRequest(incoming);
-  if (requestedLanguage && !safety.restricted && !safety.risks.includes("privacy")) {
-    const replies = {
-      english: "Of course, we can continue in English. What would you like to know?",
-      arabic: "أكيد، منكمّل بالعربي. شو حابب تعرف؟",
-      greek: "Βεβαίως, μπορούμε να συνεχίσουμε στα ελληνικά. Τι θα θέλατε να μάθετε;"
-    };
-    response = replies[requestedLanguage];
-    const metadata = { ...prepared.metadata, intent: { ...prepared.metadata.intent, language: requestedLanguage } };
-    const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
   const lastTurn = user.history?.[user.history.length - 1];
   const nameWasRequested = wasNameRequested(lastTurn);
@@ -822,15 +879,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     const history = await recordHistory(store, userId, incoming, response, { metadata });
     return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
-  if (echoesRecentAssistantReply(incoming, user.history)) {
-    response = localized(language, {
-      english: "Understood. I’m here if you want me to clarify a specific point.",
-      arabic: "تمام، أنا جاهز أوضّحلك أي نقطة إذا حبيت.",
-      greek: "Κατανοητό. Είμαι εδώ αν θέλετε να διευκρινίσω κάποιο σημείο."
-    });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
   const existingNameIsPlausible = isPlausibleCustomerName(user.profile?.name);
 
   // Ignore and clear legacy greeting/question strings previously mis-saved as names.
@@ -853,16 +901,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     });
     user.profile = { ...(user.profile || {}), name: capturedName, nameSource: "customer_stated" };
     prepared.metadata.customerNameCaptured = true;
-  }
-
-  if (capturedName && nameWasRequested && user.profile?.handover?.required && !hasLimitedHandoverScope(incoming)) {
-    response = localized(language, {
-      english: `Thank you, ${capturedName}. I’ve added your name to the specialist-review request. Is there one important detail you’d like the team to know?`,
-      arabic: `شكرًا لك يا ${capturedName}. أضفت اسمك إلى طلب مراجعة المختص. هل هناك تفصيل مهم تود أن يعرفه الفريق؟`,
-      greek: `Ευχαριστώ, ${capturedName}. Πρόσθεσα το όνομά σας στο αίτημα αξιολόγησης από ειδικό. Υπάρχει κάποια σημαντική λεπτομέρεια που θέλετε να γνωρίζει η ομάδα;`
-    });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (user.profile?.handover?.required && hasLimitedHandoverScope(incoming) && !["denied", "revoked"].includes(consentFromText(incoming))) {
@@ -890,36 +928,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     user.profile = { ...(user.profile || {}), need: customerNeed, needSource: "customer_stated" };
   }
 
-  if (classification.intents.includes(INTENTS.GREETING) || classification.intents.includes(INTENTS.AGENT_IDENTITY)) {
-    response = localized(language, {
-      english: "Hello! I’m your digital assistant. How can I help you?",
-      arabic: "أهلاً! أنا مساعدك الرقمي. كيف فيني ساعدك؟",
-      greek: "Γεια σας! Είμαι ο ψηφιακός σας βοηθός. Πώς μπορώ να σας βοηθήσω;"
-    });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
-  if (classification.intents.includes(INTENTS.LANGUAGE_CAPABILITY)) {
-    response = localized(language, {
-      english: "Yes. I can chat with you in English, Arabic, or Greek. Which would you prefer?",
-      arabic: "إي، فيني أحكي معك بالعربي أو بالإنجليزي أو باليوناني. بأي لغة بتفضّل نكمل؟",
-      greek: "Ναι, μπορώ να μιλήσω μαζί σας στα ελληνικά, αγγλικά ή αραβικά. Σε ποια γλώσσα προτιμάτε να συνεχίσουμε;"
-    });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
-  if (classification.intents.includes(INTENTS.PROJECT_ENQUIRY)) {
-    response = localized(language, {
-      english: "I can help you explore whether the project may fit Refalco Group’s areas of work, though suitability needs a specialist review. What kind of project are you considering?",
-      arabic: "أستطيع مساعدتك في استكشاف مدى ارتباط الفكرة بمجالات عمل الشركة، أما ملاءمتها فتحتاج إلى مراجعة مختص. ما نوع المشروع الذي تفكر فيه؟",
-      greek: "Μπορώ να βοηθήσω να εξετάσουμε αν το έργο σχετίζεται με τους τομείς δραστηριότητας της Refalco Group· η καταλληλότητα χρειάζεται αξιολόγηση ειδικού. Τι είδους έργο σκέφτεστε;"
-    });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
   // A no-contact statement is a customer instruction, not an invitation to
   // start the handover flow. Acknowledge it directly when it is not bundled
   // with an actual information question; questions still continue through the
@@ -942,12 +950,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       arabic: "تمام، رح خلي الحديث للمعلومات هون. إذا قررت تحجز أو تطلب متابعة، بتخبرني وقت ما بتكون جاهز.",
       greek: "Κατανοητό. Θα συνεχίσουμε μόνο με πληροφορίες· μπορείτε να ζητήσετε κράτηση ή επικοινωνία όποτε είστε έτοιμοι."
     });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
-  if (GREEKLISH_CLOSURE.test(incoming.trim())) {
-    response = "Εντάξει. Είμαι εδώ αν χρειαστείτε κάτι άλλο.";
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
@@ -1022,17 +1024,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata, handover, history, customerMessage: incoming });
   }
 
-  if (capturedName &&
-      !classification.intents.some((intent) => ![INTENTS.UNKNOWN, INTENTS.SMALL_TALK, INTENTS.GREETING].includes(intent))) {
-    response = localized(language, {
-      english: `Nice to meet you, ${capturedName}. How can I help?`,
-      arabic: `تشرفت بك يا ${capturedName}. كيف يمكنني مساعدتك؟`,
-      greek: `Χαίρω πολύ, ${capturedName}. Πώς μπορώ να βοηθήσω;`
-    });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
   // Safety and escalation decisions happen before name capture or AI retrieval.
   //
   // P2.2 / BLK-2. This is where the blanket refusal did most of its damage: a
@@ -1080,56 +1071,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
   }
 
-  if (prepared.metadata.correction?.explicit) {
-    const response = prepared.metadata.correction.field
-      ? localized(language, {
-        english: "Thanks for correcting that. I’ve updated the information for this conversation. Is there anything else about the request that should be corrected?",
-        arabic: "شكرًا لتصحيح المعلومة. حدّثت البيانات الخاصة بهذه المحادثة. هل هناك أي جزء آخر يحتاج إلى تصحيح؟",
-        greek: "Ευχαριστώ για τη διόρθωση. Ενημέρωσα την πληροφορία για αυτή τη συζήτηση. Υπάρχει κάτι ακόμη που χρειάζεται διόρθωση;"
-      })
-      : localized(language, {
-        english: "Thanks for pointing that out. Which specific detail should I correct?",
-        arabic: "شكرًا لتوضيح ذلك. ما المعلومة المحددة التي تريد تصحيحها؟",
-        greek: "Ευχαριστώ για την επισήμανση. Ποια συγκεκριμένη πληροφορία θέλετε να διορθώσω;"
-      });
-    const metadata = { ...prepared.metadata };
-    const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
-  }
-
-  const objection = detectObjection(incoming);
-  // A hesitation cue must not swallow a concrete question in the same message.
-  // Answer the requested fact first; the reply can still stay low pressure.
-  // Pricing intent alone includes statements like "the price feels high";
-  // preserve only an actual price question from the deterministic objection
-  // matrix so O1/O2 can answer with the current package inclusions.
-  const asksConcretePrice = classification.intents.includes(INTENTS.PRICING) && /[?؟]|\b(?:how much|what(?:'s| is) the price|is the price|does it include)\b|كم|قديش|πόσο/iu.test(incoming);
-  const asksSeparateFact = /\b(?:and|but)\s+(?:where|what|which|when|how|can you|could you)\b|(?:و|بس)\s*(?:وين|أين|شو|ماذا|كيف|متى|هل|ممكن)|και\s+(?:πού|τι|ποιος|ποια|πότε|πώς|μπορείτε)/iu.test(incoming);
-  const matrixObjection = identifyObjection(incoming);
-  if (matrixObjection && !asksSeparateFact && !(asksConcretePrice && ["O1", "O2"].includes(matrixObjection))) {
-    const languageKey = language === "arabic" ? "ar" : language === "greek" ? "el" : "en";
-    const matrix = await require("./salesIntelligence").buildObjectionAnswer({ text: incoming, language: languageKey, store });
-    const response = matrix?.response || safeFallbackData({ language: languageKey, category: objection.category }).text;
-    const metadata = { ...prepared.metadata, objection: { id: matrix?.objection || matrixObjection, source: "m5_objection_matrix" } };
-    const history = await recordHistory(store, userId, incoming, response, { metadata });
-    return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
-  }
-
-  const smallTalk = normalizeSmallTalk(incoming);
-  if (/^(?:تمام|تمام شكرا|تمام شكرًا|لا شكرا|لا شكرًا|مش محتاج|no thanks|no thank you|thanks|thank you|ευχαριστώ|okay|ok|great)$/iu.test(smallTalk)) {
-    response = /^(?:لا شكرا|لا شكرًا|مش محتاج|no thanks|no thank you|thanks|thank you|ευχαριστώ)$/iu.test(smallTalk)
-      ? localized(language, { english: "You’re welcome. I’m here if another question comes up.", arabic: "على الرحب والسعة. أنا هنا إذا كان لديك أي سؤال آخر.", greek: "Παρακαλώ. Είμαι εδώ αν προκύψει κάποια άλλη ερώτηση." })
-      : localized(language, { english: "Understood. What would you like to know?", arabic: "تمام. ما الذي تود معرفته؟", greek: "Κατανοητό. Τι θα θέλατε να μάθετε;" });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-  if (/^(?:(?:انت|إنت|وانت|وأنت)\s+)?(?:كيفك|كيف حالك|شلونك|شو اخبارك|كيف امورك|كيف صحتك)(?:\s+(?:انت|إنت|يا رفا))?$/iu.test(smallTalk) || /^(?:how are you|how's it going|how do you do)(?:\s+(?:rafa|you))?$/i.test(smallTalk)) {
-    const arabic = detectMessageLanguage(incoming) === "arabic";
-    response = localized(language, { arabic: "تمام، الحمد لله! وإنت كيفك؟", greek: "Είμαι καλά, ευχαριστώ! Εσείς πώς είστε;", english: "I’m doing well, thanks! How are you?" });
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
   if (lower === "help") {
     response = helpText(language);
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
@@ -1146,14 +1087,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const restrictedReply = allowsGroundedProgrammeAnswer(incoming) ? null : restrictedRefalcoReply(incoming);
   if (restrictedReply) {
     response = restrictedReply;
-    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
-    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
-  }
-
-  if (["start", "hi", "hello", "hey", "مرحبا", "اهلا"].includes(lower)) {
-    response = user.profile?.name
-      ? localized(language, { arabic: "مرحبًا، كيف يمكنني مساعدتك؟", greek: "Γεια σας, πώς μπορώ να βοηθήσω;", english: "Hi, how can I help?" })
-      : localized(language, { arabic: "مرحبًا، أنا رفا. كيف يمكنني مساعدتك؟", greek: "Γεια σας, είμαι η RAFA. Πώς μπορώ να βοηθήσω;", english: "Hi, I’m RAFA. How can I help?" });
     const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
     return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }

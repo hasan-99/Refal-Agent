@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  runShadowAgentTurn,
+  runShadowAgentTurn: realRunShadowAgentTurn,
   recordShadowComparison,
   isShadowEnabled,
   buildShadowToolRegistry,
@@ -409,3 +409,5 @@ test("recordShadowComparison never throws even when the shadow promise rejects o
     logEvent: () => Promise.reject(new Error("sink down"))
   }));
 });
+
+async function runShadowAgentTurn(input, options = {}) { return realRunShadowAgentTurn(input, { assessDraft: require("../scripts/helpers/scriptedGrounding").scriptedGrounding, ...options }); }

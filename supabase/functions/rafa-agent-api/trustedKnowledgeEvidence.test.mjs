@@ -8,6 +8,20 @@ const docId = "22222222-2222-4222-8222-222222222222";
 const sourceId = "33333333-3333-4333-8333-333333333333";
 const today = "2026-10-11T00:00:00.000Z";
 
+test("production evidence resolution uses the same complete-section authorization RPC as search", async () => {
+  const supabase = fakeSupabase();
+  let rpcCall;
+  supabase.rpc = async (name, args) => {
+    rpcCall = { name, args };
+    return { data: [{ chunk_id: chunkId, content: "Assistance is available. Approval remains the institution's decision.", review_status: "approved" }], error: null };
+  };
+  const result = await resolveTrustedKnowledgeEvidence(supabase, [{ chunk_id: chunkId, content: "Forged guarantee." }]);
+  assert.equal(rpcCall.name, "rafa_expand_knowledge_sections");
+  assert.deepEqual(rpcCall.args.p_chunk_ids, [chunkId]);
+  assert.match(result[0].content, /institution's decision/);
+  assert.doesNotMatch(result[0].content, /Forged/);
+});
+
 function fakeSupabase({ factStatus = "pending", documentStatus = "approved", sourceEnabled = true, chunkKind = null, chunks, documents, sources, factLookupError = false } = {}) {
   const tables = {
     rafa_knowledge_chunks: chunks || [{ id: chunkId, document_id: docId, chunk_index: 0, heading: "Formation", content: "Canonical approved chunk says package setup starts at €1,500.", metadata: { facts: ["MB-F1"], ...(chunkKind ? { kind: chunkKind } : {}) } }],
@@ -67,22 +81,17 @@ test("generation evidence preserves caller retrieval order and deduplicates chun
   assert.deepEqual(result.map((item) => item.chunk_id), [chunkId, secondChunkId]);
 });
 
-test("approved generation evidence remains usable when a Fact Register lookup fails", async () => {
-  const result = await resolveTrustedKnowledgeEvidence(fakeSupabase({ factStatus: "approved", factLookupError: true }), [
+test("generation distinguishes block-verification failure from absent knowledge", async () => {
+  await assert.rejects(resolveTrustedKnowledgeEvidence(fakeSupabase({ factStatus: "approved", factLookupError: true }), [
     { chunk_id: chunkId }
-  ], { now: new Date(today) });
-  assert.equal(result.length, 1);
-  assert.equal(result[0].review_status, "approved");
-  assert.equal(isApprovedEvidence(result[0], { language: "en" }), true);
+  ], { now: new Date(today) }), { code: "KNOWLEDGE_BLOCK_CHECK_UNAVAILABLE" });
 });
 
 test("an explicit Fact Register block remains excluded", async () => {
   const result = await resolveTrustedKnowledgeEvidence(fakeSupabase({ factStatus: "blocked" }), [
     { chunk_id: chunkId }
   ], { now: new Date(today) });
-  assert.equal(result.length, 1);
-  assert.equal(result[0].review_status, "approved");
-  assert.equal(isApprovedEvidence(result[0], { language: "en" }), false);
+  assert.deepEqual(result, []);
 });
 
 test("generation evidence excludes expired or malformed-expiry documents", async () => {

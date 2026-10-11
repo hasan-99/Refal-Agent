@@ -498,7 +498,7 @@ function containsUnsupportedNumericClaim(text, evidenceItems = []) {
 // ingestion"), a claim that happens to reuse the same digits would read as
 // "supported" by this check. The approval workflow, not this validator, is
 // the control for that.
-function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [] } = {}) {
+function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [], semanticGrounding = false } = {}) {
   const boundedDynamic = (Array.isArray(dynamicEvidenceItems) ? dynamicEvidenceItems : [])
     .filter((item) => item?.trustedDynamic === true && item?.sourceLevel === SOURCE_LEVELS.LIVE_DATA)
     .slice(0, 20);
@@ -507,9 +507,9 @@ function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceIte
   const add = (code, triggered) => { if (triggered && !reasons.includes(code)) reasons.push(code); };
 
   add("unsupported_price_claim", containsUnsupportedPriceValueClaim(text, allEvidence));
-  add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, allEvidence) || containsUnsupportedServiceListClaim(text, allEvidence) || containsUnsupportedNamedPackageInclusion(text, allEvidence));
+  if (!semanticGrounding) add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, allEvidence) || containsUnsupportedServiceListClaim(text, allEvidence) || containsUnsupportedNamedPackageInclusion(text, allEvidence));
   add("unsupported_url_claim", containsUnsupportedUrlClaim(text, allEvidence));
-  add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, allEvidence));
+  if (!semanticGrounding) add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, allEvidence));
   add("unsupported_numeric_claim", containsUnsupportedNumericClaim(text, allEvidence));
 
   return { valid: reasons.length === 0, reasons };

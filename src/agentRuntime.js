@@ -5,6 +5,7 @@ const { runAgentTurn, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY, MAX_RAG_EVIDENCE_ITEMS } = require("./agentTools");
 const { embedText: defaultEmbedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
+const { assessAgentDraft } = require("./semanticGrounding");
 
 function buildToolContext({
   store, user, userId, intents = [], language, embedText = defaultEmbedText,
@@ -24,16 +25,16 @@ function buildToolContext({
 async function runAgentTurnForContact({
   currentMessage, locale, contact, recentConversation, conversationState,
   knownCustomerFacts, currentOpenQuestion, consentState, allowedCapabilities,
-  leadTier, buyingSignals, store, user, userId, intents, language, embedText,
+  leadTier, buyingSignals, conversationPreferences, contextualWorkflow, store, user, userId, intents, language, embedText,
   embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy
 } = {}, {
   decideNextStep = defaultDecideNextStep, onModelCall, onModelUsage,
-  onToolCall, onPolicyRejection, tools = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS
+  onToolCall, onPolicyRejection, assessDraft = assessAgentDraft, tools = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS
 } = {}) {
   const context = buildAgentContext({
     currentMessage, locale, contact, recentConversation, conversationState,
     knownCustomerFacts, currentOpenQuestion, consentState, allowedCapabilities,
-    leadTier, buyingSignals
+    leadTier, buyingSignals, conversationPreferences, contextualWorkflow
   });
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
@@ -42,7 +43,9 @@ async function runAgentTurnForContact({
   const measuredDecideNextStep = decideNextStep === defaultDecideNextStep
     ? (args) => decideNextStep(args, { onModelCall, onModelUsage, tools: args.tools || tools })
     : decideNextStep;
-  return runAgentTurn(context, { decideNextStep: measuredDecideNextStep, tools, toolContext, maxSteps, onToolCall, onPolicyRejection });
+  if (typeof assessDraft !== "function") throw new TypeError("Production Agent requires independent grounding assessment.");
+  const measuredAssessDraft = (args) => assessDraft(args, { onModelCall, onModelUsage });
+  return runAgentTurn(context, { decideNextStep: measuredDecideNextStep, assessDraft: measuredAssessDraft, tools, toolContext, maxSteps, onToolCall, onPolicyRejection });
 }
 
 module.exports = { runAgentTurnForContact, buildToolContext };
