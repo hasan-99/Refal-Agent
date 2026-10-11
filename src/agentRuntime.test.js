@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { runAgentTurnForContact, buildToolContext } = require("./agentRuntime");
+const { INTENTS } = require("./intent");
 
 function scriptedDecider(decisions) {
   let index = 0;
@@ -40,6 +41,118 @@ test("RAG is never invoked when the Agent's decision never asks for it (e.g. a s
 
   assert.equal(result.outcome, "responded");
   assert.equal(searchCalls, 0, "a plain acknowledgement must never trigger a knowledge search");
+});
+
+test("buildToolContext supplies the trusted current message for CRM statement verification", () => {
+  const ctx = buildToolContext({ store: {}, user: {}, userId: "contact-1", currentMessage: "I live in Jordan.", sourceTurnId: "turn-1" });
+  assert.equal(ctx.currentMessage, "I live in Jordan.");
+  assert.equal(ctx.sourceTurnId, "turn-1");
+});
+
+test("broad services intents retrieve overview, scope, and current-conditions evidence before the model decides", async () => {
+  let searchCalls = 0;
+  let observationsSeenByModel = null;
+  const store = {
+    searchKnowledge: async (query) => {
+      searchCalls += 1;
+      assert.match(query, /^What services do you offer\?/);
+      if (searchCalls === 1) {
+        assert.match(query, /company formation and structuring/);
+        assert.match(query, /العقار والتطوير/u);
+      }
+      if (searchCalls === 2) assert.match(query, /business tax and operations/);
+      if (searchCalls === 3) assert.match(query, /company banking and payment gateways/);
+      if (searchCalls === 4) assert.match(query, /residency and relocation/);
+      if (searchCalls === 5) assert.match(query, /property purchase/);
+      if (searchCalls === 6) assert.match(query, /landowners, development and construction/);
+      if (searchCalls === 7) assert.match(query, /legal and intellectual property/);
+      if (searchCalls === 8) assert.match(query, /Jurisdiction comparison/);
+      if (searchCalls === 9) assert.match(query, /Refalco Group company profile/);
+      return [{ heading: "Company formation", content: "We provide company formation support." }];
+    }
+  };
+  const decide = async ({ observations }) => {
+    observationsSeenByModel = observations;
+    return { type: "respond", text: "We provide company formation support." };
+  };
+
+  const result = await runAgentTurnForContact({
+    currentMessage: "What services do you offer?",
+    locale: "english",
+    store,
+    user: { id: "u1" },
+    userId: "u1",
+    intents: [INTENTS.SERVICES],
+    embedText: async () => [1]
+  }, { decideNextStep: decide });
+
+  assert.equal(searchCalls, 9);
+  assert.equal(observationsSeenByModel.length, 9);
+  assert.equal(observationsSeenByModel[0].tool, "searchApprovedKnowledge");
+  assert.equal(observationsSeenByModel[0].result.modelObservation.status, "found");
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, "We provide company formation support. Which area would you like to hear more about?");
+  assert.deepEqual(result.toolsUsed, ["searchApprovedKnowledge"]);
+});
+
+test("broad Arabic service answers get one neutral next question, while focused requests keep their answer", async () => {
+  const { appendBroadServiceFollowup } = require("./agentRuntime");
+  const broad = appendBroadServiceFollowup(
+    { outcome: "responded", response: "خدماتنا تشمل تأسيس الشركات والعقار." },
+    { intents: [INTENTS.SERVICES], locale: "arabic", currentMessage: "شو هي خدماتكم؟" }
+  );
+  assert.equal(broad.response, "خدماتنا تشمل تأسيس الشركات والعقار. أي مجال حابب تعرف عنه أكثر؟");
+  const alreadyInteractive = appendBroadServiceFollowup(
+    { outcome: "responded", response: "خدماتنا تشمل تأسيس الشركات. أي مجال يهمك؟" },
+    { intents: [INTENTS.SERVICES], locale: "arabic", currentMessage: "شو هي خدماتكم؟" }
+  );
+  assert.equal(alreadyInteractive.response, "خدماتنا تشمل تأسيس الشركات. أي مجال يهمك؟");
+  const focused = appendBroadServiceFollowup(
+    { outcome: "responded", response: "Company formation is one of our services." },
+    { intents: [INTENTS.SERVICES, INTENTS.COMPANY_FORMATION], locale: "english", currentMessage: "Do you offer company formation?" }
+  );
+  assert.equal(focused.response, "Company formation is one of our services.");
+});
+
+test("an ambiguous follow-up searches using recent conversation context without canned query terms", async () => {
+  let searchedQuery = "";
+  const store = {
+    searchKnowledge: async (query) => {
+      searchedQuery = query;
+      return [{
+        heading: "بداية التأسيس",
+        content: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
+      }];
+    }
+  };
+  const result = await runAgentTurnForContact({
+    currentMessage: "طيب كيف فينا نبلش",
+    locale: "arabic",
+    store,
+    user: { id: "u1" },
+    userId: "u1",
+    intents: [INTENTS.UNKNOWN],
+    recentConversation: [
+      { role: "user", content: "انا بدي اسجل شركة بقبرص" },
+      { role: "assistant", content: "أكيد، فينا نساعدك بتأسيس شركة بقبرص. عادةً بتمر العملية بتحديد نشاط الشركة، حجز الاسم، وتجهيز وتقديم مستندات التأسيس لسجل الشركات." }
+    ],
+    embedText: async () => [1]
+  }, {
+    decideNextStep: async ({ observations }) => {
+      assert.equal(observations[0].tool, "searchApprovedKnowledge");
+      return {
+        type: "respond",
+        text: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
+      };
+    }
+  });
+
+  assert.match(searchedQuery, /انا بدي اسجل شركة بقبرص/u);
+  assert.match(searchedQuery, /طيب كيف فينا نبلش/u);
+  assert.match(searchedQuery, /حجز الاسم/u);
+  assert.doesNotMatch(searchedQuery, /Cyprus company formation incorporation first steps name reservation/i);
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /نحجز الاسم/u);
 });
 
 test("a real end-to-end turn: decide calls searchApprovedKnowledge, the real tool reaches the injected embedText and store, and the answer is grounded in the returned evidence", async () => {

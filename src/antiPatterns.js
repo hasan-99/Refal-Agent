@@ -1,4 +1,5 @@
 const { LEAD_TIERS } = require("./leadTemperature");
+const { HOOKS } = require("./salesHooks");
 
 // goldenFormula is intentionally NOT imported: its hasDirectAnswer means "did
 // this reply deflect entirely", which is a different question from "is this
@@ -21,7 +22,8 @@ const ANTI_PATTERNS = Object.freeze({
   FEAR_SELLING: "AP-3",
   FAKE_PROMISE: "AP-4",
   INTERROGATION: "AP-5",
-  UNREQUESTED_MEETING: "AP-6"
+  UNREQUESTED_MEETING: "AP-6",
+  HOT_TIER_HOOK: "AP-7"
 });
 
 // --- AP-1: contact capture ------------------------------------------------
@@ -174,6 +176,13 @@ function detectAntiPatterns({
   const customerAskedForMeeting = matches(customerMessage, CUSTOMER_ASKED_FOR_MEETING_LATIN, CUSTOMER_ASKED_FOR_MEETING_OTHER);
   if (offersMeeting && !customerAskedForMeeting && !BOOKING_READY_TIERS.includes(String(leadTier).toLowerCase())) {
     violations.push({ id: ANTI_PATTERNS.UNREQUESTED_MEETING, reason: "meeting_offer_without_signal" });
+  }
+  if (["hot", "strategic"].includes(String(leadTier).toLowerCase())) {
+    const normalizedReply = reply.toLocaleLowerCase();
+    const leakedHook = Object.values(HOOKS).some((hook) => Object.values(hook.hints || {}).some((hint) => hint && normalizedReply.includes(String(hint).toLocaleLowerCase())))
+      || (/(?:ip\s*(?:box|holding)|tax|taxation|corporate\s+rate|non[- ]?dom|gesy|residenc\w*|relocat\w*|mov(?:e|ing)|international\s+schools?|healthcare|property\s+(?:route|option|investment)|علامة|إقامة|اقامة|ضريب|الإقامة|الاقامة|انتقال|صحة|مدارس|μετακόμ|διαμον|φορολογ|γεσυ|σχολεί|υγεία)/iu.test(normalizedReply)
+        && /(?:could|may|might|worth|relevant|explore|discuss|consider|review|help(?:ful)?|option|eligible|can also|would you|benefit|advantage|favorable|favourable|reduce|lower|save|offers?|provides?|may apply|может|ممكن|قد يكون|مناسب|نستكشف|ينفع|ميزة|فوائد|يخفض|يقلل|μπορεί|ίσως|αξίζει|εξετάσουμε|να δούμε|όφελος|πλεονεκτήμ|μειώ|ευνοϊκ)/iu.test(normalizedReply));
+    if (leakedHook) violations.push({ id: ANTI_PATTERNS.HOT_TIER_HOOK, reason: "sales_hook_suppressed_at_hot_tier" });
   }
 
   return violations;

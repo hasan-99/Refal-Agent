@@ -4,7 +4,7 @@ const DIMENSIONS = Object.freeze(["need", "value", "timing", "authority", "readi
 const DEFAULT_THRESHOLDS = Object.freeze({ hot: 20, warm: 14, strategic: 25 });
 const CONSENT_STATES = Object.freeze({ UNKNOWN: "unknown", GRANTED: "granted", DENIED: "denied", REVOKED: "revoked" });
 
-const OPT_OUT_RE = /\b(?:stop|unsubscribe|do not contact|don't contact|dont contact|no contact|stop messaging|don't message|remove me|leave me alone|no more messages|don't follow up|do not follow up|no follow.?up)\b|لا\s*(?:تراسلني|ترسل لي|تتواصل(?:وا)?\s*معي|تتصل(?:وا)?\s*فيّ?|ترتب(?:وا)?\s*(?:أي\s*)?تواصل(?:\s+عني)?|تبعث(?:وا)?\s*(?:لي\s*)?(?:رسائل|متابعة)|تبعت(?:وا)?\s*(?:لي\s*)?(?:رسائل|متابعة)|أريد رسائل|اريد رسائل)|(?:أوقف|اوقف|إلغاء|الغاء)\s*(?:الرسائل|الاشتراك|التواصل)?|احذف\s*(?:رقمي|بياناتي)|(?:σταμάτα|σταματήστε|μη\s*μου\s*στέλνεις|μη\s*μου\s*στείλετε|διαγραφή|διαγράψτε|δεν\s*θέλω\s*μηνύματα|μην\s*επικοινωνείτε|μη\s*μου\s*στείλετε\s*μήνυμα|μην\s*επικοινωνήσετε\s+μαζί\s+μου)/iu;
+const OPT_OUT_RE = /\b(?:stop|unsubscribe|do not contact|don't contact|dont contact|no contact|stop messaging|don't message|remove me|leave me alone|no more messages|don't follow up|do not follow up|no follow.?up|(?:do not|don't) send me (?:any(?:\s+more)?|another|more) messages?)\b|لا\s*(?:تراسلني|ترسل لي|تتواصل(?:وا)?\s*معي|تتصل(?:وا)?\s*فيّ?|ترتب(?:وا)?\s*(?:أي\s*)?تواصل(?:\s+عني)?|تبعث(?:وا)?\s*(?:لي\s*)?(?:رسائل|متابعة)|تبعت(?:وا)?\s*(?:لي\s*)?(?:رسائل|متابعة)|أريد رسائل|اريد رسائل)|ما\s*(?:بدي|أريد|اريد)\s*(?:أي\s*)?(?:رسائل|متابعة|تواصل)|(?:أوقف|اوقف|أوقفوا|اوقفوا|وقفوا|وقف)\s*(?:كل\s*)?(?:الرسائل|الاشتراك|التواصل|المتابعة)|إلغاء\s*(?:الرسائل|الاشتراك|التواصل)?|الغاء\s*(?:الرسائل|الاشتراك|التواصل)?|احذف\s*(?:رقمي|بياناتي)|(?:σταμάτα|σταματήστε|μην?\s*μου\s*(?:στέλνεις|στέλνετε|στείλετε)(?:\s*(?:άλλα|άλλο|ξανά))?(?:\s*μηνύματα?)?|διαγραφή|διαγράψτε|δεν\s*θέλω\s*(?:άλλα\s*)?μηνύματα|μην\s*επικοινωνείτε|μη\s*μου\s*στείλετε\s*μήνυμα|μην\s*επικοινωνήσετε\s+μαζί\s+μου)/iu;
 // Consent is purpose-bound. A bare yes is meaningful only in the router's
 // tracked-offer state machine and is never inferred from arbitrary history.
 // REFAL-AGENT-014: JavaScript's \b is always ASCII-\w-based, even with the
@@ -119,6 +119,40 @@ function hasFollowUpPermission(user, { requireExplicit = true } = {}) {
   return requireExplicit ? state === CONSENT_STATES.GRANTED : ![CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(state);
 }
 
+// Automated reminders are a separate purpose from a human specialist's
+// follow-up. A specialist-contact grant must never authorize the scheduler.
+// This scope is deliberately accepted only when its durable source turn is
+// present and identifies the channel and language used for the grant.
+function hasAutomatedReminderPermission(user) {
+  if (!user?.id || user.id.startsWith("self-test:") || user.blocked || user.consent?.blocked || user.followUpBlocked || user.optedOut === true) return false;
+  let state = CONSENT_STATES.UNKNOWN;
+  for (const turn of user.history || []) {
+    const messageState = consentFromText(turn?.message || "");
+    const explicitState = turn?.metadata?.followUpConsent?.state;
+    const deniedState = [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(explicitState)
+      ? explicitState
+      : messageState;
+    if ([CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(deniedState)) {
+      state = deniedState;
+      continue;
+    }
+    const grant = turn?.metadata?.followUpConsent;
+    const sourceId = String(turn?.id || "");
+    const channel = String(grant?.channel || turn?.channel || turn?.source || "").toLowerCase();
+    const language = String(grant?.language || turn?.metadata?.intent?.language || "").toLowerCase();
+    const validLanguage = ["en", "ar", "el", "english", "arabic", "greek"].includes(language);
+    const isValidGrant = grant?.state === CONSENT_STATES.GRANTED
+      && grant?.purpose === "automated_reminder"
+      && Boolean(sourceId)
+      && grant?.sourceTurnId === sourceId
+      && Boolean(channel)
+      && validLanguage
+      && Number.isFinite(Date.parse(turn?.at || ""));
+    if (isValidGrant) state = CONSENT_STATES.GRANTED;
+  }
+  return state === CONSENT_STATES.GRANTED;
+}
+
 function recordFollowUpConsent(user, message, now = new Date()) {
   const next = consentFromText(message);
   if (next === CONSENT_STATES.UNKNOWN) return user;
@@ -141,6 +175,7 @@ module.exports = {
   detectPriority,
   getConsentState,
   hasFollowUpPermission,
+  hasAutomatedReminderPermission,
   inferDimensions,
   ownerThresholds,
   qualifyLead,

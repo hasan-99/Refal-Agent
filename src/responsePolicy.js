@@ -62,6 +62,9 @@ const INTERNAL_REASONING_PATTERNS = Object.freeze([
   // Greek equivalents.
   /(?:εσωτερικ(?:ές|ή)\s*(?:οδηγίες|σημειώσεις)|οδηγίες\s*συστήματος|αλυσίδα\s*σκέψης|εσωτερική\s*σκέψη)/iu,
   /(?:βαθμολογία\s*(?:προτεραιότητας|αξιολόγησης)|ταξινόμηση\s*(?:πελάτη|προτεραιότητας)|εσωτερικό\s*αναγνωριστικό)\s*[:=]?/iu,
+  /\b(?:your|lead|need|value|readiness)\s+(?:need\s+|value\s+|readiness\s+)?score\s*(?:is|:|=)?\s*[0-5](?:\s*(?:\/|out of)\s*5)?\b|\b(?:hot|warm|cold|strategic)\s+(?:lead|customer)\b/iu,
+  /(?:أنت\s*(?:عميل\s*)?(?:ساخن|دافئ|بارد)|درجة\s*(?:الاحتياج|القيمة|الجاهزية)\s*(?:هي|:|=)?\s*[٠-٥0-5](?:\s*من\s*٥)?)/iu,
+  /\b(?:hot|warm|cold|strategic)\s+lead\b|\b(?:need|value|readiness)\s*(?:score|:)?\s*[0-5]\s*\/\s*5\b|είσαι\s+(?:hot|warm|cold)\s+lead/iu,
   TOOL_NAME_LEAK_PATTERN
 ]);
 
@@ -106,6 +109,14 @@ const HANDOVER_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)ll\s+(?:pass|forward|log|r
 const BOOKING_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)(?:ll|ve)\s+(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arrange|arranged|set\s+up)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking|time)\b|\b(?:i|we)\s+(?:will|have|had)?\s*(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arranged)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking)\b|\b(?:your|the|this|that)\s+(?:appointment|meeting|booking|slot|call|session)\b[^.?!؟]{0,40}?\b(?:is|are|was|has\s+been|have\s+been)\s+(?:now\s+)?(?:booked|confirmed|scheduled|reserved|arranged|set|locked\s+in)\b|\byou(?:'|’|’)re\s+(?:all\s+set|confirmed|booked|scheduled)\b|\byou\s+are\s+(?:all\s+set|confirmed|booked|scheduled)\b|\b(?:it|that|this)(?:'|’|’)s\s+(?:now\s+)?(?:confirmed|booked|scheduled|reserved)\b|\b(?:booked|confirmed|scheduled)\s+you\s+(?:in|for)\b|(?:تم|تمّ)\s*(?:تأكيد|حجز|تثبيت|ترتيب)\s*(?:ال)?(?:موعد|موعدك|اجتماع|اجتماعك|الموعد|الاجتماع)|(?:موعدك|الموعد|اجتماعك|الاجتماع)\s*(?:مؤكد|محجوز|مثبّت|مثبت|تأكد|انحجز)|(?:حجزت|حجزنا|أكدت|اكدت|ثبتت|ثبّت)\s*(?:لك|لكم)?\s*(?:ال)?(?:موعد|اجتماع)|(?:رح|سوف|سأ|سن)\s*(?:أحجز|احجز|نحجز|حجز|أؤكد|اؤكد|نؤكد|ؤكد|أثبت|اثبت)|(?:το\s+)?ραντεβού\s*(?:σας)?\s*(?:έχει\s+)?(?:επιβεβαιώθηκε|επιβεβαιωθεί|επιβεβαιωμένο|κλείστηκε|κλειστεί|κλεισμένο|προγραμματίστηκε|προγραμματιστεί|οριστικοποιήθηκε|οριστικοποιηθεί)|(?:έκλεισα|κλείσαμε|επιβεβαίωσα|επιβεβαιώσαμε|έχω κλείσει)\s+(?:το\s+)?ραντεβού|θα\s+(?:κλείσω|κλείσουμε|επιβεβαιώσω|επιβεβαιώσουμε)\s+(?:το\s+)?ραντεβού/iu;
 const CONTACT_CAPABILITY_OFFER = /\b(?:i|we)\s+can\s+(?:pass|forward|send|share|arrange)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b/iu;
 const EXPLICIT_PERMISSION_QUESTION = /(?:\b(?:would you like|do you want|shall i|should i)\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|that|this)\b|\bif you(?:'d| would) like\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|arrange)\b|(?:تحب|إذا بتحب|إذا بدك|هل ترغب|هل تود).{0,80}(?:تواصل|اتصال|موعد|المختص|فريق|رتب|رتّب)|(?:θα θέλατε|αν θέλετε|θέλετε).{0,80}(?:επικοινων|κλήση|ειδικό|ραντεβού|κανονίσ))/iu;
+
+const CONSTRUCTION_TENDER_MESSAGE = /\b(?:construction\s+tender|tender\s+(?:for\s+)?(?:construction|building)|(?:construction|building)\s+tender|bill\s+of\s+quantities|boq)\b|مناقصة\s*(?:إنشاء|بناء|عقارية)?|جدول\s+الكميات|κατασκευαστικ(?:ός|ή|ό)\s+διαγωνισμ(?:ός|ό|ο)|διαγωνισμ(?:ός|ό|ο)\s+κατασκευ/iu;
+const CONSTRUCTION_PRICE_ESTIMATE = /(?:€|\$|£|\beur\b|\busd\b|\bprice\b|\bcost\b|\bestimat(?:e|ion)\b|\bquote\b|\bbid\b)|(?:θα κοστίσει|τιμή|κόστος|προσφορά|εκτίμηση)|(?:السعر|التكلفة|تقدير|عرض سعر|يورو|دولار)/iu;
+
+function containsProhibitedConstructionEstimate(customerMessage, response) {
+  return CONSTRUCTION_TENDER_MESSAGE.test(String(customerMessage || ""))
+    && CONSTRUCTION_PRICE_ESTIMATE.test(String(response || ""));
+}
 
 function containsUnconsentedContactCommitment(text) {
   const value = String(text || "");
@@ -190,6 +201,9 @@ function validateResponse(response, options = {}) {
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
   const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);
   const sensitiveValueEcho = containsRawSecretValue(text);
+  const constructionPriceEstimate = options.customerMessage
+    ? containsProhibitedConstructionEstimate(options.customerMessage, text)
+    : false;
   const reasons = [];
   if (!text) reasons.push("empty");
   if (text.length > maxChars) reasons.push("too_long");
@@ -216,6 +230,7 @@ function validateResponse(response, options = {}) {
   if (unverifiedHandoverAction) reasons.push("unverified_handover_action");
   if (unverifiedBookingAction) reasons.push("unverified_booking_action");
   if (sensitiveValueEcho) reasons.push("sensitive_value_echo");
+  if (constructionPriceEstimate) reasons.push("construction_pricing_prohibited");
   return {
     valid: reasons.length === 0,
     text,
@@ -228,7 +243,8 @@ function validateResponse(response, options = {}) {
     unconsentedContactCommitment,
     unverifiedHandoverAction,
     unverifiedBookingAction,
-    sensitiveValueEcho
+    sensitiveValueEcho,
+    constructionPriceEstimate
   };
 }
 
@@ -400,6 +416,7 @@ module.exports = {
   HANDOVER_ACTION_CLAIM,
   BOOKING_ACTION_CLAIM,
   containsUnconsentedContactCommitment,
+  containsProhibitedConstructionEstimate,
   sentenceCount,
   questionCount,
   questionsAreCoupled,

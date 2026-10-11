@@ -7,6 +7,11 @@ import_map = "./functions/rafa-admin-api/deno.json"
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
 entrypoint = "./functions/rafa-admin-api/index.ts"
 
+[functions.rafa-agent-api]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/rafa-agent-api/index.ts"
+
 [auth.hook.custom_access_token]
 enabled = true
 uri = "pg-functions://postgres/public/rafa_dashboard_access_token_hook"

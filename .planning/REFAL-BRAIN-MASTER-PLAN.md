@@ -698,6 +698,8 @@ This is the single most important import from Codex. It is what lets REFAL say �
 
 ### P3.10 — Ingestion pipeline and corpus health `[x]` completed 2026-10-09
 
+**Follow-up (2026-10-11):** The owner-supplied manual was verified against the tracked copy (matching SHA-256), and its six domain sections map to the 29-topic taxonomy. The 87 Arabic, English, and Greek corpus files validate cleanly. Broad service questions now trigger topic-faceted retrieval in the Agent route; fact-linked evidence is withheld unless its register entries are approved, current, and approved for the requested language. The legacy route also searches focused facets, deduplicates fact chunks, and abstains if any facet query errors. `npm run test:all` passes (root **2,044/2,044**; dashboard **111/111**). Live hybrid golden retrieval remains unverified: the local read-only helper currently rejects its Supabase CLI token, while live lexical checks showed occasional off-topic ranking; track that under CF-08 before treating retrieval quality as fully proven.
+
 | Wave | Work |
 | --- | --- |
 | **W3.10.1** | `scripts/ingestBrainCorpus.js`: reads `knowledge/<topic>/<lang>.md`, upserts the source with its `refal://` URI, stores the revision, chunks, embeds, verifies counts. **Idempotent and re-runnable**, reports a per topic diff. Publish and unpublish are safe operations (CX 4A). |
@@ -807,7 +809,7 @@ Typed forms with effective dates for offers, renewal fees, property, reservation
 
 # M5 — Sales Intelligence
 
-### P5.1 — Cross sell hook matrix `[ ]`
+### P5.1 — Cross sell hook matrix `[x]`
 
 | ID | Trigger | Offer | Guard |
 | --- | --- | --- | --- |
@@ -823,7 +825,7 @@ Typed forms with effective dates for offers, renewal fees, property, reservation
 - **W5.1.3** **Suppression**: at most one hook per reply · never at humour level 0 · never when the customer declined · never repeat an already offered hook · **never before the question is answered** · stop if the customer declines, stays informational, complains, or is in a sensitive state (CX 8C).
 - **W5.1.4** Evidence gated: H1 cannot fire if the IP Box document is missing or expired.
 
-### P5.2 — Objection matrix `[ ]`
+### P5.2 — Objection matrix `[x]`
 
 | ID | Objection | Core move |
 | --- | --- | --- |
@@ -838,17 +840,17 @@ Typed forms with effective dates for offers, renewal fees, property, reservation
 - **W5.2.3** O1 and O2 pull **live** package inclusions from `refal_offers_and_pricing`, never a frozen list.
 - **W5.2.4** **Imported from CX 8C:** rewrite MB's objection examples to remove multiple questions, manipulative hidden motive assumptions, pressure, and unsupported competitor accusations. *"Usually 'let me think' hides a small question"* reads as pushy to an HNW investor. Keep the warmth, drop the presumption. Each rewrite is reviewed against the One Question Rule.
 
-### P5.3 — Jurisdiction benchmarking `[ ]`
+### P5.3 — Jurisdiction benchmarking `[x]`
 `src/jurisdictionBenchmark.js` driving topics 26-29 from P3.8. Tone guard rejects any draft that disparages another jurisdiction. Every comparison ends with MB's discovery question, because the honest answer is always "it depends where your clients, your bank and your family are".
 
-### P5.4 — Offer orchestration `[ ]`
+### P5.4 — Offer orchestration `[x]`
 One place decides per turn what REFAL may offer: hook, objection response, specialist, booking, or nothing. Resolves M5's eagerness against the consent and no repeat rules, **which always win**. Consumes `policyPrecedence` from P1.6.
 
 ---
 
 # M6 — Qualification and Executive Handoff
 
-### P6.1 — The six dimension scorer `[ ]`
+### P6.1 — The six dimension scorer `[x]`
 `src/qualificationEngine.js`, extending the existing `src/leadQualification.js` which **already has the right dimension list**.
 
 - **W6.1.1** Evidence anchors 0 to 5 for NEED, VALUE, TIMING, AUTHORITY, READINESS, FIT (MB-D1..D6).
@@ -857,7 +859,9 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 - **W6.1.4** Recompute only on meaningful new evidence. Same conversation → reproducible score and rationale.
 - **W6.1.5** **Leak test**: score, dimension names and tier never appear in a customer reply. Extends the internal reasoning detector in `responsePolicy.js`.
 
-### P6.2 — Tiers and action protocols `[ ]`
+**Current result (2026-10-10):** Local scorer, deterministic evidence references, trait/negation protections, prior-score reuse, customer-output leak checks, Edge persistence path, and PGlite migration validation are implemented and covered. MIG-08 is applied and recorded in live migration history as `20261010190302 / refal_lead_score`; the RLS-enabled table and expected score/evidence columns and foreign keys are present. Updated `rafa-agent-api` is active at v45 with JWT verification enabled. No synthetic customer score row was written for live round-trip testing.
+
+### P6.2 — Tiers and action protocols `[x]`
 
 | Tier | Range | Protocol |
 | --- | --- | --- |
@@ -874,10 +878,14 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 - **W6.2.5** **Boundary tests (imported from CX 8 exit gate):** exact transitions at **7/8, 13/14, 19/20, 24/25**.
 - **W6.2.6** Strategic alerts fire **once**, durably, not repeatedly.
 
-### P6.3 — Instant buying signals `[ ]`
+**Result (2026-10-10):** Exact five-tier boundaries and actions feed the live WhatsApp and Agent prompts; sales hooks are suppressed at Hot/Strategic, consent remains required, tax and residency route distinctly, and strategic alerts use the durable deduplicated alert path. Focused and full-suite tests pass.
+
+### P6.3 — Instant buying signals `[x]`
 `src/buyingSignals.js`, trilingual incl. Arabizi and Greeklish, for MB-B1..B5. Firing raises the score floor and triggers P7 booking.
 
-### P6.4 — Executive Handoff Summary `[ ]`
+**Result (2026-10-10):** MB-B1..B5 detection returns source evidence and raises the computed tier. Allowlisted signal IDs and tier reach both the legacy WhatsApp prompt and bounded Agent decision prompt. Shared rules direct a guarded next step while explicitly denying appointment/handover consent and confirmed-booking claims. Booking remains owned by the guarded P7 workflow.
+
+### P6.4 — Executive Handoff Summary `[x]`
 `src/executiveHandoff.js`, extending the existing `buildRefalLeadSummary`.
 - **W6.4.1** MB 5.2's exact block, byte for byte.
 - **W6.4.2** **Explicit `UNKNOWN` / `NOT PROVIDED`, never an invented detail** (CX 9B).
@@ -885,11 +893,16 @@ One place decides per turn what REFAL may offer: hook, objection response, speci
 - **W6.4.4** Carries every CRM field from M8, so the human adviser never re-asks (MB-HO3).
 - **W6.4.5** Golden fixture comparison on exact separators and field names.
 
-### P6.5 — Handover delivery and acknowledgment (CX 9C) `[ ]`
+**Result (2026-10-10):** Exact structured summary is wired into deterministic and Agent handovers, with explicit unknowns, role filtering, Unicode-safe contact masking, sensitive-data redaction, CRM fields, and confirmation only from a system-confirmed appointment. Focused and full-suite tests pass.
+
+### P6.5 — Handover delivery and acknowledgment (CX 9C) `[~]`
 Durable handover records · notification jobs with retries · **dashboard badge and count reconciliation** (repairs FIX-9) · acknowledgment · closure reasons. Test external communication to a **sandbox recipient only** until explicitly enabled. Simulate: notification outage, wrong department, empty contact details, duplicate escalation, missing assignee.
 
-### P6.6 — Strategic escalation `[ ]`
+**Current result (2026-10-10):** MIG-11, the delivery ledger, bounded retry/acknowledgment/closure, dashboard summary reconciliation, and Edge queue/update/retry plumbing are implemented. Local tests cover outage state, wrong-department FK rejection, duplicate prevention, formatting, repeated escalation, and missing assignees. Live history records `20261010190310 / refal_handover_delivery` and `20261010195102 / rafa_notification_claim_by_id`; deployed `rafa-agent-api` is ACTIVE v46 with `verify_jwt=true`. The isolated claim-by-ID route uses a service-role-only RPC without queue reconciliation; normal batch processing is preserved and P6.5-tagged jobs are excluded from that batch. Recipient routing is configured through `RAFA_P65_TEST_RECIPIENT`, without a caller-selected recipient. Focused tests passed 20/20; full `npm run test:all` passed 2,015 root and 105 Dashboard tests; Deno check and independent pre-live implementation audit passed. **Live verification failed and P6.5 remains partial.** Exactly one synthetic notification (`8b24bee9-c917-42e8-b6de-479b9276b69c`, run `e8f97552-73f7-4758-9b1c-6640f852098e`) was created and isolated-claimed. SMTP returned `535 5.7.8 Username and Password not accepted`; persisted job state is `dead`, attempts=1, provider message ID is null, and delivery ledger records one failed attempt. No retry or second send was made. The synthetic handover was resolved and its ledger entry closed; the failed job/evidence were retained. Post-cleanup backing badge aggregates reconcile to zero open handovers and zero delivery issues. No unrelated production notification or customer data was touched. A temporary App Password for the controlled Gmail account was revoked. The worker credential did not authenticate during delivery and its durable local configuration is not verified. Owner decision (2026-10-10): defer the Gmail credential correction and successful live verification until later. P6.5 remains `[~]` and M6 remains incomplete because delivery did not pass. The owner authorizes moving ahead with M7 preparation while this check is deferred; return to P6.5 before claiming M6 complete. Nothing was pushed to `main`.
+### P6.6 — Strategic escalation `[x]`
 Landowner JV, construction tender, HNW €1M+, international partnership. Urgent path, senior consultant, and for construction **no price or estimate from the agent at all** (MB-F62).
+
+**Result (2026-10-10):** Strategic detectors cover land/JV, construction tender, HNW threshold and international partnership cues; verified priority routes to senior review. Construction prices/estimates are blocked by the customer-output gate across EN/AR/EL, including the Edge mirror. Near-miss and negation tests pass.
 
 ---
 
@@ -897,19 +910,23 @@ Landowner JV, construction tender, HNW €1M+, international partnership. Urgent
 
 **Why this is its own milestone.** Plan A had one thin phase. Codex specified the real policy. Booking is where a wrong answer creates a real world commitment, so it gets full treatment.
 
-### P7.1 — Calendar readiness, built and shipped working `[ ]`
+### P7.1 — Calendar readiness, built and shipped working `[~]`
 
-Codex left booking dormant waiting for four decisions. **This plan ships all four with working defaults and a settings screen**, so booking goes live the moment BOSS pastes one credential.
+**Execution record (2026-10-11; starting revision `c4dfa80d2712b67c770080a24326e32fc6d16c32`; initial worktree clean):** The dashboard has editable 60-minute, 24-hour notice, and 24h/1h reminder defaults; MIG-10 seeds those defaults durably without overwriting owner settings. Readiness names each required condition, including credentials, successful calendar access, duration, notice, and reminders. Independent audit found that `createMeetLink=false` incorrectly made readiness inactive despite all required conditions being met and no displayed cause; a regression failed before the fix, then passed after readiness stopped treating optional Meet-link creation as a booking gate. The UI now tells admins that confirmed appointments will not include a Meet link when they disable it. Admin OAuth setup posts client JSON from the browser directly to a one-use-token loopback helper; credentials are stored in ignored `.secrets` with owner-only permissions and loaded only by the managed bot worker. Admin approve/cancel/reschedule execute in the isolated helper. Route audit confirmed OAuth start, test-calendar, policy writes, and review actions all have administrator middleware. OAuth consent and real calendar access were not configured, per the owner's request to defer calendar authorization. `npm run test:all` passes (root **2,044/2,044**; dashboard **111/111**); the dashboard production build passes. MIG-10 has since been applied and verified; the booking policy schema is ready, while calendar-backed booking remains inactive until OAuth is authorized.
+
+Booking defaults and the settings screen are implemented. MIG-10 is applied; calendar-backed booking remains inactive until Google authorization is completed.
 
 | Wave | Work |
 | --- | --- |
 | **W7.1.1** | **Ship working defaults**: appointment duration **60 minutes** · minimum notice **24 hours** · reminders at **1 day** and **1 hour** before. All editable in the dashboard (M12), none hardcoded. |
 | **W7.1.2** | **Build the settings screen** so BOSS changes duration, notice, business hours and reminders without a developer. |
 | **W7.1.3** | **Build the readiness check** `verifyCalendarAccess` (already exists in `src/calendarReadiness.js`), surfaced as a green or red badge in the dashboard with the exact missing item named. |
-| **W7.1.4** | **The one field**: paste the Google OAuth credential into the dashboard once. The existing `scripts/authorizeGoogleCalendar.js` handles the flow. Worker and dashboard secrets stay separate; tokens never in code, chat or logs. |
+| **W7.1.4** | **The one field**: paste the Google OAuth client JSON into the dashboard once and authorize it. The isolated loopback helper handles the flow. Worker and dashboard secrets stay separate; tokens never in code, chat or logs. |
 | **W7.1.5** | Until the credential is pasted, REFAL does not invent slots. She says a specialist will confirm the time and creates a pending request. **She still books the lead, she just does not claim a confirmed slot.** The customer journey never dead ends. |
 
-### P7.2 — Booking state machine `[ ]`
+### P7.2 — Booking state machine `[x]`
+
+**Execution record (2026-10-11):** Main WhatsApp booking follows the bounded date-choice → at most two live slots → numbered choice → purpose → exact-time confirmation flow. It applies Europe/Nicosia weekdays/hours, rejects same-day and out-of-window requests, rechecks availability immediately before creation, uses durable `awaiting_customer_confirmation` → `creating` → `confirmed` / `pending_calendar` / `failed` / `cancelled` appointment transitions, and only confirms after the event and row update both succeed. Edge transition allowlisting, required event ID, and status-guarded updates have direct unit coverage. Local Deno was unavailable, but the remote Supabase deployment compiled and activated `rafa-agent-api` v48 with `verify_jwt=true`. MIG-10 was applied after the owner explicitly requested deployment; migration history records `20261010221510 / refal_booking_state_machine_m7`. Read-only schema verification confirms the seven-state status constraint, the status/start index, and the durable booking policy row. The WhatsApp bot and dashboard were restarted from the pushed source. The owner's instruction defers Google Calendar OAuth, so real slot creation and calendar-backed smoke tests remain unrun. `npm run test:all` passes (root **2,044/2,044**; dashboard **111/111**); the dashboard production build passes.
 - Timezone **`Europe/Nicosia`**, weekdays only, **10:00 to 15:00**.
 - Reject past dates and **same day** requests. Enforce the configured notice window.
 - Offer **no more than two verified slots** at a time. **Recheck availability immediately before booking.**
@@ -917,17 +934,23 @@ Codex left booking dormant waiting for four decisions. **This plan ships all fou
 - States: `draft → awaiting_customer_confirmation → creating → confirmed | pending_calendar | failed | cancelled`. Each explained truthfully.
 - **Never claim the event, the Meet link or the reminders exist until the APIs confirm them.**
 
-### P7.3 — Two choice offering flow `[ ]`
-MB-A1 step 1: "does today or tomorrow suit you better" (never an open "when would you like"). MB-A2 step 2, **from the live API**: "I have 11:30 or 3:00, which is easier". Slots come only from `listCalendarSlots`.
+### P7.3 — Two choice offering flow `[~]`
+MB-A1 step 1: ask whether tomorrow or a later working day/date suits the customer (never offer today because same-day requests are rejected and the minimum notice is 24 hours; never ask an open "when would you like"). MB-A2 step 2, **from the live API**: "I have 11:30 or 3:00, which is easier". Slots come only from `listCalendarSlots`.
 
-### P7.4 — Conversation flow separation (repairs FIX-3, FIX-4) `[ ]`
+**Execution record (2026-10-11):** Main WhatsApp route is wired to the booking path; localized prompts offer tomorrow or a later working day/date, and relative weekday replies generate no more than two date-specific calendar-verified options. A final audit confirmed the primary deterministic flow had called the lower-level suggestion helper directly while the Agent registry exposed `listCalendarSlots`; the shared calendar capability is now explicitly named `listCalendarSlots` and is used by both the deterministic flow and Agent booking tool. Behavioral regressions cover date-specific suggestions and the tool's trusted availability result in English, Arabic, and Greek. The live calendar criterion remains open until the deferred Google OAuth authorization is completed.
+
+### P7.4 — Conversation flow separation (repairs FIX-3, FIX-4) `[x]`
 - Answer informational questions **during** a booking draft without losing the draft.
 - The draft does **not** capture every message.
 - A new topic does **not** silently resume an old booking. One short disambiguating question only if necessary.
 - If the calendar fails, create visible pending work for an admin and tell the customer accurately.
 
-### P7.5 — Booking test suite `[ ]`
+**Execution record (2026-10-11):** Tests cover answering information during an unfinished draft and during its resume prompt without losing the draft, one-time disambiguation before resuming a date-like reply, stale draft handling, calendar failure, and durable pending work. Customer language distinguishes unverified/pending requests from confirmed appointments. Final `npm run test:all` passes (root **2,040/2,040**; dashboard **111/111**); no live calendar event was created.
+
+### P7.5 — Booking test suite `[x]`
 Timezone and **DST** conversion · date language parsing in AR/EN/EL · boundary times · notice window · stale slot · explicit confirmation · duplicate booking · cancellation · API failure · topic switch. **Live event creation stays disabled during tests.**
+
+**Execution record (2026-10-11):** Root booking, integration, multilingual, dashboard security, and Edge transition coverage includes Nicosia timezone/DST ambiguity, AR/EN/EL date parsing and prompts, schedule and notice boundaries, stale availability, exact confirmation, idempotency, cancellation, API failure, topic interruption, and the optional Meet-link readiness case. PGlite migration behavior is separately covered; tests use fakes/local PGlite and do not create a live event. Final `npm run test:all` passes (root **2,044/2,044**; dashboard **111/111**); dashboard production build passes, and the remote Edge deployment compiled successfully. No live Google calendar event was created because OAuth was deferred.
 
 ---
 
@@ -936,6 +959,8 @@ Timezone and **DST** conversion · date language parsing in AR/EN/EL · boundary
 ### P8.1 — CRM schema `[ ]`
 Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII under the existing redaction rules.
 
+**Progress (2026-10-11):** MIG-07 now adds the four grouped CRM field stores, provenance, a correction marker, and an atomic contact-owned source-turn write RPC. PGlite verifies RLS, service-role-only access, constraints, idempotence, field merging, and source-turn ownership. The migration is prepared but unapplied; live CRM persistence and Edge verification remain open.
+
 | Group | Fields (MB 5.1) |
 | --- | --- |
 | **Identity** | Name, Phone/WhatsApp, Email, Preferred Language, Nationality, Country of Residence |
@@ -943,18 +968,24 @@ Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII
 | **Property & Residency** | Residency Interest, Investment Budget, Preferred City, Purpose, Family Members, SoF Status, SoW Overview |
 | **Qualification** | Timeline, Main Motivation, Main Fear/Objection, Decision Authority, Lead Score, Lead Tier, Next Action, Appointment Status |
 
-### P8.2 — Extraction and normalisation (CX 7A) `[ ]`
+### P8.2 — Extraction and normalisation (CX 7A) `[~]`
 - Extract only supported fields explicitly stated or safely derived, **with provenance and confidence**.
 - **Mark inferred facts separately from customer stated facts.**
 - **Store a name only after clear self identification** (repairs FIX-2). Preserve the raw customer spelling and the normalized form separately. A greeting is never a name.
 - Record a conflict as a **correction need**, never a silent overwrite.
 - **WhatsApp platform metadata is for this conversation and this declared purpose only.** It is not consent for unrelated follow up (repairs FIX-12).
 
-### P8.3 — The never re-ask rule `[ ]`
+**Progress (2026-10-11):** Added trusted inbound-turn binding, allowlisted CRM fields, literal evidence and source-turn checks, explicit self-identification for names, redaction, and conflict handling. Independent audit found postposed negation could pass the value validator; added English, Arabic, and Greek regressions and fail-closed checks. Root suite passes **2,129/2,129**. Durable CRM persistence remains pending MIG-07 application and live Edge verification.
+
+### P8.3 — The never re-ask rule `[~]`
 MB-CRM5, strict. Implemented as a **pre send gate**: if the drafted question targets a field already present with sufficient confidence, reject the draft and regenerate. Covers country, budget, family, activity, target market, timeline. `src/neverReAsk.test.js` with multi turn fixtures per language.
+
+**Progress (2026-10-11):** Existing CRM facts and unresolved correction markers now feed the never-reask and decision prompt paths; a correction marker triggers one concise clarification without exposing stored conflicting values. Multi-turn behavior and durable sync still need broader workflow verification.
 
 ### P8.4 — Summaries, CRM sync, memory boundary `[ ]`
 Concise summaries tied to contact and conversation IDs, excluding secrets and irrelevant sensitive detail. Sync state recorded and retried safely without creating duplicate records. **Memory stays untrusted**: continuity only, never evidence for a company fact, never an instruction. Tests so M8 cannot erode this.
+
+**Progress (2026-10-11):** The Agent adapter now persists approved CRM candidates through the contact-owned Edge/RPC path and rehydrates durable fields into contact reads. Writes fail closed if persistence fails. Local migration and integration tests pass; the live migration and Edge deployment are still required. Only the first unresolved correction marker is surfaced at a time, so concurrent distinct conflicts need a follow-up workflow before M8 can close.
 
 ---
 
@@ -968,43 +999,53 @@ Concise summaries tied to contact and conversation IDs, excluding secrets and ir
 ### P9.1 — Consent model `[ ]`
 Persist **what** was consented to, **when**, in which **language and channel**, for what **purpose**, and its **scope** (specialist contact vs automated reminder). A bare "yes" is read **only in its immediate conversational context**; unrelated consent is never inferred. Link consent to its source turn and recheck it before any outbound action.
 
-### P9.2 — Opt out `[ ]`
+### P9.2 — Opt out `[~]`
 Simple stop and opt out handling in Arabic, English and Greek (the existing `OPT_OUT_RE` is a strong start). Opt out suppresses all future outreach until renewed consent. Resubscribe path tested.
+
+**Progress (2026-10-11):** Added Arabic stop-request coverage, including `وقفوا التواصل معي`, and ensured opt-out phrases cannot match as consent. Focused multilingual tests pass; durable outbound suppression smoke remains open.
 
 ### P9.3 — Scheduler `[ ]`
 Validate the prior policy before reusing it: hourly checks, minimum 24 hour silence window. **Skip** self tests, incomplete turns, final thanks and goodbyes, unresolved failures, and opted out contacts. **Never promise "we will message you at X" unless a durable job is scheduled and confirmed.**
 
-### P9.4 — Follow up test suite `[ ]`
+### P9.4 — Follow up test suite `[~]`
 Consent · denial · opt out · resubscribe · duplicate scheduling · stale job · delivery failure · timezone. **Follow up cannot run for test conversations or without eligible consent.** If suppression checks fail, the sender is disabled.
+
+**Progress (2026-10-11):** Added an in-process overlapping-check guard and regression coverage; it prevents duplicate sends within one process. Cross-worker atomic claiming is still required under P13.1, so duplicate protection is not complete.
 
 ---
 
 # M10 — Multilingual Parity
 
-### P10.1 — Arabic `[ ]`
+### P10.1 — Arabic `[~]`
 AR-L1: simplified warm white dialect or accessible near MSA. **Avoid dry lawyer language and complex government text.** Extend `src/language.js` Arabizi detection with the new commercial vocabulary.
 
-### P10.2 — Greek `[ ]`
+### P10.2 — Greek `[~]`
 AR-L3: professional business Greek. Extend the Greeklish detector with corporate, tax, residency and property vocabulary.
 
 ### P10.3 — English `[ ]`
 AR-L2: business casual. Practical, confident, warm. Clear without excessive legal complexity.
 
-### P10.4 — Trilingual glossary and transliteration (imported from CX 2C) `[ ]`
+### P10.4 — Trilingual glossary and transliteration (imported from CX 2C) `[~]`
 One glossary for company, legal and property terms across all three languages, with **consistent transliteration**, so "Ltd", "IP Box", "Non Dom", "EORI", "GESY", "AIF" are rendered the same way everywhere. Preserve exact legal meaning across translations. A missing reviewed translation is **fallback required**, never a fact to invent.
 
-### P10.5 — Parity measurement `[ ]`
+**Implementation note (2026-10-11):** The shared WhatsApp/dashboard/Edge prompt now preserves approved canonical spellings for legal, tax, regulatory and product terms and forbids unsupported translations or definitions. This is a safety improvement, not completion of the reviewed trilingual glossary or native-speaker review.
+
+### P10.5 — Parity measurement `[~]`
 Every golden question in each language retrieves its own language document first. The language lock stays. **Per language and per domain scores with error bars; the aggregate may never hide a Greek or Arabic failure.** Target: within 10% across languages. Persona, humour and hooks reviewed by a native speaker per language before sign off.
+
+**Progress (2026-10-11):** Expanded Arabizi/Greeklish detection and added per-language rank, spread, and confidence-interval reporting. Existing live retrieval data is diagnostic and predates the corrected scope method; rerun the scoped evaluation and obtain native-speaker review before sign-off.
 
 ---
 
 # M11 — Security, Privacy and Compliance
 
-### P11.1 — Input and retrieval controls (CX 12A) `[ ]`
+### P11.1 — Input and retrieval controls (CX 12A) `[~]`
 Customer documents and retrieved content are untrusted input, never system instructions. Resist injection in Arabic, English, Greek, **mixed script text, and quoted documents**. **Access scoped retrieval: one customer's data or internal handoff can never be retrieved for another.**
 
-### P11.2 — Output and tool controls (CX 12B) `[ ]`
+### P11.2 — Output and tool controls (CX 12B) `[~]`
 Detect prompt leakage, credentials, API keys, access tokens, private lead data, and internal score or reasoning. **Validate every tool call against an allowlisted schema, required authorization, and the user's actual intent.** Never ask for passwords, card details or bank statements in public chat. Refuse help concealing beneficial ownership or evading sanctions, and escalate to Compliance **without debating it**. Keep legal and tax replies general. **Do not remove a meaningful caveat just to make a sales reply sound confident.**
+
+**Progress (2026-10-11):** Tool arguments and summaries are now explicitly framed as untrusted data in the decision prompt, with regression tests. Broader tool-action and cross-contact adversarial auditing remains open.
 
 ### P11.3 — Privacy, retention and routing (CX 12C) `[ ]`
 Least privilege access · redacted observability · retention, deletion, correction and export policy · PII handling in exports · staff roles. **Preserve the OpenRouter privacy settings and ZDR routing** confirmed in P0.1. Do not change the model or the data routing policy without BOSS.
@@ -1021,6 +1062,8 @@ Multilingual adversarial corpus by category, including obfuscated and mixed scri
 ### P12.1 — Knowledge admin `[ ]`
 Add, edit, review, approve, publish, unpublish, archive. Show source, language, status, version, reviewer, effective date and expiry (the P3.9 register). **Preview retrieval results in Arabic, English and Greek before publishing.** Confirmation and undo for destructive operations. Audit who changed which fact. **Knowledge edit → publish → search demonstrated without redeploying the agent.**
 
+**Execution record (2026-10-11):** Local implementation adds reversible source archive/restore with required reason and dashboard audit event, removes permanent source deletion, provides an admin-only side-by-side approved retrieval preview in EN/AR/EL, and displays revision provenance and effective/expiry metadata. Preview deliberately searches only approved active evidence; pending revisions stay unavailable to the agent. Independent local verification: full dashboard suite **116/116** and production build pass. No live knowledge was changed and no production UI demo was run; the phase stays open until the end-to-end publish/search demonstration can run on a configured dashboard host.
+
 ### P12.2 — Dynamic data admin `[ ]`
 Typed forms with effective dates for offers, prices, property, deposits and fees. **Never edited as freeform prompt text.**
 
@@ -1030,6 +1073,8 @@ Open handovers and alerts · complaint status · lead summary · appointment pro
 ### P12.4 — Human corrections `[ ]`
 Staff can correct names, intent, score evidence, routing and knowledge facts. Corrections are auditable and **feed the evaluation fixtures after review**. Tested with: a staff member without permission, stale browser state, partial saves, concurrent edits. No control may imply success before the save is confirmed.
 
+**Progress (2026-10-11):** Independent audit found process-local stale-write protection and a split profile/audit write. Replaced these with MIG-14's service-role-only RPC: row lock, compare against the browser baseline, partial JSON merge, and field-name-only audit insert occur in one transaction. PGlite covers stale state, partial preservation, audit payload privacy, privilege boundary, and rerunnable DDL; dashboard covers role checks and concurrent stale submissions. MIG-14 is prepared but unapplied, so live multi-instance behavior remains unverified.
+
 ---
 
 # M13 — Scale and Reliability
@@ -1037,8 +1082,10 @@ Staff can correct names, intent, score evidence, routing and knowledge facts. Co
 ### P13.1 — Concurrency `[ ]`
 Per contact serialisation (two messages from one customer must not race) · bounded global concurrency · a work queue with retry · idempotency on inbound receipts (`rafa_inbound_message_receipts` exists) · **webhook deduplication**.
 
-### P13.2 — Shared rate limiting (removes BLK-11) `[ ]`
+### P13.2 — Shared rate limiting (removes BLK-11) `[~]`
 Move `src/rateLimiter.js` counters from process memory to Supabase so limits survive restarts and hold across processes.
+
+**Progress (2026-10-11):** Added an atomic, service-role-only Supabase RPC migration, authenticated Edge route, HMAC pseudonymous contact keys, shared per-minute and daily counters, and a bounded local outage fallback. Local migration and application tests pass. The migration is intentionally unapplied; cross-worker behavior and restart survival require the owner migration gate and live verification.
 
 ### P13.3 — Measured latency and cost (CX 15A) `[ ]`
 **Recalculate against current provider prices and actual token usage.** Historical assumptions of 100 conversations a day at 2,000 in / 200 out are planning estimates, not current usage. Measure **p50 and p95** across WhatsApp, API, RAG, Supabase writes, tools and model calls. Compare sequential vs parallel non dependent writes while preserving transaction and idempotency correctness. Set a hard prompt token ceiling. Track cost through `src/aiUsage.js`.
@@ -1063,6 +1110,10 @@ N concurrent conversations across all three languages. Measure latency, error ra
 
 ### P14.1 — Golden set scoring `[ ]`
 All ~870 questions. Targets, written before the run: ≥90% factual accuracy · 100% grounding · **0 guardrail failures** · ≥85% Golden Formula compliance · language parity within 10%. Results identify test type: synthetic, sandbox or live. **No scripted fallback counts as a model success without disclosure.**
+
+**Execution record (2026-10-11, diagnostic only):** The new harness ran the live approved-knowledge search for all **879** positive golden questions and **17** negative controls. It returned 742/879 expected-fact hits in the top five (84.4%); language counts were AR 252/293 (86.0%), EN 241/293 (82.3%), EL 249/293 (85.0%). It generated **zero** model answers, so factual accuracy, grounding, Golden Formula and answer-language quality remain unscored. Do not use these retrieval rates as a release verdict yet: MB-F9 package-price questions require the separate dynamic-offer tool, the raw-search negative controls bypass the agent's scope gate, and at least one golden expected-fact mapping needs human review. A corrected three-question ranked live smoke found each supplied expected fact in ranks 2–4. Full methodology review and human answer adjudication remain open.
+
+**Harness correction (2026-10-11):** A false-green path allowed answer-quality eligibility with no reviewed refusal scenario. Eligibility now requires at least one refusal answer with explicit passing adjudication. Negative raw-search diagnostics still do not count as Agent refusal evidence. No model answers were generated in this pass; live answer quality is not yet scored.
 
 ### P14.2 — Full workflow tests (CX 14C) `[ ]`
 Inbound message → intent → retrieval or tool → answer → DB persistence → handoff, booking or follow up state → dashboard view. Fake services and isolated Supabase fixtures first, then sandbox accounts for external connectors.
@@ -1153,7 +1204,7 @@ Full matrix in [`docs/brain/SOURCE-ANALYSIS.md`](../docs/brain/SOURCE-ANALYSIS.m
 | **OP-01** | Fact approval register: source, reviewer, verified, effective, expiry, status | R-09, 2B | **P3.9** | `[x]` |
 | **OP-02** | Policy precedence ladder, 6 levels, enforced in code | 1C | **P1.6** | `[ ]` |
 | **OP-03** | Booking policy: Europe/Nicosia, weekdays 10:00-15:00, no same day, notice window, fresh recheck, explicit exact confirmation, 7 states | R-20, P10 | **M7** | `[ ]` |
-| **OP-04** | Booking never blocks unrelated Q&A; a new message never resumes an old booking | R-21 | **P7.4** | `[ ]` |
+| **OP-04** | Booking never blocks unrelated Q&A; a new message never resumes an old booking | R-21 | **P7.4** | `[x]` |
 | **OP-05** | Follow up consent scope, trilingual opt out, scheduler suppression, no untrue timing promise | R-22, P11 | **M9** | `[ ]` |
 | **OP-06** | Existing client account data fail closed until approved independent verification | R-19 | **P2.5** | `[x]` |
 | **OP-07** | A greeting is never a name; platform metadata is not consent | R-11 | **P8.2** | `[ ]` |
@@ -1304,6 +1355,25 @@ One row per defect found, with the phase that repairs it and the regression test
 ## 16. Phase completion log
 
 Append one Result block per completed phase at G1. Never delete an entry.
+
+### 2026-10-11 — improvement sweep (partial; no milestone closed)
+
+**Built locally:**
+- M8: a pre-send never-reask gate and a CRM candidate normalizer with stated/inferred provenance, source turn, confidence, raw/normalized values, and conflict handling. The durable CRM schema and retry-safe CRM sync are still missing.
+- M9: reminder consent is separate from specialist contact consent; only an explicit offer followed by an affirmative immediate turn can grant automated reminders. Denial and revocation override older grants. `MIG-09` adds the persisted scope and fresh-offer reconsent guard.
+- M10: Arabic, Greek, Arabizi, and Greeklish language signals were expanded. Broad company and service searches use language-matched facets; specific package questions lead with the approved package title. Query embeddings are batched and independent live searches run concurrently while retaining deterministic evidence order and fail-closed behavior. The Arabic company-profile source has a local translation draft for existing MB-C5 coverage; live data still needs the normal reviewer approval to publish it.
+- M11: mixed Greek/Cyrillic homoglyph prompt-injection detection was fixed and regression-tested; broader multilingual red-team and retention/role evidence remain open.
+- M12: dashboard saves now queue revisions as pending and do not index them. An audited reviewer action is the only dashboard path that publishes and indexes them. Archive/undo, side-by-side trilingual preview, and remaining dashboard requirements remain open.
+- M13: expired in-memory rate-limit buckets are pruned periodically. Shared limits, per-contact serialization, queue recovery, health checks, measured p50/p95 cost and latency, and load testing remain open.
+- CF-08: lexical relevance now uses a shared query scale and deterministic ID tie-breaks. Explicit quoted phrases and exclusions disable partial fallback. Local PGlite regressions cover exclusions, phrases, duplicate terms, punctuation, Arabic, and Greek. `MIG-08` was applied as `20261010230731 / cf08_lexical_rank_consistency`; lexical runtime evaluation is still required against the live database, and the hybrid halfvec function was not executable in PGlite.
+
+**Verification:** latest `npm test` → exit=0, 2,077/2,077; dashboard tests → 116/116; dashboard production build → exit=0; `npm run validate:corpus` → 87/87 files clean. Earlier in the sweep `npm run health:brain` reported 87/87 present, 87/87 lexically healthy, 868/879 reachable, 5 pending live-DB checks, 0 blockers; the fact-register check cannot authenticate with the dashboard secret, so this is not a complete live health verdict. Latest focused checks: `node --test scripts/evaluateRag.test.js src/ragPolicy.test.js` → 53/53; `node --test scripts/cf08LexicalRank.test.mjs scripts/m9ConsentMigration.test.mjs` → 5/5; Deno check on the Edge entrypoint passed; generated Edge mirrors are in sync; `git diff --check` has no whitespace errors (only Git line-ending notices). The six-case WhatsApp conversation evaluation passed all six synthetic conversations; the production guard rejected several model drafts and the approved-evidence fallback returned the reply.
+
+**Real-data evidence (read-only):** After CF-08 deployment, Supabase retrieval via the actual WhatsApp facet path returned the approved company-formation chunk first in English, Arabic, and Greek, with Arabic and Greek chunks in their requested language. The current live pricing lookup returned an approved, active, verified offer; it is checked through dynamic data, not treated as a RAG fact. The six-case smoke evaluator reports 5/6 approved-corpus checks passing; its live pricing-table check passes. Arabic company-profile service-list coverage remains a live-data gap pending reviewer approval. The six-case sample measures Arabic 1/2 versus English and Greek 2/2 (50-point spread), above the 10-point target. This is an early test signal, not the 870-question release evaluation.
+
+**Audits and defects:** CF-08 independent audit found quoted phrase and negation bypasses plus unstable tie ordering; these were fixed and have executable regressions. The independent M14 audit found stale benchmark expectations (old source names and a fixed RAG price), which were corrected; equal zero pass rates no longer count as language parity. No independent full cross-phase release audit has passed.
+
+**External gates and explicitly not done:** M8, M9, M10, M11, M12, M13 and M14 are not complete. `MIG-09` was applied as `20261010230719 / refal_m9_consent_scopes`, and `rafa-agent-api` is deployed at version 50 with `verify_jwt=true`; live consent/suppression smoke testing is still required before scheduling outbound reminders. `MIG-08` was applied as `20261010230731 / cf08_lexical_rank_consistency`; the actual WhatsApp hybrid search path was exercised against live data, but the full live retrieval evaluation remains unverified. The pending Arabic knowledge revision has not been approved or published. No commit or push has been made in this sweep. Google Calendar OAuth and live booking remain deferred as requested. The 870-question release evaluation, complete prompt/security parity audit, staging workflow, and independent rollback rehearsal are still outstanding.
 
 ```
 ### <PHASE ID> — <name> — completed <date>
@@ -2008,6 +2078,117 @@ Requested execution: all five phases and seven P4.2 waves, independent phase aud
 
 **Baseline:** independent verifier ran root tests (1,785 pass, 2 mirror-generation failures), dashboard tests (94 pass), and dashboard build (pass) before implementation. Root cause: generated mirrors had inconsistent line endings; fixed and covered by normalization. Baseline details: `docs/brain/M4-BASELINE.md`.
 
+---
+
+### M5 — Sales Intelligence — execution completed 2026-10-10 — `[x]`
+
+Executed with `.agents/skills/refal-milestone-execute/SKILL.md`, using disjoint implementation and independent audit assignments, followed by coordinator integration and a fresh cross-phase audit. P5.1–P5.4 are individually audited and verified below. No M5 database migration was required by the plan.
+
+**P5.1 — Cross sell hook matrix — `[x]`**
+
+- **Built:** `src/salesHooks.js` and runtime composition in `src/salesIntelligence.js`; Arabic, English, Greek, Arabizi and Greeklish trigger/phrase handling; evidence/currentness checks; suppression for answered-state, humour, no-repeat, no-contact, complaints, sensitive and informational requests; persisted hook IDs through Edge metadata allowlist.
+- **Defects validated and fixed:** mapped language detector values (`arabic`/`greek`) to native hook locales; added missing developer trigger; integrated hooks in legacy and Agent response paths; informational service, company, identity, pricing and contact requests now suppress cross-sells; transliteration language detection now mirrors Greeklish and Arabizi.
+- **Verification:** `node --test src/salesHooks.test.js src/salesIntelligence.test.js src/language.test.js src/salesOfferMetadata.test.mjs` → exit 0, **23/23**. Hook composer and Edge metadata tests pass.
+- **Independent audit:** P5.1 re-audit passed; no remaining in-scope defect reported.
+
+**P5.2 — Objection matrix — `[x]`**
+
+- **Built:** `src/objectionMatrix.js`; five trilingual, one-question, non-pushy responses; live `formation-package` lookup for O1/O2; evidence-gated O5 credibility facts and humour cap; `messageRouter.js` runtime bridge.
+- **Defects validated and fixed:** removed the legacy router-category gate that stranded O2/O3/O4 and question-form O5; preserved direct factual and mixed questions; added Greek reliable-adjective morphology and English/Arabic/Greek trust-plus-office route regressions.
+- **Verification:** objection matrix, objection workflow and route tests passed; final independent targeted route probes passed **3/3**, matrix/sales intelligence **15/15**, and combined route/workflow suite **84/84**.
+- **Independent audit:** P5.2 final audit passed; no remaining in-scope defect reported.
+
+**P5.3 — Jurisdiction benchmarking — `[x]`**
+
+- **Built:** `src/jurisdictionBenchmark.js` and runtime guard in both legacy and Agent answer paths; all four corpus topics with English, Arabic and Greek cases; current approved topic/fact evidence; localized discovery-question fallback; non-disparagement and unsupported-claim rejection.
+- **Defects validated and fixed:** wired the guard to both production response paths; enriched Edge retrieval with bounded server-side topic and current fact-register metadata; fail closed when governance lookups or current rows are missing; fixed corpus fact splitting and tone checks.
+- **Verification:** jurisdiction, runtime composition and Edge enrichment tests passed **24/24**; independent audit exercised all **12** topic/locale corpus cases and the missing, stale, blocked, pending and language-mismatch fail-closed paths. `npx --yes deno check supabase/functions/rafa-agent-api/index.ts` passed.
+- **Independent audit:** P5.3 and final M5 cross-phase audits passed; no remaining in-scope defect reported.
+
+**P5.4 — Offer orchestration — `[x]`**
+
+- **Built:** `src/offerOrchestration.js` selects one eligible booking, specialist, objection, jurisdiction or hook candidate; enforces strict answer completion, one-question, priority, policy precedence, consent and suppression gates. Explicit booking requests pass the selector before the existing deterministic booking owner. Specialist follow-up now composes after the answer in both response paths; hook and specialist metadata persist for no-repeat checks.
+- **Defects validated and fixed:** removed the pre-answer specialist return and its hardcoded `answerComplete`; added persisted specialist-offer repeat suppression; added the narrow Edge `specialistOffer` metadata contract (`offered`, `consentRequired`, parseable `offeredAt` only) after the independent audit proved Agent turn PATCHes were rejected; Edge tests cover valid and forged payloads.
+- **Verification:** `node --test src/offerOrchestration.test.js src/salesIntelligence.test.js src/messageRouter.test.js src/bot.test.js` → exit 0, **96/96**; Edge metadata validation tests → exit 0, **3/3**. Full `npm test` → exit 0, **1,916/1,916**. `npm run test:all` → exit 0, including Dashboard **105/105**. Deno check and `git diff --check` passed.
+- **Independent audit:** P5.4 audit and fresh M5 cross-phase audit passed after the Edge persistence fix. No remaining confirmed in-scope defect.
+
+**Final M5 audit and evidence boundary:** a fresh independent audit compared P5.1–P5.4 to this plan and rechecked runtime wiring, localization, suppression, current evidence, persistence schemas and regression tests. It found and validated the specialist-offer Edge metadata rejection above; after the fix, it reported no remaining confirmed M5 blocker. Edge code is locally type-checked and unit-tested, but was **not deployed** and no live Supabase persistence round-trip was run. No migrations, production writes, customer messages, commit or push were performed in this M5 execution.
+
+### P6.1 — The six dimension scorer — implementation reviewed 2026-10-10 — `[x]`
+Built: Six-dimension evidence scoring, deterministic provenance/fingerprints, previous-score reuse, protected-trait and negation exclusions scoped across English/Arabic/Greek contrast boundaries, customer-output leak protection, and durable Edge score-history persistence.
+Files touched: `src/qualificationEngine.js`, `src/messageRouter.js`, `src/responsePolicy.js`, `supabase/functions/rafa-agent-api/index.ts`, `supabase/migrations/20261010150000_refal_lead_score.sql`, `scripts/m6QualificationMigration.test.mjs`, related tests.
+Verification: `node --test src/qualificationEngine.test.js src/messageRouter.test.js src/responsePolicy.test.js scripts/m6QualificationMigration.test.mjs` exit=0; focused qualification regression suite exit=0 (162 tests); final `npm run test:all` exit=0 (2,003 root + 105 Dashboard).
+Gap scan: COVERED 6 / PARTIAL 0 / MISSING 0. Local scoring and migration acceptance covered; live MIG-08 history, table, RLS, columns, foreign keys, and updated Edge deployment verified. No synthetic customer score row was written.
+Defects logged: Independent audits found trait-clause removal could drop adjacent commercial evidence and negation scope crossed contrastive clauses, suppressing affirmative evidence. Both were reproduced; trait-only rejection remains covered.
+Auto fixes applied: Deterministic evidence ordering, trait-only and negative-only protections, conjunction-safe trait-clause removal, contrast-boundary negation scope, all-match positive-evidence scanning, and previous-score reuse. Added English, Arabic and Greek mixed-turn regressions.
+Fields left for BOSS to fill: None for schema/deployment. A live score-row round-trip was not performed to avoid creating synthetic production customer data.
+Deviations from plan: Store evidence references as source-turn IDs and excerpt hashes, not duplicated raw evidence text.
+Explicitly NOT done: No live score-row round-trip. MIG-08 was applied by the owner-authorized Supabase operation on 2026-10-10 and verified in remote migration history and schema metadata.
+BOSS sign off: Owner authorized Supabase migration and Edge deployment on 2026-10-10; live schema and active function version verified.
+
+### P6.2 — Tiers and action protocols — completed 2026-10-10 — `[x]`
+Built: Five exact score bands and action protocols; tier-aware hook suppression; distinct tax/residency routing; durable deduplicated strategic alerts; computed tier reaches WhatsApp and Agent prompts.
+Files touched: `src/leadTiers.js`, `src/messageRouter.js`, `src/bot.js`, `src/brainPrompt.js`, `src/agentContext.js`, `src/agentDecision.js`, `src/agentRuntime.js`, prompt mirrors, `config/refal-agent-rules.md`, related tests.
+Verification: `node --test src/leadTiers.test.js src/messageRouter.test.js src/agentContext.test.js src/agentDecision.test.js src/promptParity.test.js` exit=0; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard).
+Gap scan: COVERED 6 / PARTIAL 0 / MISSING 0.
+Defects logged: Independent audit found AP-7 missed paraphrased tax and relocation benefits. A fresh M6 audit also reproduced a score-only Strategic lead (25/30, no buying-signal or explicit strategic cue) that wrote no priority alert, violating W6.2.6.
+Auto fixes applied: Prior audit findings for tier wiring and department routing; expanded and independently rechecked Hot/Strategic hook suppression; `recordHistory` now creates an urgent `material_business_opportunity` alert for a Strategic tier when no other alert branch already handles it. The existing Edge workflow upsert reuses the active contact/trigger row, preserving one durable alert.
+Verification: Added a router regression for a score-only 25/30 Strategic lead and an MB-B5 overlap case. Both paths assert exactly one urgent alert write. `node --test --test-name-pattern="a Strategic qualification score|buying signals apply score floors" src/messageRouter.test.js` passed 2/2; combined focused M6 suite passed 186/186; full `npm run test:all` passed 2,003 root and 105 Dashboard tests. Edge active-alert upsert and the partial unique index were independently rechecked; no live write was performed.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: None.
+Explicitly NOT done: No live alert delivery was triggered.
+BOSS sign off: Pending.
+
+### P6.3 — Instant buying signals — completed 2026-10-10 — `[x]`
+Built: MB-B1..B5 trilingual and transliterated signal detection with original-message evidence offsets, score floors, guarded next-step metadata, and prompt wiring through both the legacy WhatsApp and bounded Agent routes.
+Files touched: `src/buyingSignals.js`, `src/messageRouter.js`, `src/bot.js`, `src/ai.js`, `src/brainPrompt.js`, `src/agentContext.js`, `src/agentRuntime.js`, `src/agentDecision.js`, prompt mirrors, related tests.
+Verification: Signal/prompt/Agent tests exit=0; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard); prompt mirror checks exit=0. Independent audit verified all canonical B1–B5 English, Arabic and Greek samples reach the guarded booking request detector; regression coverage verifies mixed landowner/sanctions turns defer from booking in English, Arabic and Greek.
+Gap scan: COVERED 1 / PARTIAL 0 / MISSING 0.
+Defects logged: Independent audit found the booking gate could preempt a compliance-triggered B5 message. Booking dispatch now yields to restricted safety and compliance triggers, including sanctions/source-of-funds cases.
+Auto fixes applied: Signal IDs now reach both customer decision paths; safety/compliance precedence is explicit. A signal never grants appointment/handover consent or confirmed status.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: Signals prompt the existing consent-gated P7 booking workflow; they do not execute or confirm a booking directly.
+Explicitly NOT done: No appointment was created.
+BOSS sign off: Pending.
+
+### P6.4 — Executive Handoff Summary — completed 2026-10-10 — `[x]`
+Built: Structured summary with fixed sections/separators, explicit unknowns, role-based visibility, sensitive-data redaction, Unicode contact masking, all allowlisted typed intake fields attached to the linked inquiry, qualification/routing details, and system-confirmed appointment status.
+Files touched: `src/executiveHandoff.js`, `src/handover.js`, `src/agentTools.js`, related tests.
+Verification: `node --test src/executiveHandoff.test.js src/handover.test.js src/agentTools.test.js src/messageRouter.test.js` exit=0; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard). Runtime adapter test confirms linked inquiry intake and qualification reach the handover summary; unrelated profile fields remain excluded.
+Gap scan: COVERED 5 / PARTIAL 0 / MISSING 0.
+Defects logged: None.
+Auto fixes applied: Independent audit fixes for Unicode phone digits, linked M8 CRM field omissions, and handoff adapter propagation of intake/qualification metadata.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: Handoff includes typed intake/CRM values from the inquiry linked to consent; it deliberately excludes unrelated legacy profile fields without inquiry provenance.
+Explicitly NOT done: No customer-facing handover confirmation is fabricated.
+BOSS sign off: Pending.
+
+### P6.5 — Handover delivery and acknowledgment — implementation reviewed 2026-10-10 — `[~]`
+Built: Sandbox-only delivery ledger, bounded retry/update plumbing, acknowledgment and closure, department-consistent FK, dashboard unresolved/delivery-failure summary, failed-ledger retry recovery, legacy open-handover seeding, and resolved/cancelled handover notification suppression through claim and worker send.
+Files touched: `supabase/migrations/20261010160000_refal_handover_delivery.sql`, `supabase/functions/rafa-agent-api/index.ts`, `supabase/functions/rafa-agent-api/handoverDeliveryState.mjs`, `src/supabaseStore.js`, `src/notificationScheduler.js`, `dashboard/server.js`, `scripts/m6HandoverMigration.test.mjs`, related tests.
+Verification: `node --test scripts/m6HandoverMigration.test.mjs src/handover.test.js src/notificationScheduler.test.js supabase/functions/rafa-agent-api/handoverDeliveryState.test.mjs` exit=0; combined focused M6 suite passed 186/186; final full `npm run test:all` exit=0 (2,003 root + 105 Dashboard); Deno check exit=0.
+Gap scan: COVERED 9 / PARTIAL 1 / MISSING 0. Local evidence covers outage/retry, failed-ledger retry repair, terminal state reconciliation, closed-handover suppression, retry cancellation ordering, open-only legacy seeding, wrong department, duplicate prevention, nullable assignee, and empty contact formatting. Live MIG-11 history, RLS-enabled ledger schema, expected columns/FK, and updated Edge deployment are verified. End-to-end notification delivery and dashboard badge reconciliation remain unverified. Two fresh independent audits verified that the production recipient is hard-coded to non-deliverable `sandbox@refalco.test` and the claim route performs global reconciliation plus a shared claim of up to 25 jobs. Therefore no live invocation is safe until a test-only recipient and isolated claim-by-ID path exist; no notification was sent and no live rows were changed.
+Defects logged: Audits found missing enqueue recovery, ACK/resolve writes missing department/timestamps, terminal notification partial writes, retry partial writes, historical open handovers lacking delivery rows, retrying resolved work, queued jobs surviving dashboard resolution, claim-to-send closure races, and cancellation incorrectly reopening a closed ledger as a failure. Each was reproduced from code/state flow and fixed with idempotent reconciliation, open-row sandbox seeding, retry allowlisting, claim response validation, worker-side parent-status validation, and cancellation-specific closed ledger mapping. Cancellation runs before ledger closure; reconciliation failure aborts claims. No live route/provider integration test exists; Edge/database control flow is independently audited and state helpers plus worker behavior are unit-tested.
+Auto fixes applied: Nullable-assignee and department mismatch assertions; claim-time enqueue and retry repair; sent/dead/cancelled reconciliation; sandbox migration seed for pre-existing open handovers only; retry eligibility limited to open/acknowledged; closed/missing parent notifications cancelled before return; fail-closed reconciliation, post-claim and pre-send status guards; cancellation maps to closed with timestamps/reason; dashboard ACK/resolve timestamp/department fixes; regression tests for retry/closure ordering and resolved-before-send cancellation.
+Fields left for BOSS to fill: Add and independently audit a test-only controlled administrator recipient and claim-by-ID path that cannot reconcile or claim unrelated jobs; then run one synthetic delivery, verify status/provider evidence and dashboard aggregate/ACK reconciliation, and safely clean up synthetic rows while retaining audit evidence.
+Deviations from plan: Recipient stays hard-coded to the sandbox lane; no production notification recipient is enabled.
+Explicitly NOT done: No live notification or external communication; live delivery/badge round-trip was not run. This is an intentional safety stop: the deployed recipient is `sandbox@refalco.test` and the shared claim endpoint can affect unrelated pending jobs. MIG-11 was applied by the owner-authorized Supabase operation on 2026-10-10 and verified in remote migration history and schema metadata.
+BOSS sign off: Owner authorized Supabase migration and Edge deployment on 2026-10-10; live schema and active function version verified. Delivery integration remains partial.
+
+### P6.6 — Strategic escalation — completed 2026-10-10 — `[x]`
+Built: Landowner/JV, construction tender, HNW €1M+, and international partnership cues; urgent senior route; EN/AR/EL construction price/estimate output guard and Edge mirror.
+Files touched: `src/strategicEscalation.js`, `src/responsePolicy.js`, `src/ai.js`, `src/messageRouter.js`, Edge response-policy mirror, related tests.
+Verification: `node --test src/strategicEscalation.test.js src/responsePolicy.test.js supabase/functions/rafa-agent-api/responsePolicy.test.mjs` exit=0; combined focused M6 suite passed 186/186; final `npm run test:all` exit=0 (2,003 root + 105 Dashboard). Regression coverage rejects explicitly negated English, Arabic and Greek signals while retaining affirmative signals after comma and localized contrast boundaries.
+Gap scan: COVERED 4 / PARTIAL 0 / MISSING 0.
+Defects logged: Independent audit found the deterministic `resultWithHistory` validator omitted trusted inbound context; every call now passes the current message so construction tender price/estimate checks run. Prior audits found strategic classes escalated negated cues and overbroad negation suppressed affirmative evidence in contrastive turns. The 2026-10-10 independent P6.6 audit reproduced missed Arabic HNW thresholds for grouped Western/Arabic-Indic/Persian amounts and a false escalation for sub-million decimals; follow-up audit found the Arabic token `ما` inside `استثمار` was misread as negation and suppressed valid evidence.
+Auto fixes applied: Independent audit corrected threshold parsing, landowner cues, and response-output enforcement; added context to the route-level validator. Strategic detector scopes negation to local clauses, evaluates subsequent affirmative matches, normalizes Arabic-Indic/Persian digits plus Arabic thousands/decimal separators, parses numeric `مليون` amounts and amount-before-`يورو`, applies numeric thresholds instead of cue-only matches, and uses Unicode word boundaries for Arabic/Greek negation tokens. Added regressions for grouped amounts, decimal million values, below-threshold values, and affirmative amounts after negated amounts.
+Validated audit findings: Previously, `ميزانيتي 1,000,000 يورو`, `ميزانيتي ١٬٠٠٠٬٠٠٠ يورو`, `لدينا ميزانية €١٬٠٠٠٬٠٠٠`, and `ميزانية الاستثمار ١٫٢ مليون يورو` missed escalation; the initial localized numeric change then exposed false positives at 0.5M and the `استثمار` substring issue. Final tests prove 1.0M/1.2M/1.5M route, 0.5M/0.9M do not, negative-only 1M does not, and affirmative 2M after negated 1M does.
+Fields left for BOSS to fill: None for this phase.
+Deviations from plan: Strategic facts remain internal routing signals, not customer-facing business claims.
+Explicitly NOT done: No real opportunity was escalated.
+BOSS sign off: Pending.
+
+**M6 closeout status (2026-10-10):** P6.1, P6.2, P6.3, P6.4 and P6.6 are complete; P6.5 is partial. Migrations `20261010190302 / refal_lead_score`, `20261010190310 / refal_handover_delivery`, and `20261010195102 / rafa_notification_claim_by_id` are recorded; `rafa-agent-api` is ACTIVE v46 with `verify_jwt=true`, `import_map=false`. Full `npm run test:all` passed 2,015 root and 105 Dashboard tests; Deno check and independent pre-live P6.5 audit passed. Exactly one isolated synthetic live attempt was made using the controlled recipient. SMTP rejected authentication with `535 5.7.8`; one attempt is persisted as dead/failed with no provider ID. Synthetic handover and delivery ledger were safely closed, while failed job evidence remains; post-cleanup badge backing counts are zero. No duplicate attempt or unrelated production processing occurred. The temporary Gmail App Password was revoked. Successful delivery, provider evidence, dashboard UI badge behavior, and acknowledgment remain unverified. Owner-directed deferral: M7 preparation may proceed; return to P6.5 before marking M6 complete. No completion changes were pushed to `main`.
 ## 17. Standing verification commands
 
 ```bash
@@ -2176,7 +2357,7 @@ is still open.** Closing the row is part of that phase's G3.
 | **CF-04** | **W3.10.4** (M3, P3.10) | **P10.2** | **Sibling-chunk expansion on retrieval.** An alias-chunk hit should pull the document's other chunks into evidence. Today it does not, so a question found only through the finding aid retrieves a table of contents and no facts. | Measured, not guessed. Scored against the real planned chunk set: **833 of 879** golden questions have the finding aid as their best single chunk, while only **580** can independently reach a fact-bearing one. Mean coverage against fact-bearing chunks alone is **ar 47.7% / en 65.6% / el 53.4%**, so Arabic depends on it hardest, which is the FIX-7 shape again. M3 cannot fix this from the ingest side at all: it is a retrieval-layer change in `src/agentTools.js` and the search RPCs. P3.10 made the finding aid carry the title and every section heading, which means such a hit now returns a real map of the document instead of a bare keyword list. That narrows it; it does not close it. | `[ ]` OPEN |
 | **CF-05** | **W3.10.6** (M3, P3.10) | **P4.1** | **Price-bearing golden questions are graded against an artifact that may not hold the answer.** Five questions per language in `formation-package` top out at 75-83% because the only missing token is the package price, which `corpusFile.js` forbids the corpus to contain (MB-DYN6). | `src/dynamicDataIntegration.test.js` exercises the real `runAgentTurn` loop and proves validated current-offer inclusions compose with the live-tool price while suppressing stale €899 evidence. A read-only synthetic run against deployed approved knowledge and the current offer returned the approved inclusions and EUR 999 plus VAT through the local runtime; no customer message or write occurred. The final decision used the configured live model with strict JSON-schema output; both live read tools returned `found`, the factual and grounding gates passed, and the response was not sent to a customer. The live offer row is €999 EUR, active through 2026-11-06, and Edge v44 offer reads pass. Preserve the coverage threshold. | `[x]` CLOSED — synthetic live-model turn composed live approved source and offer and passed grounding; no external message or write |
 | **CF-06** | **W3.9.7** (M3, P3.9) | **P12.2** | `refal_fact_register` is readable from here only because MIG-01 adds an `anon` grant behind `rafa_dashboard_secret_matches()`. There is still **no Node-side `service_role` credential** anywhere in `scripts/`, `src/` or `dashboard/`; only the Deno edge functions hold one. | Not a defect, a credential boundary. It means any future register operation that genuinely needs `service_role` has nowhere to run from. Named here so it is not rediscovered as a bug. | `[ ]` OPEN |
-| **CF-08** | **M3 deployment** (2026-10-10) | **P10.2** | **FIX-35.** The lexical ranker in `rafa_search_knowledge` compares two incompatible `ts_rank_cd` scales, so an exact match loses to a stopword match, and the hybrid fusion cannot rescue a document that missed the lexical cut. | M3 cleared its gate by writing around it: the corpus now phrases facts in the customer's words while deliberately not containing *every* token of a question. That works and is honest authoring, but it is compensating for a ranking bug in the RPC, and the next person to edit the corpus has to do the same before/after sweep or they will silently displace a neighbouring document. The real fix is in the RPC: put both branches on one scale, and give `simple` a stopword list or move to a language-aware config. `supabase/migrations/` was out of M3's scope. | `[ ]` OPEN |
+| **CF-08** | **M3 deployment** (2026-10-10) | **P10.2** | **FIX-35.** The lexical ranker compared incompatible `ts_rank_cd` scales, allowing partial matches to outrank fuller matches; hybrid ranking needed a shared deterministic lexical scale. | Fixed in local migration `20261010223908_cf08_lexical_rank_consistency.sql`, applied as history `20261010230731 / cf08_lexical_rank_consistency` on 2026-10-11. Local PGlite regressions cover negation, phrases, duplicate terms, punctuation, Arabic, and Greek. Live WhatsApp retrieval exercised the updated hybrid path. The hybrid halfvec SQL was not independently executable in PGlite; the 870-question release evaluation remains open. | `[x] FIXED 2026-10-11; release evaluation remains open` |
 | **CF-09** | **M3 deployment** (2026-10-10) | **P11.4** | **The hybrid retrieval path has no "return nothing" behaviour**, so 0 of 17 negative queries retrieve nothing, against an M3 criterion of 100%. Lexical manages 14/17. | Structural, not a regression: the semantic branch admits anything inside 0.65 cosine distance and the rank fusion then returns the top N regardless. The criterion was written assuming lexical-only retrieval. What actually protects these queries is the answer side, and that part is verified: all three prompt-injection negatives are caught by `classifySafety`, and the per-claim groundedness gate CF-02 added is what stops an unrelated chunk becoming an assertion. P11.4 owns `redTeamBrain.js` and should assert the refusal behaviour end to end rather than scoring retrieval emptiness. | `[ ]` OPEN |
 | **CF-07** | **M3 deployment** (2026-10-10) | **P12.2** | **FIX-34.** The `RAFA_DASHBOARD_SUPABASE_SECRET` in this machine's `.env` does not match the sha256 stored in `rafa_private.api_secret_hashes`. Until it does, nothing on this PC can read or write the knowledge tables or the fact register through PostgREST, which means `scripts/ingestBrainCorpus.js --apply`, `scripts/backfillKnowledgeEmbeddings.js`, `scripts/brainHealth.js --db` and the whole W3.9.7 dashboard Facts screen are unusable from here. | It is a credential, so it is BOSS's to resolve, not something to go hunting for. The value is never to be printed. The deployment went through the Management API instead (`scripts/emitCorpusSql.js`, `scripts/emitEmbeddingSql.js`, `scripts/applySupabaseMigration.ps1`), which is not subject to RLS, so M3 is deployed and verified regardless. **What is still unproven is whether the live agent and the dashboard can reach the data**, because they authenticate the same way this PC does. If the deployed app uses a different secret than this `.env`, it is fine and only the local tooling is affected. | `[ ]` OPEN |
 | **CF-03** | M1 close observation | **P12.3** | The dashboard streaming path runs **2 of 6** output gates (`containsProhibitedClaim`, `containsUnconsentedContactCommitment`). No `validateResponse`, no anti-patterns, no humour gate. | It is the operator surface: its output is read by staff, not sent to a customer, so copying the customer gates is a decision rather than an obvious fix. | `[ ]` OPEN |
@@ -2204,14 +2385,14 @@ CF-01's original "no live caller" condition is closed by M4's tested dynamic-dat
 | **MIG-04** | `refal_property_inventory` | Units, city, type, status, price, `first_sale`, `pr_eligible`, availability | **P4.1** | `LIVE_PROPERTY_INVENTORY` | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
 | **MIG-05** | `refal_reservation_rules` | Deposit amount or percent, refundable, conditions per project | **P4.1** | `RESERVATION_DEPOSIT_RULES`, the P2.4 guard | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
 | **MIG-06** | `refal_government_fees` | Registry, land registry, residency application fees | **P4.1** | `GOVERNMENT_THIRD_PARTY_FEES` | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
-| **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | `[ ]` |
-| **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | `[ ]` |
-| **MIG-09** | `refal_consent` | What, when, language, channel, purpose, scope, source turn, opt out state | **P9.1** | any follow up or outbound action | `[ ]` |
-| **MIG-10** | booking state extensions | The 7 state machine on `rafa_appointments`, notice window, timezone fields | **P7.2** | real bookings | `[ ]` |
-| **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | `[ ]` |
+| **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, provenance, correction marker, atomic source-turn RPC, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | **[ ] PREPARED, PGlite verified; live application and Edge smoke pending** |
+| **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | **[x] APPLIED 2026-10-10**, history `20261010190302 / refal_lead_score`; RLS/schema verified |
+| **MIG-09** | `rafa_contact_consents` | Specialist and automated-reminder scopes; language, channel, purpose, source turns, opt-out/reconsent guard | **P9.1** | any follow up or outbound action | **[x] APPLIED 2026-10-11**, history `20261010230719 / refal_m9_consent_scopes`; columns verified. Do not schedule reminders before the live consent/suppression smoke check. |
+| **MIG-10** | `20261010210717_refal_booking_state_machine_m7.sql` | Seven workflow states, status index, durable default booking policy | **P7.2** | real bookings | **[x] APPLIED 2026-10-11**; migration history `20261010221510 / refal_booking_state_machine_m7`; constraint, index, and policy row verified |
+| **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | **[x] APPLIED 2026-10-10**, history `20261010190310 / refal_handover_delivery`; RLS/schema verified; delivery smoke pending |
 | **MIG-12** | `refal_compliance_events` + `refal_identity_verification` | AML and sanctions escalation records, one time code verification state | **P2.5** | compliance escalation, existing client unlock | `[ ]` |
 | **MIG-13** | `refal_rate_limits` | Shared counters replacing in process memory | **P13.2** | FIX fix 11, surviving a restart | `[ ]` |
-| **MIG-14** | audit extensions | Append only events for consent, score change, human correction, booking confirmation, sensitive access | **P12.4** | dashboard corrections and audit | `[ ]` |
+| **MIG-14** | atomic contact correction | Locked compare-and-merge with same-transaction field-only audit for human CRM correction | **P12.4** | dashboard corrections and audit | **[ ] PREPARED, PGlite verified; live application and multi-instance smoke pending** |
 
 ### How a migration is applied, as of 2026-10-10
 

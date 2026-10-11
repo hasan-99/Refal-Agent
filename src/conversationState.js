@@ -43,8 +43,13 @@ function getConversationState(user = {}) {
     noProactiveBookingOrContact: Boolean(profile.conversationPreferences?.noProactiveBookingOrContact),
     consent: Object.freeze({ followUp: getConsentState({ user, history: user.history || [] }) || "unknown" }),
     agentFacts: Object.freeze(
-      Object.fromEntries(Object.entries(profile.agentFacts || {}).map(([field, record]) => [field, record?.value ?? null]))
-    )
+      Object.fromEntries(Object.entries(profile.agentFacts || {}).map(([field, record]) => [field, record?.correctionNeeded ? null : record?.value ?? null]))
+    ),
+    crmCorrectionNeeded: profile.crmCorrectionNeeded && typeof profile.crmCorrectionNeeded === "object"
+      ? Object.freeze({
+        field: String(profile.crmCorrectionNeeded.field || "").slice(0, 64)
+      })
+      : null
   });
 }
 

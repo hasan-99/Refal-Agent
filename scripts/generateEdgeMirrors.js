@@ -200,8 +200,11 @@ const TARGETS = [
         extract(src, "UNCONSENTED_CONTACT_COMMITMENT"),
         extract(src, "CONTACT_CAPABILITY_OFFER"),
         extract(src, "EXPLICIT_PERMISSION_QUESTION"),
+        extract(src, "CONSTRUCTION_TENDER_MESSAGE"),
+        extract(src, "CONSTRUCTION_PRICE_ESTIMATE"),
         "",
         extract(src, "containsUnconsentedContactCommitment").replace(/^function /, "export function "),
+        extract(src, "containsProhibitedConstructionEstimate").replace(/^function /, "export function "),
         ""
       ].join("\n");
     }

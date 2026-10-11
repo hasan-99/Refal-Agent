@@ -21,6 +21,7 @@ test("workflow store methods use protected normalized workflow endpoints", async
   assert.deepEqual(await store.saveQualification("123@s.whatsapp.net", { need: 3, value: 2, timing: 1, authority: 0, readiness: 0, fit: 2 }), { id: "q-1" });
   assert.deepEqual(await store.saveIntents("123@s.whatsapp.net", ["investment"]), [{ intent: "investment" }]);
   assert.deepEqual(await store.saveConsent("123@s.whatsapp.net", "granted"), { state: "granted" });
+  await store.saveConsent("123@s.whatsapp.net", "granted", { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: "turn-confirm", offerSourceTurnId: "turn-offer", language: "en", channel: "whatsapp" });
   assert.deepEqual(await store.saveFollowUpState("123@s.whatsapp.net", { consentState: "granted", status: "eligible" }), { status: "eligible" });
   assert.deepEqual(await store.createHandover("123@s.whatsapp.net", { department: "investment" }), { id: "h-1" });
   assert.deepEqual(await store.createPriorityAlert("123@s.whatsapp.net", { level: "high", trigger: "institutional_investment" }), { id: "a-1" });
@@ -28,9 +29,12 @@ test("workflow store methods use protected normalized workflow endpoints", async
   assert.deepEqual(await store.saveExistingClientVerification("123@s.whatsapp.net", { state: "authenticated" }), { state: "authenticated" });
   assert.deepEqual(await store.logAuditEvent("123@s.whatsapp.net", "workflow_saved"), { id: "e-1" });
   assert.deepEqual(calls.map((call) => call.path), [
-    "/workflows/qualification", "/workflows/intents", "/workflows/consent", "/workflows/follow-up",
+    "/workflows/qualification", "/workflows/intents", "/workflows/consent", "/workflows/consent", "/workflows/follow-up",
     "/workflows/handover", "/workflows/priority-alert", "/workflows/complaint", "/workflows/existing-client-verification", "/workflows/audit-event"
   ]);
+  assert.deepEqual(calls.find((call) => call.path.endsWith("/consent") && call.body.consentType === "automated_reminder").body, {
+    userId: "123@s.whatsapp.net", consentType: "automated_reminder", state: "granted", purpose: "automated_reminder", sourceTurnId: "turn-confirm", offerSourceTurnId: "turn-offer", language: "en", channel: "whatsapp"
+  });
 });
 
 test("workflow persistence does not include evidence or memory fields", async () => {

@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { buildSafeHistoryInsert, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
-import { containsUnconsentedContactCommitment } from "./responsePolicy.mjs";
+import { hasConfirmationEventId, isAllowedAppointmentTransition, updateAppointmentIfStatusMatches } from "./appointmentStateMachine.mjs";
+import { areAdjacentConsentTurns, buildSafeHistoryInsert, hasPurposeBoundAutomatedReminderConsent, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
+import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate } from "./responsePolicy.mjs";
 // Was a hand-copied regex in this file that had drifted into a fail-open:
 // it let "100% success rate", "موافقة مضمونة" and "Σίγουρη έγκριση" through,
 // and wrongly blocked "I cannot provide tax advice". Now a generated,
@@ -10,6 +11,12 @@ import { buildBrainPrompt as buildOperatorPrompt } from "./brainPrompt.mjs";
 import { listDynamicData, mutateDynamicData, performDynamicAction } from "./dynamicData.mjs";
 import { validateCustomerLeadFields } from "./dynamicActionValidation.mjs";
 import { persistDynamicActionAlert } from "./dynamicActionAlert.mjs";
+import { attachKnowledgePolicyMetadata } from "./knowledgePolicyMetadata.mjs";
+import { validateSalesOfferMetadata, validateSpecialistOfferMetadata } from "./salesOfferMetadata.mjs";
+import { canRetryHandoverReview, closeHandoverDeliverySafely, ledgerPatchForClosedHandover, ledgerPatchForExistingNotification, ledgerPatchForNotificationResult, ledgerPatchForRetryMismatch } from "./handoverDeliveryState.mjs";
+import { canClaimP65TestNotification, canCreateP65TestNotification, controlledP65Recipient, isSyntheticP65Handover } from "./p65TestRouting.mjs";
+import { consumeSharedRateLimit } from "./rateLimit.mjs";
+import { CRM_PROFILE_GROUPS, crmRowToAgentFacts, isExplicitCrmCorrection, isSelfIdentifiedCrmName, validateCrmValueAgainstMessage } from "./crmLeadProfile.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -110,6 +117,45 @@ Deno.serve(async (req: Request) => {
       return json({ ...result, userSafeSummary: result.status === "confirmed" ? result.result?.userSafeSummary || "Confirmed." : result.status === "pending" ? "The request is still being checked." : "The request could not be confirmed." }, result.status === "confirmed" ? 200 : 202);
     }
 
+    if (parts[0] === "rate-limits" && parts[1] === "consume" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const result = await consumeSharedRateLimit(supabase, body);
+      return json(result);
+    }
+
+    if (parts[0] === "crm" && parts[1] === "profile" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const userId = String(body.userId || "").trim().slice(0, 200);
+      const field = String(body.field || "");
+      const value = typeof body.value === "string" ? body.value.trim() : "";
+      const sourceTurnId = String(body.sourceTurnId || "");
+      if (!userId || !Object.hasOwn(CRM_PROFILE_GROUPS, field) || !value || value.length > 500 || !isUuid(sourceTurnId)) {
+        throw new HttpError("A supported CRM field and verified source turn are required.", 400);
+      }
+      const { data: contact, error: contactError } = await supabase.from("rafa_contacts").select("id").eq("whatsapp_jid", userId).maybeSingle();
+      if (contactError) throw contactError;
+      if (!contact?.id) throw new HttpError("Customer contact was not found.", 404);
+      const { data: sourceTurn, error: sourceError } = await supabase.from("rafa_conversation_turns").select("id,message")
+        .eq("id", sourceTurnId).eq("contact_id", contact.id).maybeSingle();
+      if (sourceError) throw sourceError;
+      if (!sourceTurn || !validateCrmValueAgainstMessage(field, value, sourceTurn.message)
+        || (field === "name" && !isSelfIdentifiedCrmName(sourceTurn.message, value))) {
+        throw new HttpError("CRM value must be stated affirmatively in the linked customer turn.", 400);
+      }
+      const correction = isExplicitCrmCorrection(sourceTurn.message);
+      const { data: saved, error: writeError } = await supabase.rpc("refal_save_lead_profile_field", {
+        p_contact_id: contact.id,
+        p_field: field,
+        p_value: value,
+        p_source_turn_id: sourceTurnId,
+        p_captured_at: new Date().toISOString(),
+        p_explicit_correction: correction
+      });
+      if (writeError) throw writeError;
+      if (!saved || !["saved", "correction_needed"].includes(saved.status)) throw new Error("CRM profile persistence was not confirmed.");
+      return json({ status: saved.status, field: saved.field || field.toLowerCase(), correctionField: saved.correction_field || null });
+    }
+
     if (parts[0] === "settings" && parts[1] === "booking-policy" && parts.length === 2) {
       if (req.method === "GET") {
         const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", "booking_policy").maybeSingle();
@@ -148,7 +194,9 @@ Deno.serve(async (req: Request) => {
           p_match_count: matchCount
         });
       if (error) throw error;
-      return json({ results: data || [] });
+      // Governance metadata is fetched server-side for deterministic M5 policy
+      // checks. It is carried separately from the model-safe evidence block.
+      return json({ results: await attachKnowledgePolicyMetadata(supabase, data || []) });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {
@@ -206,6 +254,29 @@ Deno.serve(async (req: Request) => {
       return json({ user: await ensureUser(String(body.userId || "")) });
     }
 
+    if (parts[0] === "contacts" && parts[1] && parts[2] === "admin-correction" && req.method === "POST") {
+      const userId = decodeURIComponent(parts[1]);
+      const body = await req.json().catch(() => ({}));
+      const allowed = new Set(["nameOverride","phoneOverride","needOverride","conversationSummary"]);
+      const changes = body?.contact;
+      const expected = body?.expected;
+      const actor = String(body?.actor || "").trim().slice(0, 200);
+      if (!validWhatsAppJid(userId) || !changes || typeof changes !== "object" || Array.isArray(changes)
+        || !expected || typeof expected !== "object" || Array.isArray(expected)
+        || Object.keys(changes).length === 0 || Object.keys(changes).some((field) => !allowed.has(field))
+        || Object.keys(expected).some((field) => !allowed.has(field)) || !actor) {
+        throw new HttpError("Invalid contact correction request.", 400);
+      }
+      const { data, error } = await supabase.rpc("refal_correct_contact_profile", {
+        p_whatsapp_jid: userId, p_expected: expected, p_changes: changes, p_actor: actor
+      });
+      if (error) throw error;
+      if (data?.status === "stale") throw new HttpError("This contact changed since you opened it. Reload the current values before saving.", 409);
+      if (data?.status === "not_found") throw new HttpError("User not found.", 404);
+      if (data?.status !== "saved") throw new HttpError("Contact correction was not confirmed.", 502);
+      return json({ ok: true, profile: data.profile });
+    }
+
     if (parts[0] === "contacts" && parts[1] && req.method === "GET") {
       const includeHistory = url.searchParams.get("includeHistory") !== "false";
       return json({ user: await getUser(decodeURIComponent(parts[1]), includeHistory) });
@@ -214,6 +285,14 @@ Deno.serve(async (req: Request) => {
     if (parts[0] === "contacts" && parts[1] && req.method === "PUT") {
       const body = await req.json();
       return json({ user: await updateUser(decodeURIComponent(parts[1]), body) });
+    }
+
+    if (parts[0] === "handovers" && parts[1] && req.method === "GET" && parts.length === 2) {
+      const handoverId = decodeURIComponent(parts[1]);
+      if (!isUuid(handoverId)) throw new HttpError("Invalid handover ID.", 400);
+      const { data, error } = await supabase.from("rafa_handovers").select("id,status").eq("id", handoverId).maybeSingle();
+      if (error) throw error;
+      return json({ handover: data || null });
     }
 
     if (parts[0] === "contacts" && parts[1] && parts[2] === "history" && req.method === "POST") {
@@ -360,6 +439,113 @@ Deno.serve(async (req: Request) => {
       return json({ reminder: await updateReminder(decodeURIComponent(parts[1]), body) });
     }
 
+    if (parts[0] === "notifications" && parts[1] === "test-handover" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const testRunId = String(body.testRunId || "").toLowerCase();
+      if (!isUuid(testRunId)) throw new HttpError("A valid test run ID is required.", 400);
+      const recipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
+      if (!recipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
+      const idempotencyKey = `p65-handover:${testRunId}`;
+      const { data: previous, error: previousError } = await supabase.from("rafa_notification_jobs")
+        .select("id,handover_id,kind,recipient,payload,status,idempotency_key")
+        .eq("idempotency_key", idempotencyKey).maybeSingle();
+      if (previousError) throw previousError;
+      if (previous) {
+        const { data: previousHandover, error: previousHandoverError } = await supabase.from("rafa_handovers")
+          .select("id,contact_id,department,priority,status,summary")
+          .eq("id", previous.handover_id).maybeSingle();
+        if (previousHandoverError) throw previousHandoverError;
+        const { data: previousContact, error: previousContactError } = previousHandover
+          ? await supabase.from("rafa_contacts").select("whatsapp_jid").eq("id", previousHandover.contact_id).maybeSingle()
+          : { data: null, error: null };
+        if (previousContactError) throw previousContactError;
+        if (!canCreateP65TestNotification({ kind: previous.kind, testRunId, idempotencyKey, handover: previousHandover, contact: previousContact, recipient: previous.recipient }) || previous.payload?.p65TestRunId !== testRunId) {
+          throw new HttpError("The test idempotency key is already used for a different notification.", 409);
+        }
+        return json({ notification: previous, handover: previousHandover, created: false });
+      }
+
+      const syntheticUserId = `p65test-${testRunId}@lid`;
+      const { handover } = await persistWorkflow("handover", {
+        userId: syntheticUserId,
+        department: "general",
+        priority: "normal",
+        status: "open",
+        summary: {
+          p65TestRunId: testRunId,
+          intent: "p6_5_controlled_delivery_test",
+          need: "Synthetic internal notification verification. Do not contact a customer.",
+          customer: { name: "REFAL P6.5 test" }
+        }
+      });
+      const { data: contact, error: contactError } = await supabase.from("rafa_contacts")
+        .select("whatsapp_jid").eq("id", handover.contact_id).maybeSingle();
+      if (contactError) throw contactError;
+      if (!isSyntheticP65Handover(handover, contact, testRunId)) throw new HttpError("The synthetic handover did not pass its test marker checks.", 409);
+      const payload = {
+        department: "general",
+        priority: "normal",
+        intent: "p6_5_controlled_delivery_test",
+        name: "REFAL P6.5 test",
+        need: "Synthetic internal notification verification. Do not contact a customer.",
+        p65TestRunId: testRunId
+      };
+      const { data: notification, error: notificationError } = await supabase.from("rafa_notification_jobs").insert({
+        handover_id: handover.id,
+        channel: "email",
+        kind: "handover_review",
+        recipient,
+        payload,
+        status: "queued",
+        idempotency_key: idempotencyKey
+      }).select("*").single();
+      if (notificationError?.code === "23505") {
+        const { data: concurrent, error: concurrentError } = await supabase.from("rafa_notification_jobs")
+          .select("id,handover_id,kind,recipient,payload,status,idempotency_key").eq("idempotency_key", idempotencyKey).single();
+        if (concurrentError) throw concurrentError;
+        if (concurrent.kind !== "handover_review" || concurrent.handover_id !== handover.id || concurrent.recipient !== recipient || concurrent.payload?.p65TestRunId !== testRunId) throw new HttpError("The test idempotency key is already used for a different notification.", 409);
+        return json({ notification: concurrent, handover, created: false });
+      }
+      if (notificationError) throw notificationError;
+      return json({ notification, handover, created: true }, 201);
+    }
+
+    if (parts[0] === "notifications" && parts[1] && parts[2] === "claim" && req.method === "POST" && parts.length === 3) {
+      const notificationId = decodeURIComponent(parts[1]);
+      if (!isUuid(notificationId)) throw new HttpError("Invalid notification ID.", 400);
+      const body = await req.json().catch(() => ({}));
+      const testRunId = String(body.testRunId || "").toLowerCase();
+      if (!isUuid(testRunId)) throw new HttpError("A valid test run ID is required.", 400);
+      const configuredRecipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
+      if (!configuredRecipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
+      const { data: candidate, error: candidateError } = await supabase.from("rafa_notification_jobs")
+        .select("id,handover_id,kind,recipient,payload,status")
+        .eq("id", notificationId).maybeSingle();
+      if (candidateError) throw candidateError;
+      if (!candidate || !canClaimP65TestNotification({ ...candidate, requestedId: notificationId, testRunId, configuredRecipient })) {
+        throw new HttpError("Only the matching controlled P6.5 test notification can be claimed by ID.", 409);
+      }
+      const { data: claimedRows, error: claimError } = await supabase.rpc("rafa_claim_notification_by_id", {
+        p_notification_id: notificationId,
+        p_test_run_id: testRunId,
+        p_expected_recipient: configuredRecipient
+      });
+      if (claimError) throw claimError;
+      const notification = (claimedRows || [])[0];
+      if (!notification) throw new HttpError("The requested notification is not currently eligible for claim.", 409);
+      const { data: handover, error: handoverError } = await supabase.from("rafa_handovers")
+        .select("status").eq("id", notification.handover_id).maybeSingle();
+      if (handoverError) throw new HttpError("Handover status verification is unavailable; the notification was not returned.", 503);
+      if (!handover || !canRetryHandoverReview(handover.status)) {
+        const { error: cancelError } = await supabase.from("rafa_notification_jobs")
+          .update({ status: "cancelled", locked_at: null, last_error: "Synthetic test handover is closed." })
+          .eq("id", notificationId).eq("status", "processing");
+        if (cancelError) throw cancelError;
+        throw new HttpError("The synthetic test handover is closed; notification cancelled.", 409);
+      }
+      return json({ notification });
+    }
+
     if (parts[0] === "notifications" && req.method === "GET" && parts.length === 1) {
       const status = url.searchParams.get("status");
       let query = supabase.from("rafa_notification_jobs").select("*").order("created_at", { ascending: false }).limit(500);
@@ -371,9 +557,27 @@ Deno.serve(async (req: Request) => {
 
     if (parts[0] === "notifications" && parts[1] && parts[2] === "retry" && req.method === "POST" && parts.length === 3) {
       if (!isUuid(parts[1])) throw new HttpError("Invalid notification ID.", 400);
+      const { data: candidate, error: candidateError } = await supabase.from("rafa_notification_jobs")
+        .select("id,kind,handover_id,status,payload")
+        .eq("id", parts[1])
+        .in("status", ["failed", "dead"])
+        .maybeSingle();
+      if (candidateError) throw candidateError;
+      if (!candidate) throw new HttpError("Notification is not retryable in its current state.", 409);
+      if (candidate.kind === "handover_review" && candidate.payload?.p65TestRunId) throw new HttpError("Controlled P6.5 deliveries are one-shot and cannot be retried because SMTP outcomes may be ambiguous.", 409);
+      if (candidate.kind === "handover_review" && candidate.handover_id) {
+        const { data: parent, error: parentError } = await supabase.from("rafa_handovers")
+          .select("status").eq("id", candidate.handover_id).maybeSingle();
+        if (parentError) throw parentError;
+        if (!parent || !canRetryHandoverReview(parent.status)) throw new HttpError("A closed handover cannot be retried.", 409);
+      }
       const { data, error } = await supabase.from("rafa_notification_jobs").update({ status: "queued", attempts: 0, next_attempt_at: new Date().toISOString(), locked_at: null, last_error: null }).eq("id", parts[1]).in("status", ["failed", "dead"]).select("*").maybeSingle();
       if (error) throw error;
       if (!data) throw new HttpError("Notification is not retryable in its current state.", 409);
+      if (data.kind === "handover_review" && data.handover_id) {
+        const { error: deliveryError } = await supabase.from("refal_handover_delivery").update({ status: "queued", next_attempt_at: new Date().toISOString(), last_error_code: null, updated_at: new Date().toISOString() }).eq("handover_id", data.handover_id);
+        if (deliveryError) throw deliveryError;
+      }
       await logEvent("notification_admin_retry", { notificationId: data.id, appointmentId: data.appointment_id || null });
       return json({ notification: data });
     }
@@ -400,10 +604,36 @@ Deno.serve(async (req: Request) => {
         payload = { text };
       } else if (kind === "handover_review") {
         channel = "email";
-        recipient = (Deno.env.get("RAFA_HANDOVER_NOTIFY_EMAIL") || Deno.env.get("BOOKING_NOTIFY_EMAIL") || Deno.env.get("ALERT_EMAIL_TO") || Deno.env.get("REPORT_EMAIL_TO") || "hasan.cy99@gmail.com").trim().slice(0, 320);
         handoverId = String(body.handoverId || "");
+        const testRunId = String(body.p65TestRunId || "").toLowerCase();
+        if (testRunId) {
+          recipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
+          if (!recipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
+          const { data: testHandover, error: testHandoverError } = await supabase.from("rafa_handovers")
+            .select("id,contact_id,department,priority,status,summary").eq("id", handoverId).maybeSingle();
+          if (testHandoverError) throw testHandoverError;
+          const { data: testContact, error: testContactError } = testHandover
+            ? await supabase.from("rafa_contacts").select("whatsapp_jid").eq("id", testHandover.contact_id).maybeSingle()
+            : { data: null, error: null };
+          if (testContactError) throw testContactError;
+          const idempotencyKey = String(body.idempotencyKey || "").trim().slice(0, 240);
+          if (!canCreateP65TestNotification({ kind, testRunId, idempotencyKey, handover: testHandover, contact: testContact, recipient })) {
+            throw new HttpError("Controlled recipient routing is limited to the matching synthetic P6.5 handover.", 403);
+          }
+          payload = {
+            department: "general",
+            priority: "normal",
+            intent: "p6_5_controlled_delivery_test",
+            name: "REFAL P6.5 test",
+            need: "Synthetic internal notification verification. Do not contact a customer.",
+            p65TestRunId: testRunId
+          };
+        } else {
+          // Normal production handover notifications remain on the non-deliverable sandbox lane.
+          recipient = "sandbox@refalco.test";
+        }
         if (!isUuid(handoverId) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw new HttpError("A handover and valid admin notification address are required.", 400);
-        payload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? boundedObject(body.payload, 4000) : {};
+        if (!testRunId) payload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? boundedObject(body.payload, 4000) : {};
       } else if (kind === "admin_followup") {
         channel = String(body.channel || "");
         recipient = String(body.recipient || "").trim();
@@ -422,14 +652,14 @@ Deno.serve(async (req: Request) => {
       if (!idempotencyKey) throw new HttpError("An idempotency key is required.", 400);
       if (kind === "owner_review") {
         if (!appointmentId || !isUuid(appointmentId)) throw new HttpError("A valid appointment ID is required.", 400);
-        if (expectedStatus !== "pending_review") throw new HttpError("Admin review email must be tied to a pending appointment.", 400);
+        if (!["pending_review", "pending_calendar", "creating"].includes(expectedStatus)) throw new HttpError("Admin review email must be tied to a pending appointment.", 400);
       }
       if (kind === "admin_followup" || kind === "handover_review") {
         if (!handoverId) throw new HttpError("A valid handover is required.", 400);
       } else if (kind === "customer_message" && (!appointmentId || !isUuid(appointmentId))) {
         throw new HttpError("A valid appointment ID is required.", 400);
       }
-      if (appointmentId && !["pending_review", "confirmed", "rejected", "rescheduled", "cancelled"].includes(expectedStatus)) throw new HttpError("A valid expected appointment status is required.", 400);
+      if (appointmentId && !["pending_review", "pending_calendar", "creating", "confirmed", "rejected", "rescheduled", "cancelled"].includes(expectedStatus)) throw new HttpError("A valid expected appointment status is required.", 400);
       const { data, error } = await supabase.from("rafa_notification_jobs").insert({
         appointment_id: appointmentId, handover_id: handoverId, channel, kind, recipient, payload, status,
         expected_appointment_status: expectedStatus || null, idempotency_key: idempotencyKey
@@ -461,10 +691,37 @@ Deno.serve(async (req: Request) => {
     if (parts[0] === "notifications" && parts[1] === "claim" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const limit = Math.min(100, Math.max(1, Number(body.limit) || 25));
+      // Repair the gap between the durable handover ledger write and the
+      // best-effort notification enqueue. A transient queue outage must not
+      // permanently strand an open, sandbox-routed handover.
+      try { await reconcileHandoverReviewQueue(); }
+      catch (reconcileError) {
+        await logEvent("handover_notification_reconcile_error", { message: String(reconcileError instanceof Error ? reconcileError.message : reconcileError).slice(0, 200) });
+        throw new HttpError("Notification queue reconciliation is unavailable; no notifications were claimed.", 503);
+      }
       const { data, error } = await supabase.rpc("rafa_claim_due_notifications", { p_limit: limit });
       if (error) throw error;
       const notifications = [];
       for (const job of data || []) {
+        if (job.kind === "handover_review" && job.handover_id) {
+          const { data: handover, error: handoverError } = await supabase.from("rafa_handovers")
+            .select("status").eq("id", job.handover_id).maybeSingle();
+          if (handoverError) throw new HttpError("Handover status verification is unavailable; no notifications were returned.", 503);
+          if (!handover || !canRetryHandoverReview(handover.status)) {
+            const { error: cancelError } = await supabase.from("rafa_notification_jobs")
+              .update({ status: "cancelled", locked_at: null, last_error: "Handover is closed or unavailable." })
+              .eq("id", job.id).eq("status", "processing");
+            if (cancelError) throw new HttpError("Closed handover notification could not be cancelled.", 503);
+            const closedPatch = ledgerPatchForClosedHandover(handover?.status) || {
+              status: "closed", closed_at: new Date().toISOString(), closure_reason: "handover_unavailable",
+              next_attempt_at: null, updated_at: new Date().toISOString()
+            };
+            const { error: closeError } = await supabase.from("refal_handover_delivery")
+              .update(closedPatch).eq("handover_id", job.handover_id).neq("status", "closed");
+            if (closeError) throw new HttpError("Closed handover delivery could not be reconciled.", 503);
+            continue;
+          }
+        }
         if (job.kind === "admin_followup") {
           try { await requireFollowUpConsent(job.handover_id); }
           catch (consentError) {
@@ -500,6 +757,12 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await supabase.from("rafa_notification_jobs").update(patch).eq("id", parts[1]).eq("status", "processing").select("*").maybeSingle();
       if (error) throw error;
       if (!data) throw new HttpError("Notification job is no longer claimed.", 409);
+      if (data.handover_id && data.kind === "handover_review") {
+        const now = new Date().toISOString();
+        const deliveryPatch = ledgerPatchForNotificationResult(body.status, data.attempts, now, body.nextAttemptAt || now);
+        const { error: deliveryError } = await supabase.from("refal_handover_delivery").update(deliveryPatch).eq("handover_id", data.handover_id);
+        if (deliveryError) throw deliveryError;
+      }
       return json({ notification: data });
     }
 
@@ -545,7 +808,22 @@ async function listUsers(includeHistory: boolean) {
     .order("updated_at", { ascending: false });
   if (error) throw error;
 
-  const users = await Promise.all((data || []).map(async (row) => attachWorkflowState(rowToUser(row, []))));
+  const rows = data || [];
+  const crmByContact = new Map<string, Record<string, unknown>>();
+  if (rows.length) {
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const ids = rows.slice(offset, offset + 500).map((row) => row.id);
+      const { data: crmRows, error: crmError } = await supabase.from("refal_lead_profile")
+        .select("contact_id,identity_fields,opportunity_fields,property_residency_fields,qualification_fields,field_provenance,crm_correction_needed")
+        .in("contact_id", ids);
+      if (crmError) throw crmError;
+      for (const crmRow of crmRows || []) crmByContact.set(crmRow.contact_id, crmRow);
+    }
+  }
+  const users = await Promise.all(rows.map(async (row) => {
+    const user = await attachWorkflowState(rowToUser(row, []));
+    return attachCrmProfile(user, crmByContact.get(row.id) || null);
+  }));
   if (!includeHistory) return users;
   if (!users.length) return users;
 
@@ -640,6 +918,7 @@ async function generateAgentReply(body: Record<string, any>) {
           // surface's job (dashboard operations) and its data access.
           "Apply the REFAL operating order: understand, help, discover, qualify, build trust, capture, convert, book, handover, follow up.",
           "Be concise, practical, calm, and direct. Answer first when possible; ask only one useful next question and do not over-qualify a clear opportunity.",
+          "Qualification tiers are internal: Informational 0-7, Cold 8-13, Warm 14-19, Hot 20-24, Strategic 25-30. At Informational/Cold, do not push booking. Warm permits a flexible, non-repeated appointment offer. At Hot/Strategic, suppress every cross-sell hook and benefit hint and focus on logistics. Contact requests, follow-up, and booking still require the customer's explicit request or consent; never imply an appointment is confirmed unless the booking system confirms it. Never expose scores, dimensions, or tier labels.",
           // Deliberately states the personality WITHOUT inviting humour. The
           // customer path calibrates humour to a level and enforces it with
           // assertHumourCompliance; this surface has neither, so an
@@ -687,7 +966,7 @@ async function generateAgentReply(body: Record<string, any>) {
   // and allowed there. Unapproved and expired chunks are filtered by
   // isApprovedEvidence inside the gate, so this can only ever unlock a fact the
   // evidence actually carries.
-  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsUnconsentedContactCommitment(reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
+  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsUnconsentedContactCommitment(reply) || containsProhibitedConstructionEstimate(text, reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
   return {
     reply: reply.slice(0, 10000),
     usage: normalizeOpenRouterUsage(result, model)
@@ -836,7 +1115,7 @@ async function getUser(userId: string, includeHistory = true) {
   if (error) throw error;
   if (!data) return null;
 
-  const user = await attachWorkflowState(rowToUser(data, []));
+  const user = await attachCrmProfile(await attachWorkflowState(rowToUser(data, [])));
   return includeHistory ? attachHistory(user) : user;
 }
 
@@ -861,7 +1140,7 @@ async function ensureUser(userId: string): Promise<Record<string, any>> {
     .select("*")
     .single();
   if (error) throw error;
-  return attachWorkflowState(rowToUser(data, []));
+  return attachCrmProfile(await attachWorkflowState(rowToUser(data, [])));
 }
 
 async function updateUser(userId: string, body: Record<string, unknown>) {
@@ -880,7 +1159,7 @@ async function updateUser(userId: string, body: Record<string, unknown>) {
     .select("*")
     .single();
   if (error) throw error;
-  return attachHistory(rowToUser(data, []));
+  return attachHistory(await attachCrmProfile(rowToUser(data, [])));
 }
 
 async function addHistory(user: Record<string, any>, body: Record<string, unknown>) {
@@ -941,8 +1220,8 @@ function validateHistoryMetadataPatch(value: unknown, userId: string) {
   if (value === undefined) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError("Metadata must be an object.", 400);
   const patch = value as Record<string, unknown>;
-  const allowedSections = new Set(["delivery", "editability", "whatsapp"]);
-  if (Object.keys(patch).some((key) => !allowedSections.has(key))) throw new HttpError("Only delivery and editability metadata can be updated.", 400);
+  const allowedSections = new Set(["delivery", "editability", "whatsapp", "salesOffer", "specialistOffer", "followUpConsent"]);
+  if (Object.keys(patch).some((key) => !allowedSections.has(key))) throw new HttpError("Unsupported history metadata section.", 400);
 
   const deliveryFields: Record<string, (value: unknown) => boolean> = {
     action: (item) => typeof item === "string" && ["platform_edit", "correction_resend"].includes(item),
@@ -978,7 +1257,28 @@ function validateHistoryMetadataPatch(value: unknown, userId: string) {
   const result: Record<string, Record<string, unknown>> = {};
   for (const [section, fields] of Object.entries(patch)) {
     if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new HttpError(`Metadata ${section} must be an object.`, 400);
+    if (section === "salesOffer") {
+      const validated = validateSalesOfferMetadata(fields);
+      if (!validated) throw new HttpError("Invalid sales offer metadata.", 400);
+      result[section] = validated;
+      continue;
+    }
+    if (section === "specialistOffer") {
+      const validated = validateSpecialistOfferMetadata(fields);
+      if (!validated) throw new HttpError("Invalid specialist offer metadata.", 400);
+      result[section] = validated;
+      continue;
+    }
     const input = fields as Record<string, unknown>;
+    if (section === "followUpConsent") {
+      const stateValid = ["unknown", "granted", "denied", "revoked"].includes(String(input.state || ""));
+      const valid = stateValid && input.purpose === "automated_reminder" && input.channel === "whatsapp" &&
+        ["ar", "en", "el"].includes(String(input.language || "")) && isUuid(String(input.sourceTurnId || "")) &&
+        (input.offerSourceTurnId === null || isUuid(String(input.offerSourceTurnId || "")));
+      if (!valid || (input.state === "granted" && !isUuid(String(input.offerSourceTurnId || "")))) throw new HttpError("Invalid automated reminder consent metadata.", 400);
+      result[section] = input;
+      continue;
+    }
     const validators = section === "delivery" ? deliveryFields : section === "editability" ? editabilityFields : whatsappFields;
     if (Object.keys(input).some((key) => !validators[key])) throw new HttpError(`Unsupported ${section} metadata field.`, 400);
     for (const [key, item] of Object.entries(input)) {
@@ -998,17 +1298,19 @@ async function createAppointment(body: Record<string, any>) {
   const purpose = String(body.purpose || "").trim();
   const calendarId = String(body.calendarId || "").trim();
   const timezone = String(body.timezone || "").trim();
+  const requestedStatus = String(body.status || "pending_review");
   if (!userId || userId.length > 200 || !idempotencyKey || idempotencyKey.length > 200) throw new HttpError("A user and valid idempotency key are required.", 400);
   if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) throw new HttpError("A valid appointment start and end are required.", 400);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 240 || Math.abs((endsAt.getTime() - startsAt.getTime()) / 60000 - durationMinutes) > 0.01) throw new HttpError("Appointment duration does not match its start and end.", 400);
   if (!purpose || purpose.length > 1000 || !calendarId || calendarId.length > 320 || !timezone || timezone.length > 80) throw new HttpError("Purpose, calendar, and timezone are required.", 400);
+  if (!["pending_review", "awaiting_customer_confirmation"].includes(requestedStatus)) throw new HttpError("Invalid initial appointment status.", 400);
   try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch { throw new HttpError("Invalid appointment timezone.", 400); }
 
   const contact = await ensureUser(userId);
   const values = {
     contact_id: contact.contactId,
     whatsapp_jid: userId,
-    status: "pending_review",
+    status: requestedStatus,
     starts_at: startsAt.toISOString(),
     ends_at: endsAt.toISOString(),
     timezone,
@@ -1036,24 +1338,19 @@ async function createAppointment(body: Record<string, any>) {
 async function updateAppointment(appointmentId: string, body: Record<string, any>) {
   if (!isUuid(appointmentId)) throw new HttpError("Invalid appointment ID.", 400);
   const { data: current, error: currentError } = await supabase.from("rafa_appointments")
-    .select("id,status").eq("id", appointmentId).maybeSingle();
+    .select("id,status,metadata").eq("id", appointmentId).maybeSingle();
   if (currentError) throw currentError;
   if (!current) throw new HttpError("Appointment not found.", 404);
 
   const patch: Record<string, unknown> = {};
-  const transitions: Record<string, string[]> = {
-    pending_review: ["confirmed", "rejected", "rescheduled", "cancelled"],
-    pending_calendar: ["pending_review", "confirmed", "failed"],
-    confirmed: ["rescheduled", "cancelled", "completed"],
-    rescheduled: ["pending_review", "cancelled"],
-    rejected: ["pending_review", "cancelled"],
-    failed: ["pending_calendar", "pending_review", "cancelled"],
-    cancelled: [],
-    completed: []
-  };
   if (body.status !== undefined) {
     const next = String(body.status);
-    if (next !== current.status && !(transitions[current.status] || []).includes(next)) throw new HttpError(`Invalid appointment status transition: ${current.status} to ${next}.`, 409);
+    if (!isAllowedAppointmentTransition(current.status, next)) {
+      const message = next === current.status && next === "creating"
+        ? "This appointment is already being created."
+        : `Invalid appointment status transition: ${current.status} to ${next}.`;
+      throw new HttpError(message, 409);
+    }
     patch.status = next;
     if (next === "confirmed") patch.confirmed_at = body.confirmedAt || new Date().toISOString();
     if (next === "cancelled") patch.cancelled_at = body.cancelledAt || new Date().toISOString();
@@ -1087,12 +1384,16 @@ async function updateAppointment(appointmentId: string, body: Record<string, any
     if (reason.length > 500) throw new HttpError("Review reason is too long.", 400);
     patch.review_reason = reason || null;
   }
-  if (body.status === "confirmed" && !String(body.googleEventId || "").trim()) throw new HttpError("A Google Calendar event ID is required before confirmation.", 400);
+  if (body.metadata !== undefined) {
+    if (!body.metadata || typeof body.metadata !== "object" || Array.isArray(body.metadata)) throw new HttpError("Appointment metadata must be an object.", 400);
+    patch.metadata = boundedObject({ ...(current.metadata || {}), ...body.metadata }, 6000);
+  }
+  if (!hasConfirmationEventId(body.status, body.googleEventId)) throw new HttpError("A Google Calendar event ID is required before confirmation.", 400);
   if (!Object.keys(patch).length) throw new HttpError("No supported appointment changes were supplied.", 400);
-  let { data, error } = await supabase.from("rafa_appointments").update(patch).eq("id", appointmentId).eq("status", current.status).select("*").single();
+  let { data, error } = await updateAppointmentIfStatusMatches(supabase, appointmentId, current.status, patch);
   if (error && "google_meet_url" in patch && /google_meet_url/i.test(error.message || "")) {
     delete patch.google_meet_url;
-    ({ data, error } = await supabase.from("rafa_appointments").update(patch).eq("id", appointmentId).eq("status", current.status).select("*").single());
+    ({ data, error } = await updateAppointmentIfStatusMatches(supabase, appointmentId, current.status, patch));
   }
   if (error?.code === "PGRST116") throw new HttpError("Appointment changed while this action was being processed; refresh and try again.", 409);
   if (error) throw error;
@@ -1192,7 +1493,7 @@ async function deleteConversationData(userId: string) {
 }
 
 const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk"]);
-const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
+const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "tax", "residency", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
 const WORKFLOW_TRIGGERS = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity"]);
 
 async function runDynamicAction(name: string, body: Record<string, any>) {
@@ -1266,6 +1567,22 @@ async function runDynamicAction(name: string, body: Record<string, any>) {
     const { data: consentTurn, error: turnError } = await supabase.from("rafa_conversation_turns").select("id,metadata").eq("id", consent.source_turn_id).eq("contact_id", contact.contactId).maybeSingle();
     if (turnError) throw turnError;
     if (!consentTurn || !hasPurposeBoundFollowUpConsent(consent, consentTurn)) throw new HttpError("Purpose-bound follow-up consent is required.", 403);
+    const { data: reminderConsent, error: reminderError } = await supabase.from("rafa_contact_consents").select("consent_type,state,source_turn_id,offer_source_turn_id,language,channel").eq("contact_id", contact.contactId).eq("consent_type", "automated_reminder").maybeSingle();
+    if (reminderError) throw reminderError;
+    if (!reminderConsent || reminderConsent.state !== "granted" || !reminderConsent.source_turn_id || !reminderConsent.offer_source_turn_id) throw new HttpError("Automated reminder consent is required.", 403);
+    const { data: reminderTurns, error: reminderTurnError } = await supabase.from("rafa_conversation_turns")
+      .select("id,metadata,at").eq("contact_id", contact.contactId)
+      .in("id", [reminderConsent.source_turn_id, reminderConsent.offer_source_turn_id]);
+    if (reminderTurnError) throw reminderTurnError;
+    const confirmationTurn = (reminderTurns || []).find((turn) => turn.id === reminderConsent.source_turn_id);
+    const offerTurn = (reminderTurns || []).find((turn) => turn.id === reminderConsent.offer_source_turn_id);
+    if (!confirmationTurn || !offerTurn || !hasPurposeBoundAutomatedReminderConsent(reminderConsent, confirmationTurn, offerTurn)) throw new HttpError("Purpose-bound automated reminder consent is required.", 403);
+    const offerAt = Date.parse(String(offerTurn.at || "")), confirmationAt = Date.parse(String(confirmationTurn.at || ""));
+    if (!Number.isFinite(offerAt) || !Number.isFinite(confirmationAt) || confirmationAt < offerAt) throw new HttpError("Automated reminder consent source is invalid.", 403);
+    const { data: interveningTurns, error: interveningError } = await supabase.from("rafa_conversation_turns").select("id")
+      .eq("contact_id", contact.contactId).gte("at", new Date(offerAt).toISOString()).lte("at", new Date(confirmationAt).toISOString()).order("at", { ascending: true });
+    if (interveningError) throw interveningError;
+    if (!areAdjacentConsentTurns(interveningTurns || [], offerTurn.id, confirmationTurn.id)) throw new HttpError("Automated reminder consent was not given immediately after its offer.", 403);
     const saved = await persistWorkflow("follow-up", { userId, consentState: "granted", status: "scheduled", nextDueAt: dueAt.toISOString() });
     if (!saved?.followUp?.contact_id) throw new Error("Follow-up schedule persistence was not confirmed.");
     return { id: saved.followUp.contact_id, status: "scheduled", userSafeSummary: "Your follow-up request is scheduled." };
@@ -1338,6 +1655,18 @@ function boundedScore(value: unknown) {
 
 async function persistWorkflow(kind: string, body: Record<string, unknown>) {
   const { contact, sourceTurnId } = await workflowContact(body);
+  if (kind === "lead-score") {
+    const dimensions = Object.fromEntries(["need", "value", "timing", "authority", "readiness", "fit"].map((name) => [name, boundedScore((body.dimensions as Record<string, unknown> || {})[name])]));
+    const scoreFloor = Number(body.scoreFloor || 0);
+    const tier = String(body.tier || "");
+    const scorerVersion = String(body.scorerVersion || "").slice(0, 80);
+    const evidenceFingerprint = String(body.evidenceFingerprint || "");
+    if (!Number.isInteger(scoreFloor) || scoreFloor < 0 || scoreFloor > 30 || !["informational", "cold", "warm", "hot", "strategic"].includes(tier) || !scorerVersion || !/^[a-f0-9]{64}$/.test(evidenceFingerprint)) throw new HttpError("Invalid lead score snapshot.", 400);
+    const evidenceRefs = boundedObject(body.evidenceReferences, 6000);
+    const { data, error } = await supabase.from("refal_lead_score").upsert({ contact_id: contact.contactId, ...dimensions, score_floor: scoreFloor, tier, evidence_refs: evidenceRefs, scorer_version: scorerVersion, evidence_fingerprint: evidenceFingerprint, source_turn_id: sourceTurnId }, { onConflict: "contact_id,evidence_fingerprint", ignoreDuplicates: true }).select("*").maybeSingle();
+    if (error) throw error;
+    return { score: data };
+  }
   if (kind === "qualification") {
     const dimensions = Object.fromEntries(["need", "value", "timing", "authority", "readiness", "fit"].map((name) => [name, boundedScore((body.dimensions as Record<string, unknown> || {})[name])]));
     const total = Object.values(dimensions).reduce((sum, value) => sum + Number(value), 0);
@@ -1362,13 +1691,36 @@ async function persistWorkflow(kind: string, body: Record<string, unknown>) {
     return { intents: data || [] };
   }
   if (kind === "consent") {
-    if (body.consentType !== "follow_up") throw new HttpError("Only follow-up consent is supported.", 400);
+    const consentType = String(body.consentType || "follow_up");
+    if (!["follow_up", "automated_reminder"].includes(consentType)) throw new HttpError("Unsupported consent scope.", 400);
     const state = String(body.state || "");
     if (!["unknown", "granted", "denied", "revoked"].includes(state)) throw new HttpError("Invalid consent state.", 400);
-    const { data, error } = await supabase.from("rafa_contact_consents").upsert({ contact_id: contact.contactId, consent_type: "follow_up", state, source_turn_id: sourceTurnId }, { onConflict: "contact_id,consent_type" }).select("*").single();
+    const purpose = consentType === "automated_reminder" ? "automated_reminder" : "specialist_contact";
+    const language = ["ar", "en", "el"].includes(String(body.language || "")) ? String(body.language) : "unknown";
+    const channel = String(body.channel || "whatsapp");
+    if (channel !== "whatsapp" || (state === "granted" && language === "unknown")) throw new HttpError("Consent provenance is incomplete.", 400);
+    const offerSourceTurnId = body.offerSourceTurnId ? String(body.offerSourceTurnId) : null;
+    if (state === "granted" && consentType === "automated_reminder") {
+      if (!sourceTurnId || !offerSourceTurnId || !isUuid(offerSourceTurnId)) throw new HttpError("Automated reminder offer provenance is required.", 400);
+      const { data: linkedTurns, error: linkedError } = await supabase.from("rafa_conversation_turns").select("id,metadata,at").eq("contact_id", contact.contactId).in("id", [sourceTurnId, offerSourceTurnId]);
+      if (linkedError) throw linkedError;
+      const confirmationTurn = (linkedTurns || []).find((turn) => turn.id === sourceTurnId);
+      const offerTurn = (linkedTurns || []).find((turn) => turn.id === offerSourceTurnId);
+      const consent = { consent_type: consentType, state, source_turn_id: sourceTurnId, offer_source_turn_id: offerSourceTurnId, language, channel };
+      if (!confirmationTurn || !offerTurn || !hasPurposeBoundAutomatedReminderConsent(consent, confirmationTurn, offerTurn)) throw new HttpError("Automated reminder consent must affirm a tracked reminder offer.", 403);
+      const offerAt = Date.parse(String(offerTurn.at || "")), confirmationAt = Date.parse(String(confirmationTurn.at || ""));
+      if (!Number.isFinite(offerAt) || !Number.isFinite(confirmationAt) || confirmationAt < offerAt) throw new HttpError("Automated reminder offer provenance is invalid.", 403);
+      const { data: adjacentTurns, error: adjacentError } = await supabase.from("rafa_conversation_turns").select("id").eq("contact_id", contact.contactId)
+        .gte("at", new Date(offerAt).toISOString()).lte("at", new Date(confirmationAt).toISOString()).order("at", { ascending: true });
+      if (adjacentError) throw adjacentError;
+      if (!areAdjacentConsentTurns(adjacentTurns || [], offerSourceTurnId, sourceTurnId)) throw new HttpError("Reminder consent must immediately follow its offer.", 403);
+    }
+    const { data, error } = await supabase.from("rafa_contact_consents").upsert({ contact_id: contact.contactId, consent_type: consentType, state, purpose, language, channel, source_turn_id: sourceTurnId, offer_source_turn_id: offerSourceTurnId }, { onConflict: "contact_id,consent_type" }).select("*").single();
     if (error) throw error;
-    const { error: followUpError } = await supabase.from("rafa_follow_up_states").upsert({ contact_id: contact.contactId, consent_state: state, status: state === "granted" ? "eligible" : "suppressed" }, { onConflict: "contact_id" });
-    if (followUpError) throw followUpError;
+    if (consentType === "follow_up") {
+      const { error: followUpError } = await supabase.from("rafa_follow_up_states").upsert({ contact_id: contact.contactId, consent_state: state, status: state === "granted" ? "eligible" : "suppressed" }, { onConflict: "contact_id" });
+      if (followUpError) throw followUpError;
+    }
     return { consent: data };
   }
   if (kind === "follow-up") {
@@ -1403,6 +1755,7 @@ async function persistWorkflow(kind: string, body: Record<string, unknown>) {
         const patch = mergeActiveHandover(existing, values, { sourceTurnId });
         const { data, error } = await supabase.from("rafa_handovers").update(patch).eq("id", existing.id).select("*").single();
         if (error) throw error;
+        await queueHandoverDelivery(existing.id, department);
         return { handover: data, merged: true };
       }
     }
@@ -1414,10 +1767,12 @@ async function persistWorkflow(kind: string, body: Record<string, unknown>) {
         const patch = mergeActiveHandover(concurrent, values, { sourceTurnId });
         const { data: updated, error: updateError } = await supabase.from("rafa_handovers").update(patch).eq("id", concurrent.id).select("*").single();
         if (updateError) throw updateError;
+        await queueHandoverDelivery(concurrent.id, department);
         return { handover: updated, merged: true };
       }
     }
     if (error) throw error;
+    await queueHandoverDelivery(data.id, department);
     return { handover: data };
   }
   if (kind === "priority-alert") {
@@ -1460,6 +1815,133 @@ async function logWorkflowAudit(contactId: string | null, event: string, details
   const { data, error } = await supabase.from("rafa_audit_events").insert({ contact_id: contactId, event, actor_type: actorType, details }).select("*").single();
   if (error) throw error;
   return data;
+}
+
+async function queueHandoverDelivery(handoverId: string, department: string) {
+  const { data: existing, error: lookupError } = await supabase.from("refal_handover_delivery").select("id").eq("handover_id", handoverId).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (existing) {
+    const { data, error } = await supabase.from("refal_handover_delivery").update({ department, updated_at: new Date().toISOString() }).eq("handover_id", handoverId).select("*").single();
+    if (error) throw error;
+    return data;
+  }
+  const { data, error } = await supabase.from("refal_handover_delivery").insert({ handover_id: handoverId, department, recipient_lane: "sandbox", status: "queued", next_attempt_at: new Date().toISOString() }).select("*").single();
+  if (error?.code === "23505") return { id: handoverId };
+  if (error) throw error;
+  return data;
+}
+
+async function reconcileHandoverReviewQueue() {
+  // The manual retry endpoint updates the existing job first and the ledger
+  // second. If that second write fails, recover the failed ledger from the
+  // active review job before the normal queued/retry repair pass.
+  const { data: activeReviews, error: activeReviewError } = await supabase.from("rafa_notification_jobs")
+    .select("id,handover_id,status")
+    .eq("kind", "handover_review")
+    .in("status", ["queued", "processing"])
+    .not("handover_id", "is", null)
+    .order("updated_at", { ascending: true })
+    .limit(25);
+  if (activeReviewError) throw activeReviewError;
+  for (const notification of activeReviews || []) {
+    const { data: parent, error: parentError } = await supabase.from("rafa_handovers")
+      .select("status").eq("id", notification.handover_id).maybeSingle();
+    if (parentError) throw parentError;
+    const closedPatch = ledgerPatchForClosedHandover(parent?.status);
+    if (closedPatch) {
+      await closeHandoverDeliverySafely({
+        cancelActiveNotifications: async () => {
+          const { error } = await supabase.from("rafa_notification_jobs")
+            .update({ status: "cancelled", locked_at: null, last_error: "Handover is closed." })
+            .eq("id", notification.id).in("status", ["queued", "processing"]);
+          if (error) throw error;
+        },
+        closeDelivery: async () => {
+          const { error } = await supabase.from("refal_handover_delivery")
+            .update(closedPatch).eq("handover_id", notification.handover_id).neq("status", "closed");
+          if (error) throw error;
+        }
+      });
+      continue;
+    }
+    const retryPatch = ledgerPatchForRetryMismatch(notification.status);
+    if (!retryPatch) continue;
+    const { error: retryReconcileError } = await supabase.from("refal_handover_delivery")
+      .update(retryPatch)
+      .eq("handover_id", notification.handover_id)
+      .eq("status", "failed");
+    if (retryReconcileError) throw retryReconcileError;
+  }
+
+  const { data: pending, error } = await supabase.from("refal_handover_delivery")
+    .select("handover_id,department")
+    .in("status", ["queued", "retry"])
+    .lte("next_attempt_at", new Date().toISOString())
+    .order("updated_at", { ascending: true })
+    .limit(25);
+  if (error) throw error;
+  for (const delivery of pending || []) {
+    const { data: handover, error: handoverError } = await supabase.from("rafa_handovers")
+      .select("id,department,priority,summary,status")
+      .eq("id", delivery.handover_id)
+      .eq("department", delivery.department)
+      .maybeSingle();
+    if (handoverError) throw handoverError;
+    if (!handover) continue;
+    const closedPatch = ledgerPatchForClosedHandover(handover.status);
+    if (closedPatch) {
+      await closeHandoverDeliverySafely({
+        cancelActiveNotifications: async () => {
+          const { error } = await supabase.from("rafa_notification_jobs")
+            .update({ status: "cancelled", locked_at: null, last_error: "Handover is closed." })
+            .eq("handover_id", delivery.handover_id).eq("kind", "handover_review").in("status", ["queued", "processing"]);
+          if (error) throw error;
+        },
+        closeDelivery: async () => {
+          const { error } = await supabase.from("refal_handover_delivery")
+            .update(closedPatch).eq("handover_id", delivery.handover_id).in("status", ["queued", "retry"]);
+          if (error) throw error;
+        }
+      });
+      continue;
+    }
+    const { data: existing, error: existingError } = await supabase.from("rafa_notification_jobs")
+      .select("id,status")
+      .eq("handover_id", delivery.handover_id)
+      .eq("kind", "handover_review")
+      .in("status", ["queued", "processing", "sent", "dead", "cancelled"])
+      .limit(1);
+    if (existingError) throw existingError;
+    const notification = existing?.[0];
+    const reconciliationPatch = notification ? ledgerPatchForExistingNotification(notification.status) : null;
+    if (reconciliationPatch) {
+      const { error: reconcileError } = await supabase.from("refal_handover_delivery")
+        .update(reconciliationPatch)
+        .eq("handover_id", delivery.handover_id)
+        .in("status", ["queued", "retry"]);
+      if (reconcileError) throw reconcileError;
+      continue;
+    }
+    if (notification) continue;
+    const summary = handover.summary && typeof handover.summary === "object" ? handover.summary : {};
+    const customer = summary.customer && typeof summary.customer === "object" ? summary.customer : {};
+    const { error: insertError } = await supabase.from("rafa_notification_jobs").insert({
+      handover_id: handover.id,
+      channel: "email",
+      kind: "handover_review",
+      recipient: "sandbox@refalco.test",
+      status: "queued",
+      idempotency_key: `handover:${handover.id}:admin-review-email`,
+      payload: {
+        department: handover.department,
+        priority: handover.priority || "normal",
+        intent: summary.intent || summary.primaryIntent || "",
+        name: customer.name || "",
+        need: summary.need || summary.opportunity || ""
+      }
+    });
+    if (insertError && insertError.code !== "23505") throw insertError;
+  }
 }
 
 function isUuid(value: string) {
@@ -1584,23 +2066,53 @@ function rowToUser(row: Record<string, any>, history: unknown[]) {
   };
 }
 
+async function attachCrmProfile(user: Record<string, any>, suppliedRow?: Record<string, any> | null) {
+  if (!user?.contactId) return user;
+  let row = suppliedRow;
+  if (arguments.length < 2) {
+    const { data, error } = await supabase.from("refal_lead_profile")
+      .select("contact_id,identity_fields,opportunity_fields,property_residency_fields,qualification_fields,field_provenance,crm_correction_needed")
+      .eq("contact_id", user.contactId).maybeSingle();
+    if (error) throw error;
+    row = data;
+  }
+  const projection = crmRowToAgentFacts(row);
+  const profile = {
+    ...(user.profile || {}),
+    agentFacts: { ...(user.profile?.agentFacts || {}), ...projection.agentFacts }
+  };
+  if (projection.hasRow) {
+    if (projection.crmCorrectionNeeded) profile.crmCorrectionNeeded = projection.crmCorrectionNeeded;
+    else delete profile.crmCorrectionNeeded;
+  }
+  return {
+    ...user,
+    profile
+  };
+}
+
 async function attachWorkflowState(user: Record<string, any>) {
   const contactId = user.contactId;
   if (!contactId) return user;
-  const [consentResult, followUpResult, qualificationResult, existingClientResult] = await Promise.all([
+  const [consentResult, automatedReminderResult, followUpResult, qualificationResult, existingClientResult] = await Promise.all([
     supabase.from("rafa_contact_consents").select("state,observed_at").eq("contact_id", contactId).eq("consent_type", "follow_up").maybeSingle(),
+    supabase.from("rafa_contact_consents").select("state,observed_at").eq("contact_id", contactId).eq("consent_type", "automated_reminder").maybeSingle(),
     supabase.from("rafa_follow_up_states").select("consent_state,status,next_due_at,last_sent_at,updated_at").eq("contact_id", contactId).maybeSingle(),
     supabase.from("rafa_lead_qualifications").select("need,value,timing,authority,readiness,fit,total,status,priority_reason,thresholds,assessed_at").eq("contact_id", contactId).maybeSingle(),
     supabase.from("rafa_existing_client_verifications").select("state,attempts,identifier_provided,verified,account_disclosure_allowed,verified_at,updated_at").eq("contact_id", contactId).maybeSingle()
   ]);
-  for (const result of [consentResult, followUpResult, qualificationResult, existingClientResult]) if (result.error) throw result.error;
+  for (const result of [consentResult, automatedReminderResult, followUpResult, qualificationResult, existingClientResult]) if (result.error) throw result.error;
   const consent = consentResult.data;
+  const automatedReminderConsent = automatedReminderResult.data;
   const followUpState = followUpResult.data;
   const qualification = qualificationResult.data;
   const existingClient = existingClientResult.data;
   return {
     ...user,
-    consent: consent ? { followUp: consent.state, followUpUpdatedAt: consent.observed_at } : undefined,
+    consent: consent || automatedReminderConsent ? {
+      ...(consent ? { followUp: consent.state, followUpUpdatedAt: consent.observed_at } : {}),
+      ...(automatedReminderConsent ? { automatedReminder: automatedReminderConsent.state, automatedReminderUpdatedAt: automatedReminderConsent.observed_at } : {})
+    } : undefined,
     followUpState: followUpState || undefined,
     leadQualification: qualification || undefined,
     profile: existingClient ? { ...(user.profile || {}), existingClientState: {

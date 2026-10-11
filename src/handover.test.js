@@ -6,6 +6,8 @@ test("validated intent routing selects the specialist department and fails close
   assert.equal(routeIntentToDepartment({ intents: ["real_estate", "investment"] }).department, "investment");
   assert.equal(routeIntentToDepartment({ intent: "made_up_intent" }).department, "general");
   assert.equal(routeIntentToDepartment({ intent: "made_up_intent" }).validated, false);
+  assert.equal(routeIntentToDepartment({ intent: "tax" }).department, "tax");
+  assert.equal(routeIntentToDepartment({ intent: "residency_enquiry" }).department, "residency");
 });
 
 test("REFAL LEAD SUMMARY is structured and internal-only content is separated", () => {

@@ -1,9 +1,12 @@
 const { assessPriority } = require("./priorityRules");
 const { redactSensitiveData } = require("./sensitiveData");
+const { buildExecutiveHandoff } = require("./executiveHandoff");
 
 const DEPARTMENTS = Object.freeze({
   customer_service: "customer_service",
   corporate_services: "corporate_services",
+  tax: "tax",
+  residency: "residency",
   real_estate: "real_estate",
   development_construction: "development_construction",
   investment: "investment",
@@ -22,7 +25,7 @@ const INTENT_ROUTES = Object.freeze({
   vat: DEPARTMENTS.corporate_services,
   cyprus_business_expansion: DEPARTMENTS.corporate_services,
   business_relocation: DEPARTMENTS.corporate_services,
-  residency_enquiry: DEPARTMENTS.corporate_services,
+  residency_enquiry: DEPARTMENTS.residency,
   real_estate_purchase: DEPARTMENTS.real_estate,
   real_estate_investment: DEPARTMENTS.investment,
   property_development: DEPARTMENTS.development_construction,
@@ -44,8 +47,8 @@ const INTENT_ROUTES = Object.freeze({
   services: DEPARTMENTS.general,
   contact: DEPARTMENTS.general,
   legal: DEPARTMENTS.corporate_services,
-  tax: DEPARTMENTS.corporate_services,
-  immigration: DEPARTMENTS.corporate_services,
+  tax: DEPARTMENTS.tax,
+  immigration: DEPARTMENTS.residency,
   banking: DEPARTMENTS.corporate_services,
   permit: DEPARTMENTS.development_construction,
   approval: DEPARTMENTS.corporate_services,
@@ -107,6 +110,20 @@ function safeStructured(value, depth = 0) {
   return null;
 }
 
+function safeOpportunityIntake(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const type = clean(value.type, 60);
+  if (!/^(company_formation|real_estate|land_development|construction|investment|partnership|appointment)$/.test(type)) return null;
+  const fields = safeStructured(value.data);
+  return {
+    type,
+    status: ["in_progress", "complete"].includes(value.status) ? value.status : "in_progress",
+    data: fields && typeof fields === "object" && !Array.isArray(fields) ? fields : {},
+    provenance: safeStructured(value.provenance) || {},
+    missingFields: Array.isArray(value.missingFields) ? value.missingFields.slice(0, 30).map((field) => clean(field, 80)) : []
+  };
+}
+
 function normalizeIntent(value) {
   return clean(value, 80).toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -130,7 +147,7 @@ function routeIntentToDepartment({ intent, intents, defaultDepartment = DEPARTME
   };
 }
 
-function buildRefalLeadSummary({ customer = {}, conversation = {}, intent, intents, need, timing, value, authority, contact, language, notes, qualification, objections, documents, appointment, sharingScope = "current_inquiry_only" } = {}) {
+function buildRefalLeadSummary({ customer = {}, conversation = {}, intent, intents, need, timing, value, authority, contact, language, notes, qualification, opportunityIntake, objections, documents, appointment, sharingScope = "current_inquiry_only" } = {}) {
   const routing = routeIntentToDepartment({ intent, intents });
   const priority = assessPriority({ intent: routing.matchedIntents, text: [need, notes, conversation.lastMessage].filter(Boolean).join(" ") });
   const summary = {
@@ -172,6 +189,7 @@ function buildRefalLeadSummary({ customer = {}, conversation = {}, intent, inten
     objections: safeValue(objections || conversation.objections, 500) || null,
     documents: safeValue(documents || conversation.documents, 500) || null,
     qualification: qualification || null,
+    opportunityIntake: safeOpportunityIntake(opportunityIntake),
     classification: qualification?.status || null,
     nextAction: safeValue(conversation.nextAction, 240) || null,
     appointment: appointment || null,
@@ -233,16 +251,32 @@ function defaultHandoverCustomerMessage(language) {
   return "Thank you. I’ve shared this with the appropriate Refalco Group team, and they will follow up with you.";
 }
 
-function createHandover({ input, customerMessage, customer, conversation, intent, intents, need, timing, value, authority, contact, language, notes, sharingScope } = {}) {
+function createHandover({ input, customerMessage, customer, conversation, intent, intents, need, timing, value, authority, contact, language, notes, qualification, opportunityIntake, sharingScope } = {}) {
   const routing = routeIntentToDepartment({ intent, intents });
-  const summary = buildRefalLeadSummary({ customer, conversation, intent: routing.matchedIntents, need, timing, value, authority, contact, language, notes, sharingScope });
+  const summary = buildRefalLeadSummary({ customer, conversation, intent: routing.matchedIntents, need, timing, value, authority, contact, language, notes, qualification, opportunityIntake, sharingScope });
   const priority = assessPriority({ intent: routing.matchedIntents, text: input || need || notes });
+  const internalMessage = buildExecutiveHandoff({
+    customer: summary.customer,
+    conversation: { ...summary, ...conversation, conversationSummary: summary.notes || summary.opportunity || summary.need },
+    intent: routing.intent,
+    primaryIntent: summary.primaryIntent,
+    secondaryIntents: summary.secondaryIntents,
+    estimatedBudget: summary.budget,
+    timeline: summary.timing,
+    decisionAuthority: summary.authority,
+    qualification: summary.qualification,
+    opportunityIntake: summary.opportunityIntake,
+    classification: summary.classification,
+    recommendedDepartment: routing.department,
+    recommendedNextAction: summary.nextAction,
+    appointment: summary.appointment
+  }, { role: "adviser" });
   return {
     routing: { ...routing, priority: priority.level, handoverRequired: priority.handoverRequired },
     summary,
     messages: separateCustomerAndInternalMessages({
       customerMessage: customerMessage || defaultHandoverCustomerMessage(language),
-      internalMessage: formatRefalLeadSummary(summary)
+      internalMessage
     })
   };
 }

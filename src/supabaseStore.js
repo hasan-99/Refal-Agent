@@ -111,6 +111,45 @@ class EdgeApiStore {
     }
   }
 
+  async consumeRateLimit({ scope, subjectHash, limit }) {
+    return this.request("/rate-limits/consume", {
+      method: "POST",
+      timeoutMs: 5000,
+      body: JSON.stringify({ scope, subjectHash, limit })
+    });
+  }
+
+  async saveCrmProfile({ userId, field, value, sourceTurnId }) {
+    const result = await this.request("/crm/profile", {
+      method: "POST",
+      timeoutMs: 8000,
+      body: JSON.stringify({ userId, field, value, sourceTurnId })
+    });
+    const user = this.data.users[userId];
+    if (user) {
+      user.profile = user.profile || {};
+      user.profile.agentFacts = { ...(user.profile.agentFacts || {}) };
+      if (result?.status === "saved") {
+        user.profile.agentFacts[field.toLowerCase()] = {
+          value, normalizedValue: value, provenance: "customer_message", confidence: 1,
+          sourceTurnId, savedAt: new Date().toISOString(), durable: true
+        };
+      }
+      if (result?.status === "correction_needed") {
+        const correctionField = String(result.correctionField || field).toLowerCase();
+        user.profile.crmCorrectionNeeded = { field: correctionField };
+        if (user.profile.agentFacts[correctionField]) {
+          user.profile.agentFacts[correctionField] = { ...user.profile.agentFacts[correctionField], correctionNeeded: true };
+        }
+      } else if (result?.correctionField) {
+        user.profile.crmCorrectionNeeded = { field: String(result.correctionField).toLowerCase() };
+      } else {
+        delete user.profile.crmCorrectionNeeded;
+      }
+    }
+    return result;
+  }
+
   async hydrate() {
     const { users } = await this.request("/contacts");
     this.data = { users: Object.fromEntries((users || []).map((user) => [user.id, user])) };
@@ -171,6 +210,13 @@ class EdgeApiStore {
     });
     this.data.users[userId] = updated;
     return updated;
+  }
+
+  async correctContactProfile(userId, contact, expected, actor) {
+    return this.request(`/contacts/${encodeURIComponent(userId)}/admin-correction`, {
+      method: "POST",
+      body: JSON.stringify({ contact, expected, actor })
+    });
   }
 
   async resetUser(userId) {
@@ -250,13 +296,18 @@ class EdgeApiStore {
     return qualification;
   }
 
+  async saveLeadScore(userId, score) {
+    const { score: saved } = await this.persistWorkflow("lead-score", { userId, ...score });
+    return saved;
+  }
+
   async saveIntents(userId, intents, options = {}) {
     const { intents: saved } = await this.persistWorkflow("intents", { userId, intents, sourceTurnId: options.sourceTurnId, confidence: options.confidence, source: options.source });
     return saved || [];
   }
 
   async saveConsent(userId, state, options = {}) {
-    const { consent } = await this.persistWorkflow("consent", { userId, consentType: "follow_up", state, ...options });
+    const { consent } = await this.persistWorkflow("consent", { userId, consentType: options.consentType || "follow_up", state, ...options });
     return consent;
   }
 
@@ -363,6 +414,14 @@ class EdgeApiStore {
     return this.request("/notifications", { method: "POST", body: JSON.stringify(notification) });
   }
 
+  async createP65TestHandoverNotification(testRunId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(testRunId || ""))) throw new Error("A valid P6.5 test run ID is required.");
+    return this.request("/notifications/test-handover", {
+      method: "POST",
+      body: JSON.stringify({ testRunId })
+    });
+  }
+
   async queueNotificationDraft(notificationId) {
     const { notification } = await this.request(`/notifications/${encodeURIComponent(notificationId)}/send`, { method: "POST", body: JSON.stringify({}) });
     return notification;
@@ -371,6 +430,21 @@ class EdgeApiStore {
   async claimDueNotifications(limit = 25) {
     const { notifications } = await this.request("/notifications/claim", { method: "POST", body: JSON.stringify({ limit }) });
     return notifications || [];
+  }
+
+  async claimNotificationById(notificationId, testRunId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(notificationId || ""))) throw new Error("A valid notification ID is required.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(testRunId || ""))) throw new Error("A valid P6.5 test run ID is required.");
+    const { notification } = await this.request(`/notifications/${encodeURIComponent(notificationId)}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ testRunId })
+    });
+    return notification ? [notification] : [];
+  }
+
+  async getHandoverStatus(handoverId) {
+    const { handover } = await this.request(`/handovers/${encodeURIComponent(handoverId)}`);
+    return handover || null;
   }
 
   async updateNotification(notificationId, patch) {

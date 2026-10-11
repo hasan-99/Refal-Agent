@@ -12,7 +12,7 @@ const {
 const P = require("pino");
 const qrcode = require("qrcode-terminal");
 const { loadProjectEnv } = require("./env");
-const { askOpenRouter, embedText, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
+const { askOpenRouter, embedText, embedQueryTexts, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
 const { createStore } = require("./supabaseStore");
 const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
@@ -22,7 +22,7 @@ const { startFollowUpSchedule } = require("./followUp");
 const { startReminderSchedule } = require("./reminderScheduler");
 const { startNotificationSchedule } = require("./notificationScheduler");
 const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
-const { AI_LIMIT_MESSAGE, allowAiMessage, allowIncomingMessage } = require("./rateLimiter");
+const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
 const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply } = require("./refalcoAnswer");
 const { detectMessageLanguage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
@@ -39,10 +39,13 @@ const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
 const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
-const { buildKnowledgeSearchQuery, turnNeedsKnowledge } = require("./knowledgeQuery");
+const { retrieveKnowledgeForTurn } = require("./knowledgeQuery");
 const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
 const { detectIntent, INTENTS } = require("./intent");
 const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
+const { appendGroundedHook, guardJurisdictionAnswer, observationPolicyRows, hasInformationalIntent } = require("./salesIntelligence");
+const { selectOfferForTurn } = require("./offerOrchestration");
+const { shouldEnterBookingPath, shouldDeferBookingHandler } = require("./buyingSignals");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -310,7 +313,17 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
   const bookingStartedAt = performance.now();
   // Regulated and privacy-risk messages must reach the safety router first;
   // the booking parser can otherwise persist raw sensitive details.
-  const booking = prepared.safety?.restricted ? null : await handleBookingMessage({ userId, text, store, user });
+  // Owner-approved MB-B1..B5 signals enter the existing guarded booking
+  // conversation even when the intent classifier misses their phrasing. The
+  // booking handler still requires a date/time and never confirms availability
+  // or creates an appointment from a signal alone.
+  const explicitBookingRequest = shouldEnterBookingPath(prepared);
+  const bookingSelection = explicitBookingRequest ? selectOfferForTurn({
+    candidates: [{ type: "booking", id: "explicit-appointment-request", mode: "action", validated: true }],
+    context: { answerComplete: true, explicitBookingRequest: true, explicitBookingConsent: true }
+  }) : null;
+  const booking = shouldDeferBookingHandler(prepared, bookingSelection)
+    ? null : await handleBookingMessage({ userId, text, store, user });
   stage("booking_gate", bookingStartedAt, { entered: Boolean(booking) });
   if (booking) {
     response = booking.response;
@@ -334,9 +347,10 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     await refreshLeadTemperature(userId);
     stage("lead_temperature", stageStartedAt);
 
-    if (booking.appointment?.status === "pending_review" && booking.details && booking.user) {
+    if (["pending_review", "pending_calendar", "creating"].includes(booking.appointment?.status) && booking.details && booking.user) {
       try {
         const appointmentId = booking.appointment.id;
+        const expectedAppointmentStatus = booking.appointment.status;
         const payload = {
           name: booking.user.profile?.name || "",
           phone: booking.user.phone || String(userId || "").replace(/@.+$/, ""),
@@ -348,7 +362,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
         await store.createNotification({
           appointmentId,
           kind: "owner_review",
-          expectedAppointmentStatus: "pending_review",
+          expectedAppointmentStatus,
           idempotencyKey: `${appointmentId}:owner-review-email`,
           payload
         });
@@ -357,7 +371,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
             appointmentId,
             kind: "customer_message",
             recipient: process.env.OWNER_WHATSAPP_JID,
-            expectedAppointmentStatus: "pending_review",
+            expectedAppointmentStatus,
             idempotencyKey: `${appointmentId}:owner-review-whatsapp`,
             payload: { text: `New WhatsApp appointment request for review: ${payload.name || payload.phone}, ${payload.startsAt} (${payload.timezone}). ${payload.purpose}` }
           });
@@ -389,30 +403,26 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
   response = routed.response;
   if (routed.shouldUseAi) {
     const customerText = routed.metadata?.privacySafeQuestion || String(text || "").trim();
-    const knowledgeSearchQuery = buildKnowledgeSearchQuery(customerText, routed.user, routed.metadata?.intent?.intents);
     let evidence = [];
     let stageAt = performance.now();
-    // A purely social turn ("كيفك", "thanks") has no knowledge need, and the
-    // hybrid path cannot return nothing (CF-09) -- it would hand her the N
-    // closest chunks as if they answered the question. She still replies; she
-    // just replies from persona and identity, which are not evidence-gated,
-    // instead of from whatever the ranker happened to surface.
-    const needsKnowledge = turnNeedsKnowledge(routed.metadata?.intent?.intents);
-    if (!needsKnowledge) {
-      stage("knowledge_retrieval", stageAt, { evidenceCount: 0, skipped: "social_turn" });
-      logEvent("knowledge_retrieval_skipped", { reason: "social_turn", intents: routed.metadata?.intent?.intents || [] });
-    } else {
-      try {
-        const embedding = await embedText(knowledgeSearchQuery);
-        stage("embedding", stageAt);
-        stageAt = performance.now();
-        evidence = store.searchKnowledge ? await store.searchKnowledge(knowledgeSearchQuery, embedding, DEFAULT_EMBEDDING_MODEL, 6) : [];
-        stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length });
-      } catch (error) {
-        console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
-        logEvent("knowledge_search_error", safeErrorDiagnostics(error));
-      }
+    const retrieval = await retrieveKnowledgeForTurn(customerText, {
+      user: routed.user,
+      intents: routed.metadata?.intent?.intents || [],
+      language: routed.metadata?.intent?.language || "english",
+      store,
+      embedQueryTexts,
+      embeddingModel: DEFAULT_EMBEDDING_MODEL,
+      matchCount: 6
+    });
+    // A broad answer must not look complete after one of its targeted searches
+    // failed. Keep the existing localized abstention path for an incomplete
+    // retrieval instead of handing the model a partial view as if it were all.
+    evidence = retrieval.complete ? retrieval.evidence : [];
+    for (const error of retrieval.failures) {
+      console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
+      logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
+    stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length, facetCount: retrieval.queryCount, complete: retrieval.complete });
 
     let dynamicResult = { requested: [], live: [], statuses: [] };
     try {
@@ -431,7 +441,10 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     const citations = localRecap?.citations || grounded?.citations || [];
     response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
 
-    if (!localRecap && evidence.length && process.env.OPENROUTER_API_KEY && !allowAiMessage(userId)) {
+    const aiRateLimit = !localRecap && evidence.length && process.env.OPENROUTER_API_KEY
+      ? await checkAiMessage(userId, { store }) : { allowed: true, source: "not_checked" };
+    if (aiRateLimit.source === "local_fallback") logEvent("shared_rate_limit_fallback", { scope: "ai_daily" });
+    if (!aiRateLimit.allowed) {
       stageAt = performance.now();
       const knowledgeEvidence = knowledgeEvidenceMetadata(evidence);
       const turn = (await recordHistory(store, userId, text, AI_LIMIT_MESSAGE, {
@@ -470,7 +483,8 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
           // always emitted the "do not offer a call at this stage" default,
           // which is BLK-6's behaviour under a new name. The classification is
           // internal and never shown to the customer.
-          leadTier: classifyLeadTemperature({ history: routed.user?.history || [], booking: routed.user?.booking }).status,
+          leadTier: routed.metadata?.leadTier || classifyLeadTemperature({ history: routed.user?.history || [], booking: routed.user?.booking }).status,
+          buyingSignals: routed.metadata?.buyingSignals || [],
           onUsage: async (usage) => {
             try {
               await logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
@@ -508,6 +522,29 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     }
 
     response = removeCustomerCitations(response);
+    const m5Safety = guardJurisdictionAnswer({
+      message: customerText, response, rows: evidence, language: detectMessageLanguage(customerText)
+    });
+    response = m5Safety.response;
+    const hookResult = appendGroundedHook({
+      message: customerText, response, language: detectMessageLanguage(customerText),
+      history: routed.user?.history || [], user: routed.user, rows: evidence,
+      specialistEligible: routed.metadata?.priority?.handoverRequired === true,
+      answerComplete: Boolean(grounded?.answer || modelResponseUsed),
+      suppressed: {
+        informational: hasInformationalIntent(routed.metadata?.intent?.intents),
+        complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
+        sensitive: Boolean(routed.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
+        declined: false,
+        optOut: ["denied", "revoked"].includes(getConsentState({ user: routed.user || {}, history: routed.user?.history || [] })),
+        pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(routed.user?.booking?.status),
+        handoverActive: Boolean(routed.user?.profile?.handover?.status === "active"),
+        complianceLock: Boolean(routed.metadata?.complianceLock?.active)
+      }
+    });
+    response = hookResult.response;
+    if (hookResult.salesOffer) routed.metadata.salesOffer = hookResult.salesOffer;
+    if (hookResult.specialistOffer) routed.metadata.specialistOffer = hookResult.specialistOffer;
     if (routed.metadata?.privacySafeQuestion) {
       const reminder = {
         arabic: "ولحماية خصوصيتك، لا تبعت كلمات مرور أو بيانات بطاقات أو دخول هون.",
@@ -586,6 +623,8 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
   const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
   const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
   const language = prepared.classification?.language || user?.profile?.language || "english";
+  let selectedSalesOffer = null;
+  let selectedSpecialistOffer = null;
   const result = await runAgentAfterPreflight({
     prepared,
     routed,
@@ -618,12 +657,54 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
         userId,
         intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
         language,
-        inboundMessageId: providerMessageId || null
+        inboundMessageId: providerMessageId || null,
+        leadTier: routed.metadata?.leadTier || "",
+        buyingSignals: routed.metadata?.buyingSignals || []
       }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
-      return decision.send ? decision.responseText : null;
+      if (!decision.send) {
+        const failedStep = Array.isArray(agentResult.steps)
+          ? agentResult.steps.find((step) => step?.result?.ok === false)
+          : null;
+        const knowledgeStep = Array.isArray(agentResult.steps)
+          ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge")
+          : null;
+        await logEvent("agent_turn_not_clean", {
+          outcome: String(agentResult.outcome || "unknown").slice(0, 40),
+          reasonCode: /^[A-Za-z0-9_:,-]{1,100}$/u.test(String(agentResult.reason || ""))
+            ? String(agentResult.reason).slice(0, 100)
+            : String(failedStep?.result?.reasonCode || "not_clean").slice(0, 80),
+          stepCount: Number.isInteger(agentResult.stepCount) ? agentResult.stepCount : 0,
+          knowledgeStatus: String(knowledgeStep?.result?.modelObservation?.status || "not_retrieved").slice(0, 30),
+          toolsUsed: Array.isArray(agentResult.toolsUsed) ? agentResult.toolsUsed.filter((tool) => typeof tool === "string").slice(0, 12) : []
+        });
+      }
+      if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
+      const policyRows = observationPolicyRows(agentResult.steps);
+      const jurisdiction = guardJurisdictionAnswer({ message: text, response: decision.responseText, rows: policyRows, language });
+      let response = jurisdiction.response;
+      const hook = appendGroundedHook({
+        message: text, response, language, history: history.filter((turn) => turn.id !== sourceTurnId),
+        user: currentUser, rows: policyRows,
+        specialistEligible: routed.metadata?.priority?.handoverRequired === true,
+        answerComplete: true,
+        suppressed: {
+          informational: hasInformationalIntent(routed.metadata?.intent?.intents),
+          complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
+          sensitive: Boolean(prepared.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
+          optOut: ["denied", "revoked"].includes(consentState),
+          pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(currentUser?.booking?.status),
+          handoverActive: Boolean(currentUser?.profile?.handover?.status === "active"),
+          complianceLock: Boolean(routed.metadata?.complianceLock?.active)
+        }
+      });
+      response = hook.response;
+      selectedSalesOffer = hook.salesOffer;
+      selectedSpecialistOffer = hook.specialistOffer;
+      return response;
     },
-    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId, patch),
+    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId,
+      selectedSalesOffer || selectedSpecialistOffer ? { ...patch, metadata: { ...(selectedSalesOffer ? { salesOffer: selectedSalesOffer } : {}), ...(selectedSpecialistOffer ? { specialistOffer: selectedSpecialistOffer } : {}) } } : patch),
     send: async (response, turn) => {
       await setTyping(socket, chatId, false);
       await sendStoredTextReply(socket, chatId, response, userId, turn);
@@ -892,7 +973,9 @@ async function handleMessage(socket, message, upsertType) {
       }
     }
 
-    if (!allowIncomingMessage(remoteJid)) {
+    const incomingRateLimit = await checkIncomingMessage(remoteJid, { store });
+    if (incomingRateLimit.source === "local_fallback") logEvent("shared_rate_limit_fallback", { scope: "incoming_minute" });
+    if (!incomingRateLimit.allowed) {
       logEvent("rate_limited_per_minute", {});
       receiptShouldComplete = true;
       return;

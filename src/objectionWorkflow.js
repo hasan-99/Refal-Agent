@@ -4,7 +4,7 @@ const CATEGORIES = Object.freeze([
 
 const PATTERNS = Object.freeze({
   price: /\b(?:too expensive|expensive|overpriced|cheaper|too costly|can't afford|cannot afford|outside (?:my|our) budget|price is (?:high|too much))\b|(?:السعر|التكلفة|التكاليف|الرسوم).{0,20}(?:غالي|مرتفعة|كثيرة|مبالغ)|(?:غالي|مرتفعة|مبالغ).{0,20}(?:السعر|التكلفة|الرسوم)|(?:ακριβό|υπερβολικό κόστος|εκτός προϋπολογισμού)/i,
-  trust: /\b(?:trust|reliable|reputation|proof|scam|legitimate|reviews)\b|ثقة|موثوق|احتيال|سمعة|αξιοπιστία|εμπιστοσύνη|απάτη/i,
+  trust: /\b(?:trust|reliable|reputation|proof|scam|legitimate|reviews)\b|ثقة|موثوق|احتيال|سمعة|αξιοπιστία|αξιόπιστ\p{L}*|εμπιστοσύνη|απάτη/iu,
   timing: /\b(?:later|wait|timing|time|deadline|busy|next month|not now)\b|لاحقًا|انتظر|الوقت|ليس الآن|αργότερα|χρόνος|όχι τώρα/i,
   competitor: /\b(?:i(?:'m| am) (?:choosing|going with)|i prefer)\s+(?:the\s+)?(?:other|another|competitor|provider|firm)\b|(?:سأختار|بفضّل|أفضل)\s+(?:شركة|المنافس|الجهة)\s+(?:الأخرى|الثانية)|(?:θα επιλέξω|προτιμώ)\s+(?:την άλλη εταιρεία|άλλον πάροχο)/i,
   tax: /\b(?:i (?:won't|will not|can't|cannot) proceed because of|tax(?:es)? are too high for me|i am worried about)\b.{0,35}\b(?:tax|vat|fiscal)\b|(?:ما بدي|لن أتابع بسبب|قلقان من).{0,30}(?:الضريبة|الضرائب|ضريبة القيمة)|(?:δεν θα προχωρήσω λόγω|ανησυχώ για).{0,35}(?:φόρο|φορολογ)/iu,

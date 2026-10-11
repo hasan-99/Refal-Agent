@@ -19,6 +19,10 @@ import { countUniqueHandoverContacts } from "./handoverGrouping.js";
 import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
+import { registerContactCorrectionAdminRoutes } from "./contactCorrectionAdmin.js";
+import { previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
+import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,9 +37,10 @@ const { embedText, embedTexts, normalizeOpenRouterUsage, DEFAULT_EMBEDDING_MODEL
 const { containsProhibitedClaim, restrictedRefalcoReply } = require("../src/refalcoAnswer.js");
 const { containsUnconsentedContactCommitment } = require("../src/responsePolicy.js");
 const { buildBrainPrompt: buildOperatorPrompt } = require("../src/brainPrompt.js");
-const { approvePendingAppointment, changeAppointmentStatus, formatBookingTime, hasCalendarConfig, hasOAuthCalendarCredentials, suggestAvailableTimes, verifyCalendarAccess } = require("../src/booking.js");
-const { createCalendarReadinessTracker } = require("../src/calendarReadiness.js");
+const { formatBookingTime, suggestAvailableTimes } = require("../src/booking.js");
+const { createCalendarReadinessTracker, isBookingPolicyReady } = require("../src/calendarReadiness.js");
 const { validateBookingPolicy } = require("../src/bookingPolicy.js");
+const { workerCredentialsReady } = require("../scripts/googleCalendarCredentialStore.js");
 const { dashboardFailureReply } = await import("./agentFallback.js");
 const {
   DEFAULT_OPENROUTER_MODEL,
@@ -44,9 +49,10 @@ const {
 } = require("../src/openrouterPrivacy.js");
 const dashboardRoot = __dirname;
 const botRoot = path.resolve(dashboardRoot, "..");
+stripWorkerCalendarCredentials(process.env);
 
-loadEnv(path.join(botRoot, ".env"));
-loadEnv(path.join(botRoot, ".env.rafa"));
+loadDashboardEnv(path.join(botRoot, ".env"));
+loadDashboardEnv(path.join(botRoot, ".env.rafa"));
 const store = createStore();
 const whatsappController = createWhatsAppController({ botRoot });
 
@@ -67,6 +73,7 @@ const port = Number(process.env.DASHBOARD_PORT || 8787);
 const authAttemptBuckets = new Map();
 const limitAgentChat = createAgentRateLimit();
 const calendarReadiness = createCalendarReadinessTracker();
+const calendarOnboarding = createCalendarCredentialOnboarding({ botRoot, onConfigured: () => whatsappController.restart() });
 let openRouterCreditsCache = { expiresAt: 0, value: null };
 
 app.disable("x-powered-by");
@@ -169,6 +176,7 @@ app.get("/api/session", async (req, res) => {
 
 app.use("/api", requireAuth);
 registerDynamicDataAdminRoutes(app, { requireAdmin });
+registerContactCorrectionAdminRoutes(app, { store, requireAdmin });
 
 app.get("/api/whatsapp/control", requireAdmin, async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -279,7 +287,7 @@ app.get("/api/knowledge", async (req, res) => {
     const isAdmin = req.dashboardUser.role === "admin";
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,approval_note,last_status,last_error,last_fetched_at,last_success_at,last_content_hash,created_at,updated_at${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&order=updated_at.desc`),
-      supabaseRest("rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until&review_status=eq.approved&order=fetched_at.desc&limit=200")
+      supabaseRest(`rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata${isAdmin ? "" : "&review_status=eq.approved"}&order=fetched_at.desc&limit=200`)
     ]);
     res.json({ sources, documents });
   } catch (error) {
@@ -298,7 +306,7 @@ app.post("/api/knowledge", requireAdmin, async (req, res) => {
     const canonicalUrl = String(req.body?.url || "").trim() ? validateKnowledgeUrl(req.body.url).href : `manual:${crypto.randomUUID()}`;
     const rows = await supabaseRest("rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,last_status", {
       method: "POST", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied", enabled: true, approved: true, approval_note: "Knowledge entries are active when saved." })
+      body: JSON.stringify({ canonical_url: canonicalUrl, display_name: displayName, source_kind: "manual", trust_tier: "operator_supplied", enabled: true, approved: true, approval_note: "Operator-supplied source; each content revision requires review before REFAL can use it." })
     });
     res.status(201).json({ source: rows[0] });
   } catch (error) {
@@ -313,7 +321,8 @@ app.patch("/api/knowledge/:id", requireAdmin, async (req, res) => {
     for (const key of ["enabled", "approved"]) {
       if (req.body?.[key] !== undefined) {
         if (typeof req.body[key] !== "boolean") return res.status(400).json({ error: `${key} must be boolean.` });
-        if (req.body[key] === false) return res.status(400).json({ error: "Knowledge sources always remain approved and enabled." });
+        if (key === "enabled") return res.status(400).json({ error: "Use the audited archive or restore action to change source availability." });
+        if (req.body[key] === false) return res.status(400).json({ error: "Knowledge sources remain approved; review each content revision instead." });
         patch[key] = true;
       }
     }
@@ -343,8 +352,7 @@ app.post("/api/knowledge/:id/fetch", requireAdmin, async (req, res) => {
     const page = await fetchKnowledgePage(source.canonical_url);
     const extracted = extractKnowledgeText(page.html, page.url);
     const saved = await storeKnowledgeRevision(id, extracted, "en");
-    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
-    res.json({ ...saved, ...indexed, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
+    res.json({ ...saved, embeddedChunks: 0, embeddingWarning: "", title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     const status = error.code || 502;
     try {
@@ -363,8 +371,7 @@ app.post("/api/knowledge/:id/import", requireAdmin, async (req, res) => {
     if (content.length < 40) return res.status(400).json({ error: "Import at least 40 characters of source content." });
     const extracted = { title, content, chunks: chunkKnowledge(content) };
     const saved = await storeKnowledgeRevision(id, extracted, String(req.body?.language || "en").slice(0, 8));
-    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
-    res.status(201).json({ ...saved, ...indexed, characterCount: content.length, chunkCount: extracted.chunks.length });
+    res.status(201).json({ ...saved, embeddedChunks: 0, embeddingWarning: "", characterCount: content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -383,8 +390,7 @@ app.patch("/api/knowledge/documents/:id", requireAdmin, async (req, res) => {
     if (!documents[0]) return res.status(404).json({ error: "Knowledge entry not found." });
     const chunks = chunkKnowledge(content);
     const result = await storeKnowledgeRevision(documents[0].source_id, { title, content, chunks }, String(req.body?.language || "en").slice(0, 8));
-    const indexed = result.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(result.document_id);
-    res.json({ ...result, ...indexed, chunkCount: chunks.length });
+    res.json({ ...result, embeddedChunks: 0, embeddingWarning: "", chunkCount: chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message || "Could not update this knowledge entry." });
   }
@@ -405,24 +411,9 @@ app.post("/api/knowledge/:id/upload", requireAdmin, upload.single("file"), async
       sourceFileType: extracted.sourceFileType,
       sourceFileName: extracted.sourceFileName
     });
-    const indexed = saved.unchanged ? { embeddedChunks: 0, embeddingWarning: "" } : await indexKnowledgeDocument(saved.document_id);
-    res.status(201).json({ ...saved, ...indexed, title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
+    res.status(201).json({ ...saved, embeddedChunks: 0, embeddingWarning: "", title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
-  }
-});
-
-app.delete("/api/knowledge/:id", requireAdmin, async (req, res) => {
-  try {
-    const id = requireUuid(req.params.id);
-    const deleted = await supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=id,display_name`, {
-      method: "DELETE",
-      headers: { Prefer: "return=representation" }
-    });
-    if (!deleted.length) return res.status(404).json({ error: "Knowledge entry not found." });
-    res.json({ deleted: true, source: deleted[0] });
-  } catch (error) {
-    res.status(error.code || 500).json({ error: error.message || "Could not delete this knowledge entry." });
   }
 });
 
@@ -432,7 +423,7 @@ app.get("/api/knowledge/:id", async (req, res) => {
     const isAdmin = req.dashboardUser.role === "admin";
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=*${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&limit=1`),
-      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}&review_status=eq.approved&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,valid_until,metadata&order=revision.desc&limit=1`)
+      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}${isAdmin ? "" : "&review_status=eq.approved"}&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata&order=revision.desc&limit=${isAdmin ? "20" : "1"}`)
     ]);
     if (!sources[0]) return res.status(404).json({ error: "Knowledge source not found." });
     const chunks = documents.length ? await supabaseRest(`rafa_knowledge_chunks?document_id=in.(${documents.map((doc) => doc.id).join(",")})&select=id,document_id,chunk_index,heading,content,metadata,embedding_model,embedded_at&order=chunk_index.asc`) : [];
@@ -446,12 +437,14 @@ app.patch("/api/knowledge/documents/:id/review", requireAdmin, async (req, res) 
   try {
     const id = requireUuid(req.params.id);
     const status = req.body?.status;
-    if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "Review status must be approved or rejected." });
-    const rows = await supabaseRest(`rafa_knowledge_documents?id=eq.${id}&select=id,source_id,revision,review_status,approved_at,approved_by`, {
-      method: "PATCH", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ review_status: status, approved_at: status === "approved" ? new Date().toISOString() : null, approved_by: status === "approved" ? "dashboard-operator" : null })
+    if (!["approved", "rejected", "pending"].includes(status)) return res.status(400).json({ error: "Review status must be approved, rejected, or pending." });
+    const reviewer = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
+    const decision = await reviewKnowledgeDocument(supabaseRest, {
+      documentId: id,
+      status,
+      reviewer,
+      reason: req.body?.reason
     });
-    if (!rows[0]) return res.status(404).json({ error: "Document revision not found." });
     let embeddedChunks = 0;
     let embeddingWarning = "";
     if (status === "approved") {
@@ -466,7 +459,7 @@ app.patch("/api/knowledge/documents/:id/review", requireAdmin, async (req, res) 
         embeddingWarning = String(error.message || "Embedding failed").slice(0, 240);
       }
     }
-    res.json({ document: rows[0], embeddedChunks, embeddingWarning });
+    res.json({ document: decision, embeddedChunks, embeddingWarning });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -517,11 +510,13 @@ app.get("/api/facts/:factId/audit", async (req, res) => {
 
 app.post("/api/facts/:factId/reapprove", requireAdmin, async (req, res) => {
   try {
+    const reviewer = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
+    if (!reviewer) return res.status(403).json({ error: "Your signed-in admin account has no reviewer identity." });
     res.json(await reapproveFact(supabaseRest, {
       factId: req.params.factId,
-      reviewer: req.body?.reviewer,
+      reviewer,
       cadenceDays: req.body?.cadenceDays,
-      reason: req.body?.reason
+      reason: "Re-verified from the Facts register."
     }));
   } catch (error) { factRouteError(res, error); }
 });
@@ -796,37 +791,6 @@ app.post("/api/conversations/:userId/turns/:turnId/edit", requireAdmin, authRate
   }
 });
 
-app.put("/api/leads/:id/contact", requireAdmin, async (req, res) => {
-  const user = await store.getUser(req.params.id, { includeHistory: true });
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  const profile = user.profile || {};
-  const nextName = String(req.body?.nameOverride || "").trim();
-  const nextPhone = String(req.body?.phoneOverride || "").trim();
-  const nextSummary = String(req.body?.conversationSummary || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 700);
-  const nextNeed = String(req.body?.needOverride || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 160);
-
-  if (nextName) profile.nameOverride = nextName;
-  else delete profile.nameOverride;
-
-  if (nextPhone) profile.phoneOverride = nextPhone;
-  else delete profile.phoneOverride;
-  if (nextSummary) profile.conversationSummary = nextSummary;
-  else delete profile.conversationSummary;
-  profile.conversationSummaryUpdatedAt = new Date().toISOString();
-  if (nextNeed) profile.needOverride = nextNeed;
-  else delete profile.needOverride;
-
-  user.profile = profile;
-  await store.updateUser(req.params.id, (draft) => {
-    draft.profile = profile;
-  });
-  await store.logEvent?.("contact_memory_admin_updated", { contactId: req.params.id, actor: req.dashboardUser.email || req.dashboardUser.id, action: "update_contact_memory", fields: ["nameOverride", "phoneOverride", "conversationSummary", "needOverride"] });
-
-  const saved = await store.getUser(req.params.id, { includeHistory: true });
-  res.json({ ok: true, user: userSummary(saved), profile: saved.profile || {} });
-});
-
 app.patch("/api/leads/:id/qualification", requireAdmin, async (req, res) => {
   const status = req.body?.status;
   if (!["unreviewed", "qualified", "not_qualified"].includes(status)) {
@@ -895,15 +859,25 @@ app.get("/api/notifications", requireAdmin, async (_req, res) => {
 
 app.get("/api/handovers/summary", requireAdmin, async (_req, res) => {
   try {
-    // Count one active queue item per contact; detailed customer data stays in the inbox request.
+    // Page to exhaustion so the badge reflects the durable handover ledger,
+    // including acknowledged requests and every retry/failure past page 1.
+    const readAll = async (path) => {
+      const rows = [];
+      const pageSize = 1000;
+      for (let offset = 0; ; offset += pageSize) {
+        const page = await supabaseRest(path, { headers: { Range: `${offset}-${offset + pageSize - 1}` } });
+        rows.push(...page);
+        if (page.length < pageSize) return rows;
+      }
+    };
     const [openRows, problemRows] = await Promise.all([
-      supabaseRest("rafa_handovers?select=id,contact_id&status=eq.open&order=created_at.desc&limit=100"),
-      supabaseRest("rafa_notification_jobs?select=id&status=in.(failed,dead)&limit=100")
+      readAll("rafa_handovers?select=id,contact_id&status=in.(open,acknowledged)&order=created_at.desc"),
+      readAll("refal_handover_delivery?select=id&status=in.(retry,failed)")
     ]);
     const openCount = countUniqueHandoverContacts(openRows);
     const deliveryIssueCount = problemRows.length;
     res.setHeader("Cache-Control", "no-store");
-    res.json({ openCount, deliveryIssueCount, totalCount: openCount + deliveryIssueCount, capped: openCount === 100 || deliveryIssueCount === 100 });
+    res.json({ openCount, deliveryIssueCount, totalCount: openCount + deliveryIssueCount, capped: false });
   } catch (error) { res.status(502).json({ error: String(error?.message || "Could not load notification count.").slice(0, 250) }); }
 });
 
@@ -951,16 +925,33 @@ app.patch("/api/handovers/:id", requireAdmin, authRateLimit, async (req, res) =>
   const status = String(req.body?.status || "");
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id) || !["acknowledged", "resolved"].includes(status)) return res.status(400).json({ error: "Choose a valid handover status." });
   try {
-    const target = await supabaseRest(`rafa_handovers?id=eq.${encodeURIComponent(req.params.id)}&status=in.(open,acknowledged)&select=id,contact_id&limit=1`);
+    const target = await supabaseRest(`rafa_handovers?id=eq.${encodeURIComponent(req.params.id)}&status=in.(open,acknowledged)&select=id,contact_id,department&limit=1`);
     if (!target.length) return res.status(404).json({ error: "Open specialist request not found." });
     const scope = /^[0-9a-f-]{36}$/i.test(String(target[0].contact_id || ""))
       ? `contact_id=eq.${encodeURIComponent(target[0].contact_id)}`
       : `id=eq.${encodeURIComponent(req.params.id)}`;
-    const rows = await supabaseRest(`rafa_handovers?${scope}&status=in.(open,acknowledged)&select=id,status`, {
+    const rows = await supabaseRest(`rafa_handovers?${scope}&status=in.(open,acknowledged)&select=id,department,status`, {
       method: "PATCH",
       headers: { Prefer: "return=representation" },
       body: JSON.stringify({ status, resolved_at: status === "resolved" ? new Date().toISOString() : null })
     });
+    const changedAt = new Date().toISOString();
+    const closedAt = status === "resolved" ? changedAt : null;
+    for (const handover of rows) {
+      await supabaseRest("refal_handover_delivery?on_conflict=handover_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          handover_id: handover.id,
+          department: handover.department,
+          recipient_lane: "sandbox",
+          status: status === "resolved" ? "closed" : "acknowledged",
+          acknowledged_at: changedAt,
+          ...(status === "resolved" ? { closed_at: closedAt, closure_reason: "operator_resolved" } : {}),
+          updated_at: changedAt
+        })
+      });
+    }
     await logDashboardEvent("handover_admin_status_updated", { handoverId: req.params.id, groupedRequestCount: rows.length, status, actor: req.dashboardUser.email || req.dashboardUser.id });
     res.json({ handover: rows[0], updatedCount: rows.length });
   } catch (error) { res.status(502).json({ error: String(error?.message || "Could not update specialist request.").slice(0, 250) }); }
@@ -1038,7 +1029,7 @@ app.post("/api/bookings/:id/review", requireAdmin, authRateLimit, async (req, re
   const reason = String(req.body?.reason || "").trim().slice(0, 500);
   try {
     if (action === "approve") {
-      const result = await approvePendingAppointment({ store, appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id });
+      const result = await calendarOnboarding.review({ action, appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id });
       let notificationError = result.reminderError || "";
       try {
         const when = new Intl.DateTimeFormat("en-GB", { timeZone: result.policy.timezone, dateStyle: "full", timeStyle: "short" }).format(result.event.start?.dateTime ? new Date(result.event.start.dateTime) : new Date(result.appointment.starts_at));
@@ -1062,7 +1053,8 @@ app.post("/api/bookings/:id/review", requireAdmin, authRateLimit, async (req, re
       const appointment = await store.getAppointment(req.params.id);
       if (!appointment) return res.status(404).json({ error: "Appointment was not found." });
       const nextStatus = action === "cancel" ? "cancelled" : "rescheduled";
-      const updated = await changeAppointmentStatus({ store, appointmentId: appointment.id, status: nextStatus, actor: req.dashboardUser.email || req.dashboardUser.id, reason, now: new Date() });
+      const result = await calendarOnboarding.review({ action, appointmentId: appointment.id, reviewer: req.dashboardUser.email || req.dashboardUser.id, reason });
+      const updated = result.updated;
       let notificationError = "";
       try {
         const contact = await store.getUser(appointment.whatsapp_jid, { includeHistory: true });
@@ -1134,18 +1126,55 @@ app.get("/api/bookings/readiness", async (_req, res) => {
     const policy = await store.getBookingPolicy();
     const valid = policy ? (() => { try { return validateBookingPolicy(policy); } catch { return null; } })() : null;
     const access = calendarReadiness.get(valid?.calendarId);
+    const credentialsReady = workerCredentialsReady();
+    const policyReady = isBookingPolicyReady(valid);
     res.json({
-      active: hasCalendarConfig(valid) && Boolean(access), policy: valid,
+      active: credentialsReady && policyReady && Boolean(access), policy: valid,
       calendarAccessVerified: Boolean(access), calendarAccessCheckedAt: access?.checkedAt || null,
-      calendarCredentials: Boolean(hasOAuthCalendarCredentials() || (process.env.GOOGLE_CALENDAR_CLIENT_EMAIL && process.env.GOOGLE_CALENDAR_PRIVATE_KEY))
+      calendarCredentials: credentialsReady,
+      calendarAuthorizationStatus: calendarOnboarding.status
     });
   } catch (error) { res.status(502).json({ error: error.message }); }
+});
+
+app.post("/api/knowledge/search/preview", requireAdmin, async (req, res) => {
+  try {
+    const preview = await previewKnowledgeAcrossLanguages(async (query) => {
+      let embedding = null;
+      try { embedding = await embedText(query); } catch { /* Approved lexical retrieval remains available. */ }
+      return embedding
+        ? await supabaseRest("rpc/rafa_hybrid_search_knowledge", { method: "POST", body: JSON.stringify({ p_query: query, p_embedding: `[${embedding.join(",")}]`, p_embedding_model: DEFAULT_EMBEDDING_MODEL, p_match_count: 8 }) })
+        : await supabaseRest("rpc/rafa_search_knowledge", { method: "POST", body: JSON.stringify({ p_query: query, p_match_count: 8 }) });
+    }, req.body?.queries);
+    res.json(preview);
+  } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
+});
+
+app.patch("/api/knowledge/:id/archive", requireAdmin, async (req, res) => {
+  try {
+    const result = await setKnowledgeSourceArchived(supabaseRest, {
+      sourceId: requireUuid(req.params.id), archived: req.body?.archived,
+      actor: req.dashboardUser?.email || req.dashboardUser?.id, reason: req.body?.reason
+    });
+    await logDashboardEvent(result.archived ? "knowledge_source_archived" : "knowledge_source_restored", {
+      sourceId: result.source.id, displayName: result.source.display_name, actor: result.actor, reason: result.reason
+    });
+    res.json(result);
+  } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
+});
+
+app.post("/api/bookings/calendar-oauth/start", requireAdmin, authRateLimit, async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const started = await calendarOnboarding.start();
+    res.json(started);
+  } catch (error) { res.status(400).json({ error: error.message || "Calendar authorization could not start." }); }
 });
 
 app.post("/api/bookings/test-calendar", requireAdmin, async (_req, res) => {
   try {
     const policy = validateBookingPolicy(await store.getBookingPolicy());
-    const access = await verifyCalendarAccess(policy);
+    const access = await calendarOnboarding.verify(policy);
     calendarReadiness.markVerified(access);
     res.json({ access });
   } catch (error) {
@@ -1431,25 +1460,11 @@ async function storeKnowledgeRevision(sourceId, document, languageCode, metadata
       p_language_code: languageCode,
       p_chunks: document.chunks,
       p_metadata: metadata,
-      // P3.9 / CR-014 made `rafa_store_knowledge_revision` default to `pending`,
-      // because a save silently approving itself is the conflict that phase had
-      // to remove. This call site must therefore state its intent EXPLICITLY.
-      //
-      // It states `approved`, deliberately, and that is not a regression of
-      // CR-014. The dashboard has no pending-review screen: the UI copy says
-      // "Active when saved" and `POST /api/knowledge` creates every source with
-      // `approved: true, enabled: true`. Letting the new default apply here
-      // would queue entries into a screen that does not exist, and they would
-      // silently never become searchable, which is precisely the bug the
-      // 2026-10-07 migrations were written to fix.
-      //
-      // What CR-014 actually asked for is now true: the queue EXISTS, nothing
-      // deletes a non-approved revision any more, and approving is a stated
-      // decision rather than something the database does behind the caller's
-      // back. Flipping this to `pending` is a one word change the moment P12.2
-      // ships the review screen.
-      p_review_status: "approved",
-      p_approved_by: "dashboard-operator"
+      // Dashboard edits and imports require a separate administrator decision.
+      // The generated corpus uses its own explicit approved-ingestion path in
+      // src/corpusIngest.js and remains unchanged.
+      p_review_status: "pending",
+      p_approved_by: null
     })
   });
   return result;
@@ -1470,22 +1485,6 @@ async function indexKnowledgeDocument(documentId) {
     return { embeddedChunks, embeddingWarning: "" };
   } catch (error) {
     return { embeddedChunks: 0, embeddingWarning: String(error.message || "Embedding failed").slice(0, 240) };
-  }
-}
-
-function loadEnv(filePath) {
-  if (!fs.existsSync(filePath)) return;
-  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const index = trimmed.indexOf("=");
-    if (index === -1) continue;
-    const key = trimmed.slice(0, index).trim();
-    let value = trimmed.slice(index + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (key && process.env[key] === undefined) process.env[key] = value;
   }
 }
 
@@ -1988,6 +1987,7 @@ async function askDashboardAgent({ text, messages, model: sessionModel, memories
               "If the operator asks a general-knowledge question unrelated to Refalco Group or dashboard operations, briefly redirect to Refalco Group; do not answer from general knowledge.",
               "For Refalco Group facts, rely only on retrieved approved knowledge; do not invent facts, prices, availability, deadlines, legal/tax/immigration outcomes, bank approval, permits, or expected investment returns. Answer service/package/fee questions only when asked. Keep internal source names, owner confirmations, review status, and verification steps private. Do not claim legal registration/status or provide legal/tax/immigration advice.",
               "Silently classify intent, multiple intents, need, value, timing, authority, readiness, and fit. Flag high-value, sensitive, complex, complaint, existing-client, development, construction, investment, and partnership cases internally. A priority label is internal only; create a customer handover or follow-up only after the customer gives clear consent by affirming a tracked offer or directly asking for specialist contact. Link consent to its source turn and recheck it before outbound follow-up.",
+              "When drafting a customer reply, use internal tiers only: Informational 0-7, Cold 8-13, Warm 14-19, Hot 20-24, Strategic 25-30. Informational/Cold must not push booking; Warm permits a flexible, non-repeated appointment offer. At Hot/Strategic suppress every cross-sell hook and benefit hint and focus on logistics. Tiers and buying signals never grant consent or confirm a booking. Never expose scores, dimensions, or tier labels.",
               "Do not mention internal source names, owner confirmations, review status, or verification steps. Include source links only when the operator asks for provenance or needs to verify a material conflict.",
               "Retrieved approved company knowledge:",
               evidence?.length ? evidence.map((item, index) => `[${index + 1}] ${item.source_name} (${item.source_url})\n${item.heading || ""}\n${item.content}`).join("\n\n") : "No approved company knowledge retrieved.",

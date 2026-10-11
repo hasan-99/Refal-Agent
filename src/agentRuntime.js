@@ -13,6 +13,125 @@ const { runAgentTurn, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { embedText: defaultEmbedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
+const { detectIntent, INTENTS } = require("./intent");
+const { validateResponse, MODEL_DRAFT_THRESHOLDS } = require("./responsePolicy");
+
+// Factual customer questions must not depend on the model remembering to ask
+// for its evidence first. Retrieve approved knowledge deterministically for
+// these routed intents, then let the Agent reason over that bounded result.
+const KNOWLEDGE_REQUIRED_INTENTS = new Set([
+  INTENTS.COMPANY_INFO, INTENTS.BUSINESS_AREAS, INTENTS.PRICING, INTENTS.SERVICES,
+  INTENTS.CONTACT, INTENTS.COMPANY_FORMATION, INTENTS.ACCOUNTING, INTENTS.VAT,
+  INTENTS.CYPRUS_BUSINESS_EXPANSION, INTENTS.BUSINESS_RELOCATION, INTENTS.RESIDENCY_ENQUIRY,
+  INTENTS.REAL_ESTATE_PURCHASE, INTENTS.REAL_ESTATE_INVESTMENT, INTENTS.LAND_OWNER,
+  INTENTS.PROPERTY_DEVELOPMENT, INTENTS.CONSTRUCTION_TENDER, INTENTS.PROJECT_MANAGEMENT,
+  INTENTS.INVESTMENT_OPPORTUNITY, INTENTS.INVESTMENT_PARTNERSHIP, INTENTS.STRATEGIC_PARTNERSHIP,
+  INTENTS.INFRASTRUCTURE, INTENTS.TECHNOLOGY, INTENTS.OPERATIONS, INTENTS.STRATEGIC_ASSETS,
+  INTENTS.BUSINESS_PROPOSAL, INTENTS.PROJECT_ENQUIRY, INTENTS.GENERAL_INFORMATION,
+  INTENTS.REAL_ESTATE, INTENTS.LAND_DEVELOPMENT, INTENTS.CONSTRUCTION,
+  INTENTS.CORPORATE_SERVICES, INTENTS.INVESTMENT, INTENTS.PARTNERSHIP
+]);
+const BROAD_COMPANY_INTENTS = new Set([
+  INTENTS.COMPANY_INFO, INTENTS.BUSINESS_AREAS, INTENTS.SERVICES, INTENTS.CORPORATE_SERVICES
+]);
+const SPECIALIZED_SERVICE_INTENTS = new Set([
+  INTENTS.PRICING, INTENTS.COMPANY_FORMATION, INTENTS.ACCOUNTING, INTENTS.VAT,
+  INTENTS.CYPRUS_BUSINESS_EXPANSION, INTENTS.BUSINESS_RELOCATION, INTENTS.RESIDENCY_ENQUIRY,
+  INTENTS.REAL_ESTATE_PURCHASE, INTENTS.REAL_ESTATE_INVESTMENT, INTENTS.LAND_OWNER,
+  INTENTS.PROPERTY_DEVELOPMENT, INTENTS.CONSTRUCTION_TENDER, INTENTS.PROJECT_MANAGEMENT,
+  INTENTS.INVESTMENT_OPPORTUNITY, INTENTS.INVESTMENT_PARTNERSHIP, INTENTS.STRATEGIC_PARTNERSHIP,
+  INTENTS.INFRASTRUCTURE, INTENTS.TECHNOLOGY, INTENTS.OPERATIONS, INTENTS.STRATEGIC_ASSETS,
+  INTENTS.BUSINESS_PROPOSAL, INTENTS.PROJECT_ENQUIRY, INTENTS.REAL_ESTATE,
+  INTENTS.LAND_DEVELOPMENT, INTENTS.CONSTRUCTION, INTENTS.INVESTMENT, INTENTS.PARTNERSHIP
+]);
+const BROAD_SERVICE_FOLLOWUPS = Object.freeze({
+  en: "Which area would you like to hear more about?",
+  ar: "أي مجال حابب تعرف عنه أكثر؟",
+  el: "Ποιον τομέα θα θέλατε να μάθετε καλύτερα;"
+});
+const COMPANY_OVERVIEW_RETRIEVAL_TERMS = [
+  "Refalco Group company overview: company formation and structuring, tax and accounting, investment, real estate and property development, comprehensive investment and structural solutions.",
+  "تأسيس الشركات والهيكلة، ملفات الضريبة والمحاسبة، الملفات الاستثمارية، العقار والتطوير، حلول استثمارية وهيكلية شاملة."
+].join(" ");
+// A broad services question needs more than one nearest-neighbour sample.
+// Search the approved corpus along three customer-useful facets before the
+// first model decision, while keeping every observation under the tool's
+// existing evidence budget.
+const BROAD_COMPANY_RETRIEVAL_FACETS = Object.freeze([
+  "Cyprus company formation and lifecycle: company structures, name reservation, secretary, registered office, shareholders, directors, ownership changes, dormant company and liquidation",
+  "Cyprus business tax and operations: corporate tax, IP Box, dividends versus salary, holding versus trading, VAT, EORI and payroll",
+  "Cyprus company banking and payment gateways: corporate bank account, KYC, AML, Stripe and PayPal",
+  "Cyprus residency and relocation: permanent residency, non-dom, source of funds, source of wealth, relocation checklist, schools and healthcare",
+  "Cyprus property purchase: buyer journey, off-plan versus completed property, property VAT and cities",
+  "Cyprus landowners, development and construction: land development, partnership, planning permits, density, tenders and BOQ",
+  "Cyprus legal and intellectual property: trademarks, shareholder agreements, employment, development contracts and GDPR",
+  "Jurisdiction comparison: Cyprus compared with Dubai, Estonia, Malta, Bulgaria and USA for company setup and operations",
+  "Refalco Group company profile, identity and approved track record"
+]);
+function requiresApprovedKnowledge(intents) {
+  return Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+}
+
+function contextualKnowledgeQuery(currentMessage, intents, recentConversation) {
+  if (Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent))) return null;
+  const history = Array.isArray(recentConversation) ? recentConversation.slice(-6) : [];
+  const priorUser = [...history].reverse().find((turn) => turn?.role === "user" && typeof turn.content === "string" && turn.content.trim());
+  if (!priorUser) return null;
+  const priorIntents = detectIntent(priorUser.content).intents;
+  const topic = priorIntents.find((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+  if (!topic) return null;
+  const context = history
+    .filter((turn) => ["user", "assistant"].includes(turn?.role) && typeof turn.content === "string")
+    .map((turn) => turn.content.trim())
+    .filter(Boolean)
+    .join("\n");
+  return context ? `${context}\n${String(currentMessage || "").trim()}`.slice(0, 1800) : null;
+}
+
+function appendBroadServiceFollowup(result, { intents, locale, currentMessage } = {}) {
+  if (result?.outcome !== "responded" || typeof result.response !== "string") return result;
+  if (!Array.isArray(intents) || !intents.includes(INTENTS.SERVICES)
+      || intents.some((intent) => SPECIALIZED_SERVICE_INTENTS.has(intent))) return result;
+  if (/[?؟]/u.test(result.response)) return result;
+  const language = String(locale || "").toLowerCase();
+  const key = language.startsWith("ar") ? "ar" : language.startsWith("el") || language.startsWith("greek") ? "el" : "en";
+  const response = `${result.response.trim()} ${BROAD_SERVICE_FOLLOWUPS[key]}`;
+  const checked = validateResponse(response, { ...MODEL_DRAFT_THRESHOLDS, customerMessage: currentMessage });
+  return checked.valid ? { ...result, response: checked.text } : result;
+}
+
+async function initialKnowledgeObservation(currentMessage, intents, recentConversation, toolContext, tools) {
+  const directKnowledgeIntent = Array.isArray(intents) && intents.some((intent) => KNOWLEDGE_REQUIRED_INTENTS.has(intent));
+  const contextualQuery = contextualKnowledgeQuery(currentMessage, intents, recentConversation);
+  if (!directKnowledgeIntent && !contextualQuery) return [];
+  const tool = tools?.searchApprovedKnowledge;
+  const message = String(currentMessage || "").trim().slice(0, 1000);
+  const broad = Array.isArray(intents) && intents.some((intent) => BROAD_COMPANY_INTENTS.has(intent));
+  const baseQuery = contextualQuery || message;
+  const queries = broad
+    ? BROAD_COMPANY_RETRIEVAL_FACETS.map((facet, index) =>
+      `${baseQuery}\n${index === 0 ? COMPANY_OVERVIEW_RETRIEVAL_TERMS : ""}\n${facet}`)
+    : [baseQuery];
+  const observations = [];
+  for (const [index, rawQuery] of queries.entries()) {
+    const args = { query: rawQuery.slice(0, 1800) };
+    let result;
+    try {
+      if (typeof tool?.run !== "function") throw new Error("Approved knowledge search is unavailable.");
+      result = await tool.run(args, toolContext);
+    } catch (error) {
+      result = {
+        ok: false,
+        status: "error",
+        reasonCode: "RETRIEVAL_FAILED",
+        message: String(error?.message || error).slice(0, 200),
+        modelObservation: { type: "approved_knowledge", status: "error", evidence: [], truncated: false }
+      };
+    }
+    observations.push({ step: 0, tool: "searchApprovedKnowledge", args, result, retrievalFacet: broad ? index + 1 : null });
+  }
+  return observations;
+}
 
 // Everything a tool might need, bound once per turn. Deliberately narrow:
 // only what the Ticket 001 tools actually read (store, user, userId, intents,
@@ -41,11 +160,15 @@ function buildToolContext({
   sourceTurnId = null,
   consentState = "unknown",
   allowedCapabilities = [],
-  policy = null
+  policy = null,
+  currentMessage = ""
 } = {}) {
   return {
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
     inboundMessageId, sourceTurnId, consentState,
+    // Bound by the trusted caller, never by the model. CRM extraction uses
+    // this exact inbound turn to verify that a proposed value was stated.
+    currentMessage: String(currentMessage || "").slice(0, 4000),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).filter((value) => typeof value === "string"))]),
     policy
   };
@@ -64,6 +187,8 @@ async function runAgentTurnForContact({
   currentOpenQuestion,
   consentState,
   allowedCapabilities,
+  leadTier,
+  buyingSignals,
   store,
   user,
   userId,
@@ -89,13 +214,17 @@ async function runAgentTurnForContact({
     knownCustomerFacts,
     currentOpenQuestion,
     consentState,
-    allowedCapabilities
+    allowedCapabilities,
+    leadTier,
+    buyingSignals
   });
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
-    inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy
+    inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy, currentMessage
   });
-  return runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps });
+  const initialObservations = await initialKnowledgeObservation(currentMessage, intents, recentConversation, toolContext, tools);
+  const result = await runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps, initialObservations });
+  return appendBroadServiceFollowup(result, { intents, locale, currentMessage });
 }
 
-module.exports = { runAgentTurnForContact, buildToolContext };
+module.exports = { runAgentTurnForContact, buildToolContext, requiresApprovedKnowledge, appendBroadServiceFollowup };

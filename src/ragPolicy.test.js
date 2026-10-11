@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply, containsProhibitedClaim } = require("./refalcoAnswer");
-const { askOpenRouter, embedText, embedTexts, suppressRepeatedSpecialistOffer, containsUnsupportedPackageInclusion, DEFAULT_EMBEDDING_MODEL } = require("./ai");
+const { askOpenRouter, embedText, embedTexts, embedQueryTexts, suppressRepeatedSpecialistOffer, containsUnsupportedPackageInclusion, DEFAULT_EMBEDDING_MODEL } = require("./ai");
 const {
   DEFAULT_OPENROUTER_FALLBACK_MODEL,
   DEFAULT_OPENROUTER_MODEL,
@@ -13,7 +13,7 @@ const {
   resolveOpenRouterModel
 } = require("./openrouterPrivacy");
 const { routeMessageResult } = require("./messageRouter");
-const { buildKnowledgeSearchQuery } = require("./knowledgeQuery");
+const { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn } = require("./knowledgeQuery");
 
 const evidenceFixture = {
   source_name: "Refalco Group Contact",
@@ -332,6 +332,102 @@ test("knowledge retrieval uses only the current question and actual conversation
   assert.equal(buildKnowledgeSearchQuery("بدي تفاصيل اكتر", { history: [] }), "بدي تفاصيل اكتر");
 });
 
+test("deterministic evidence fallback truncates only at complete sentence boundaries", () => {
+  const evidence = {
+    ...evidenceFixture,
+    content: `First complete sentence. ${"A grounded detail follows. ".repeat(30)}`
+  };
+  const result = answerFromEvidence([evidence]);
+  assert.ok(result.answer.length <= 460);
+  assert.match(result.answer, /\.$/);
+  assert.doesNotMatch(result.answer, /\.\.\.$/);
+  const numbered = answerFromEvidence([{
+    ...evidenceFixture,
+    content: `Opening fact. ${Array.from({ length: 18 }, (_, index) => `${index + 1}. **Grounded item ${index + 1}.** A full explanation follows here.`).join(" ")}`
+  }]);
+  assert.ok(numbered.answer.length <= 460);
+  assert.doesNotMatch(numbered.answer, /\d\.$/);
+  assert.match(numbered.answer, /\.$/);
+});
+
+test("broad company questions search each knowledge area before composing an answer", () => {
+  const broad = buildKnowledgeSearchQueries("ما هي خدمات الشركة؟", { history: [] }, ["services"]);
+  assert.equal(broad.length, 5);
+  assert.doesNotMatch(broad[0], /ما هي خدمات الشركة/u);
+  assert.match(broad[0], /company formation package/u);
+  assert.match(broad[1], /corporate tax Cyprus/u);
+  assert.match(broad[2], /banking and payment gateways/u);
+  assert.match(broad[3], /permanent residency Cyprus/u);
+  assert.match(broad[4], /buying property in Cyprus/u);
+  const businessAreas = buildKnowledgeSearchQueries("What business areas does Refalco Group work in?", {}, ["business_areas"], "english");
+  assert.match(businessAreas[0], /Refalco Group business areas and services/u);
+  assert.equal(businessAreas.length, 6);
+  const profile = buildKnowledgeSearchQueries("Who are you?", {}, ["company_info"]);
+  assert.match(profile[0], /Refalco Group business areas and services/u);
+  assert.equal(profile.length, 6);
+  assert.match(profile[4], /permanent residency Cyprus/u);
+  assert.match(profile[5], /buying property in Cyprus/u);
+  const packageDetails = buildKnowledgeSearchQueries("شو بتشمل باقة تأسيس الشركة القبرصية؟", {}, ["company_info"], "arabic");
+  assert.equal(packageDetails[0], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
+  assert.match(packageDetails[1], /شو بتشمل باقة تأسيس الشركة القبرصية/u);
+  assert.match(packageDetails[2], /مجالات وخدمات Refalco Group/u);
+  assert.deepEqual(buildKnowledgeSearchQueries("How much is setup?", {}, ["pricing"]), ["How much is setup?"]);
+  const arabic = buildKnowledgeSearchQueries("شو خدماتكم؟", {}, ["services"], "arabic");
+  const greek = buildKnowledgeSearchQueries("Τι υπηρεσίες προσφέρετε;", {}, ["services"], "greek");
+  assert.match(arabic[0], /باقة تأسيس الشركة القبرصية/u);
+  assert.match(greek[0], /πακέτο ίδρυσης κυπριακής εταιρείας/u);
+  assert.doesNotMatch(arabic.join(" "), /company formation package/u);
+  assert.doesNotMatch(greek.join(" "), /company formation package/u);
+  assert.match(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic")[0], /مجالات وخدمات Refalco Group/u);
+});
+
+test("broad retrieval supplies one distinct content chunk per facet and skips finding aids", async () => {
+  const calls = [];
+  let activeSearches = 0;
+  let maxActiveSearches = 0;
+  const retrieval = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"],
+    language: "english",
+    embedText: async (query) => query.length,
+    embeddingModel: "test-model",
+    store: {
+      searchKnowledge: async (query, embedding, model, count) => {
+      calls.push({ query, embedding, model, count });
+      const index = calls.length;
+      activeSearches += 1;
+      maxActiveSearches = Math.max(maxActiveSearches, activeSearches);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      activeSearches -= 1;
+        return [
+          { chunk_kind: "aliases", chunk_id: `aid-${index}`, heading: "Aliases", content: "Question phrases" },
+          { chunk_kind: "discovery", chunk_id: `discovery-${index}`, heading: "Discovery prompts", content: "Questions for a specialist" },
+          { chunk_kind: "fact", chunk_id: `content-${index}`, heading: `Facet ${index}`, content: `Approved content ${index}` }
+        ];
+      }
+    }
+  });
+  assert.equal(retrieval.queryCount, 5);
+  assert.equal(retrieval.failures.length, 0);
+  assert.equal(retrieval.complete, true);
+  assert.equal(calls.length, 5);
+  assert.ok(maxActiveSearches > 1);
+  assert.ok(calls.every((call) => call.model === "test-model" && call.count === 6 && call.embedding === call.query.length));
+  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "content-2", "content-3", "content-4", "content-5"]);
+
+  let failedSearch = false;
+  const incomplete = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"],
+    language: "english",
+    store: { searchKnowledge: async (_query, _embedding, _model, _count) => {
+      if (!failedSearch) { failedSearch = true; throw new Error("unreachable"); }
+      return [];
+    } }
+  });
+  // Deterministic failure coverage: the first facet fails, the rest have no results.
+  assert.equal(incomplete.complete, false);
+  assert.equal(incomplete.failures.length, 1);
+});
+
 test("price answers cannot attach nearby company services to the paid package without explicit evidence", () => {
   const evidence = [{ content: "The €999 package includes four months of company secretary and registered address. Remote assistance covers document preparation, name reservation, and application follow-up." }];
   assert.equal(containsUnsupportedPackageInclusion("The €999 package includes four months of company secretary and registered address.", evidence), false);
@@ -545,9 +641,9 @@ test("W1.7.7: the lead tier reaches the live system prompt and changes the booki
   });
 
   const expectations = [
-    ["hot", /Stop selling and move to booking, with their consent/],
+    ["hot", /Stop all selling, cross-sell hooks, and benefit hints/],
     ["warm", /Offer a call flexibly if it genuinely helps/],
-    ["cold", /has declined contact\. Do not offer a call, meeting, or follow-up at all/],
+    ["cold", /exploratory question.*No booking push/is],
     ["", /Do not offer a call or meeting at this stage/]
   ];
 
@@ -654,6 +750,8 @@ test("WhatsApp, dashboard, Edge, and canonical rules share the consent and inves
     assert.match(content, /Never claim(?: that)? (?:a )?handover, call, or follow-up is arranged or promise (?:that )?(?:a person|someone) will contact the customer unless the system confirms that action/, file);
     assert.match(content, /When (?:the customer|a customer) corrects a misunderstanding, answer the corrected request/, file);
     assert.match(content, /If the customer explicitly requests a reply language, use (?:that|the requested) language even when the request sentence itself is written in another language/, file);
+    assert.match(content, /keep official company names, legal forms, tax and regulatory labels, and product names in their approved canonical spelling/, file);
+    assert.match(content, /do not invent translations or definitions/, file);
     assert.match(content, /summarize only customer-stated facts/, file);
     // W1.7.7 removed BLK-6. The old clause was an ABSOLUTE ban on introducing a
     // call during information gathering, which left a ready-to-buy customer
@@ -671,7 +769,7 @@ test("WhatsApp, dashboard, Edge, and canonical rules share the consent and inves
     } else {
       // The runtime surfaces express the same tier-awareness as prompt lines.
       assert.match(content, /decided by the booking-offer rule for the current lead tier/, file);
-      assert.match(content, /move to booking, with their consent/, file);
+      assert.match(content, /Stop all selling, cross-sell hooks, and benefit hints/, file);
     }
     assert.match(content, /Persisted customer preferences against proactive booking, contact, or contact-detail capture are binding for future turns/, file);
     assert.match(content, /Do not repeat a specialist, call, meeting, booking, or contact offer already made in recent history/, file);
@@ -746,13 +844,17 @@ test("local multilingual embeddings use query/passage prefixes and preserve the 
     return { dims: [values.length, 384], data: new Float32Array(values.length * 384).fill(1 / Math.sqrt(384)) };
   };
   const query = await embedText("What does Refalco Group do?", pipelineFactory);
+  const queryBatch = await embedQueryTexts(["one query", "another query"], pipelineFactory);
   const passages = await embedTexts(["Refalco Group operating platform"], pipelineFactory);
   assert.equal(DEFAULT_EMBEDDING_MODEL, "Xenova/multilingual-e5-small@761b726dd34fb83930e26aab4e9ac3899aa1fa78:q8");
   assert.equal(query.length, 2048);
+  assert.equal(queryBatch.length, 2);
+  assert.equal(queryBatch[0].length, 2048);
   assert.equal(passages[0].length, 2048);
   assert.equal(query.slice(384).every((value) => value === 0), true);
   assert.match(calls[0].input, /^query: /);
-  assert.match(calls[1].input[0], /^passage: /);
+  assert.deepEqual(calls[1].input, ["query: one query", "query: another query"]);
+  assert.match(calls[2].input[0], /^passage: /);
   assert.deepEqual(calls[0].options, { pooling: "mean", normalize: true, truncation: true, max_length: 512 });
 });
 

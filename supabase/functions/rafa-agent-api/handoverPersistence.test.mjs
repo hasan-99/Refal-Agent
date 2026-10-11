@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildSafeHistoryInsert, hasPurposeBoundFollowUpConsent, sanitizeInboundHistoryText } from "./handoverPersistence.mjs";
+import { areAdjacentConsentTurns, buildSafeHistoryInsert, hasPurposeBoundAutomatedReminderConsent, hasPurposeBoundFollowUpConsent, sanitizeInboundHistoryText } from "./handoverPersistence.mjs";
 
 test("Edge history persistence redacts privacy-risk messages before database insertion", () => {
   const payloadText = sanitizeInboundHistoryText("Password: SecretPhrase-81; help me set up a company");
@@ -33,4 +33,22 @@ test("outbound follow-up consent must link a granted purpose-specific source tur
   assert.equal(hasPurposeBoundFollowUpConsent(consent, { ...valid, id: "turn-2" }), false);
   assert.equal(hasPurposeBoundFollowUpConsent(consent, { id: "turn-1", metadata: {} }), false);
   assert.equal(hasPurposeBoundFollowUpConsent({ state: "granted" }, valid), false);
+});
+
+test("automated reminder consent requires a separate scope and linked offer and confirmation turns", () => {
+  const offer = { id: "offer-1", response: "Would you like automated reminders for this request?", metadata: { automatedReminderOffer: { consentRequired: true, purpose: "automated_reminder", language: "en", channel: "whatsapp" } } };
+  const confirmation = { id: "confirm-1", metadata: {
+    automatedReminderConsent: { state: "granted", purpose: "automated_reminder", scope: "automated_reminder", offerSourceTurnId: "offer-1", language: "en", channel: "whatsapp" },
+    followUpConsent: { state: "granted", purpose: "automated_reminder", sourceTurnId: "confirm-1", offerSourceTurnId: "offer-1", language: "en", channel: "whatsapp" }
+  } };
+  const consent = { consent_type: "automated_reminder", state: "granted", source_turn_id: "confirm-1", offer_source_turn_id: "offer-1", language: "en", channel: "whatsapp" };
+  assert.equal(hasPurposeBoundAutomatedReminderConsent(consent, confirmation, offer), true);
+  assert.equal(hasPurposeBoundAutomatedReminderConsent({ ...consent, state: "revoked" }, confirmation, offer), false);
+  assert.equal(hasPurposeBoundAutomatedReminderConsent({ ...consent, consent_type: "follow_up" }, confirmation, offer), false);
+  assert.equal(hasPurposeBoundAutomatedReminderConsent(consent, { ...confirmation, id: "other" }, offer), false);
+  assert.equal(hasPurposeBoundAutomatedReminderConsent(consent, confirmation, { ...offer, metadata: {} }), false);
+  assert.equal(hasPurposeBoundAutomatedReminderConsent({ ...consent, language: "el" }, confirmation, offer), false);
+  assert.equal(areAdjacentConsentTurns([offer, confirmation], "offer-1", "confirm-1"), true);
+  assert.equal(areAdjacentConsentTurns([offer, { id: "intervening" }, confirmation], "offer-1", "confirm-1"), false);
+  assert.equal(areAdjacentConsentTurns([confirmation, offer], "offer-1", "confirm-1"), true, "the timestamp check establishes chronology without relying on UUID ordering for equal timestamps");
 });

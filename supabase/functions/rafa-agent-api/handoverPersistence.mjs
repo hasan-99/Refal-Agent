@@ -81,6 +81,36 @@ export function hasPurposeBoundFollowUpConsent(consent, sourceTurn) {
     sourceTurn?.metadata?.specialistFollowUp?.purpose === "specialist_follow_up";
 }
 
+export function hasPurposeBoundAutomatedReminderConsent(consent, confirmationTurn, offerTurn) {
+  return consent?.consent_type === "automated_reminder" && consent?.state === "granted" &&
+    Boolean(consent?.source_turn_id && consent?.offer_source_turn_id) &&
+    String(confirmationTurn?.id || "") === String(consent.source_turn_id) &&
+    String(offerTurn?.id || "") === String(consent.offer_source_turn_id) &&
+    confirmationTurn?.metadata?.automatedReminderConsent?.state === "granted" &&
+    confirmationTurn?.metadata?.automatedReminderConsent?.purpose === "automated_reminder" &&
+    confirmationTurn?.metadata?.automatedReminderConsent?.scope === "automated_reminder" &&
+    confirmationTurn?.metadata?.automatedReminderConsent?.offerSourceTurnId === String(offerTurn.id) &&
+    confirmationTurn?.metadata?.followUpConsent?.state === "granted" &&
+    confirmationTurn.metadata.followUpConsent.purpose === "automated_reminder" &&
+    confirmationTurn.metadata.followUpConsent.sourceTurnId === String(confirmationTurn.id) &&
+    confirmationTurn.metadata.followUpConsent.offerSourceTurnId === String(offerTurn.id) &&
+    confirmationTurn.metadata.followUpConsent.language === consent.language &&
+    confirmationTurn.metadata.followUpConsent.channel === "whatsapp" &&
+    ["ar", "en", "el"].includes(consent.language) && consent.language === confirmationTurn.metadata.automatedReminderConsent.language &&
+    consent.channel === "whatsapp" && confirmationTurn.metadata.automatedReminderConsent.channel === "whatsapp" &&
+    offerTurn?.metadata?.automatedReminderOffer?.consentRequired === true &&
+    offerTurn?.metadata?.automatedReminderOffer?.purpose === "automated_reminder" &&
+    offerTurn.metadata.automatedReminderOffer.language === consent.language &&
+    offerTurn.metadata.automatedReminderOffer.channel === "whatsapp" &&
+    /(?:automated|automatic|scheduled)\s+(?:reminders?|messages?)|(?:ال)?تذكير(?:ات)?\s*(?:(?:ال)?آلي(?:ة)?|(?:ال)?تلقائي(?:ة)?)|(?:ال)?رسائل\s*(?:تذكير|تذكيرية)\s*(?:آلية|تلقائية)|(?:αυτόματ(?:ες|ων)\s+υπενθυμίσε(?:ις|ων)|υπενθυμίσε(?:ις|ων)\s+(?:αυτόματ(?:ες|ων)|με\s+αυτόματο\s+τρόπο))/iu.test(String(offerTurn.response || "")) &&
+    /[?؟;]/u.test(String(offerTurn.response || ""));
+}
+
+export function areAdjacentConsentTurns(turns, offerTurnId, confirmationTurnId) {
+  if (!Array.isArray(turns) || turns.length !== 2) return false;
+  return turns.some((turn) => turn.id === offerTurnId) && turns.some((turn) => turn.id === confirmationTurnId) && offerTurnId !== confirmationTurnId;
+}
+
 function summarySnapshot(summary = {}) {
   return Object.fromEntries(["intent", "primaryIntent", "need", "opportunity", "nextAction"]
     .filter((key) => summary[key] !== undefined && summary[key] !== null && String(summary[key]).trim())

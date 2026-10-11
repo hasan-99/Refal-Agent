@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomerFact, proposeHandover, buildApprovedKnowledgeObservation, MAX_RAG_EVIDENCE_ITEMS, MAX_RAG_EVIDENCE_TOTAL_CHARS } = require("./agentTools");
+const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
+const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
 
 test("searchApprovedKnowledge rejects an empty query without calling the store", async () => {
   let called = false;
@@ -194,7 +196,7 @@ test("saveCustomerFact only accepts customer_message provenance", async () => {
   assert.equal(modelGuess.reasonCode, "INVALID_PROVENANCE");
   assert.equal(updates.length, 0);
 
-  const real = await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1" });
+  const real = await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My company activity is import/export", sourceTurnId: "turn-1" });
   assert.equal(real.ok, true);
   assert.equal(updates[0].profile.agentFacts.companyactivity.value, "import/export");
 });
@@ -203,13 +205,83 @@ test("saveCustomerFact normalizes field-name casing so the same fact can't fragm
   const draft = { profile: {} };
   const store = { updateUser: async (userId, updater) => { await updater(draft); } };
 
-  await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1" });
-  const first = await saveCustomerFact({ field: "COMPANYACTIVITY", value: "real estate", provenance: "customer_message" }, { store, userId: "u1" });
+  await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My company activity is import/export", sourceTurnId: "turn-1" });
+  const first = await saveCustomerFact({ field: "COMPANYACTIVITY", value: "real estate", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My company activity is real estate", sourceTurnId: "turn-2" });
 
   assert.equal(first.ok, true);
+  assert.equal(first.status, "correction_needed");
   assert.equal(first.data.field, "companyactivity");
   assert.equal(Object.keys(draft.profile.agentFacts).length, 1);
-  assert.equal(draft.profile.agentFacts.companyactivity.value, "real estate");
+  assert.equal(draft.profile.agentFacts.companyactivity.value, "import/export");
+  assert.equal(draft.profile.agentFacts.companyactivity.correctionNeeded, true);
+});
+
+test("saveCustomerFact uses durable CRM sync when the store exposes it", async () => {
+  let saved;
+  const store = {
+    saveCrmProfile: async (payload) => { saved = payload; return { status: "saved" }; },
+    updateUser: async () => { throw new Error("durable stores must not duplicate CRM into contact profile"); }
+  };
+  const result = await saveCustomerFact({ field: "businessActivity", value: "accounting", provenance: "customer_message" }, {
+    store, userId: "123@s.whatsapp.net", currentMessage: "My business activity is accounting", sourceTurnId: "turn-verified"
+  });
+  assert.equal(result.status, "saved");
+  assert.deepEqual(saved, { userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-verified" });
+});
+
+test("a CRM conflict is only resolved by an explicit correction in a later customer turn", async () => {
+  const draft = { profile: {} };
+  const store = { updateUser: async (_id, updater) => { await updater(draft); } };
+  await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  const conflict = await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Lebanon", sourceTurnId: "turn-2" });
+  assert.equal(conflict.status, "correction_needed");
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Jordan");
+  assert.ok(draft.profile.crmCorrectionNeeded);
+
+  const corrected = await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: I live in Lebanon, not Jordan", sourceTurnId: "turn-3" });
+  assert.equal(corrected.status, "saved");
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Lebanon");
+  assert.equal(draft.profile.crmCorrectionNeeded, undefined);
+});
+
+test("a customer can explicitly confirm the previously saved value to clear a CRM conflict", async () => {
+  const draft = { profile: {} };
+  const store = { updateUser: async (_id, updater) => { await updater(draft); } };
+  await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Lebanon", sourceTurnId: "turn-2" });
+  const confirmed = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: Jordan is still my country of residence", sourceTurnId: "turn-3" });
+  assert.equal(confirmed.status, "saved");
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Jordan");
+  assert.equal(draft.profile.crmCorrectionNeeded, undefined);
+});
+
+test("saveCustomerFact rejects values not stated in the current trusted turn or without a persisted turn id", async () => {
+  const store = { updateUser: async () => { throw new Error("must not write"); } };
+  const invented = await saveCustomerFact({ field: "countryOfResidence", value: "Cyprus", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  const missingSource = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan" });
+  const negated = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I don't live in Jordan", sourceTurnId: "turn-2" });
+  assert.equal(invented.reasonCode, "UNVERIFIED_CUSTOMER_VALUE");
+  assert.equal(missingSource.reasonCode, "UNVERIFIED_CUSTOMER_VALUE");
+  assert.equal(negated.reasonCode, "NON_AFFIRMATIVE_CUSTOMER_VALUE");
+});
+
+test("saveCustomerFact stores a name only when the current turn explicitly identifies it", async () => {
+  const user = { profile: {} };
+  const store = { updateUser: async (_id, update) => { await update(user); } };
+  const greeting = await saveCustomerFact({ field: "name", value: "Maya", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Hello, my friend Maya has a company", sourceTurnId: "turn-1" });
+  const selfIdentified = await saveCustomerFact({ field: "name", value: "Maya", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My name is Maya", sourceTurnId: "turn-2" });
+  assert.equal(greeting.reasonCode, "NAME_NOT_SELF_IDENTIFIED");
+  assert.equal(selfIdentified.ok, true);
+  assert.equal(user.profile.agentFacts.name.normalizedValue, "Maya");
+  assert.equal(user.profile.agentFacts.name.sourceTurnId, "turn-2");
+});
+
+test("CRM identity values and evidence pass the existing PII redaction before profile persistence", async () => {
+  const user = { profile: {} };
+  const store = { updateUser: async (_id, update) => { await update(user); } };
+  const result = await saveCustomerFact({ field: "email", value: "hasan@example.com", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My email is hasan@example.com", sourceTurnId: "turn-1" });
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(JSON.stringify(user.profile.agentFacts), /hasan@example\.com/);
 });
 
 test("saveCustomerFact rejects an invalid field name or an object value", async () => {
@@ -221,6 +293,9 @@ test("saveCustomerFact rejects an invalid field name or an object value", async 
   const badValue = await saveCustomerFact({ field: "companyActivity", value: { nested: true }, provenance: "customer_message" }, { store, userId: "u1" });
   assert.equal(badValue.ok, false);
   assert.equal(badValue.reasonCode, "INVALID_VALUE");
+
+  const unsupported = await saveCustomerFact({ field: "apiKey", value: "secret-value", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My apiKey is secret-value", sourceTurnId: "turn-1" });
+  assert.equal(unsupported.reasonCode, "UNSUPPORTED_CRM_FIELD");
 });
 
 test("proposeHandover refuses without granted consent and never persists", async () => {
@@ -298,6 +373,89 @@ test("lookupActiveOffer sends only its typed filter and emits a bounded approved
   assert.equal(found.modelObservation.records[0].currency, "EUR");
   assert.equal("id" in found.modelObservation.records[0], false);
   assert.equal("reviewer_email" in found.modelObservation.records[0], false);
+});
+
+test("M5 governance metadata remains separate from model prompt text and joins only by opaque chunk reference", async () => {
+  const store = { searchKnowledge: async () => [{
+    document_title: "Jurisdiction comparison",
+    heading: "Cyprus and Dubai",
+    content: "Approved comparison content.",
+    chunk_id: "chunk-j1",
+    review_status: "approved",
+    valid_until: "2026-12-31T00:00:00Z",
+    policyMetadata: {
+      topic: "jurisdiction-dubai",
+      facts: ["MB-J0", "MB-J1"],
+      factRegisterRows: ["MB-J0", "MB-J1"].map((id) => ({ id, status: "approved", reviewer: "BOSS", verifiedAt: "2026-10-01", effectiveFrom: "2026-01-01", expiryOrReviewAt: "2026-12-31", approvedLanguages: ["ar", "en", "el"] })),
+      reviewStatus: "approved",
+      validUntil: "2026-12-31T00:00:00Z"
+    }
+  }] };
+  const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null, language: "english" });
+  const [modelEvidence] = result.modelObservation.evidence;
+  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
+  assert.doesNotMatch(formatApprovedKnowledgeEvidence(result.modelObservation), /jurisdiction-dubai|MB-J1|BOSS|reviewer/i);
+  const observations = [{ result }];
+  const [policyEvidence] = collectApprovedKnowledgeEvidence(observations);
+  assert.equal(policyEvidence.review_status, "approved");
+  assert.deepEqual(policyEvidence.metadata.facts, ["MB-J0", "MB-J1"]);
+  assert.deepEqual(collectFactRegisterRows(observations).map((row) => row.id), ["MB-J0", "MB-J1"]);
+});
+
+test("fact-linked evidence is withheld unless every register row is approved, current, effective, and approved for the customer language", async () => {
+  const now = new Date();
+  const future = new Date(now.getTime() + 10 * 86400000).toISOString().slice(0, 10);
+  const past = new Date(now.getTime() - 10 * 86400000).toISOString().slice(0, 10);
+  const baseFact = { id: "MB-J1", status: "approved", verifiedAt: past, effectiveFrom: past, expiryOrReviewAt: future, approvedLanguages: ["en"] };
+  const makeRow = (fact, extra = {}) => ({
+    document_title: "Jurisdiction facts", heading: "Cyprus", content: "Fact-linked content must be gated.",
+    chunk_id: "chunk-fact", review_status: "approved", valid_until: future,
+    policyMetadata: { facts: ["MB-J1"], factRegisterRows: [fact], reviewStatus: "approved", validUntil: future },
+    ...extra
+  });
+  const cases = [
+    ["blocked status", { ...baseFact, status: "blocked" }, "english"],
+    ["pending status", { ...baseFact, status: "pending" }, "english"],
+    ["review date elapsed", { ...baseFact, expiryOrReviewAt: past }, "english"],
+    ["review date missing", { ...baseFact, expiryOrReviewAt: null }, "english"],
+    ["not yet effective", { ...baseFact, effectiveFrom: future }, "english"],
+    ["malformed effective date", { ...baseFact, effectiveFrom: "not-a-date" }, "english"],
+    ["customer language not approved", baseFact, "arabic"],
+    ["register row missing", null, "english"]
+  ];
+
+  for (const [label, fact, language] of cases) {
+    const store = { searchKnowledge: async () => [makeRow(fact)] };
+    const result = await searchApprovedKnowledge({ query: "Cyprus" }, { store, embedText: async () => null, language });
+    assert.deepEqual(result.modelObservation.evidence, [], label);
+    assert.equal(result.status, "no_evidence", label);
+  }
+
+  const approvedStore = { searchKnowledge: async () => [makeRow(baseFact)] };
+  const approved = await searchApprovedKnowledge({ query: "Cyprus" }, { store: approvedStore, embedText: async () => null, language: "english" });
+  assert.equal(approved.modelObservation.evidence.length, 1);
+});
+
+test("knowledge search filters finding aids and fact-linked chunks without changing unlinked approved evidence", async () => {
+  const store = { searchKnowledge: async () => [
+    { chunk_kind: "aliases", heading: "Finding aid", content: "Customer question aliases.", chunk_id: "aid-1", review_status: "approved" },
+    { metadata: { kind: "aliases" }, heading: "Legacy finding aid", content: "More aliases.", chunk_id: "aid-2", review_status: "approved" },
+    { heading: "Approved unlinked document", content: "Approved content without a fact-register link.", chunk_id: "free-1", review_status: "approved" }
+  ] };
+  const result = await searchApprovedKnowledge({ query: "services" }, { store, embedText: async () => null, language: "english" });
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["free-1"]);
+});
+
+test("raw row metadata cannot authorize M5 evidence when server enrichment is absent", async () => {
+  const store = { searchKnowledge: async () => [{
+    content: "Untrusted adapter row.", chunk_id: "chunk-raw", review_status: "approved",
+    metadata: { topic: "jurisdiction-dubai", facts: ["MB-J0", "MB-J1"] }
+  }] };
+  const result = await searchApprovedKnowledge({ query: "Dubai" }, { store, embedText: async () => null });
+  const observations = [{ result }];
+  const [evidence] = collectApprovedKnowledgeEvidence(observations);
+  assert.deepEqual(evidence.metadata, { topic: null, facts: [] });
+  assert.deepEqual(collectFactRegisterRows(observations), []);
 });
 
 test("lookupActiveOffer can safely discover current offers when the model lacks an exact code", async () => {

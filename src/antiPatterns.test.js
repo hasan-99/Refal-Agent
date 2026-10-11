@@ -185,6 +185,29 @@ test("AP-6: a hot lead may be offered a booking", () => {
   assert.ok(!ids(result).includes(ANTI_PATTERNS.UNREQUESTED_MEETING));
 });
 
+test("AP-7 suppresses benefit hooks at Hot and Strategic while leaving logistics available", () => {
+  const { HOOKS } = require("./salesHooks");
+  const hook = HOOKS.H1_IP_BOX.hints.en;
+  assert.ok(detectAntiPatterns({ answer: hook, leadTier: "hot" }).some((item) => item.reason === "sales_hook_suppressed_at_hot_tier"));
+  assert.ok(detectAntiPatterns({ answer: hook, leadTier: "strategic" }).some((item) => item.reason === "sales_hook_suppressed_at_hot_tier"));
+  assert.deepEqual(detectAntiPatterns({ answer: "Would you like a suitable appointment?", leadTier: "hot", customerMessage: "I want an appointment." }), []);
+});
+
+test("AP-7 catches paraphrased benefit hooks at Hot and Strategic", () => {
+  for (const answer of [
+    "A tax adviser could review Cyprus IP Box options for your software company.",
+    "We can also discuss tax advantages and residency options.",
+    "Your move may make international schools and GESY relevant.",
+    "Cyprus offers a favorable tax environment for software companies.",
+    "An IP holding structure may reduce the effective tax burden.",
+    "You could benefit from a lower corporate tax rate in Cyprus.",
+    "There may be advantages for your family in moving here, including healthcare and schools."
+  ]) {
+    assert.ok(detectAntiPatterns({ answer, leadTier: "hot" }).some((item) => item.id === ANTI_PATTERNS.HOT_TIER_HOOK), answer);
+    assert.ok(detectAntiPatterns({ answer, leadTier: "strategic" }).some((item) => item.id === ANTI_PATTERNS.HOT_TIER_HOOK), answer);
+  }
+});
+
 test("AP-6 fires in Arabic and Greek", () => {
   for (const answer of ["تحب نرتب لك موعد؟", "Θα θέλατε ένα ραντεβού;"]) {
     const result = detectAntiPatterns({ answer, customerMessage: "What do you do?", leadTier: "cold" });
@@ -204,8 +227,8 @@ test("a clean, well-formed reply commits no anti-pattern", () => {
   assert.deepEqual(result, []);
 });
 
-test("all six anti-patterns are defined and can fire", () => {
-  assert.deepEqual(Object.values(ANTI_PATTERNS).sort(), ["AP-1", "AP-2", "AP-3", "AP-4", "AP-5", "AP-6"]);
+test("all seven anti-pattern guards are defined and can fire", () => {
+  assert.deepEqual(Object.values(ANTI_PATTERNS).sort(), ["AP-1", "AP-2", "AP-3", "AP-4", "AP-5", "AP-6", "AP-7"]);
 });
 
 test("empty input never crashes", () => {

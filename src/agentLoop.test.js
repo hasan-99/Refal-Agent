@@ -35,6 +35,40 @@ test("a zero-question respond decision is valid: the customer's request is alrea
   assert.equal(result.stepCount, 1);
 });
 
+test("the pre-send gate rejects questions about already known customer facts and regenerates", async () => {
+  const context = buildAgentContext({
+    currentMessage: "Can you explain the next steps?",
+    locale: "english",
+    knownCustomerFacts: { countryOfResidence: "Jordan", investmentBudget: "EUR 250,000" }
+  });
+  const decide = scriptedDecider([
+    { type: "clarify", text: "Which country do you live in?" },
+    { type: "respond", text: "Let's continue with the next steps for your request." }
+  ]);
+  const result = await runAgentTurn(context, { decideNextStep: decide, tools: {} });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 2);
+  assert.equal(result.steps[0].result.reasonCode, "never_reask:countryOfResidence");
+  assert.match(result.response, /next steps/i);
+});
+
+test("the pre-send gate permits clarification when stored facts are inferred or conflict", async () => {
+  const context = buildAgentContext({
+    currentMessage: "Tell me what you have recorded.",
+    locale: "english",
+    knownCustomerFacts: {
+      countryOfResidence: { value: "Jordan", provenance: "derived_from_customer_message", confidence: 0.99, inferred: true },
+      investmentBudget: { value: "EUR 250,000", provenance: "customer_message", confidence: 0.95, correctionNeeded: true }
+    }
+  });
+  const result = await runAgentTurn(context, {
+    decideNextStep: scriptedDecider([{ type: "clarify", text: "Which country do you live in?" }]),
+    tools: {}
+  });
+  assert.equal(result.outcome, "clarified");
+  assert.match(result.response, /country/i);
+});
+
 test("a tool call is executed, observed, and the loop continues for a second decision", async () => {
   let searchArgs = null;
   const tools = {

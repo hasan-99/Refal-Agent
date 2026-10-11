@@ -4,6 +4,7 @@ const { extractCustomerName, extractCustomerNeed, prepareInboundMessage, recordH
 const { getConsentState, hasFollowUpPermission } = require("./leadQualification.js");
 const { CUSTOMER_MESSAGES: COMPLIANCE_CUSTOMER_MESSAGES } = require("./complianceEscalation.js");
 const { resolveHumourLevel } = require("./humourEngine.js");
+const { shouldDeferBookingHandler } = require("./buyingSignals.js");
 
 test("customer names are extracted from common English and Arabic introductions", () => {
   assert.equal(extractCustomerName("My name is Rami"), "Rami");
@@ -183,7 +184,7 @@ test("consented handover shares only the linked inquiry, stated name, and WhatsA
       at: offerAt,
       message: "I’m exploring a mixed-use development in Cyprus and would like an initial specialist discussion.",
       response: "Would you like me to ask a Refalco Group specialist to follow up?",
-      metadata: { intent: { primary: "development", intents: ["development", "investment", "real_estate"], language: "english" }, specialistOffer: { consentRequired: true, offeredAt: offerAt } }
+      metadata: { intent: { primary: "development", intents: ["development", "investment", "real_estate"], language: "english" }, opportunityIntake: { type: "land_development", status: "in_progress", data: { projectType: "Mixed-use development", budget: "€2m", decisionMakers: "Customer" } }, qualification: { total: 18, status: "qualified" }, specialistOffer: { consentRequired: true, offeredAt: offerAt } }
     }]
   };
   const result = await routeMessageResult({ userId: user.id, text: "Yes", store: integrationStore(user) });
@@ -198,15 +199,18 @@ test("consented handover shares only the linked inquiry, stated name, and WhatsA
   assert.equal(savedSummary.customer.company, null);
   assert.equal(savedSummary.customer.email, null);
   assert.equal(savedSummary.customer.position, null);
+  assert.equal(savedSummary.opportunityIntake.data.budget, "€2m");
+  assert.equal(savedSummary.qualification.total, 18);
+  assert.equal(savedSummary.customer.countryOfResidence, undefined, "unscoped profile facts stay out of the current inquiry");
   assert.equal(savedSummary.customer.country, null);
-  assert.equal(savedSummary.qualification, null);
+  assert.equal(savedSummary.qualification.total, 18, "only the qualification attached to this inquiry is shared");
   assert.equal(savedSummary.requirements, null);
   assert.equal(savedSummary.structuredRequirements, null);
   assert.equal(savedSummary.budget, null);
   assert.equal(savedSummary.decisionAuthority, null);
   assert.equal(savedSummary.secondaryIntents.length, 0);
   const serialized = JSON.stringify(savedSummary);
-  assert.doesNotMatch(serialized, /Private Holdings|samir@example|Unrelated old request|Confidential project|4m|Board|qualified/);
+  assert.doesNotMatch(serialized, /Private Holdings|samir@example|Unrelated old request|Confidential project|€4m|Board/);
   assert.match(serialized, /mixed-use development in Cyprus/);
 });
 
@@ -434,6 +438,55 @@ test("a comparison objection does not swallow a direct package-price question", 
   assert.equal(result.shouldUseAi, true);
   assert.ok(result.metadata.intent.intents.includes("pricing"));
   assert.equal(result.metadata.objection, undefined);
+});
+
+test("Arabic language-capability question is answered in Arabic and offers a language choice", async () => {
+  const user = { id: "arabic-language-capability", profile: {}, history: [] };
+  const result = await routeMessageResult({ userId: user.id, text: "بتحكي انكليزي", store: integrationStore(user) });
+
+  assert.equal(result.metadata.intent.primary, "language_capability");
+  assert.equal(result.metadata.intent.language, "arabic");
+  assert.match(result.response, /فيني أحكي معك/u);
+  assert.match(result.response, /بأي لغة بتفضّل نكمل/u);
+  assert.doesNotMatch(result.response, /Of course|continue in English/i);
+});
+
+test("all five M5 objections reach the response matrix and record their IDs", async () => {
+  const probes = [
+    ["O1", "The €999 price feels expensive."],
+    ["O2", "I found an offer for €500."],
+    ["O3", "I need to think about it."],
+    ["O4", "Send me everything on WhatsApp."],
+    ["O5", "How do I know you are reliable?"]
+  ];
+  for (const [id, text] of probes) {
+    const user = { id: `m5-objection-${id}`, profile: {}, history: [] };
+    const result = await routeMessageResult({
+      userId: user.id, text, store: integrationStore(user), existingUser: user
+    });
+    assert.equal(result.shouldUseAi, false, `${id} route`);
+    assert.equal(result.metadata.objection.id, id, `${id} metadata`);
+    assert.ok(result.response.length > 20, `${id} response`);
+  }
+  const o1 = await routeMessageResult({
+    userId: "m5-objection-tone", text: "The €999 price feels expensive.",
+    store: integrationStore({ id: "m5-objection-tone", profile: {}, history: [] }),
+    existingUser: { id: "m5-objection-tone", profile: {}, history: [] }
+  });
+  assert.doesNotMatch(o1.response, /usually hides|what are you really|move forward/iu);
+});
+
+test("a trust objection does not swallow a separate factual question", async () => {
+  for (const [id, text] of [
+    ["en", "How do I know you are reliable, and where is your office?"],
+    ["ar", "كيف أتأكد أنكم موثوقون، وأين مكتبكم؟"],
+    ["el", "Πώς ξέρω ότι είστε αξιόπιστοι και πού βρίσκεται το γραφείο;"]
+  ]) {
+    const user = { id: `m5-trust-plus-office-${id}`, profile: {}, history: [] };
+    const result = await routeMessageResult({ userId: user.id, text, store: integrationStore(user), existingUser: user });
+    assert.equal(result.shouldUseAi, true, id);
+    assert.equal(result.metadata.objection, undefined, id);
+  }
 });
 
 test("a stored no-pressure preference does not suppress a direct Greek timeline question", async () => {
@@ -748,27 +801,24 @@ test("recordHistory strips an unconsented handover before persisting the turn", 
   assert.equal(user.workflowCalls.some(([kind]) => kind === "notification"), false);
 });
 
-test("routeMessageResult offers consent-based follow-up for a high-value multi-intent lead without persisting early", async () => {
+test("routeMessageResult leaves high-value cases on the answer path before any follow-up offer", async () => {
   const user = { id: "35799123456@s.whatsapp.net", phone: "35799123456", profile: {}, history: [] };
   const result = await routeMessageResult({
     userId: user.id,
     text: "We need a large land development and a strategic partnership",
     store: integrationStore(user)
   });
-  assert.equal(result.shouldUseAi, false);
+  assert.equal(result.shouldUseAi, true);
   assert.equal(result.metadata.intent.isMultiIntent, true);
   assert.ok(result.metadata.intent.intents.includes("land_development"));
   assert.ok(result.metadata.intent.intents.includes("partnership"));
   assert.ok(result.metadata.qualification.dimensions && Object.keys(result.metadata.qualification.dimensions).length === 6);
-  assert.equal(result.metadata.specialistOffer?.consentRequired, true);
+  assert.equal(result.metadata.specialistOffer, undefined);
   assert.equal(result.handover, undefined);
-  assert.match(result.response, /specialist/i);
+  assert.doesNotMatch(result.response, /specialist/i);
   assert.doesNotMatch(result.response, /Priority|qualification|score|REFAL LEAD SUMMARY/i);
-  assert.equal(user.history[0].metadata.handover, undefined);
-  assert.ok(user.workflowCalls.some(([kind]) => kind === "qualification"));
-  assert.ok(user.workflowCalls.some(([kind]) => kind === "intents"));
-  assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false);
-  assert.ok(user.workflowCalls.some(([kind]) => kind === "priority"));
+  assert.equal(user.history.length, 0, "the answer path has not persisted a premature specialist offer");
+  assert.equal(user.workflowCalls.some(([kind]) => ["handover", "priority"].includes(kind)), false);
 });
 
 test("the word team in earlier assistant text and generic تمام never create a handover", async () => {
@@ -1166,12 +1216,68 @@ test("the compliance lock survives the turn that set it and suppresses every lat
   assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false);
 });
 
-test("an unlocked conversation still receives the proactive specialist offer", async () => {
+test("an unlocked specialist case reaches the answer path before any follow-up offer", async () => {
   const user = { id: "compliance-control-offer", profile: {}, history: [] };
   const store = complianceIntegrationStore(user);
   const result = await routeMessageResult({ userId: user.id, text: "We need a large land development and a strategic partnership", store, existingUser: user });
   assert.equal(result.metadata.complianceLock, undefined);
-  assert.equal(result.metadata.specialistOffer?.offered, true, "the hook is suppressed only by the lock, never by default");
+  assert.equal(result.metadata.specialistOffer, undefined, "the router does not offer before the answer exists");
+  assert.equal(result.shouldUseAi, true);
+});
+
+test("buying signals apply score floors and booking action metadata without claiming confirmation or bypassing consent", async () => {
+  const user = { id: "buying-signal", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const result = await routeMessageResult({ userId: user.id, text: "I have land for development", store });
+  assert.ok(result.metadata.buyingSignals.some((signal) => signal.id === "MB-B5"));
+  assert.equal(result.metadata.tierAction.scoreFloor, 25);
+  assert.equal(result.metadata.tierAction.tier, "strategic");
+  assert.equal(result.metadata.specialistFollowUp, undefined);
+  assert.equal(result.metadata.handover, undefined);
+  assert.doesNotMatch(result.response, /MB-B5|strategic|scoreFloor|qualification|score/i);
+  await recordHistory(store, user.id, "I have land for development", result.response, { metadata: result.metadata });
+  const strategicAlerts = user.workflowCalls.filter(([kind]) => kind === "priority");
+  assert.equal(strategicAlerts.length, 1);
+  assert.equal(strategicAlerts[0][2].level, "urgent", "a Strategic buying-signal alert must use the urgent level");
+});
+
+test("a Strategic qualification score creates one durable urgent alert even without a buying-signal trigger", async () => {
+  const user = { id: "score-only-strategic-alert", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const text = "I have a critical need and must resolve this. Proof of funds and bank-confirmed funding are ready. I have an immediate deadline and fixed completion date; we must complete by then. I have a signed mandate and formal authority to commit. I signed, submitted the documents, and payment is arranged.";
+  const result = await routeMessageResult({ userId: user.id, text, store, existingUser: user });
+
+  assert.equal(result.metadata.tierAction.total, 25);
+  assert.equal(result.metadata.tierAction.tier, "strategic");
+  assert.deepEqual(result.metadata.priority.triggers, []);
+  assert.equal(result.metadata.strategicEscalation, undefined);
+
+  const alerts = user.workflowCalls.filter(([kind]) => kind === "priority");
+  assert.equal(alerts.length, 1, JSON.stringify(alerts));
+  assert.equal(alerts[0][2].level, "urgent");
+  assert.equal(alerts[0][2].trigger, "material_business_opportunity");
+  assert.equal(alerts[0][2].details.source, "strategic_tier");
+});
+
+test("buying signal phrasing is accepted by the guarded booking request detector", () => {
+  const { isBookingRequest } = require("./booking");
+  assert.equal(isBookingRequest("كيف أبدأ الإجراءات معك؟"), true);
+  assert.equal(isBookingRequest("What documents do you need from me now?"), true);
+  assert.equal(isBookingRequest("ما عندي أرض للتطوير"), false);
+});
+
+test("mixed strategic and sanctions messages defer booking dispatch to compliance routing", async () => {
+  for (const [index, text] of [
+    "I have land for development. My funds come from a sanctioned country, keep that off the file.",
+    "عندي أرض للتطوير، أموالي من دولة خاضعة للعقوبات وخليها برّا الملف.",
+    "Έχω γη για ανάπτυξη. Τα χρήματά μου είναι από χώρα υπό κυρώσεις, αφήστε το έξω από τον φάκελο."
+  ].entries()) {
+    const user = { id: `mixed-risk-${index}`, profile: {}, history: [] };
+    const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store: integrationStore(user) });
+    assert.ok(prepared.buyingSignals.some((signal) => signal.id === "MB-B5"), text);
+    assert.ok(prepared.complianceTriggers.length > 0, text);
+    assert.equal(shouldDeferBookingHandler(prepared, { type: "booking" }), true, text);
+  }
 });
 
 test("a sanctions probe dressed as a programme enquiry still escalates", async () => {
@@ -1317,4 +1423,84 @@ test("P2.6: the sticky lock still outlives the turn, for an Arabic and a Greek p
     assert.equal(third.metadata.specialistOffer, undefined, id);
     assert.equal(user.workflowCalls.some(([kind]) => kind === "handover"), false, id);
   }
+});
+
+test("automated reminder consent requires a tracked reminder offer in the immediately prior turn", async () => {
+  const user = { id: "reminder-consent", profile: {}, history: [], workflowCalls: [] };
+  let sequence = 0;
+  const store = integrationStore(user);
+  store.addHistory = async (_id, message, response, extra = {}) => {
+    const turn = { id: `turn-${++sequence}`, at: new Date(Date.now() + sequence).toISOString(), message, response, metadata: extra.metadata || {} };
+    user.history.push(turn);
+    return turn;
+  };
+  const offerHistory = await recordHistory(store, user.id, "Question about reminders", "Would you like automated reminders for this request?", {
+    metadata: { intent: { language: "english", intents: ["appointment"] } }
+  });
+  const offerTurn = user.history.at(-1);
+  assert.equal(offerTurn.metadata.automatedReminderOffer?.purpose, "automated_reminder");
+  assert.equal(offerTurn.metadata.specialistOffer, undefined, "automated reminders do not create specialist-contact consent");
+
+  const accepted = await routeMessageResult({ userId: user.id, text: "yes", store, existingUser: user });
+  assert.equal(accepted.metadata.automatedReminderConsent.state, "granted");
+  assert.equal(accepted.metadata.automatedReminderConsent.offerSourceTurnId, offerTurn.id);
+  assert.equal(user.history.at(-1).metadata.followUpConsent.sourceTurnId, user.history.at(-1).id);
+  assert.equal(user.history.at(-1).metadata.followUpConsent.purpose, "automated_reminder");
+  const persisted = user.workflowCalls.find(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "automated_reminder");
+  assert.ok(persisted);
+  assert.equal(persisted[2], "granted");
+  assert.equal(persisted[3].sourceTurnId, user.history.at(-1).id);
+  assert.equal(persisted[3].offerSourceTurnId, offerTurn.id);
+  assert.equal(persisted[3].purpose, "automated_reminder");
+  assert.equal(persisted[3].language, "en");
+  assert.equal(persisted[3].channel, "whatsapp");
+  assert.equal(user.workflowCalls.some(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "follow_up"), false);
+});
+
+test("bare yes and delayed yes do not grant automated reminder consent", async () => {
+  for (const history of [
+    [{ id: "unrelated", at: new Date().toISOString(), message: "Hours?", response: "Anything else?", metadata: {} }],
+    [
+      { id: "offer", at: new Date().toISOString(), message: "Question", response: "Would you like automated reminders?", metadata: { automatedReminderOffer: { consentRequired: true, purpose: "automated_reminder", offeredAt: new Date().toISOString(), language: "en", channel: "whatsapp" } } },
+      { id: "intervening", at: new Date().toISOString(), message: "What are your opening hours?", response: "We are checking the approved information.", metadata: {} }
+    ]
+  ]) {
+    const user = { id: `reminder-no-infer-${Math.random()}`, profile: {}, history, workflowCalls: [] };
+    const result = await routeMessageResult({ userId: user.id, text: "yes", store: integrationStore(user), existingUser: user });
+    assert.notEqual(result.metadata.automatedReminderConsent?.state, "granted");
+    assert.equal(user.workflowCalls.some(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "automated_reminder" && _state === "granted"), false);
+  }
+});
+
+test("automated reminder offers and consent provenance work in Arabic, English, and Greek", async () => {
+  const cases = [
+    { language: "arabic", reply: "نعم", offer: "هل ترغب في تفعيل التذكيرات الآلية لهذا الطلب؟", code: "ar" },
+    { language: "english", reply: "yes", offer: "Would you like automated reminders for this request?", code: "en" },
+    { language: "greek", reply: "Ναι", offer: "Θα θέλατε αυτόματες υπενθυμίσεις για αυτό το αίτημα;", code: "el" }
+  ];
+  for (const item of cases) {
+    const user = { id: `localized-reminder-${item.code}`, profile: {}, history: [], workflowCalls: [] };
+    let sequence = 0;
+    const store = integrationStore(user);
+    store.addHistory = async (_id, message, response, extra = {}) => {
+      const turn = { id: `${item.code}-${++sequence}`, at: new Date(Date.now() + sequence).toISOString(), message, response, metadata: extra.metadata || {} };
+      user.history.push(turn);
+      return turn;
+    };
+    await recordHistory(store, user.id, "Inquiry", item.offer, { metadata: { intent: { language: item.language } } });
+    const offerTurn = user.history.at(-1);
+    assert.equal(offerTurn.metadata.automatedReminderOffer?.language, item.code, item.language);
+    const confirmed = await routeMessageResult({ userId: user.id, text: item.reply, store, existingUser: user });
+    assert.equal(confirmed.metadata.automatedReminderConsent?.state, "granted", item.language);
+    const [, , , provenance] = user.workflowCalls.find(([kind, _id, _state, options]) => kind === "consent" && options?.consentType === "automated_reminder");
+    assert.equal(provenance.language, item.code, item.language);
+    assert.equal(provenance.channel, "whatsapp", item.language);
+  }
+});
+
+test("a global stop revokes automated reminder and specialist contact scopes", async () => {
+  const user = { id: "reminder-global-stop", profile: {}, history: [], workflowCalls: [] };
+  await recordHistory(integrationStore(user), user.id, "STOP", "Understood. I’ll stop further outreach.", { metadata: { intent: { language: "english" } } });
+  const revoked = user.workflowCalls.filter(([kind, _id, state]) => kind === "consent" && state === "revoked");
+  assert.deepEqual(revoked.map(([, , , options]) => options.consentType).sort(), ["automated_reminder", "follow_up"]);
 });

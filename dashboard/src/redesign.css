@@ -382,19 +382,31 @@ tbody tr:hover { background: #f6faf8; }
 .knowledge-search > div { display: flex; gap: 7px; }
 .knowledge-search-add { flex: 0 0 auto; white-space: nowrap; }
 .knowledge-search input { flex: 1; }
+.knowledge-language-preview { grid-column: 1 / -1; }
+.knowledge-language-preview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px; }
+.knowledge-language-preview-grid input { min-width: 0; }
+.knowledge-language-results { margin: 16px 0; }
+.knowledge-language-result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.knowledge-language-result-grid > article { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; overflow-wrap: anywhere; }
+.knowledge-language-result-grid h3 { margin: 0 0 8px; color: #173a50; font-size: 14px; }
+.knowledge-language-result-grid section { padding: 10px 0; border-top: 1px solid var(--line); }
+.knowledge-language-result-grid section p, .knowledge-preview-query { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.knowledge-language-result-grid section small { color: var(--muted); }
+.knowledge-archive-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+.knowledge-archive-actions button { color: #8d3030; }
 .knowledge-layout { min-width: 0; display: grid; grid-template-columns: minmax(250px, .72fr) minmax(0, 1.6fr); align-items: start; gap: 14px; }
 .knowledge-sources, .knowledge-detail { min-width: 0; }
 .knowledge-add { padding-bottom: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
 .knowledge-add input { width: 100%; }
 .knowledge-add button { justify-self: start; }
 .knowledge-add > small { color: var(--muted); font-size: 9px; line-height: 1.45; }
-.knowledge-source-list { margin-top: 14px; display: grid; }
-.knowledge-source { width: 100%; min-height: 63px; padding: 10px; display: grid; align-content: center; gap: 6px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: white; text-align: left; }
+.knowledge-source-list { min-width: 0; margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1fr); }
+.knowledge-source { width: 100%; min-width: 0; min-height: 63px; padding: 10px; display: grid; grid-template-columns: minmax(0, 1fr); align-content: center; gap: 6px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: white; text-align: left; }
 .knowledge-source.selected { color: #155e7a; background: #eef7fb; box-shadow: inset 3px 0 #328db8; }
-.knowledge-source-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.knowledge-source-top { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .knowledge-source-top strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; text-align: start; unicode-bidi: plaintext; }
 .knowledge-source small { color: var(--muted); font-size: 10px; }
-.knowledge-source-preview { display: -webkit-box; overflow: hidden; color: #758792; font-size: 10px; line-height: 1.45; text-align: start; unicode-bidi: plaintext; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.knowledge-source-preview { min-width: 0; display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; color: #758792; font-size: 10px; line-height: 1.45; text-align: start; unicode-bidi: plaintext; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .knowledge-url { display: block; margin: -7px 0 12px; overflow-wrap: anywhere; font-size: 11px; }
 .knowledge-controls { display: flex; flex-wrap: wrap; gap: 14px; padding: 11px 0; border-block: 1px solid var(--line); }
 .knowledge-controls label, .booking-days label, .booking-confirm-duration { display: flex; align-items: center; gap: 7px; color: #516269; font-size: 11px; }
@@ -433,6 +445,11 @@ input[type="checkbox"] { accent-color: #16836f; }
 .knowledge-revision-head > div { min-width: 0; display: grid; gap: 4px; }
 .knowledge-revision-head strong { font-size: 12px; }
 .knowledge-revision-head small { color: var(--muted); font-size: 10px; }
+.knowledge-review-source { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.knowledge-review-evidence { margin-top: 8px; padding: 9px 10px; border-left: 3px solid #9bb6c5; background: #f5f8fa; color: #52636a; font-size: 10px; line-height: 1.5; }
+.knowledge-review-evidence p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.badge.pending { color: #795b22; background: #fbf2dc; }
+.badge.rejected { color: #a84039; background: #f9e9e7; }
 .knowledge-revision-content { max-height: 340px; margin: 9px 0 2px; padding: 12px; overflow: auto; border: 1px solid #e2e9ed; border-radius: 7px; background: #fafcfd; color: #40545f; font-size: 12px; line-height: 1.65; text-align: start; unicode-bidi: plaintext; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-gutter: stable; }
 .knowledge-entry-actions { padding-top: 7px; display: flex; justify-content: flex-end; gap: 7px; }
 .knowledge-entry-actions button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; font-size: 10px; }
@@ -452,7 +469,8 @@ input[type="checkbox"] { accent-color: #16836f; }
 .knowledge-delete-dialog-actions .knowledge-delete-confirm-button:hover:not(:disabled) { border-color: #8d3030; background: #8d3030; }
 .knowledge-delete-spinner { width: 13px; height: 13px; border: 2px solid rgb(255 255 255 / 45%); border-top-color: #fff; border-radius: 50%; animation: knowledge-spin .75s linear infinite; }
 @keyframes knowledge-spin { to { transform: rotate(360deg); } }
-.knowledge-review-actions { display: flex; gap: 7px; }
+.knowledge-review-actions { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 7px; }
+.knowledge-review-actions > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .knowledge-result-list { display: grid; gap: 9px; }
 .knowledge-result-list article { padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8faf9; }
 .knowledge-result-list strong { font-size: 11px; }
@@ -491,6 +509,10 @@ input[type="checkbox"] { accent-color: #16836f; }
 .booking-policy-actions span { color: var(--muted); font-size: 11px; }
 .booking-policy-actions .calendar-check-success { color: #246d92; }
 .booking-policy-actions .calendar-check-error { color: #a13f3a; }
+.calendar-oauth-setup { display: grid; gap: 8px; margin: 12px 0 18px; padding: 13px; border: 1px solid #d7e4eb; border-radius: 6px; background: #f7fafc; }
+.calendar-oauth-setup textarea { width: 100%; min-height: 100px; padding: 9px; resize: vertical; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.calendar-oauth-setup small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.calendar-oauth-setup a { color: #246d92; font-size: 11px; font-weight: 700; }
 .booking-contact, .booking-time { display: grid; gap: 3px; }
 .booking-contact strong, .booking-time strong { font-size: 11px; }
 .booking-contact small, .booking-time small { color: var(--muted); font-size: 10px; }
@@ -625,6 +647,7 @@ input[type="checkbox"] { accent-color: #16836f; }
   .knowledge-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .knowledge-search { grid-column: 1 / -1; }
   .knowledge-search > div { align-items: stretch; flex-direction: column; }
+  .knowledge-language-preview-grid, .knowledge-language-result-grid { grid-template-columns: minmax(0, 1fr); }
   .lead-command { flex-wrap: wrap; gap: 9px; }
   .lead-command .mini-stat { min-width: 75px; }
   .lead-command-copy { flex-basis: 100%; margin: 4px 0 0; padding: 9px 0 0; border-top: 1px solid var(--line); border-left: 0; }
@@ -818,6 +841,10 @@ input[type="checkbox"] { accent-color: #328db8; }
 .booking-empty-action:hover { border-color: #8fb8cd; background: #eaf5fa; }
 .booking-readiness { border-color: #d4e3eb; background: #f4f9fc; }
 .booking-readiness-icon { color: #287da8; background: #e5f2f8; }
+.booking-readiness.is-ready { border-color: #cce3d7; background: #f3faf6; }
+.booking-readiness.is-ready .booking-readiness-icon { color: #17694f; background: #e3f3ea; }
+.booking-readiness.is-blocked { border-color: #ead8bb; background: #fffaf1; }
+.booking-readiness.is-blocked .booking-readiness-icon { color: #98621e; background: #f8ecd6; }
 
 .agent-rail:not(.collapsed) {
   border-color: #d5e2e9;

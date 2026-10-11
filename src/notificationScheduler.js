@@ -59,9 +59,20 @@ function createMailer(env = process.env) {
   });
 }
 
-async function runNotificationCheck({ store, socket, mailerFactory = createMailer, env = process.env, now = new Date(), logEvent = () => {} }) {
-  if (!store.claimDueNotifications || !store.updateNotification || !store.getAppointment) throw new Error("Supabase notification outbox methods are unavailable.");
-  const jobs = await store.claimDueNotifications(25);
+async function runNotificationCheck({ store, socket, mailerFactory = createMailer, env = process.env, now = new Date(), logEvent = () => {}, notificationId = "", testRunId = "" }) {
+  if (!store.updateNotification || !store.getAppointment) throw new Error("Supabase notification outbox methods are unavailable.");
+  let jobs;
+  if (notificationId) {
+    if (!store.claimNotificationById) throw new Error("Isolated notification claiming is unavailable.");
+    if (!testRunId) throw new Error("A P6.5 test run ID is required for isolated notification claiming.");
+    jobs = await store.claimNotificationById(notificationId, testRunId);
+  } else {
+    if (!store.claimDueNotifications) throw new Error("Supabase notification batch claiming is unavailable.");
+    jobs = await store.claimDueNotifications(25);
+  }
+  if (notificationId && (jobs.length > 1 || jobs.some((job) => job.id !== notificationId || job.kind !== "handover_review" || job.payload?.p65TestRunId !== testRunId))) {
+    throw new Error("Isolated notification claim returned a job outside the requested P6.5 test.");
+  }
   let sent = 0;
   for (const job of jobs) {
     try {
@@ -69,6 +80,14 @@ async function runNotificationCheck({ store, socket, mailerFactory = createMaile
         const appointment = await store.getAppointment(job.appointment_id);
         if (!appointment || (job.expected_appointment_status && appointment.status !== job.expected_appointment_status)) {
           await store.updateNotification(job.id, { status: "cancelled", lastError: "Appointment changed before notification delivery." });
+          continue;
+        }
+      }
+      if (job.kind === "handover_review") {
+        if (typeof store.getHandoverStatus !== "function") throw new Error("Handover status verification is unavailable.");
+        const handover = await store.getHandoverStatus(job.handover_id);
+        if (!handover || !["open", "acknowledged"].includes(handover.status)) {
+          await store.updateNotification(job.id, { status: "cancelled", lastError: "Handover closed before notification delivery." });
           continue;
         }
       }
@@ -118,7 +137,11 @@ async function runNotificationCheck({ store, socket, mailerFactory = createMaile
       const retryMinutes = Math.min(60, 5 * (2 ** Math.max(0, attempts - 1)));
       const lastError = safeText(error?.message || "Notification delivery failed.", 500);
       try {
-        await store.updateNotification(job.id, dead ? { status: "dead", lastError } : {
+        // SMTP errors and database failures can be ambiguous: the provider may
+        // have accepted a message even when this worker did not receive or
+        // persist confirmation. P6.5 runs are one-shot and fail closed rather
+        // than automatically risking a duplicate email.
+        await store.updateNotification(job.id, notificationId ? { status: "dead", lastError } : dead ? { status: "dead", lastError } : {
           status: "failed", lastError,
           nextAttemptAt: new Date(now.getTime() + retryMinutes * 60000).toISOString()
         });

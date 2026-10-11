@@ -33,6 +33,7 @@ const { detectMessageLanguage } = require("./language");
 // telemetry helper; reusing it here does not change its own behavior or
 // make it a gate on its own — only this file's use of its return value gates.
 const { languageSignalsFrom } = require("./agentObservability");
+const { findRepeatedQuestion } = require("./neverReAsk");
 
 const DEFAULT_MAX_STEPS = 4;
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -86,11 +87,11 @@ function correctTooManyQuestions(text) {
   return match ? match[0].trim() : null;
 }
 
-function attemptDeterministicCorrection(text, policy, thresholds) {
+function attemptDeterministicCorrection(text, policy, thresholds, context = {}) {
   if (policy.reasons.length !== 1 || policy.reasons[0] !== "too_many_questions") return null;
   const corrected = correctTooManyQuestions(text);
   if (!corrected) return null;
-  const recheck = validateResponse(corrected, thresholds);
+  const recheck = validateResponse(corrected, { ...thresholds, customerMessage: context.currentMessage });
   return recheck.valid ? recheck.text : null;
 }
 
@@ -136,8 +137,10 @@ function checkLanguageEquivalence(text, locale) {
 // so neither is ever mistaken for one the mechanical correction knows how to
 // fix — both only ever go through retry-then-fallback, never a silent text edit.
 function checkDraftPolicy(text, thresholds, observations, locale, context = {}) {
-  const policy = validateResponse(text, thresholds);
+  const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage });
   if (!policy.valid) return policy;
+  const repeatedFields = findRepeatedQuestion(text, context.knownCustomerFacts);
+  if (repeatedFields.length) return { ...policy, valid: false, reasons: repeatedFields.map((field) => `never_reask:${field}`) };
   const conflicts = resolveObservationConflicts(context, observations);
   const evidenceItems = collectApprovedKnowledgeEvidence(observations)
     .filter((item) => !item.sourceRef || !conflicts.staleRefs.has(item.sourceRef));
@@ -198,10 +201,10 @@ function checkDraftPolicy(text, thresholds, observations, locale, context = {}) 
 //   tools: { [name]: { run(args, toolContext) } }       -- the deterministic tool registry
 //   toolContext: extra data (store, user, etc.) passed through to every tool.run call
 //   maxSteps: bounded step budget, default 4 (never unlimited)
-async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS } = {}) {
+async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [] } = {}) {
   if (typeof decideNextStep !== "function") throw new Error("runAgentTurn requires a decideNextStep function.");
-  const observations = [];
-  const toolsUsed = [];
+  const observations = Array.isArray(initialObservations) ? [...initialObservations] : [];
+  const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
 
   for (let step = 1; step <= maxSteps; step += 1) {
     let rawDecision;
@@ -241,7 +244,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
         result = { ok: false, status: "error", reasonCode: "TOOL_THREW", message: String(error?.message || error).slice(0, 200) };
       }
       observations.push({ step, tool: validated.tool, args: validated.args, result });
-      toolsUsed.push(validated.tool);
+      if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
       continue;
     }
 
@@ -249,7 +252,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
       const thresholds = MODEL_DRAFT_THRESHOLDS;
       const policy = checkDraftPolicy(validated.text, thresholds, observations, context?.locale, context);
       if (!policy.valid) {
-        const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds);
+        const corrected = attemptDeterministicCorrection(validated.text, policy, thresholds, context);
         if (corrected) {
           return { finished: true, outcome: "responded", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
@@ -275,7 +278,7 @@ async function runAgentTurn(context, { decideNextStep, tools = {}, toolContext =
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
     const policy = checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context);
     if (!policy.valid) {
-      const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds);
+        const corrected = attemptDeterministicCorrection(validated.text, policy, clarifyThresholds, context);
       if (corrected) {
         return { finished: true, outcome: "clarified", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
       }

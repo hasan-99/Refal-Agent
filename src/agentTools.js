@@ -14,6 +14,7 @@ const { createHandover } = require("./handover");
 const { getConversationState } = require("./conversationState");
 const { ok, fail } = require("./agentToolResult");
 const { getBookingAvailability, requestBookingAction } = require("./agentBookingTools");
+const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate } = require("./crmProfile");
 
 const DYNAMIC_READS = Object.freeze({
   lookupActiveOffer: { kind: "offers", fields: ["code"] },
@@ -122,6 +123,10 @@ function dynamicRecord(kind, row) {
   }
   const shared = {
     kind,
+    // `lookupDynamic()` has already required `row.active === true`; expose
+    // that verified state so downstream policy consumers do not have to infer
+    // it from omitted source columns.
+    active: true,
     location: trimString(row.location, 40),
     currency: trimString(row.currency, 3),
     vatTreatment: trimString(row.vat_note || row.vat_rate_note),
@@ -388,6 +393,55 @@ function safeField(value, max) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
 }
 
+const BRAIN_FACT_ID = /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u;
+const KNOWLEDGE_LANGUAGES = Object.freeze({ arabic: "ar", english: "en", greek: "el" });
+
+function knowledgeLanguageCode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return KNOWLEDGE_LANGUAGES[normalized] || (Object.hasOwn({ ar: true, en: true, el: true }, normalized) ? normalized : null);
+}
+
+function dateOnly(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(value.trim());
+  if (match) return match[1];
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : null;
+}
+
+// Fact-linked chunks require a complete, current register record for every
+// linked fact before they can reach the Agent model. A document-level approval
+// is not enough because the register can independently block or expire one
+// fact inside an otherwise approved document.
+function factLinkedChunkIsCurrent(row, language, now = new Date()) {
+  const kind = row?.chunk_kind ?? row?.chunkKind ?? row?.metadata?.kind;
+  if (String(kind || "") === "aliases") return false;
+
+  const metadata = row?.policyMetadata;
+  const factIds = Array.isArray(metadata?.facts) ? metadata.facts : [];
+  if (!factIds.length) return true;
+
+  const languageCode = knowledgeLanguageCode(language);
+  if (!languageCode) return false;
+  const registerRows = Array.isArray(metadata?.factRegisterRows) ? metadata.factRegisterRows : [];
+  const rowsById = new Map(registerRows.filter((item) => item && typeof item.id === "string").map((item) => [item.id, item]));
+  const today = now.toISOString().slice(0, 10);
+
+  return factIds.every((rawId) => {
+    const id = String(rawId || "").trim();
+    if (!BRAIN_FACT_ID.test(id)) return false;
+    const fact = rowsById.get(id);
+    if (!fact || fact.status !== "approved") return false;
+    const effectiveFrom = fact.effectiveFrom == null ? null : dateOnly(fact.effectiveFrom);
+    const reviewAt = dateOnly(fact.expiryOrReviewAt);
+    const approvedLanguages = Array.isArray(fact.approvedLanguages) ? fact.approvedLanguages : [];
+    if ((fact.effectiveFrom != null && !effectiveFrom) || !reviewAt) return false;
+    return (!effectiveFrom || effectiveFrom <= today)
+      && reviewAt > today
+      && approvedLanguages.includes(languageCode);
+  });
+}
+
 // Builds the explicit "approved_knowledge" model observation from already
 // trust-filtered search rows. Deliberately does NOT run the customer-input
 // style `redactSensitiveData` label-proximity redaction on this content:
@@ -401,6 +455,8 @@ function safeField(value, max) {
 function buildApprovedKnowledgeObservation(status, rows = []) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const evidence = [];
+  const policyEvidence = [];
+  const factRegisterRows = new Map();
   let totalContentChars = 0;
   let truncated = safeRows.length > MAX_RAG_EVIDENCE_ITEMS;
 
@@ -420,6 +476,18 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
     const content = rawContent.slice(0, perItemLimit);
     const contentTruncated = rawContent.length > content.length;
     totalContentChars += content.length;
+    const trustedPolicy = row?.policyMetadata && typeof row.policyMetadata === "object" ? row.policyMetadata : {};
+    // Governance metadata is trusted only after the server-side enrichment
+    // lookup succeeds. Raw search rows (or future adapters) cannot authorize
+    // hooks/comparisons by supplying their own topic/fact labels.
+    const policyFacts = Array.isArray(trustedPolicy.facts) ? trustedPolicy.facts : [];
+    const factIds = policyFacts.map((id) => String(id || "").trim())
+      .filter((id) => /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(id)).slice(0, 24);
+    const ref = safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS);
+    for (const fact of (Array.isArray(trustedPolicy.factRegisterRows) ? trustedPolicy.factRegisterRows : [])) {
+      const id = String(fact?.id || "");
+      if (/^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(id)) factRegisterRows.set(id, fact);
+    }
     evidence.push({
       title: safeField(row?.document_title || row?.source_name, MAX_RAG_EVIDENCE_TITLE_CHARS) || "Approved information",
       section: safeField(row?.heading, MAX_RAG_EVIDENCE_SECTION_CHARS),
@@ -428,14 +496,20 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
       // Opaque chunk/document identifiers only (never a reviewer name,
       // approval timestamp, or other workflow metadata) — safe for internal
       // source traceability, never customer/profile data.
-      sourceRef: safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS)
+      sourceRef: ref
+    });
+    policyEvidence.push({
+      sourceRef: ref,
+      review_status: trustedPolicy.reviewStatus === "approved" ? "approved" : row?.review_status === "approved" ? "approved" : null,
+      valid_until: typeof trustedPolicy.validUntil === "string" ? trustedPolicy.validUntil.slice(0, 40) : typeof row?.valid_until === "string" ? row.valid_until.slice(0, 40) : null,
+      metadata: { topic: safeField(trustedPolicy.topic, 80), facts: factIds }
     });
   }
 
-  return { type: "approved_knowledge", status, evidence, truncated };
+  return { type: "approved_knowledge", status, evidence, truncated, policyEvidence, factRegisterRows: [...factRegisterRows.values()] };
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6 } = {}) {
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
@@ -456,7 +530,11 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
   }
 
-  const evidence = Array.isArray(results) ? results : [];
+  // The RPC enforces source/document approval and expiry. Apply the separate
+  // fact-register gate here, before the bounded model observation is built.
+  // Finding aids are never customer evidence, even if a legacy RPC returns one.
+  const evidence = (Array.isArray(results) ? results : [])
+    .filter((row) => factLinkedChunkIsCurrent(row, language));
   if (evidence.length === 0) {
     return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
   }
@@ -477,6 +555,7 @@ function getCustomerContext(args, { user } = {}) {
   const data = {
     language: user.profile?.language || null,
     knownFacts: state.agentFacts,
+    crmCorrectionNeeded: state.crmCorrectionNeeded,
     consent: state.consent,
     noProactiveBookingOrContact: state.noProactiveBookingOrContact,
     hasOpenHandover: state.handover.required,
@@ -495,7 +574,7 @@ const FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 const ALLOWED_PROVENANCE = new Set(["customer_message"]);
 const ALLOWED_VALUE_TYPES = new Set(["string", "number", "boolean"]);
 
-async function saveCustomerFact(args, { store, userId } = {}) {
+async function saveCustomerFact(args, { store, userId, currentMessage, sourceTurnId } = {}) {
   const field = args?.field;
   const value = args?.value;
   const provenance = args?.provenance;
@@ -510,18 +589,83 @@ async function saveCustomerFact(args, { store, userId } = {}) {
     return fail("invalid_input", "INVALID_VALUE");
   }
   if (!ALLOWED_PROVENANCE.has(provenance)) return fail("not_authorized", "INVALID_PROVENANCE");
+  // The model can propose a value, but cannot establish that the customer
+  // said it. Verify it against the trusted inbound turn and persist a turn
+  // reference. This keeps a model guess out of memory and the never-reask gate.
+  const evidence = extractLiteralEvidence(currentMessage, value);
+  if (!evidence || !sourceTurnId) return fail("not_authorized", "UNVERIFIED_CUSTOMER_VALUE");
+  if (isNegatedLiteralMention(currentMessage, value)) return fail("not_authorized", "NON_AFFIRMATIVE_CUSTOMER_VALUE");
+  const crmField = Object.keys(CRM_FIELDS).find((candidate) => candidate.toLowerCase() === canonicalField)
+    || (canonicalField === "companyactivity" ? "businessActivity" : null);
+  if (!crmField) return fail("not_authorized", "UNSUPPORTED_CRM_FIELD");
+  const candidate = crmField ? normalizeCrmCandidate({
+    field: crmField,
+    value: String(value),
+    rawValue: String(value),
+    provenance: CUSTOMER_PROVENANCE,
+    confidence: 1,
+    sourceTurnId: String(sourceTurnId),
+    evidence,
+    selfIdentified: crmField === "name" && isSelfIdentifiedName(currentMessage, value)
+  }) : null;
+  if (crmField && !candidate?.ok) return fail("not_authorized", candidate?.reason === "name_not_self_identified" ? "NAME_NOT_SELF_IDENTIFIED" : "INVALID_CRM_CANDIDATE");
+  const storedValue = candidate.record.normalizedValue;
+  const safeEvidence = candidate.record.evidence;
+  if (typeof store?.saveCrmProfile === "function") {
+    try {
+      const result = await store.saveCrmProfile({ userId, field: crmField, value: storedValue, sourceTurnId: String(sourceTurnId) });
+      if (result?.status === "correction_needed") {
+        return ok("correction_needed", { field: canonicalField, correctionNeeded: true });
+      }
+      if (result?.status !== "saved") return fail("error", "SAVE_FAILED");
+      return ok("saved", { field: canonicalField });
+    } catch {
+      return fail("error", "SAVE_FAILED");
+    }
+  }
   if (!userId || typeof store?.updateUser !== "function") return fail("error", "STORE_UNAVAILABLE");
 
+  let correctionNeeded = false;
   try {
     await store.updateUser(userId, (draft) => {
       draft.profile = draft.profile || {};
       draft.profile.agentFacts = { ...(draft.profile.agentFacts || {}) };
-      draft.profile.agentFacts[canonicalField] = { value, provenance, savedAt: new Date().toISOString() };
+      const current = draft.profile.agentFacts[canonicalField];
+      const resolvesPendingCorrection = draft.profile.crmCorrectionNeeded?.field === canonicalField
+        && isExplicitCorrectionMessage(currentMessage);
+      if (current && resolvesPendingCorrection) {
+        draft.profile.agentFacts[canonicalField] = {
+          ...candidate.record, value: storedValue, provenance,
+          sourceTurnId: String(sourceTurnId), evidence: safeEvidence, savedAt: new Date().toISOString()
+        };
+        delete draft.profile.crmCorrectionNeeded;
+        return;
+      }
+      if (current && String(current.value ?? current.normalizedValue ?? "").trim().toLocaleLowerCase() !== storedValue.trim().toLocaleLowerCase()) {
+        // Never silently replace a different stated value. Leave the prior
+        // record intact and request a clarification in the conversation.
+        draft.profile.crmCorrectionNeeded = {
+          field: canonicalField,
+          sourceTurnId: String(sourceTurnId),
+        proposedValue: storedValue,
+          recordedAt: new Date().toISOString()
+        };
+        draft.profile.agentFacts[canonicalField] = { ...current, correctionNeeded: true };
+        correctionNeeded = true;
+        return;
+      }
+      draft.profile.agentFacts[canonicalField] = {
+        ...candidate.record,
+        value: storedValue, provenance, sourceTurnId: String(sourceTurnId),
+        evidence: safeEvidence, savedAt: new Date().toISOString()
+      };
     });
   } catch (error) {
     return fail("error", "SAVE_FAILED", { message: String(error?.message || error).slice(0, 200) });
   }
-  return ok("saved", { field: canonicalField, value });
+  return ok(correctionNeeded ? "correction_needed" : "saved", correctionNeeded
+    ? { field: canonicalField, correctionNeeded: true }
+    : { field: canonicalField });
 }
 
 // --- proposeHandover -----------------------------------------------------------

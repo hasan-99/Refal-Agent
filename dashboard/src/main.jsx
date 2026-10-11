@@ -882,7 +882,7 @@ function AgentSidebar({ role }) {
 }
 
 function Knowledge({ isAdmin, onNavigate }) {
-  const { data, setData, loading, reload } = useApi("/api/knowledge");
+  const { data, loading, reload } = useApi("/api/knowledge");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState("");
@@ -890,6 +890,7 @@ function Knowledge({ isAdmin, onNavigate }) {
   const [error, setError] = useState("");
   const [importTitle, setImportTitle] = useState("");
   const [importContent, setImportContent] = useState("");
+  const [importLanguage, setImportLanguage] = useState("en");
   const [uploadFile, setUploadFile] = useState(null);
   const [knowledgeMode, setKnowledgeMode] = useState("text");
   const [knowledgeView, setKnowledgeView] = useState("content");
@@ -898,7 +899,11 @@ function Knowledge({ isAdmin, onNavigate }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [previewQueries, setPreviewQueries] = useState({ en: "", ar: "", el: "" });
+  const [previewResults, setPreviewResults] = useState([]);
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archiveReason, setArchiveReason] = useState("");
+  const [archiveUndo, setArchiveUndo] = useState(null);
 
   useEffect(() => {
     if (!selectedId && data.documents?.length) setSelectedId(data.documents[0].source_id);
@@ -924,6 +929,7 @@ function Knowledge({ isAdmin, onNavigate }) {
     setEditorMode(document ? "update" : "new");
     setImportTitle(document?.title || "");
     setImportContent(document?.canonical_content || "");
+    setImportLanguage(document?.language_code || "en");
     setUploadFile(null);
     setKnowledgeView("edit");
   }
@@ -933,6 +939,7 @@ function Knowledge({ isAdmin, onNavigate }) {
     setEditingDocument(null);
     setImportTitle("");
     setImportContent("");
+    setImportLanguage("en");
     setUploadFile(null);
     setKnowledgeMode("text");
   }
@@ -948,7 +955,7 @@ function Knowledge({ isAdmin, onNavigate }) {
     await run("fetch", async () => {
       const value = await api(`/api/knowledge/${selectedId}/fetch`, { method: "POST" });
       setDetail(await api(`/api/knowledge/${selectedId}`));
-      return { message: value.deduplicated ? "No content change; existing revision kept." : `Revision saved with ${value.chunkCount} searchable chunks.` };
+      return { message: value.deduplicated ? "No content change; existing revision kept." : `Revision v${value.revision} saved pending review. It is not available to REFAL until approved.` };
     });
   }
 
@@ -958,17 +965,17 @@ function Knowledge({ isAdmin, onNavigate }) {
       let targetSourceId = selectedId;
       let saved;
       if (editorMode === "update" && editingDocument?.id) {
-        saved = await api(`/api/knowledge/documents/${editingDocument.id}`, { method: "PATCH", body: JSON.stringify({ title: importTitle, content: importContent }) });
+        saved = await api(`/api/knowledge/documents/${editingDocument.id}`, { method: "PATCH", body: JSON.stringify({ title: importTitle, content: importContent, language: importLanguage }) });
       } else {
         const created = await api("/api/knowledge", { method: "POST", body: JSON.stringify({ displayName: importTitle }) });
         targetSourceId = created.source.id;
-        const value = await api(`/api/knowledge/${targetSourceId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent }) });
+        const value = await api(`/api/knowledge/${targetSourceId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent, language: importLanguage }) });
         saved = value;
         setSelectedId(targetSourceId);
       }
       setImportTitle(""); setImportContent(""); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
       if (saved.embeddingWarning) return { message: `Saved to the database. Text search is ready, but semantic indexing failed: ${saved.embeddingWarning}` };
-      return { message: saved.unchanged ? "No changes detected. The database entry was left as it was." : editorMode === "update" ? "Changes saved to the database and REFAL search index." : `Added to the database and indexed in ${saved.embeddedChunks} searchable sections.` };
+      return { message: saved.unchanged ? "No content change detected. The existing revision and review status were kept." : `Revision v${saved.revision} saved as pending review. REFAL will not use or index it until an administrator approves it.` };
     });
   }
 
@@ -984,6 +991,7 @@ function Knowledge({ isAdmin, onNavigate }) {
       }
       const formData = new FormData();
       formData.append("file", uploadFile);
+      formData.append("language", importLanguage);
       // Not the shared api() helper: it always forces Content-Type:
       // application/json, which would break the browser's own multipart
       // boundary for this file upload.
@@ -991,23 +999,7 @@ function Knowledge({ isAdmin, onNavigate }) {
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.error || `Upload failed: ${response.status}`);
       setUploadFile(null); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
-      return { message: value.embeddingWarning ? `Saved to the database. Text search is ready, but semantic indexing failed: ${value.embeddingWarning}` : value.unchanged ? "No changes detected. The database entry was left as it was." : `File added and indexed in ${value.embeddedChunks} searchable sections.` };
-    });
-  }
-
-  async function deleteKnowledgeDocument(document) {
-    await run(`delete-${document.id}`, async () => {
-      await api(`/api/knowledge/${document.source_id}`, { method: "DELETE" });
-      const refreshed = await api("/api/knowledge");
-      setData(refreshed);
-      const nextSourceId = refreshed.documents?.[0]?.source_id || "";
-      setSelectedId(nextSourceId);
-      setDetail(null);
-      setDeleteTarget(null);
-      if (editingDocument?.id === document.id) {
-        setKnowledgeView("content"); setEditingDocument(null); setImportTitle(""); setImportContent("");
-      }
-      return { message: "Knowledge entry and searchable chunks deleted." };
+      return { message: value.unchanged ? "No content change detected. The existing revision and review status were kept." : `File saved as revision v${value.revision}, pending review. REFAL will not use or index it until an administrator approves it.` };
     });
   }
 
@@ -1018,6 +1010,35 @@ function Knowledge({ isAdmin, onNavigate }) {
     finally { setSearching(false); }
   }
 
+  async function previewAllLanguages(event) {
+    event.preventDefault(); setSearching(true); setError("");
+    try {
+      const value = await api("/api/knowledge/search/preview", { method: "POST", body: JSON.stringify({ queries: previewQueries }) });
+      setPreviewResults(value.results || []);
+    } catch (value) { setError(value.message); }
+    finally { setSearching(false); }
+  }
+
+  async function archiveSource(source, archived, reason) {
+    await run(`archive-${source.id}`, async () => {
+      await api(`/api/knowledge/${source.id}/archive`, { method: "PATCH", body: JSON.stringify({ archived, reason }) });
+      setArchiveTarget(null); setArchiveReason(""); setArchiveUndo(archived ? { source, archived: true } : null);
+      if (selectedId === source.id) setDetail(await api(`/api/knowledge/${source.id}`));
+      return { message: archived ? `${source.display_name} archived from agent retrieval.` : `${source.display_name} restored to agent retrieval.` };
+    });
+  }
+
+  async function reviewDocument(document, status) {
+    await run(`review-${document.id}`, async () => {
+      const result = await api(`/api/knowledge/documents/${document.id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      setDetail(await api(`/api/knowledge/${document.source_id}`));
+      return { message: status === "approved" ? result.embeddingWarning ? `Revision approved, but search indexing needs attention: ${result.embeddingWarning}` : `Revision v${document.revision} approved and indexed in ${result.embeddedChunks} chunks.` : `Revision v${document.revision} marked ${status}.` };
+    });
+  }
+
   if (loading) return <Loading />;
   return (
     <div className="page-stack overview-page">
@@ -1025,21 +1046,31 @@ function Knowledge({ isAdmin, onNavigate }) {
         <div>
           <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> REFAL KNOWLEDGE BASE</span>
           <h2>Give REFAL better context</h2>
-          <p>Add or update company information. Saving replaces the database entry and refreshes REFAL’s searchable knowledge.</p>
+          <p>Add or update company information. Each changed revision waits for administrator review before REFAL can use it.</p>
         </div>
-        <div className="knowledge-hero-note"><span className="knowledge-live-dot" /><span><strong>Active when saved</strong><small>Edits replace the current entry.</small></span></div>
+        <div className="knowledge-hero-note"><span className="knowledge-live-dot" /><span><strong>Review before use</strong><small>Approved revisions are indexed for REFAL.</small></span></div>
       </section>
       <section className="knowledge-summary">
-        <div><span>Company knowledge</span><strong>{documents.length}</strong><small>saved entries</small></div>
-        <div><span>Saved knowledge entries</span><strong>{documents.length}</strong><small>active in REFAL</small></div>
+        <div><span>Knowledge revisions</span><strong>{documents.length}</strong><small>visible to you</small></div>
+        <div><span>Awaiting review</span><strong>{documents.filter((doc) => doc.review_status === "pending").length}</strong><small>not used by REFAL</small></div>
         <form className="knowledge-search" onSubmit={searchKnowledge}>
           <label htmlFor="knowledge-query">Search approved knowledge</label>
           <div><input id="knowledge-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try a company, project, or contact question" /><button className="primary" disabled={searching || !query.trim()}><Search size={16} /> {searching ? "Searching" : "Search"}</button>{isAdmin && <button type="button" className="primary knowledge-search-add" onClick={() => openKnowledgeEditor()}><Plus size={16} /> Add knowledge</button>}</div>
         </form>
+        {isAdmin && <form className="knowledge-search knowledge-language-preview" onSubmit={previewAllLanguages}>
+          <label>Preview approved retrieval in all customer languages</label>
+          <div className="knowledge-language-preview-grid">
+            <input aria-label="English retrieval preview query" dir="auto" value={previewQueries.en} onChange={(event) => setPreviewQueries((current) => ({ ...current, en: event.target.value }))} placeholder="English query" />
+            <input aria-label="Arabic retrieval preview query" dir="auto" value={previewQueries.ar} onChange={(event) => setPreviewQueries((current) => ({ ...current, ar: event.target.value }))} placeholder="استعلام بالعربية" />
+            <input aria-label="Greek retrieval preview query" dir="auto" value={previewQueries.el} onChange={(event) => setPreviewQueries((current) => ({ ...current, el: event.target.value }))} placeholder="Ερώτημα στα Ελληνικά" />
+            <button className="primary" disabled={searching || Object.values(previewQueries).some((value) => !value.trim())}><Search size={16} /> {searching ? "Previewing" : "Preview EN · AR · EL"}</button>
+          </div>
+        </form>}
       </section>
       {error && <p className="error knowledge-message">{error}</p>}
       {notice && <p className="notice knowledge-message">{notice}</p>}
       {results.length > 0 && <section className="panel knowledge-results"><PanelTitle icon={Search} title={`Search results (${results.length})`} /><div className="knowledge-result-list">{results.map((result, index) => <article key={result.chunk_id || `${result.document_id}-${result.heading}-${index}`}><strong>{result.document_title}{result.heading ? ` · ${result.heading}` : ""}</strong><p>{result.content}</p><a href={result.source_url} target="_blank" rel="noreferrer">{result.source_name} <ChevronRight size={14} /></a></article>)}</div></section>}
+      {previewResults.length > 0 && <section className="panel knowledge-results knowledge-language-results"><PanelTitle icon={Search} title="Trilingual approved retrieval preview" /><div className="knowledge-language-result-grid">{previewResults.map(({ language, query: previewQuery, results: languageResults }) => <article key={language} lang={language} dir={language === "ar" ? "rtl" : "auto"}><h3>{({ en: "English", ar: "العربية", el: "Ελληνικά" })[language]}</h3><p className="knowledge-preview-query">{previewQuery}</p>{languageResults.length ? languageResults.map((result, index) => <section key={result.chunk_id || `${result.document_id}-${index}`}><strong>{result.document_title}{result.heading ? ` · ${result.heading}` : ""}</strong><p>{result.content}</p><small>{result.source_name}{result.valid_until ? ` · Valid until ${formatDate(result.valid_until)}` : ""}</small></section>) : <p>No approved retrieval result for this query.</p>}</article>)}</div></section>}
       <div className="knowledge-layout">
         <section className="panel knowledge-sources">
           <PanelTitle icon={BookOpenCheck} title="Agent knowledge" />
@@ -1048,7 +1079,7 @@ function Knowledge({ isAdmin, onNavigate }) {
               const source = sources.find((item) => item.id === doc.source_id);
               const snippet = String(doc.canonical_content || "").replace(/\s+/g, " ").trim();
               return <button key={doc.id} className={`knowledge-source${selectedId === doc.source_id ? " selected" : ""}`} onClick={() => setSelectedId(doc.source_id)}>
-                <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className="badge online">Active</span></span>
+                <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></span>
                 <small>{source?.display_name || "Knowledge entry"}</small>
                 <span className="knowledge-source-preview">{snippet.slice(0, 150)}{snippet.length > 150 ? "…" : ""}</span>
               </button>;
@@ -1062,7 +1093,7 @@ function Knowledge({ isAdmin, onNavigate }) {
             {selected.last_error && <p className="knowledge-error">{selected.last_error}</p>}
             {knowledgeView === "content" && isAdmin && <div className="knowledge-entry-toolbar"><span>Saved content</span></div>}
             {isAdmin && knowledgeView === "edit" && <section className="knowledge-add-panel" aria-labelledby="knowledge-add-title">
-              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "Save replaces this database entry and refreshes REFAL search. Unchanged text is left alone." : "Add clear information for REFAL. Save activates it and updates the search index."}</p></div><button type="button" className="ghost" onClick={() => setKnowledgeView("content")}>Back to content</button></div>
+              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "A changed save creates a pending revision. The current approved revision remains available until a reviewer approves the new one." : "New content stays pending and is not available to REFAL until reviewed."}</p></div><button type="button" className="ghost" onClick={() => setKnowledgeView("content")}>Back to content</button></div>
               <div className="knowledge-editor-actions">
                 <span>{editorMode === "update" ? `Editing revision v${editingDocument?.revision}` : "New entry"}</span>
                 {editorMode === "update" && <button type="button" className="ghost" onClick={startNewKnowledgeEntry}>Start a new entry</button>}
@@ -1074,38 +1105,51 @@ function Knowledge({ isAdmin, onNavigate }) {
               {knowledgeMode === "text" ? <form className="knowledge-import" onSubmit={importText}>
                 <label htmlFor="knowledge-title">Title</label>
                 <input id="knowledge-title" required value={importTitle} onChange={(event) => setImportTitle(event.target.value)} placeholder="For example, Company setup FAQs" />
+                <label htmlFor="knowledge-language">Content language</label>
+                <select id="knowledge-language" value={importLanguage} onChange={(event) => setImportLanguage(event.target.value)}><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select>
                 <label htmlFor="knowledge-content">Knowledge text</label>
                 <textarea id="knowledge-content" dir="auto" value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste company facts, service details, policies, or FAQs…" rows={7} />
                 <KnowledgeCommercialWarning content={importContent} onOpenCommercialData={() => onNavigate("commercial-data")} />
-                <div className="knowledge-submit-row"><small>At least 40 characters. Arabic and English text are both supported.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving and activating…" : editorMode === "update" ? "Save changes to database" : "Add to database"}</button></div>
+                <div className="knowledge-submit-row"><small>At least 40 characters. Choose the language reviewers should use to assess this revision.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving for review…" : editorMode === "update" ? "Save pending revision" : "Submit for review"}</button></div>
               </form> : <form className="knowledge-upload" onSubmit={uploadDocument}>
                 <label htmlFor="knowledge-file">Choose a text, PDF, or Word file</label>
                 <input id="knowledge-file" type="file" accept=".txt,.pdf,.docx" aria-label="Choose a TXT, PDF, or DOCX knowledge file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
-                <div className="knowledge-file-note"><BookOpenCheck size={18} /><span><strong>{uploadFile?.name || "Your file will become searchable knowledge"}</strong><small>REFAL will use its text in future answers after saving.</small></span></div>
-                <div className="knowledge-submit-row"><small>Supported formats: TXT, PDF, DOCX.</small><button className="primary" disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Saving and activating…" : "Add file to database"}</button></div>
+                <div className="knowledge-file-note"><BookOpenCheck size={18} /><span><strong>{uploadFile?.name || "Your file will be submitted for review"}</strong><small>REFAL can use its text after an administrator approves the revision.</small></span></div>
+                <label htmlFor="knowledge-file-language">Content language</label>
+                <select id="knowledge-file-language" value={importLanguage} onChange={(event) => setImportLanguage(event.target.value)}><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select>
+                <div className="knowledge-submit-row"><small>Supported formats: TXT, PDF, DOCX.</small><button className="primary" disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Saving for review…" : "Submit file for review"}</button></div>
               </form>}
             </section>}
             {knowledgeView === "content" && <div className="knowledge-revisions">
               {(detail?.documents || []).map((doc) => <article className="knowledge-revision" key={doc.id}>
-                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Updated {formatDate(doc.fetched_at)} · {doc.chunks.length} searchable sections{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small></div><span className="badge online">Active</span></div>
+                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Revision v{doc.revision} · {doc.language_code || "language unspecified"} · Saved {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small><small>Reviewed by {doc.approved_by || "Not approved"} · Effective {formatDate(doc.approved_at)} · Expires {formatDate(doc.valid_until)}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></div>
+                <small className="knowledge-review-source">Source: {selected.display_name}{selected.canonical_url && !selected.canonical_url.startsWith("manual:") ? ` · ${selected.canonical_url}` : " · operator supplied"}{doc.metadata?.sourceFileName ? ` · File: ${doc.metadata.sourceFileName}` : ""}</small>
+                {(doc.metadata?.evidence || doc.metadata?.supporting) && <div className="knowledge-review-evidence"><strong>Evidence / supporting references</strong><p>{typeof (doc.metadata.evidence || doc.metadata.supporting) === "string" ? (doc.metadata.evidence || doc.metadata.supporting) : JSON.stringify(doc.metadata.evidence || doc.metadata.supporting)}</p></div>}
                 <div className="knowledge-revision-content" dir="auto">{doc.canonical_content}</div>
-                {isAdmin && <div className="knowledge-entry-actions"><button className="ghost" onClick={() => openKnowledgeEditor(doc)}><Save size={14} /> Edit</button><button className="knowledge-delete-button" onClick={() => setDeleteTarget(doc)} disabled={Boolean(busy)}><Trash2 size={14} /> Delete</button></div>}
+                {isAdmin && <div className="knowledge-review-actions">
+                  <div>
+                    <button className="primary" onClick={() => reviewDocument(doc, "approved")} disabled={Boolean(busy) || doc.review_status === "approved"}>{busy === `review-${doc.id}` ? "Saving review…" : "Approve and index"}</button>
+                    <button className="ghost" onClick={() => reviewDocument(doc, "pending")} disabled={Boolean(busy) || doc.review_status === "pending"}>Return to pending</button>
+                    <button className="knowledge-delete-button" onClick={() => reviewDocument(doc, "rejected")} disabled={Boolean(busy) || doc.review_status === "rejected"}>Reject</button>
+                  </div>
+                </div>}
+                {isAdmin && <div className="knowledge-entry-actions"><button className="ghost" onClick={() => openKnowledgeEditor(doc)}><Save size={14} /> Edit</button></div>}
               </article>)}
               {!detail?.documents?.length && <p className="empty">No knowledge saved yet. Select Add knowledge to paste text or upload a file.</p>}
             </div>}
           </>}
         </section>
       </div>
-      {deleteTarget && <div className="knowledge-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDeleteTarget(null); }}>
-        <section className="knowledge-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-delete-title" aria-describedby="knowledge-delete-description">
-          <span className="knowledge-delete-dialog-icon"><Trash2 size={19} /></span>
-          <h2 id="knowledge-delete-title">Delete this knowledge?</h2>
-          <p className="knowledge-delete-dialog-entry">{deleteTarget.title || "Saved knowledge"}</p>
-          <p id="knowledge-delete-description">This permanently removes the entry, its source, and all searchable content from Supabase. REFAL will no longer use it in future answers.</p>
-          <div className="knowledge-delete-dialog-actions">
-            <button type="button" onClick={() => setDeleteTarget(null)} disabled={Boolean(busy)}>Cancel</button>
-            <button type="button" className="knowledge-delete-confirm-button" onClick={() => deleteKnowledgeDocument(deleteTarget)} disabled={Boolean(busy)}>{busy === `delete-${deleteTarget.id}` ? <><span className="knowledge-delete-spinner" /> Deleting…</> : <><Trash2 size={14} /> Delete knowledge</>}</button>
-          </div>
+      {isAdmin && selected && <div className="knowledge-archive-actions">
+        {selected.enabled ? <button type="button" className="ghost" onClick={() => { setArchiveTarget(selected); setArchiveReason(""); }}>Archive source</button> : <button type="button" className="ghost" onClick={() => archiveSource(selected, false, "Restored by administrator from the knowledge archive.")} disabled={Boolean(busy)}>Restore source</button>}
+      </div>}
+      {archiveUndo?.archived && <p className="notice knowledge-message" role="status">Source archived. <button type="button" className="ghost" onClick={() => archiveSource(archiveUndo.source, false, "Undo archive action.")} disabled={Boolean(busy)}>Undo</button></p>}
+      {archiveTarget && <div className="knowledge-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setArchiveTarget(null); }}>
+        <section className="knowledge-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-archive-title" aria-describedby="knowledge-archive-description">
+          <h2 id="knowledge-archive-title">Archive this source?</h2><p className="knowledge-delete-dialog-entry">{archiveTarget.display_name}</p>
+          <p id="knowledge-archive-description">REFAL will stop retrieving every revision from this source. The content and review history remain saved. You can restore it later.</p>
+          <label htmlFor="knowledge-archive-reason">Reason for archive</label><textarea id="knowledge-archive-reason" value={archiveReason} onChange={(event) => setArchiveReason(event.target.value)} maxLength={500} rows={3} />
+          <div className="knowledge-delete-dialog-actions"><button type="button" onClick={() => setArchiveTarget(null)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="knowledge-delete-confirm-button" onClick={() => archiveSource(archiveTarget, true, archiveReason)} disabled={Boolean(busy) || !archiveReason.trim()}>{busy === `archive-${archiveTarget.id}` ? "Archiving…" : "Archive source"}</button></div>
         </section>
       </div>}
     </div>
@@ -1471,7 +1515,7 @@ function Leads({ isAdmin }) {
 }
 
 function ConversationDrawer({ userId, isAdmin, onClose }) {
-  const { data, setData, loading } = useApi(`/api/leads/${encodeURIComponent(userId)}`, [userId]);
+  const { data, setData, loading, reload } = useApi(`/api/leads/${encodeURIComponent(userId)}`, [userId]);
   const [contact, setContact] = useState({ nameOverride: "", phoneOverride: "", needOverride: "", conversationSummary: "" });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -1483,7 +1527,7 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
       needOverride: data.profile?.needOverride || "",
       conversationSummary: data.profile?.conversationSummary || ""
     });
-  }, [data.user?.nameOverride, data.user?.phoneOverride]);
+  }, [data.user?.nameOverride, data.user?.phoneOverride, data.profile?.needOverride, data.profile?.conversationSummary]);
 
   async function saveContact() {
     setSaving(true);
@@ -1491,9 +1535,17 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
     try {
       const saved = await api(`/api/leads/${encodeURIComponent(userId)}/contact`, {
         method: "PUT",
-        body: JSON.stringify(contact)
+        body: JSON.stringify({
+          contact,
+          expected: {
+            nameOverride: data.user?.nameOverride || "",
+            phoneOverride: data.user?.phoneOverride || "",
+            needOverride: data.profile?.needOverride || "",
+            conversationSummary: data.profile?.conversationSummary || ""
+          }
+        })
       });
-      setData({ ...data, user: saved.user, profile: saved.profile });
+      setData({ ...data, profile: saved.profile });
       setMessage("Contact saved.");
     } catch (error) {
       setMessage(error.message);
@@ -1550,7 +1602,8 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
             <button className="primary" onClick={saveContact} disabled={saving}>
               <Save size={16} /> {saving ? "Saving" : "Save"}
             </button>
-            {message && <span>{message}</span>}
+            {message && <span role="status">{message}</span>}
+            {message.includes("Reload the current values") && <button type="button" className="ghost" onClick={reload}>Reload current contact values</button>}
           </section>}
 
           {(data.history || []).map((item, index) => (
@@ -1651,6 +1704,11 @@ function Bookings({ isAdmin }) {
   const [calendarTestBusy, setCalendarTestBusy] = useState(false);
   const [calendarTestMessage, setCalendarTestMessage] = useState("");
   const [calendarTestError, setCalendarTestError] = useState(false);
+  const [calendarOAuthBusy, setCalendarOAuthBusy] = useState(false);
+  const [calendarOAuthSetup, setCalendarOAuthSetup] = useState(null);
+  const [calendarOAuthSubmitted, setCalendarOAuthSubmitted] = useState(false);
+  const [calendarOAuthMessage, setCalendarOAuthMessage] = useState("");
+  const calendarOAuthFormRef = useRef(null);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1658,12 +1716,14 @@ function Bookings({ isAdmin }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [reviewing, setReviewing] = useState("");
 
+  useEffect(() => () => calendarOAuthFormRef.current?.reset(), []);
+
   useEffect(() => {
     if (!readiness) return;
     setPolicy(readiness.policy || {
       timezone: "Europe/Nicosia", calendarId: "primary", weekdays: [1, 2, 3, 4, 5],
-      startTime: "10:00", endTime: "15:00", durationMinutes: "", durationOwnerConfirmed: false,
-      minimumNoticeHours: "", reminderHours: [], createMeetLink: false
+      startTime: "10:00", endTime: "15:00", durationMinutes: 60, durationOwnerConfirmed: true,
+      minimumNoticeHours: 24, reminderHours: [24, 1], createMeetLink: false
     });
   }, [readiness]);
 
@@ -1692,6 +1752,16 @@ function Bookings({ isAdmin }) {
       setCalendarTestMessage(cause.message || "Could not verify Google Calendar access.");
       setCalendarTestError(true);
     } finally { setCalendarTestBusy(false); }
+  };
+
+  const startCalendarAuthorization = async () => {
+    setCalendarOAuthBusy(true); setCalendarOAuthMessage(""); setCalendarOAuthSetup(null); setCalendarOAuthSubmitted(false);
+    try {
+      const result = await api("/api/bookings/calendar-oauth/start", { method: "POST", body: JSON.stringify({}) });
+      setCalendarOAuthSetup(result);
+      setCalendarOAuthMessage("Setup helper ready. Paste the OAuth JSON below; the browser sends it directly to the local helper, not the dashboard server.");
+    } catch (cause) { setCalendarOAuthMessage(cause.message || "Could not start Google Calendar authorization."); }
+    finally { setCalendarOAuthBusy(false); }
   };
 
   const reviewAppointment = async (booking, action) => {
@@ -1752,11 +1822,11 @@ function Bookings({ isAdmin }) {
     <div className="page-stack bookings-page">
       {isAdmin && pendingReviewCount > 0 && <div className="booking-error" role="status"><Clock3 size={16} /><span>{pendingReviewCount} appointment{pendingReviewCount === 1 ? "" : "s"} need admin review.</span></div>}
       {isAdmin && deliveryProblems.length > 0 && <section className="panel"><PanelTitle icon={Bell} title="Notification delivery issues" /><div className="simple-list">{deliveryProblems.slice(0, 10).map((job) => <div key={job.id}><strong>{notificationJobLabel(job)} · {job.status}</strong><small>{job.last_error || "Delivery failed."} · {job.attempts} attempt(s)</small>{job.status === "dead" && <button className="ghost" disabled={reviewing === job.id} onClick={() => retryNotification(job)}>{reviewing === job.id ? "Queueing…" : "Retry"}</button>}</div>)}</div></section>}
-      {readiness && !readiness.active && <section className="booking-readiness" role="status">
+      {readiness && <section className={`booking-readiness${readiness.active ? " is-ready" : " is-blocked"}`} role="status" aria-live="polite">
         <div className="booking-readiness-icon"><ShieldCheck size={19} /></div>
         <div className="booking-readiness-copy">
-          <strong>Calendar booking is not enabled</strong>
-          <span>Appointments are paused until REFAL's calendar access and booking rules are ready.</span>
+          <strong>{readiness.active ? "Calendar booking is ready" : "Calendar booking is not enabled"}</strong>
+          <span>{readiness.active ? "Calendar access and booking rules are ready." : "Appointments are paused until the items below are ready."}</span>
           <div className="booking-readiness-tags">
             <span className={readiness.calendarCredentials ? "ready" : "missing"}>{readiness.calendarCredentials ? "Worker credentials configured" : "REFAL worker authorization missing"}</span>
             <span className={readiness.calendarAccessVerified ? "ready" : "missing"}>{readiness.calendarAccessVerified ? `Calendar access verified ${formatDate(readiness.calendarAccessCheckedAt)}` : "Calendar access not verified"}</span>
@@ -1764,12 +1834,25 @@ function Bookings({ isAdmin }) {
             <span className={readiness.policy?.minimumNoticeHours != null ? "ready" : "missing"}>{readiness.policy?.minimumNoticeHours != null ? "Booking notice set" : "Minimum notice not set"}</span>
             <span className={readiness.policy?.reminderHours?.length ? "ready" : "missing"}>{readiness.policy?.reminderHours?.length ? "Reminder schedule set" : "Reminder schedule not set"}</span>
           </div>
-          <small>Your personal Google Calendar connection does not authorize the WhatsApp worker. Configure worker credentials, then test access here before relying on calendar bookings.</small>
+          {readiness.active && readiness.policy && !readiness.policy.createMeetLink && <small>Google Meet link creation is disabled; confirmed appointments will not include a Meet link.</small>}
+          {!readiness.active && <small>Your personal Google Calendar connection does not authorize the WhatsApp worker. Configure worker credentials, then test access here before relying on calendar bookings.</small>}
         </div>
       </section>}
       {isAdmin && policy && <section className="panel booking-policy" id="booking-policy">
         <PanelTitle icon={Settings} title="Booking policy" />
-        <p className="booking-policy-intro">Rules are stored in Supabase. Google credentials remain in the server secret store.</p>
+        <p className="booking-policy-intro">Rules are stored in Supabase. OAuth credentials go directly from your browser to a loopback helper, then are stored for the WhatsApp worker only.</p>
+        {!readiness?.calendarCredentials && <div className="calendar-oauth-setup">
+          {!calendarOAuthSetup || readiness?.calendarAuthorizationStatus === "error" ? <button className="ghost" type="button" disabled={calendarOAuthBusy} onClick={startCalendarAuthorization}>{calendarOAuthBusy ? "Starting secure authorization…" : "Set up Google Calendar"}</button> : calendarOAuthSubmitted ? <p>OAuth JSON was sent directly to the local helper. Complete Google's consent in the new tab, then refresh status.</p> : <form ref={calendarOAuthFormRef} action={calendarOAuthSetup.submissionUrl} method="post" target="refal-calendar-authorization" encType="application/x-www-form-urlencoded" onSubmit={() => { setCalendarOAuthSubmitted(true); setCalendarOAuthMessage("OAuth JSON was submitted directly to the local helper. Complete consent in the new tab."); window.setTimeout(() => calendarOAuthFormRef.current?.reset(), 100); }}>
+            <input type="hidden" name="token" value={calendarOAuthSetup.setupToken} />
+            <label className="field">Google OAuth client JSON<textarea name="clientJson" rows="5" required maxLength={1024 * 1024} disabled={calendarOAuthSubmitted} autoComplete="off" spellCheck="false" placeholder="Paste the downloaded OAuth client JSON. It must include the REFAL loopback redirect URI." /></label>
+            <button className="ghost" type="submit" disabled={calendarOAuthSubmitted}>Continue to authorization</button>
+          </form>}
+          {calendarOAuthMessage && <span role="status">{calendarOAuthMessage}</span>}
+          {calendarOAuthSetup && <button className="ghost" type="button" onClick={reloadReadiness}>Refresh authorization status</button>}
+          <small>Google consent is required. REFAL requests calendar event and availability access only. This local onboarding flow requires the dashboard browser and helper to run on the same machine.</small>
+        </div>}
+        {readiness?.calendarAuthorizationStatus === "configured_worker_restart_needed" && <p className="booking-policy-intro">Authorization is saved. Reconnect the WhatsApp worker so it loads the new worker credentials.</p>}
+        {readiness?.calendarAuthorizationStatus === "configured_worker_restarting" && <p className="booking-policy-intro">Authorization is saved. The connected WhatsApp worker is restarting with the new credentials.</p>}
         <div className="form-grid">
           <label className="field">Calendar ID<input value={policy.calendarId || ""} onChange={(event) => setPolicy({ ...policy, calendarId: event.target.value })} /></label>
           <label className="field">Time zone<input value={policy.timezone || ""} onChange={(event) => setPolicy({ ...policy, timezone: event.target.value })} /></label>
@@ -2015,7 +2098,7 @@ function useApi(url, deps = [], options = {}) {
     };
   }, [url, tick, options.pollMs, ...deps]);
 
-  return { data, setData, loading, error, reload: () => setTick((value) => value + 1) };
+  return { data, setData, loading, error, reload: () => { apiGetCache.delete(url); setTick((value) => value + 1); } };
 }
 
 async function api(url, options = {}) {
@@ -2034,7 +2117,12 @@ async function api(url, options = {}) {
       ...options
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || `Request failed: ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(body.error || `Request failed: ${response.status}`);
+      error.status = response.status;
+      error.code = body.code;
+      throw error;
+    }
     if (method === "GET") apiGetCache.set(url, { data: body, expiresAt: Date.now() + API_GET_CACHE_MS });
     else apiGetCache.clear();
     return body;

@@ -36,3 +36,14 @@ test("buildAgentContext returns a frozen object that cannot be mutated downstrea
   context.currentMessage = "tampered"; // silently ignored in non-strict mode
   assert.equal(context.currentMessage, "hi");
 });
+
+test("qualification tier and buying-signal IDs are allowlisted in Agent context", () => {
+  const context = buildAgentContext({
+    leadTier: "hot",
+    buyingSignals: [{ id: "MB-B4" }, { id: "customer-controlled" }, { id: "MB-B4" }]
+  });
+  assert.equal(context.leadTier, "hot");
+  assert.deepEqual(context.buyingSignals, ["MB-B4"]);
+  assert.equal(Object.isFrozen(context.buyingSignals), true);
+  assert.equal(buildAgentContext({ leadTier: "superuser", buyingSignals: ["MB-B7"] }).leadTier, "");
+});

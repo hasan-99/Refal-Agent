@@ -66,3 +66,12 @@ test("existingClient.accountDisclosureAllowed stays false for an unauthenticated
   const locked = getConversationState({ id: "whatsapp:4", profile: { existingClientState: { state: "locked", authenticated: false, accountDisclosureAllowed: true } } });
   assert.equal(locked.existingClient.accountDisclosureAllowed, false, "canDiscloseAccountInformation requires state === authenticated, not just a stray flag");
 });
+
+test("a conflicting CRM value is hidden from the never-reask projection until it is clarified", () => {
+  const state = getConversationState({ profile: {
+    agentFacts: { countryofresidence: { value: "Jordan", provenance: "customer_message", correctionNeeded: true } },
+    crmCorrectionNeeded: { field: "countryofresidence", sourceTurnId: "turn-2" }
+  } });
+  assert.equal(state.agentFacts.countryofresidence, null);
+  assert.deepEqual(state.crmCorrectionNeeded, { field: "countryofresidence" });
+});

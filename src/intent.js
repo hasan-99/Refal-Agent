@@ -4,6 +4,7 @@ const INTENTS = Object.freeze({
   GREETING: "greeting",
   SMALL_TALK: "small_talk",
   AGENT_IDENTITY: "agent_identity",
+  LANGUAGE_CAPABILITY: "language_capability",
   COMPANY_INFO: "company_info",
   BUSINESS_AREAS: "business_areas",
   PRICING: "pricing",
@@ -93,6 +94,7 @@ const rawPatterns = [
   [INTENTS.CAREER, /career|careers|job|jobs|vacancy|work for (?:business|refal(?:co)?(?: group)?)|وظيفة|وظائف|توظيف|عمل لدى|καριέρα|θέση εργασίας|εργασία στη(?:ν)? (?:business|refal(?:co)?(?: group)?)/iu],
   [INTENTS.MEDIA, /media enquiry|press enquiry|journalist|journalists|interview request|استفسار إعلامي|صحفي|صحافة|مقابلة إعلامية|δημοσιογράφος|μέσα ενημέρωσης|συνέντευξη/iu],
   [INTENTS.AGENT_IDENTITY, /^(?:(?:hi|hello|hey|مرحبا|مرحبًا|أهلا|اهلا|γεια(?:\s+σας)?)[,،\s]*)?(?:who are you(?:\s+and what do you do)?|who is this|what are you|what do you do|tell me who you are|about you|مين (?:أنت|انت)(?:\s+وشو بتعمل(?:وا)?)?|من (?:أنت|انت)|شو بتعمل(?:وا)?|ποιος είστε|ποια είστε|ποιοι είστε(?:\s+και τι κάνετε)?|ποιος είσαι|ποια είσαι|ποιο είσαι|τι είσαι|τι είστε)[?!.؟;؛\s]*$/iu],
+  [INTENTS.LANGUAGE_CAPABILITY, /\b(?:do you|can you)\s+(?:speak|chat|talk)\s+(?:in\s+)?(?:english|arabic|greek)\b|\bwhich languages?\s+(?:do you speak|can you speak)\b|(?:بتحكي|بتحكوا|تحكي|تحكوا|بتتكلم|بتتكلموا|تتكلم|تتكلموا|بتحكيلي|بتعرف|تعرف)\s+(?:بال)?(?:إنجليزي|انجليزي|إنكليزي|انكليزي|الإنجليزية|الانجليزية|عربي|العربي|يوناني|اليوناني)|شو اللغات اللي بتحكيها|أي لغات بتحكي|μιλά(?:ς|τε)\s+(?:αγγλικά|αραβικά|ελληνικά)|ποιες γλώσσες\s+μιλάτε/iu],
   [INTENTS.BUSINESS_AREAS, /\b(?:what|which|tell me about|describe)\b.{0,70}\b(?:business areas?|areas? of (?:focus|activity|operation)|sectors?|industr(?:y|ies)|platforms?|lines of business|business scope|focus areas?)\b|(?:business areas?|areas? of focus|sectors?|industr(?:y|ies)|platforms?|lines of business|business scope).{0,70}\b(?:business|refal(?:co)?(?: group)?|your (?:business|company)|you|focus|operate|cover|work)\b|(?:ما|ما هي|أي|في أي|ما أبرز).{0,60}(?:مجالات العمل|مجالات الأعمال|مجالات نشاط|نطاق الأعمال|قطاعات|منصات)|(?:مجالات العمل|مجالات الأعمال|مجالات نشاط|نطاق الأعمال|قطاعات|منصات).{0,60}(?:الشركة|تعمل|تركز|نشاط|نطاق)|(?:σε ποιους|σε ποιες|ποιοι|ποιους|ποια).{0,65}(?:τομείς|κλάδους|επιχειρηματικ|πλατφόρμες|δραστηριότητες)|(?:τομείς δραστηριότητας|επιχειρηματικοί τομείς|κλάδοι δραστηριότητας|πλατφόρμες).{0,60}(?:business|refal(?:co)?(?: group)?|εταιρεία|εστιάζ|δραστηριοποι)|(?:με τι ασχολείται|με τι ασχολείστε|τι δραστηριότητα έχει|ποιο είναι το αντικείμενο(?: της)? δραστηριότητας).{0,65}(?:business|refal(?:co)?(?: group)?|η εταιρεία|ο όμιλος|η ομάδα)|(?:τι κάνει|τι δραστηριότητες έχει).{0,50}(?:η business|refal(?:co)?(?: group)?|ο όμιλος|η εταιρεία)/iu],
   [INTENTS.GENERAL_INFORMATION, /general information|information about (?:business|refal(?:co)?(?: group)?)|معلومات عامة|استفسار عام|γενικές πληροφορίες|γενική ενημέρωση/iu],
   [INTENTS.IMMIGRATION, /immigration|visa|residen(?:cy|ce)|citizenship|work permit|مهاجر|هجرة|تأشيرة|فيزا|إقامة|جنسية|άδεια παραμονής|μετανάστευση|βίζα|υπηκοότητα/iu],
@@ -118,7 +120,7 @@ const rawPatterns = [
   [INTENTS.GREETING, /^(?:(?:hi|hello|hey)(?: there)?|start|مرحبا|مرحبًا|أهلا|اهلا|السلام عليكم|γεια(?:\s+σας)?|καλημέρα|καλησπέρα)(?:[،,\s]+(?:who are you|what do you do|شو بتعمل|مين (?:أنت|انت)|ما عملكم|ما هي خدماتكم))?[!.؟?\s]*$/iu]
 ];
 
-const PRIORITY = [INTENTS.PROMPT_INJECTION, INTENTS.COMPLAINT, INTENTS.EXISTING_CLIENT, INTENTS.LEGAL, INTENTS.TAX, INTENTS.IMMIGRATION, INTENTS.BANKING, INTENTS.PERMIT, INTENTS.APPROVAL, INTENTS.COMPANY_FORMATION, INTENTS.INVESTMENT, INTENTS.PRICING, INTENTS.APPOINTMENT, INTENTS.PARTNERSHIP, INTENTS.PROJECT_ENQUIRY, INTENTS.CONSTRUCTION, INTENTS.LAND_DEVELOPMENT, INTENTS.REAL_ESTATE, INTENTS.CORPORATE_SERVICES, INTENTS.BUSINESS_AREAS, INTENTS.AGENT_IDENTITY, INTENTS.SERVICES, INTENTS.CONTACT, INTENTS.COMPANY_INFO, INTENTS.SMALL_TALK, INTENTS.GREETING];
+const PRIORITY = [INTENTS.PROMPT_INJECTION, INTENTS.COMPLAINT, INTENTS.EXISTING_CLIENT, INTENTS.LEGAL, INTENTS.TAX, INTENTS.IMMIGRATION, INTENTS.BANKING, INTENTS.PERMIT, INTENTS.APPROVAL, INTENTS.COMPANY_FORMATION, INTENTS.INVESTMENT, INTENTS.PRICING, INTENTS.APPOINTMENT, INTENTS.PARTNERSHIP, INTENTS.PROJECT_ENQUIRY, INTENTS.CONSTRUCTION, INTENTS.LAND_DEVELOPMENT, INTENTS.REAL_ESTATE, INTENTS.CORPORATE_SERVICES, INTENTS.BUSINESS_AREAS, INTENTS.LANGUAGE_CAPABILITY, INTENTS.AGENT_IDENTITY, INTENTS.SERVICES, INTENTS.CONTACT, INTENTS.COMPANY_INFO, INTENTS.SMALL_TALK, INTENTS.GREETING];
 
 const patterns = foldRulePatterns(rawPatterns);
 
