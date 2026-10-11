@@ -36,7 +36,7 @@ function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} }
     "Evaluate the answer language against the customer's current request, including an explicit request for another language, with history for continuity. Evaluate contextual references and explicit preferences, including refusal to book or be contacted. For a comparative follow-up, compare the actual prior answer with the draft: set contextValid false if previously listed items are presented as additional, or if a claimed expansion is unsupported. A repeated topic list does not answer a request to distinguish earlier scope from additional scope. Do not demand a qualification question when the customer can be answered directly.",
     "Check the speaker/customer roles and interest boundaries from history. Do not attribute the company's assistance to the customer. Set contextValid false when excluded service areas are volunteered, even as conditional offers, unless the current request reopens that topic or the mention preserves a necessary material condition. A broad source overview does not override a narrower current need.",
     "The first assistant response in a conversation must naturally identify the configured agent, its role and group. If there is no prior assistant response in history and this introduction is missing, set contextValid false. Later responses need not repeat it.",
-    "answerAddressesQuestion is true when the answer directly addresses what can be answered from supplied evidence and accurately identifies any remaining uncertainty. Useful supported partial answers are allowed. Requested short bullet lists are allowed. Return only concise reason codes and exact claim text, no rationale or hidden reasoning."
+    "Assess requestCoverage separately from factual support. Set outcome addressed when the draft directly answers the current request, or supported_partial when it answers the supported parts and accurately identifies evidence limits. Do not demand unavailable contract details, an exhaustive list, or a qualification answer before accepting a useful grounded overview. Set not_addressed only for an actual ignored request aspect; unmetAspects must then quote those exact spans from the current customer request, never a rationale or a newly invented requirement. For addressed/supported_partial, unmetAspects must be empty. Requested short bullet lists are allowed. Return only reason codes, exact claim text and quoted request spans; no rationale or hidden reasoning."
   ].join("\n") }, { role: "user", content: JSON.stringify({
     identity: reviewIdentity(),
     request: redactPersonalData(context.currentMessage || ""),
@@ -56,14 +56,19 @@ async function callGroundingReviewer(messages, { onUsage } = {}) {
   const request = withOpenRouterPrivacyPolicy({ model, temperature: 0, max_tokens: 2200,
     reasoning: { enabled: false, exclude: true }, messages,
     response_format: { type: "json_schema", json_schema: { name: "refal_grounding_review", strict: true, schema: {
-      type: "object", additionalProperties: false, required: ["segments", "languageValid", "contextValid", "answerAddressesQuestion"],
+      type: "object", additionalProperties: false, required: ["segments", "languageValid", "contextValid", "requestCoverage"],
       properties: {
         segments: { type: "array", minItems: 1, maxItems: 24, items: {
           type: "object", additionalProperties: false, required: ["text", "status", "evidenceRefs", "reasonCode"], properties: {
             text: { type: "string" }, status: { type: "string", enum: ["supported", "unsupported", "identity", "non_factual"] },
             evidenceRefs: { type: "array", items: { type: "string" } }, reasonCode: { type: "string", enum: REVIEW_CODES }
           }
-        } }, languageValid: { type: "boolean" }, contextValid: { type: "boolean" }, answerAddressesQuestion: { type: "boolean" }
+        } }, languageValid: { type: "boolean" }, contextValid: { type: "boolean" }, requestCoverage: {
+          type:"object",additionalProperties:false,required:["outcome","unmetAspects"],properties:{
+            outcome:{type:"string",enum:["addressed","supported_partial","not_addressed"]},
+            unmetAspects:{type:"array",maxItems:5,items:{type:"string",maxLength:300}}
+          }
+        }
       }
     } } }
   });
@@ -79,15 +84,20 @@ async function callGroundingReviewer(messages, { onUsage } = {}) {
     return result;
   });
   try { await onUsage?.(normalizeOpenRouterUsage(body, model)); } catch { /* Usage must not change validation. */ }
+  if (body?.choices?.[0]?.finish_reason === "length") { const error = new Error("Grounding reviewer output was truncated."); error.code = "GROUNDING_REVIEW_TRUNCATED"; throw error; }
   const content = body?.choices?.[0]?.message?.content;
   if (typeof content !== "string") { const error = new Error("Grounding reviewer returned no verdict."); error.code = "GROUNDING_EMPTY_VERDICT"; throw error; }
-  return JSON.parse(content);
+  try { return JSON.parse(content); } catch { const error = new Error("Grounding reviewer returned invalid JSON."); error.code = "GROUNDING_VERDICT_JSON_INVALID"; throw error; }
 }
 
-function validateGroundingVerdict(verdict, text, evidenceItems = []) {
+function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequest = null) {
   const normalize = (value) => String(value || "").replace(/\s+/gu, " ").trim();
   const badShape = !verdict || !Array.isArray(verdict.segments) || !verdict.segments.length || verdict.segments.length > 24
-    || !["languageValid", "contextValid", "answerAddressesQuestion"].every((key) => typeof verdict[key] === "boolean");
+    || !["languageValid", "contextValid"].every((key) => typeof verdict[key] === "boolean")
+    || !["addressed","supported_partial","not_addressed"].includes(verdict.requestCoverage?.outcome)
+    || !Array.isArray(verdict.requestCoverage?.unmetAspects) || verdict.requestCoverage.unmetAspects.length > 5
+    || verdict.requestCoverage.unmetAspects.some(aspect => typeof aspect!=="string" || !aspect.trim() || aspect.length>300 || (currentRequest!==null && !normalize(currentRequest).includes(normalize(aspect))))
+    || (verdict.requestCoverage.outcome==="not_addressed" ? !verdict.requestCoverage.unmetAspects.length : verdict.requestCoverage.unmetAspects.length!==0);
   const invalidSegments = badShape || verdict.segments.some((item) => !item || typeof item.text !== "string" || !item.text.trim()
     || !["supported", "unsupported", "identity", "non_factual"].includes(item.status)
     || !Array.isArray(item.evidenceRefs) || !REVIEW_CODES.includes(item.reasonCode));
@@ -107,8 +117,11 @@ function validateGroundingVerdict(verdict, text, evidenceItems = []) {
   const reasons = [...new Set(blockedClaims.flatMap((item) => item.reasons))];
   if (!verdict.languageValid) reasons.push("language_mismatch");
   if (!verdict.contextValid) reasons.push("context_mismatch");
-  if (!verdict.answerAddressesQuestion) reasons.push("question_not_answered");
-  return { valid: reasons.length === 0, reasons, blockedClaims, segments: verdict.segments };
+  if (verdict.requestCoverage.outcome === "not_addressed") {
+    reasons.push("question_not_answered");
+    blockedClaims.push(...verdict.requestCoverage.unmetAspects.map(sentence => ({sentence,claimClass:"UNMET_REQUEST",reasons:["question_not_answered"]})));
+  }
+  return { valid: reasons.length === 0, reasons, blockedClaims, segments: verdict.segments, requestCoverage:verdict.requestCoverage };
 }
 
 async function assessAgentDraft({ text, evidenceItems = [], dynamicEvidenceItems = [], context = {}, step = 0 } = {}, {
@@ -121,11 +134,11 @@ async function assessAgentDraft({ text, evidenceItems = [], dynamicEvidenceItems
   let result;
   try {
     const verdict = await callModel(buildGroundingReviewMessages({ text, evidenceItems: evidence, context }), { onUsage: onModelUsage });
-    result = validateGroundingVerdict(verdict, text, evidence);
+    result = validateGroundingVerdict(verdict, text, evidence, redactPersonalData(context.currentMessage || ""));
     if (!result.valid) outcome = result.technicalFailure ? "validation_error" : "validation_rejected";
   } catch (error) {
     const code = /^[A-Z][A-Z0-9_.-]{0,49}$/u.test(String(error?.code || "")) ? error.code : Number.isInteger(error?.status) ? `HTTP_${error.status}` : "GROUNDING_REVIEW_FAILED";
-    outcome = "provider_error";
+    outcome = /^GROUNDING_(?:VERDICT_|REVIEW_TRUNCATED)/u.test(code) ? "validation_error" : "provider_error";
     result = { valid: false, technicalFailure: true, reasons: ["grounding_review_failed"], errorCode: code, blockedClaims: [] };
   }
   try { await onModelCall?.({ stage: "validation", step, outcome, durationMs: Math.round(performance.now() - started), evidenceCount: evidence.length,

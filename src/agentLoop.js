@@ -109,7 +109,7 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
     args: { attemptedType: decisionType },
     result: { ok: false, status: "policy_rejected", reasonCode: diagnosticCodes.join(","),
       draft: policy.text, blockedClaims: policy.blockedClaims || [],
-      correction: "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support." }
+      correction: "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support." }
   };
 }
 

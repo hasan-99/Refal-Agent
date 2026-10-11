@@ -21,7 +21,7 @@ async function main() {
     events: events.filter((event) => event.fields?.sourceTurnId === turn.id || event.sourceTurnId === turn.id || (event.fields?.traceId || event.traceId) === turn.metadata?.traceId),
     inspections: inspections.filter((item) => item.sourceTurnId === turn.id)
   }));
-  fs.writeFileSync(path.resolve(__dirname, "../artifacts/whatsapp-postrestart-transcript.json"), JSON.stringify({ startedAt, followUpBlocked: user.profile.followUpBlocked, turns }, null, 2));
+  fs.writeFileSync(path.resolve(__dirname, "../artifacts/whatsapp-postrestart-transcript.json"), JSON.stringify({ startedAt, activeSessionStartedAt:user.profile.qaSessionStartedAt, followUpBlocked: user.profile.followUpBlocked, turns }, null, 2));
   console.log(JSON.stringify({ count: turns.length, turns: turns.slice(-1).map((turn) => ({
     id: turn.id, message: turn.message, response: turn.response, deliveredAt: turn.deliveredAt, traceId: turn.traceId,
     events: turn.events.map((event) => { const f=event.fields || event; return { event: event.event, stage:f.stage, step:f.step,
