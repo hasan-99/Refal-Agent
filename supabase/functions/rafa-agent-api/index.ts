@@ -16,6 +16,7 @@ import { validateSalesOfferMetadata, validateSpecialistOfferMetadata } from "./s
 import { canRetryHandoverReview, closeHandoverDeliverySafely, ledgerPatchForClosedHandover, ledgerPatchForExistingNotification, ledgerPatchForNotificationResult, ledgerPatchForRetryMismatch } from "./handoverDeliveryState.mjs";
 import { canClaimP65TestNotification, canCreateP65TestNotification, controlledP65Recipient, isSyntheticP65Handover } from "./p65TestRouting.mjs";
 import { consumeSharedRateLimit } from "./rateLimit.mjs";
+import { CRM_PROFILE_GROUPS, crmRowToAgentFacts, isExplicitCrmCorrection, isSelfIdentifiedCrmName, validateCrmValueAgainstMessage } from "./crmLeadProfile.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -122,6 +123,39 @@ Deno.serve(async (req: Request) => {
       return json(result);
     }
 
+    if (parts[0] === "crm" && parts[1] === "profile" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const userId = String(body.userId || "").trim().slice(0, 200);
+      const field = String(body.field || "");
+      const value = typeof body.value === "string" ? body.value.trim() : "";
+      const sourceTurnId = String(body.sourceTurnId || "");
+      if (!userId || !Object.hasOwn(CRM_PROFILE_GROUPS, field) || !value || value.length > 500 || !isUuid(sourceTurnId)) {
+        throw new HttpError("A supported CRM field and verified source turn are required.", 400);
+      }
+      const { data: contact, error: contactError } = await supabase.from("rafa_contacts").select("id").eq("whatsapp_jid", userId).maybeSingle();
+      if (contactError) throw contactError;
+      if (!contact?.id) throw new HttpError("Customer contact was not found.", 404);
+      const { data: sourceTurn, error: sourceError } = await supabase.from("rafa_conversation_turns").select("id,message")
+        .eq("id", sourceTurnId).eq("contact_id", contact.id).maybeSingle();
+      if (sourceError) throw sourceError;
+      if (!sourceTurn || !validateCrmValueAgainstMessage(field, value, sourceTurn.message)
+        || (field === "name" && !isSelfIdentifiedCrmName(sourceTurn.message, value))) {
+        throw new HttpError("CRM value must be stated affirmatively in the linked customer turn.", 400);
+      }
+      const correction = isExplicitCrmCorrection(sourceTurn.message);
+      const { data: saved, error: writeError } = await supabase.rpc("refal_save_lead_profile_field", {
+        p_contact_id: contact.id,
+        p_field: field,
+        p_value: value,
+        p_source_turn_id: sourceTurnId,
+        p_captured_at: new Date().toISOString(),
+        p_explicit_correction: correction
+      });
+      if (writeError) throw writeError;
+      if (!saved || !["saved", "correction_needed"].includes(saved.status)) throw new Error("CRM profile persistence was not confirmed.");
+      return json({ status: saved.status, field: saved.field || field.toLowerCase(), correctionField: saved.correction_field || null });
+    }
+
     if (parts[0] === "settings" && parts[1] === "booking-policy" && parts.length === 2) {
       if (req.method === "GET") {
         const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", "booking_policy").maybeSingle();
@@ -218,6 +252,29 @@ Deno.serve(async (req: Request) => {
     if (parts[0] === "contacts" && parts[1] === "ensure" && req.method === "POST") {
       const body = await req.json();
       return json({ user: await ensureUser(String(body.userId || "")) });
+    }
+
+    if (parts[0] === "contacts" && parts[1] && parts[2] === "admin-correction" && req.method === "POST") {
+      const userId = decodeURIComponent(parts[1]);
+      const body = await req.json().catch(() => ({}));
+      const allowed = new Set(["nameOverride","phoneOverride","needOverride","conversationSummary"]);
+      const changes = body?.contact;
+      const expected = body?.expected;
+      const actor = String(body?.actor || "").trim().slice(0, 200);
+      if (!validWhatsAppJid(userId) || !changes || typeof changes !== "object" || Array.isArray(changes)
+        || !expected || typeof expected !== "object" || Array.isArray(expected)
+        || Object.keys(changes).length === 0 || Object.keys(changes).some((field) => !allowed.has(field))
+        || Object.keys(expected).some((field) => !allowed.has(field)) || !actor) {
+        throw new HttpError("Invalid contact correction request.", 400);
+      }
+      const { data, error } = await supabase.rpc("refal_correct_contact_profile", {
+        p_whatsapp_jid: userId, p_expected: expected, p_changes: changes, p_actor: actor
+      });
+      if (error) throw error;
+      if (data?.status === "stale") throw new HttpError("This contact changed since you opened it. Reload the current values before saving.", 409);
+      if (data?.status === "not_found") throw new HttpError("User not found.", 404);
+      if (data?.status !== "saved") throw new HttpError("Contact correction was not confirmed.", 502);
+      return json({ ok: true, profile: data.profile });
     }
 
     if (parts[0] === "contacts" && parts[1] && req.method === "GET") {
@@ -751,7 +808,22 @@ async function listUsers(includeHistory: boolean) {
     .order("updated_at", { ascending: false });
   if (error) throw error;
 
-  const users = await Promise.all((data || []).map(async (row) => attachWorkflowState(rowToUser(row, []))));
+  const rows = data || [];
+  const crmByContact = new Map<string, Record<string, unknown>>();
+  if (rows.length) {
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const ids = rows.slice(offset, offset + 500).map((row) => row.id);
+      const { data: crmRows, error: crmError } = await supabase.from("refal_lead_profile")
+        .select("contact_id,identity_fields,opportunity_fields,property_residency_fields,qualification_fields,field_provenance,crm_correction_needed")
+        .in("contact_id", ids);
+      if (crmError) throw crmError;
+      for (const crmRow of crmRows || []) crmByContact.set(crmRow.contact_id, crmRow);
+    }
+  }
+  const users = await Promise.all(rows.map(async (row) => {
+    const user = await attachWorkflowState(rowToUser(row, []));
+    return attachCrmProfile(user, crmByContact.get(row.id) || null);
+  }));
   if (!includeHistory) return users;
   if (!users.length) return users;
 
@@ -1043,7 +1115,7 @@ async function getUser(userId: string, includeHistory = true) {
   if (error) throw error;
   if (!data) return null;
 
-  const user = await attachWorkflowState(rowToUser(data, []));
+  const user = await attachCrmProfile(await attachWorkflowState(rowToUser(data, [])));
   return includeHistory ? attachHistory(user) : user;
 }
 
@@ -1068,7 +1140,7 @@ async function ensureUser(userId: string): Promise<Record<string, any>> {
     .select("*")
     .single();
   if (error) throw error;
-  return attachWorkflowState(rowToUser(data, []));
+  return attachCrmProfile(await attachWorkflowState(rowToUser(data, [])));
 }
 
 async function updateUser(userId: string, body: Record<string, unknown>) {
@@ -1087,7 +1159,7 @@ async function updateUser(userId: string, body: Record<string, unknown>) {
     .select("*")
     .single();
   if (error) throw error;
-  return attachHistory(rowToUser(data, []));
+  return attachHistory(await attachCrmProfile(rowToUser(data, [])));
 }
 
 async function addHistory(user: Record<string, any>, body: Record<string, unknown>) {
@@ -1991,6 +2063,31 @@ function rowToUser(row: Record<string, any>, history: unknown[]) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     history
+  };
+}
+
+async function attachCrmProfile(user: Record<string, any>, suppliedRow?: Record<string, any> | null) {
+  if (!user?.contactId) return user;
+  let row = suppliedRow;
+  if (arguments.length < 2) {
+    const { data, error } = await supabase.from("refal_lead_profile")
+      .select("contact_id,identity_fields,opportunity_fields,property_residency_fields,qualification_fields,field_provenance,crm_correction_needed")
+      .eq("contact_id", user.contactId).maybeSingle();
+    if (error) throw error;
+    row = data;
+  }
+  const projection = crmRowToAgentFacts(row);
+  const profile = {
+    ...(user.profile || {}),
+    agentFacts: { ...(user.profile?.agentFacts || {}), ...projection.agentFacts }
+  };
+  if (projection.hasRow) {
+    if (projection.crmCorrectionNeeded) profile.crmCorrectionNeeded = projection.crmCorrectionNeeded;
+    else delete profile.crmCorrectionNeeded;
+  }
+  return {
+    ...user,
+    profile
   };
 }
 

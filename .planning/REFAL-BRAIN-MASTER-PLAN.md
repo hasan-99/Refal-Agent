@@ -959,7 +959,7 @@ Timezone and **DST** conversion · date language parsing in AR/EN/EL · boundary
 ### P8.1 — CRM schema `[ ]`
 Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII under the existing redaction rules.
 
-**Progress (2026-10-11):** No durable `refal_lead_profile` schema or sync exists yet. The extraction work below is in-process only and does not close this schema phase.
+**Progress (2026-10-11):** MIG-07 now adds the four grouped CRM field stores, provenance, a correction marker, and an atomic contact-owned source-turn write RPC. PGlite verifies RLS, service-role-only access, constraints, idempotence, field merging, and source-turn ownership. The migration is prepared but unapplied; live CRM persistence and Edge verification remain open.
 
 | Group | Fields (MB 5.1) |
 | --- | --- |
@@ -975,7 +975,7 @@ Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII
 - Record a conflict as a **correction need**, never a silent overwrite.
 - **WhatsApp platform metadata is for this conversation and this declared purpose only.** It is not consent for unrelated follow up (repairs FIX-12).
 
-**Progress (2026-10-11):** Added trusted inbound-turn binding, allowlisted CRM fields, literal evidence and source-turn checks, explicit self-identification for names, negation checks, redaction, and conflict handling. Focused tests pass. Durable CRM persistence and human correction workflow remain open.
+**Progress (2026-10-11):** Added trusted inbound-turn binding, allowlisted CRM fields, literal evidence and source-turn checks, explicit self-identification for names, redaction, and conflict handling. Independent audit found postposed negation could pass the value validator; added English, Arabic, and Greek regressions and fail-closed checks. Root suite passes **2,129/2,129**. Durable CRM persistence remains pending MIG-07 application and live Edge verification.
 
 ### P8.3 — The never re-ask rule `[~]`
 MB-CRM5, strict. Implemented as a **pre send gate**: if the drafted question targets a field already present with sufficient confidence, reject the draft and regenerate. Covers country, budget, family, activity, target market, timeline. `src/neverReAsk.test.js` with multi turn fixtures per language.
@@ -984,6 +984,8 @@ MB-CRM5, strict. Implemented as a **pre send gate**: if the drafted question tar
 
 ### P8.4 — Summaries, CRM sync, memory boundary `[ ]`
 Concise summaries tied to contact and conversation IDs, excluding secrets and irrelevant sensitive detail. Sync state recorded and retried safely without creating duplicate records. **Memory stays untrusted**: continuity only, never evidence for a company fact, never an instruction. Tests so M8 cannot erode this.
+
+**Progress (2026-10-11):** The Agent adapter now persists approved CRM candidates through the contact-owned Edge/RPC path and rehydrates durable fields into contact reads. Writes fail closed if persistence fails. Local migration and integration tests pass; the live migration and Edge deployment are still required. Only the first unresolved correction marker is surfaced at a time, so concurrent distinct conflicts need a follow-up workflow before M8 can close.
 
 ---
 
@@ -1071,6 +1073,8 @@ Open handovers and alerts · complaint status · lead summary · appointment pro
 ### P12.4 — Human corrections `[ ]`
 Staff can correct names, intent, score evidence, routing and knowledge facts. Corrections are auditable and **feed the evaluation fixtures after review**. Tested with: a staff member without permission, stale browser state, partial saves, concurrent edits. No control may imply success before the save is confirmed.
 
+**Progress (2026-10-11):** Independent audit found process-local stale-write protection and a split profile/audit write. Replaced these with MIG-14's service-role-only RPC: row lock, compare against the browser baseline, partial JSON merge, and field-name-only audit insert occur in one transaction. PGlite covers stale state, partial preservation, audit payload privacy, privilege boundary, and rerunnable DDL; dashboard covers role checks and concurrent stale submissions. MIG-14 is prepared but unapplied, so live multi-instance behavior remains unverified.
+
 ---
 
 # M13 — Scale and Reliability
@@ -1108,6 +1112,8 @@ N concurrent conversations across all three languages. Measure latency, error ra
 All ~870 questions. Targets, written before the run: ≥90% factual accuracy · 100% grounding · **0 guardrail failures** · ≥85% Golden Formula compliance · language parity within 10%. Results identify test type: synthetic, sandbox or live. **No scripted fallback counts as a model success without disclosure.**
 
 **Execution record (2026-10-11, diagnostic only):** The new harness ran the live approved-knowledge search for all **879** positive golden questions and **17** negative controls. It returned 742/879 expected-fact hits in the top five (84.4%); language counts were AR 252/293 (86.0%), EN 241/293 (82.3%), EL 249/293 (85.0%). It generated **zero** model answers, so factual accuracy, grounding, Golden Formula and answer-language quality remain unscored. Do not use these retrieval rates as a release verdict yet: MB-F9 package-price questions require the separate dynamic-offer tool, the raw-search negative controls bypass the agent's scope gate, and at least one golden expected-fact mapping needs human review. A corrected three-question ranked live smoke found each supplied expected fact in ranks 2–4. Full methodology review and human answer adjudication remain open.
+
+**Harness correction (2026-10-11):** A false-green path allowed answer-quality eligibility with no reviewed refusal scenario. Eligibility now requires at least one refusal answer with explicit passing adjudication. Negative raw-search diagnostics still do not count as Agent refusal evidence. No model answers were generated in this pass; live answer quality is not yet scored.
 
 ### P14.2 — Full workflow tests (CX 14C) `[ ]`
 Inbound message → intent → retrieval or tool → answer → DB persistence → handoff, booking or follow up state → dashboard view. Fake services and isolated Supabase fixtures first, then sandbox accounts for external connectors.
@@ -2379,14 +2385,14 @@ CF-01's original "no live caller" condition is closed by M4's tested dynamic-dat
 | **MIG-04** | `refal_property_inventory` | Units, city, type, status, price, `first_sale`, `pr_eligible`, availability | **P4.1** | `LIVE_PROPERTY_INVENTORY` | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
 | **MIG-05** | `refal_reservation_rules` | Deposit amount or percent, refundable, conditions per project | **P4.1** | `RESERVATION_DEPOSIT_RULES`, the P2.4 guard | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
 | **MIG-06** | `refal_government_fees` | Registry, land registry, residency application fees | **P4.1** | `GOVERNMENT_THIRD_PARTY_FEES` | **[x] APPLIED 2026-10-10**, migration history `20261010150340 / refal_dynamic_commercial_data`; live schema/RLS/grants verified |
-| **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | `[ ]` |
+| **MIG-07** | `refal_lead_profile` | All four MB 5.1 CRM field groups, provenance, correction marker, atomic source-turn RPC, one row per contact, RLS scoped | **P8.1** | progressive capture, never re-ask | **[ ] PREPARED, PGlite verified; live application and Edge smoke pending** |
 | **MIG-08** | `refal_lead_score` | Six dimension scores, evidence references, scorer version, total, score history | **P6.1** | reproducible scoring and the handoff summary | **[x] APPLIED 2026-10-10**, history `20261010190302 / refal_lead_score`; RLS/schema verified |
 | **MIG-09** | `rafa_contact_consents` | Specialist and automated-reminder scopes; language, channel, purpose, source turns, opt-out/reconsent guard | **P9.1** | any follow up or outbound action | **[x] APPLIED 2026-10-11**, history `20261010230719 / refal_m9_consent_scopes`; columns verified. Do not schedule reminders before the live consent/suppression smoke check. |
 | **MIG-10** | `20261010210717_refal_booking_state_machine_m7.sql` | Seven workflow states, status index, durable default booking policy | **P7.2** | real bookings | **[x] APPLIED 2026-10-11**; migration history `20261010221510 / refal_booking_state_machine_m7`; constraint, index, and policy row verified |
 | **MIG-11** | `refal_handover_delivery` | Delivery attempts, retries, acknowledgment, closure reason, badge reconciliation | **P6.5** | FIX-9 handover delivery | **[x] APPLIED 2026-10-10**, history `20261010190310 / refal_handover_delivery`; RLS/schema verified; delivery smoke pending |
 | **MIG-12** | `refal_compliance_events` + `refal_identity_verification` | AML and sanctions escalation records, one time code verification state | **P2.5** | compliance escalation, existing client unlock | `[ ]` |
 | **MIG-13** | `refal_rate_limits` | Shared counters replacing in process memory | **P13.2** | FIX fix 11, surviving a restart | `[ ]` |
-| **MIG-14** | audit extensions | Append only events for consent, score change, human correction, booking confirmation, sensitive access | **P12.4** | dashboard corrections and audit | `[ ]` |
+| **MIG-14** | atomic contact correction | Locked compare-and-merge with same-transaction field-only audit for human CRM correction | **P12.4** | dashboard corrections and audit | **[ ] PREPARED, PGlite verified; live application and multi-instance smoke pending** |
 
 ### How a migration is applied, as of 2026-10-10
 

@@ -119,6 +119,37 @@ class EdgeApiStore {
     });
   }
 
+  async saveCrmProfile({ userId, field, value, sourceTurnId }) {
+    const result = await this.request("/crm/profile", {
+      method: "POST",
+      timeoutMs: 8000,
+      body: JSON.stringify({ userId, field, value, sourceTurnId })
+    });
+    const user = this.data.users[userId];
+    if (user) {
+      user.profile = user.profile || {};
+      user.profile.agentFacts = { ...(user.profile.agentFacts || {}) };
+      if (result?.status === "saved") {
+        user.profile.agentFacts[field.toLowerCase()] = {
+          value, normalizedValue: value, provenance: "customer_message", confidence: 1,
+          sourceTurnId, savedAt: new Date().toISOString(), durable: true
+        };
+      }
+      if (result?.status === "correction_needed") {
+        const correctionField = String(result.correctionField || field).toLowerCase();
+        user.profile.crmCorrectionNeeded = { field: correctionField };
+        if (user.profile.agentFacts[correctionField]) {
+          user.profile.agentFacts[correctionField] = { ...user.profile.agentFacts[correctionField], correctionNeeded: true };
+        }
+      } else if (result?.correctionField) {
+        user.profile.crmCorrectionNeeded = { field: String(result.correctionField).toLowerCase() };
+      } else {
+        delete user.profile.crmCorrectionNeeded;
+      }
+    }
+    return result;
+  }
+
   async hydrate() {
     const { users } = await this.request("/contacts");
     this.data = { users: Object.fromEntries((users || []).map((user) => [user.id, user])) };
@@ -179,6 +210,13 @@ class EdgeApiStore {
     });
     this.data.users[userId] = updated;
     return updated;
+  }
+
+  async correctContactProfile(userId, contact, expected, actor) {
+    return this.request(`/contacts/${encodeURIComponent(userId)}/admin-correction`, {
+      method: "POST",
+      body: JSON.stringify({ contact, expected, actor })
+    });
   }
 
   async resetUser(userId) {

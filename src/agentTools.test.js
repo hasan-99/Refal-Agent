@@ -216,6 +216,19 @@ test("saveCustomerFact normalizes field-name casing so the same fact can't fragm
   assert.equal(draft.profile.agentFacts.companyactivity.correctionNeeded, true);
 });
 
+test("saveCustomerFact uses durable CRM sync when the store exposes it", async () => {
+  let saved;
+  const store = {
+    saveCrmProfile: async (payload) => { saved = payload; return { status: "saved" }; },
+    updateUser: async () => { throw new Error("durable stores must not duplicate CRM into contact profile"); }
+  };
+  const result = await saveCustomerFact({ field: "businessActivity", value: "accounting", provenance: "customer_message" }, {
+    store, userId: "123@s.whatsapp.net", currentMessage: "My business activity is accounting", sourceTurnId: "turn-verified"
+  });
+  assert.equal(result.status, "saved");
+  assert.deepEqual(saved, { userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-verified" });
+});
+
 test("a CRM conflict is only resolved by an explicit correction in a later customer turn", async () => {
   const draft = { profile: {} };
   const store = { updateUser: async (_id, updater) => { await updater(draft); } };

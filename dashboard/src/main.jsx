@@ -1515,7 +1515,7 @@ function Leads({ isAdmin }) {
 }
 
 function ConversationDrawer({ userId, isAdmin, onClose }) {
-  const { data, setData, loading } = useApi(`/api/leads/${encodeURIComponent(userId)}`, [userId]);
+  const { data, setData, loading, reload } = useApi(`/api/leads/${encodeURIComponent(userId)}`, [userId]);
   const [contact, setContact] = useState({ nameOverride: "", phoneOverride: "", needOverride: "", conversationSummary: "" });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -1527,7 +1527,7 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
       needOverride: data.profile?.needOverride || "",
       conversationSummary: data.profile?.conversationSummary || ""
     });
-  }, [data.user?.nameOverride, data.user?.phoneOverride]);
+  }, [data.user?.nameOverride, data.user?.phoneOverride, data.profile?.needOverride, data.profile?.conversationSummary]);
 
   async function saveContact() {
     setSaving(true);
@@ -1535,9 +1535,17 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
     try {
       const saved = await api(`/api/leads/${encodeURIComponent(userId)}/contact`, {
         method: "PUT",
-        body: JSON.stringify(contact)
+        body: JSON.stringify({
+          contact,
+          expected: {
+            nameOverride: data.user?.nameOverride || "",
+            phoneOverride: data.user?.phoneOverride || "",
+            needOverride: data.profile?.needOverride || "",
+            conversationSummary: data.profile?.conversationSummary || ""
+          }
+        })
       });
-      setData({ ...data, user: saved.user, profile: saved.profile });
+      setData({ ...data, profile: saved.profile });
       setMessage("Contact saved.");
     } catch (error) {
       setMessage(error.message);
@@ -1594,7 +1602,8 @@ function ConversationDrawer({ userId, isAdmin, onClose }) {
             <button className="primary" onClick={saveContact} disabled={saving}>
               <Save size={16} /> {saving ? "Saving" : "Save"}
             </button>
-            {message && <span>{message}</span>}
+            {message && <span role="status">{message}</span>}
+            {message.includes("Reload the current values") && <button type="button" className="ghost" onClick={reload}>Reload current contact values</button>}
           </section>}
 
           {(data.history || []).map((item, index) => (
@@ -2089,7 +2098,7 @@ function useApi(url, deps = [], options = {}) {
     };
   }, [url, tick, options.pollMs, ...deps]);
 
-  return { data, setData, loading, error, reload: () => setTick((value) => value + 1) };
+  return { data, setData, loading, error, reload: () => { apiGetCache.delete(url); setTick((value) => value + 1); } };
 }
 
 async function api(url, options = {}) {
@@ -2108,7 +2117,12 @@ async function api(url, options = {}) {
       ...options
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || `Request failed: ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(body.error || `Request failed: ${response.status}`);
+      error.status = response.status;
+      error.code = body.code;
+      throw error;
+    }
     if (method === "GET") apiGetCache.set(url, { data: body, expiresAt: Date.now() + API_GET_CACHE_MS });
     else apiGetCache.clear();
     return body;

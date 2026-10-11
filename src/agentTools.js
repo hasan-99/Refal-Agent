@@ -611,6 +611,18 @@ async function saveCustomerFact(args, { store, userId, currentMessage, sourceTur
   if (crmField && !candidate?.ok) return fail("not_authorized", candidate?.reason === "name_not_self_identified" ? "NAME_NOT_SELF_IDENTIFIED" : "INVALID_CRM_CANDIDATE");
   const storedValue = candidate.record.normalizedValue;
   const safeEvidence = candidate.record.evidence;
+  if (typeof store?.saveCrmProfile === "function") {
+    try {
+      const result = await store.saveCrmProfile({ userId, field: crmField, value: storedValue, sourceTurnId: String(sourceTurnId) });
+      if (result?.status === "correction_needed") {
+        return ok("correction_needed", { field: canonicalField, correctionNeeded: true });
+      }
+      if (result?.status !== "saved") return fail("error", "SAVE_FAILED");
+      return ok("saved", { field: canonicalField });
+    } catch {
+      return fail("error", "SAVE_FAILED");
+    }
+  }
   if (!userId || typeof store?.updateUser !== "function") return fail("error", "STORE_UNAVAILABLE");
 
   let correctionNeeded = false;

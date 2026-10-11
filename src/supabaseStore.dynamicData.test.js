@@ -18,6 +18,30 @@ test("shared rate-limit requests are one bounded authenticated Edge call", async
   assert.equal(result.allowed, true);
 });
 
+test("CRM writes use the dedicated durable profile route with linked source turn", async () => {
+  const instance = store();
+  let request;
+  instance.request = async (...args) => { request = args; return { status: "saved", field: "businessactivity" }; };
+  const result = await instance.saveCrmProfile({ userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-1" });
+  assert.deepEqual(request, ["/crm/profile", {
+    method: "POST", timeoutMs: 8000,
+    body: JSON.stringify({ userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-1" })
+  }]);
+  assert.equal(result.status, "saved");
+});
+
+test("durable CRM result updates the active contact projection for the current agent turn", async () => {
+  const instance = store();
+  const user = { id: "123@s.whatsapp.net", profile: { agentFacts: { businessactivity: { value: "accounting" } } } };
+  instance.data.users[user.id] = user;
+  instance.request = async () => ({ status: "correction_needed", field: "businessactivity", correctionField: "businessactivity" });
+  const result = await instance.saveCrmProfile({ userId: user.id, field: "businessActivity", value: "construction", sourceTurnId: "turn-2" });
+  assert.equal(result.status, "correction_needed");
+  assert.deepEqual(user.profile.crmCorrectionNeeded, { field: "businessactivity" });
+  assert.equal(user.profile.agentFacts.businessactivity.value, "accounting", "the old value is retained until clarification");
+  assert.equal(user.profile.agentFacts.businessactivity.correctionNeeded, true);
+});
+
 test("dynamic reads send only typed filters and normalize explicit empty state", async () => {
   const instance = store();
   let request;

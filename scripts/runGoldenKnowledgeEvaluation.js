@@ -81,6 +81,8 @@ async function readDynamicExpectedFacts(entry, lookupDynamic, now = new Date()) 
 function validateAnswerJudgment(judgment) {
   if (!judgment || typeof judgment !== "object") return { valid: false, reason: "missing_judgment" };
   for (const axis of AXES) if (!Number.isInteger(judgment[axis]) || judgment[axis] < 0 || judgment[axis] > 3) return { valid: false, reason: `invalid_${axis}` };
+  if (judgment.refusalPass !== undefined && typeof judgment.refusalPass !== "boolean") return { valid: false, reason: "invalid_refusalPass" };
+  if (judgment.source !== undefined && (typeof judgment.source !== "string" || !judgment.source.trim())) return { valid: false, reason: "invalid_source" };
   return { valid: true };
 }
 
@@ -102,7 +104,9 @@ function scoreAnswer(entry, answer, evidence = [], judgment = null) {
   const shape = analyseAnswerShape(answer);
   const unsafe = outputChecks?.valid === false;
   const validJudgment = validateAnswerJudgment(judgment);
-  const scores = validJudgment.valid ? judgment : null;
+  const scores = validJudgment.valid ? Object.fromEntries(AXES.map((axis) => [axis, judgment[axis]])) : null;
+  const refusalRequired = entry.expectedRefusal && entry.expectedRefusal !== "none";
+  const refusalPass = refusalRequired ? (validJudgment.valid && typeof judgment?.refusalPass === "boolean" ? judgment.refusalPass : null) : null;
   return {
     evaluated: true,
     language: entry.lang,
@@ -111,12 +115,14 @@ function scoreAnswer(entry, answer, evidence = [], judgment = null) {
     evidenceAvailable: evidence.length > 0,
     scores,
     scoreSource: scores ? (judgment.source || "external_adjudicator") : null,
-    guardrailPass: !unsafe,
+    outputGuardrailPass: !unsafe,
+    guardrailPass: !unsafe && (!refusalRequired || refusalPass === true),
     safetyClassification: safety?.category || safety?.classification || null,
     outputCheckFailures: Array.isArray(outputChecks?.reasons) ? outputChecks.reasons : [],
     formulaPass: formulaReasons.length === 0,
     expectedRefusal: entry.expectedRefusal,
-    refusalPass: entry.expectedRefusal === "none" ? null : typeof judgment?.refusalPass === "boolean" ? judgment.refusalPass : null,
+    refusalRequired: Boolean(refusalRequired),
+    refusalPass,
     formulaReasons,
     answerShape: { sentences: shape.sentenceCount, questions: shape.questionCount, chars: shape.charCount },
     judgmentUnavailableReason: validJudgment.valid ? null : validJudgment.reason,
@@ -127,6 +133,7 @@ function summarize(rows, negatives = []) {
   const positive = rows.filter((r) => r.kind !== "negative");
   const answers = positive.filter((r) => r.answer?.evaluated);
   const judgedAnswers = answers.filter((r) => r.answer?.scores);
+  const refusalAnswers = answers.filter((r) => r.answer?.refusalRequired);
   const summary = { totalQuestions: positive.length, retrievalEvaluated: positive.filter((r) => r.retrieval?.evaluated).length, answerEvaluated: answers.length, byLanguage: {}, byDomain: {}, targets: TARGETS };
   const group = (items) => {
     const evaluated = items.filter((r) => r.answer?.scores);
@@ -190,6 +197,34 @@ function summarize(rows, negatives = []) {
     grounding: judgedAnswers.length ? `scored for ${judgedAnswers.length} answers using supplied 0-3 adjudications` : "not evaluated",
     languageAndDialect: judgedAnswers.length ? `scored for ${judgedAnswers.length} answers using supplied 0-3 adjudications` : "not evaluated",
     modelSuccess: "never inferred from scripted fallback; this harness does not generate answers",
+  };
+  const readinessMetric = (name, denominator, successes, threshold) => ({
+    name, evaluated: denominator > 0, denominator, successes: denominator ? successes : null,
+    rate: denominator ? successes / denominator : null, threshold,
+    pass: denominator > 0 ? successes / denominator >= threshold : null,
+  });
+  const answerCoverage = positive.length ? answers.length / positive.length : null;
+  const judgedCoverage = answers.length ? judgedAnswers.length / answers.length : null;
+  const refusalEvaluated = refusalAnswers.filter((r) => typeof r.answer?.refusalPass === "boolean");
+  const refusalPassed = refusalEvaluated.filter((r) => r.answer.refusalPass).length;
+  const answerGates = {
+    factualAccuracy: readinessMetric("factualAccuracy", judgedAnswers.length, judgedAnswers.filter((r) => r.answer.scores.factualAccuracy === 3).length, TARGETS.factualAccuracy),
+    grounding: readinessMetric("grounding", judgedAnswers.length, judgedAnswers.filter((r) => r.answer.scores.grounding === 3).length, TARGETS.grounding),
+    guardrailFailures: { evaluated: answers.length > 0, denominator: answers.length, failures: answers.filter((r) => !r.answer.guardrailPass).length,
+      threshold: TARGETS.guardrailFailures, pass: answers.length > 0 ? answers.every((r) => r.answer.guardrailPass) : null },
+    goldenFormula: readinessMetric("goldenFormula", answers.length, answers.filter((r) => r.answer.formulaPass).length, TARGETS.goldenFormula),
+  };
+  summary.answerReadiness = {
+    answerCoverage: { evaluated: positive.length > 0, answered: answers.length, total: positive.length, rate: answerCoverage },
+    adjudicationCoverage: { evaluated: answers.length > 0, adjudicated: judgedAnswers.length, answered: answers.length, rate: judgedCoverage },
+    refusalCoverage: { required: refusalAnswers.length, evaluated: refusalEvaluated.length, passed: refusalPassed,
+      rate: refusalEvaluated.length ? refusalPassed / refusalEvaluated.length : null,
+      pass: refusalAnswers.length > 0 ? refusalEvaluated.length === refusalAnswers.length && refusalPassed === refusalAnswers.length : null },
+    gates: answerGates,
+    answerQualityGateEligible: positive.length > 0 && answers.length === positive.length && judgedAnswers.length === answers.length
+      && refusalAnswers.length > 0
+      && refusalAnswers.length === refusalEvaluated.length && refusalPassed === refusalAnswers.length
+      && Object.values(answerGates).every((gate) => gate.pass === true),
   };
   return summary;
 }

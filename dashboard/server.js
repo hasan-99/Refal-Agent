@@ -19,6 +19,7 @@ import { countUniqueHandoverContacts } from "./handoverGrouping.js";
 import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
+import { registerContactCorrectionAdminRoutes } from "./contactCorrectionAdmin.js";
 import { previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
 import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
@@ -175,6 +176,7 @@ app.get("/api/session", async (req, res) => {
 
 app.use("/api", requireAuth);
 registerDynamicDataAdminRoutes(app, { requireAdmin });
+registerContactCorrectionAdminRoutes(app, { store, requireAdmin });
 
 app.get("/api/whatsapp/control", requireAdmin, async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -785,37 +787,6 @@ app.post("/api/conversations/:userId/turns/:turnId/edit", requireAdmin, authRate
   } catch (error) {
     res.status(error.statusCode || 502).json({ error: error.message || "Could not deliver this reply update." });
   }
-});
-
-app.put("/api/leads/:id/contact", requireAdmin, async (req, res) => {
-  const user = await store.getUser(req.params.id, { includeHistory: true });
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  const profile = user.profile || {};
-  const nextName = String(req.body?.nameOverride || "").trim();
-  const nextPhone = String(req.body?.phoneOverride || "").trim();
-  const nextSummary = String(req.body?.conversationSummary || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 700);
-  const nextNeed = String(req.body?.needOverride || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 160);
-
-  if (nextName) profile.nameOverride = nextName;
-  else delete profile.nameOverride;
-
-  if (nextPhone) profile.phoneOverride = nextPhone;
-  else delete profile.phoneOverride;
-  if (nextSummary) profile.conversationSummary = nextSummary;
-  else delete profile.conversationSummary;
-  profile.conversationSummaryUpdatedAt = new Date().toISOString();
-  if (nextNeed) profile.needOverride = nextNeed;
-  else delete profile.needOverride;
-
-  user.profile = profile;
-  await store.updateUser(req.params.id, (draft) => {
-    draft.profile = profile;
-  });
-  await store.logEvent?.("contact_memory_admin_updated", { contactId: req.params.id, actor: req.dashboardUser.email || req.dashboardUser.id, action: "update_contact_memory", fields: ["nameOverride", "phoneOverride", "conversationSummary", "needOverride"] });
-
-  const saved = await store.getUser(req.params.id, { includeHistory: true });
-  res.json({ ok: true, user: userSummary(saved), profile: saved.profile || {} });
 });
 
 app.patch("/api/leads/:id/qualification", requireAdmin, async (req, res) => {

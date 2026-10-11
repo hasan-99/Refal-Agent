@@ -84,6 +84,40 @@ test("answer scoring requires explicit bounded adjudication and applies producti
   assert.ok(unsafe.outputCheckFailures.includes("internal_reasoning"));
 });
 
+test("expected refusals require explicit adjudication and block a false green answer gate", () => {
+  const entry = { id: "nq", lang: "en", expectedFacts: [], expectedRefusal: "negative" };
+  const draft = "I can help with Refalco's Cyprus business services. What are you looking for?";
+  const unreviewed = scoreAnswer(entry, draft, [], { factualAccuracy: 3, grounding: 3, languageAndDialect: 3 });
+  assert.equal(unreviewed.outputGuardrailPass, true);
+  assert.equal(unreviewed.refusalPass, null);
+  assert.equal(unreviewed.guardrailPass, false);
+  const reviewed = scoreAnswer(entry, draft, [], { factualAccuracy: 0, grounding: 0, languageAndDialect: 3, refusalPass: false, source: "reviewer-1" });
+  assert.equal(reviewed.refusalPass, false);
+  assert.equal(reviewed.guardrailPass, false);
+  const summary = summarize([{ id: "nq", kind: "positive", lang: "en", domain: "other", answer: reviewed }]);
+  assert.equal(summary.answerReadiness.refusalCoverage.pass, false);
+  assert.equal(summary.answerReadiness.answerQualityGateEligible, false);
+});
+
+test("answer readiness stays explicitly unevaluated when no answer samples exist", () => {
+  const summary = summarize([{ id: "x", lang: "en", domain: "corporate", answer: scoreAnswer({ id: "x", lang: "en" }, null) }]);
+  assert.equal(summary.answerReadiness.gates.factualAccuracy.pass, null);
+  assert.equal(summary.answerReadiness.gates.grounding.pass, null);
+  assert.equal(summary.answerReadiness.gates.goldenFormula.pass, null);
+  assert.equal(summary.answerReadiness.gates.guardrailFailures.pass, null);
+  assert.equal(summary.answerReadiness.answerQualityGateEligible, false);
+});
+
+test("answer quality cannot be eligible until at least one refusal scenario is explicitly reviewed", () => {
+  const entry = { id: "positive", lang: "en", domain: "corporate", expectedFacts: ["MB-F1"], expectedRefusal: "none" };
+  const answer = scoreAnswer(entry, "A grounded, helpful response.", [{ source_url: "refal://kb/corporate/example/en" }], {
+    factualAccuracy: 3, grounding: 3, languageAndDialect: 3, source: "human-review"
+  });
+  const summary = summarize([{ id: "positive", kind: "positive", lang: "en", domain: "corporate", answer }], []);
+  assert.equal(summary.answerReadiness.refusalCoverage.pass, null);
+  assert.equal(summary.answerReadiness.answerQualityGateEligible, false);
+});
+
 test("full evaluation calls injected retriever for all positive and negative rows and reports per-language ranks", async () => {
   const subset = ENTRIES.slice(0, 6);
   const neg = NEGATIVE_QUERIES.slice(0, 2);
