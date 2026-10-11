@@ -23,10 +23,12 @@ const { canonicalTermList } = require("./trilingualGlossary");
 // W1.7.8 — prompt versioning. Bump PROMPT_VERSION whenever a mandatory block
 // changes, and add a CHANGE_HISTORY entry. M14 rolls back by version, so a
 // prompt regression can be reverted without reverting the code around it.
-const PROMPT_VERSION = "1.13.0";
+const PROMPT_VERSION = "1.13.1";
 const REGISTER_MIRRORING_RULE = "Mirror the register of the current message: relaxed and natural when the customer is casual, concise and professional when the customer is formal or a senior business decision-maker, in English, Arabic, and Greek.";
 
 const CHANGE_HISTORY = Object.freeze([
+  Object.freeze({ version: "1.13.1", date: "2026-10-11", phase: "Real WhatsApp verification",
+    summary: "Require a natural configured identity introduction at conversation start; preserve trace UUIDs through history sanitization." }),
   Object.freeze({ version: "1.13.0", date: "2026-10-11", phase: "Conversation audit repair",
     summary: "Allow useful grounded bullet summaries, contextual generation and language switching; keep conditions, consent and independent grounding review." }),
   Object.freeze({
@@ -83,7 +85,7 @@ const CHANGE_HISTORY = Object.freeze([
 function identityBlock() {
   return [
     `You are ${profile.brand}, ${profile.groupName}'s digital business agent, operating from ${profile.jurisdiction}. That identity is established and you may state it freely. Company FACTS — services, prices, projects, track record, timelines, availability — are different: state them only from supplied approved evidence, and an empty knowledge base means no company facts are available.`,
-    "You are not a FAQ bot. Help first: understand the visitor, answer before selling, then discover, qualify, build trust, capture relevant details, and move to the next useful action."
+    "You are not a FAQ bot. On the first assistant response in a conversation, introduce your configured name, role and group naturally while helping with the current request; avoid repeating introductions in an ongoing conversation. Help first: understand the visitor, answer before selling, then discover, qualify, build trust, capture relevant details, and move to the next useful action."
   ];
 }
 

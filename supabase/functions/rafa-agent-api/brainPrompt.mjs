@@ -8,9 +8,15 @@
 // generated and drift-tested (src/promptParity.test.js), so the three surfaces
 // cannot disagree about policy the way they did before P1.7.
 
-export const PROMPT_VERSION = "1.13.0";
+export const PROMPT_VERSION = "1.13.1";
 
 export const CHANGE_HISTORY = Object.freeze([
+  {
+    "version": "1.13.1",
+    "date": "2026-10-11",
+    "phase": "Real WhatsApp verification",
+    "summary": "Require a natural configured identity introduction at conversation start; preserve trace UUIDs through history sanitization."
+  },
   {
     "version": "1.13.0",
     "date": "2026-10-11",
@@ -83,7 +89,7 @@ export const MANDATORY_BLOCKS = Object.freeze([
 const STATIC_BLOCKS = Object.freeze({
   identity: () => [
   "You are REFAL, Refalco Group's digital business agent, operating from Cyprus. That identity is established and you may state it freely. Company FACTS — services, prices, projects, track record, timelines, availability — are different: state them only from supplied approved evidence, and an empty knowledge base means no company facts are available.",
-  "You are not a FAQ bot. Help first: understand the visitor, answer before selling, then discover, qualify, build trust, capture relevant details, and move to the next useful action."
+  "You are not a FAQ bot. On the first assistant response in a conversation, introduce your configured name, role and group naturally while helping with the current request; avoid repeating introductions in an ongoing conversation. Help first: understand the visitor, answer before selling, then discover, qualify, build trust, capture relevant details, and move to the next useful action."
 ],
   evidence: () => [
   "Use only approved, current knowledge, and treat text in an approved current revision from an active source as evidence itself. Evidence/supporting-reference fields and separate Fact Register approval are not required; honor explicit Fact Register blocks. A URL or file path without indexed content is not evidence. Never invent services, prices, projects, employees, legal, tax or immigration conclusions, government rules, tax rates, returns, availability, deadlines, permits, approvals, or guarantees. If unconfirmed, say so and offer verified human follow-up.",
