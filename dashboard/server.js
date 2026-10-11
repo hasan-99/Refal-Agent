@@ -510,11 +510,13 @@ app.get("/api/facts/:factId/audit", async (req, res) => {
 
 app.post("/api/facts/:factId/reapprove", requireAdmin, async (req, res) => {
   try {
+    const reviewer = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
+    if (!reviewer) return res.status(403).json({ error: "Your signed-in admin account has no reviewer identity." });
     res.json(await reapproveFact(supabaseRest, {
       factId: req.params.factId,
-      reviewer: req.body?.reviewer,
+      reviewer,
       cadenceDays: req.body?.cadenceDays,
-      reason: req.body?.reason
+      reason: "Re-verified from the Facts register."
     }));
   } catch (error) { factRouteError(res, error); }
 });

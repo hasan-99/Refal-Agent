@@ -113,13 +113,11 @@ export default function FactRegister({ isAdmin }) {
   const counts = register?.counts || null;
 
   async function reapprove(fact) {
-    if (!isAdmin || busyFactId) return;
-    const reviewer = (window.prompt(`Re-approve ${fact.id}. Who is confirming this claim? The name is written to the audit trail:`) || "").trim();
-    if (!reviewer) return;
-    const reason = (window.prompt("Optional reason for the audit record (for example, the source you checked):") || "").trim();
+    if (!fact || !isAdmin || busyFactId) return;
     setBusyFactId(fact.id); setError(""); setNotice("");
     try {
-      const result = await request(`/api/facts/${encodeURIComponent(fact.id)}/reapprove`, { method: "POST", body: JSON.stringify({ reviewer, reason }) });
+      const result = await request(`/api/facts/${encodeURIComponent(fact.id)}/reapprove`, { method: "POST" });
+      const reviewer = result.reviewer || "the signed-in administrator";
       const nextReview = result.result?.expiry_or_review_at;
       setNotice(`${fact.id} re-approved by ${reviewer}${nextReview ? `. Next review ${nextReview}.` : "."} The date was re-set from today, not extended from the old one.`);
       await load();
@@ -245,7 +243,7 @@ export default function FactRegister({ isAdmin }) {
                   <td><span className={`facts-days ${daysLeftTone(fact.daysLeft)}`}>{daysLeftLabel(fact.daysLeft)}</span></td>
                   <td>{fact.highRisk ? <span className="facts-risk">High risk</span> : <small>—</small>}</td>
                   <td className="facts-actions">
-                    <button className="primary" type="button" disabled={!isAdmin || busyFactId === fact.id} onClick={() => void reapprove(fact)} title={isAdmin ? "Re-date this fact from today and record who confirmed it" : "Admins can re-approve facts"}>
+                    <button className="primary" type="button" disabled={!isAdmin || Boolean(busyFactId)} onClick={() => void reapprove(fact)} title={isAdmin ? "Re-verify this fact and record your signed-in admin account" : "Admins can re-approve facts"}>
                       <CheckCircle2 size={14} /> {busyFactId === fact.id ? "Working…" : "Re-approve"}
                     </button>
                     <button className="ghost" type="button" onClick={() => void toggleAudit(fact)} aria-expanded={expandedId === fact.id}>
@@ -275,5 +273,6 @@ export default function FactRegister({ isAdmin }) {
         </table>}
       </section>
     </>}
+
   </div>;
 }
