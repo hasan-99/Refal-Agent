@@ -14,7 +14,7 @@ const { createHandover } = require("./handover");
 const { getConversationState } = require("./conversationState");
 const { ok, fail } = require("./agentToolResult");
 const { getBookingAvailability, requestBookingAction } = require("./agentBookingTools");
-const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate } = require("./crmProfile");
+const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, extractLiteralSpan, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeForComparison, normalizeCrmCandidate } = require("./crmProfile");
 
 const DYNAMIC_READS = Object.freeze({
   lookupActiveOffer: { kind: "offers", fields: ["code"] },
@@ -382,9 +382,9 @@ function isPlainString(value) {
 // field (`modelObservation`), never a tool's raw `data`. Reused for every
 // outcome (found/no_evidence/error) so the decision formatter has one
 // uniform shape to look for regardless of status.
-const MAX_RAG_EVIDENCE_ITEMS = 4;
-const MAX_RAG_EVIDENCE_CONTENT_CHARS = 500;
-const MAX_RAG_EVIDENCE_TOTAL_CHARS = 1600;
+const MAX_RAG_EVIDENCE_ITEMS = 8;
+const MAX_RAG_EVIDENCE_CONTENT_CHARS = 2000;
+const MAX_RAG_EVIDENCE_TOTAL_CHARS = 10000;
 const MAX_RAG_EVIDENCE_TITLE_CHARS = 160;
 const MAX_RAG_EVIDENCE_SECTION_CHARS = 160;
 const MAX_RAG_EVIDENCE_SOURCE_REF_CHARS = 80;
@@ -393,53 +393,18 @@ function safeField(value, max) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
 }
 
-const BRAIN_FACT_ID = /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u;
-const KNOWLEDGE_LANGUAGES = Object.freeze({ arabic: "ar", english: "en", greek: "el" });
-
-function knowledgeLanguageCode(value) {
-  const normalized = String(value || "").trim().toLowerCase();
-  return KNOWLEDGE_LANGUAGES[normalized] || (Object.hasOwn({ ar: true, en: true, el: true }, normalized) ? normalized : null);
-}
-
-function dateOnly(value) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(value.trim());
-  if (match) return match[1];
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : null;
-}
-
-// Fact-linked chunks require a complete, current register record for every
-// linked fact before they can reach the Agent model. A document-level approval
-// is not enough because the register can independently block or expire one
-// fact inside an otherwise approved document.
-function factLinkedChunkIsCurrent(row, language, now = new Date()) {
+// Search RPC and the Edge evidence resolver already verify the active source,
+// approved revision, and revision expiry. Fact Register links and Evidence
+// references are annotations; they do not decide whether approved indexed
+// text can be read or cited in an answer. Finding aids remain search-only.
+function isCustomerFacingKnowledgeChunk(row) {
   const kind = row?.chunk_kind ?? row?.chunkKind ?? row?.metadata?.kind;
   if (String(kind || "") === "aliases") return false;
-
-  const metadata = row?.policyMetadata;
-  const factIds = Array.isArray(metadata?.facts) ? metadata.facts : [];
-  if (!factIds.length) return true;
-
-  const languageCode = knowledgeLanguageCode(language);
-  if (!languageCode) return false;
-  const registerRows = Array.isArray(metadata?.factRegisterRows) ? metadata.factRegisterRows : [];
-  const rowsById = new Map(registerRows.filter((item) => item && typeof item.id === "string").map((item) => [item.id, item]));
-  const today = now.toISOString().slice(0, 10);
-
-  return factIds.every((rawId) => {
-    const id = String(rawId || "").trim();
-    if (!BRAIN_FACT_ID.test(id)) return false;
-    const fact = rowsById.get(id);
-    if (!fact || fact.status !== "approved") return false;
-    const effectiveFrom = fact.effectiveFrom == null ? null : dateOnly(fact.effectiveFrom);
-    const reviewAt = dateOnly(fact.expiryOrReviewAt);
-    const approvedLanguages = Array.isArray(fact.approvedLanguages) ? fact.approvedLanguages : [];
-    if ((fact.effectiveFrom != null && !effectiveFrom) || !reviewAt) return false;
-    return (!effectiveFrom || effectiveFrom <= today)
-      && reviewAt > today
-      && approvedLanguages.includes(languageCode);
-  });
+  // Preserve an explicit owner block. Missing, pending, expired, or
+  // language-limited register rows are not a second approval requirement for
+  // an already approved Knowledge revision.
+  const rows = Array.isArray(row?.policyMetadata?.factRegisterRows) ? row.policyMetadata.factRegisterRows : [];
+  return !rows.some((fact) => fact?.status === "blocked");
 }
 
 // Builds the explicit "approved_knowledge" model observation from already
@@ -480,7 +445,11 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
     // Governance metadata is trusted only after the server-side enrichment
     // lookup succeeds. Raw search rows (or future adapters) cannot authorize
     // hooks/comparisons by supplying their own topic/fact labels.
-    const policyFacts = Array.isArray(trustedPolicy.facts) ? trustedPolicy.facts : [];
+    const policyFacts = [...new Set([
+      ...(Array.isArray(trustedPolicy.facts) ? trustedPolicy.facts : []),
+      ...(Array.isArray(trustedPolicy.supporting) ? trustedPolicy.supporting : []),
+      ...(Array.isArray(trustedPolicy.governedFacts) ? trustedPolicy.governedFacts : [])
+    ])];
     const factIds = policyFacts.map((id) => String(id || "").trim())
       .filter((id) => /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(id)).slice(0, 24);
     const ref = safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS);
@@ -514,6 +483,12 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
 
+  // Search returns finding-aid chunks and chunks whose fact-register gate may
+  // reject them. Fetch a bounded candidate window so those rows do not crowd
+  // approved answer evidence out of the requested result count.
+  const requestedCount = Number.isInteger(matchCount) ? Math.min(MAX_RAG_EVIDENCE_ITEMS, Math.max(1, matchCount)) : 6;
+  const candidateCount = Math.min(20, requestedCount * 3);
+
   let embedding = null;
   try {
     if (typeof embedText === "function") embedding = await embedText(query);
@@ -525,22 +500,27 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
 
   let results;
   try {
-    results = await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount);
+    results = await store.searchKnowledge(query, embedding, embeddingModel || null, candidateCount);
   } catch (error) {
     return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
   }
 
-  // The RPC enforces source/document approval and expiry. Apply the separate
-  // fact-register gate here, before the bounded model observation is built.
-  // Finding aids are never customer evidence, even if a legacy RPC returns one.
-  const evidence = (Array.isArray(results) ? results : [])
-    .filter((row) => factLinkedChunkIsCurrent(row, language));
+  // The RPC enforces source/document approval and expiry. Evidence/supporting
+  // reference fields and Fact Register links are not admission requirements;
+  // indexed chunk content remains usable when they are empty, general, or
+  // stale. Finding aids are never customer evidence, even if a legacy RPC
+  // returns one.
+  const eligible = (Array.isArray(results) ? results : [])
+    .filter(isCustomerFacingKnowledgeChunk);
+  const evidence = eligible.slice(0, requestedCount);
   if (evidence.length === 0) {
     return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
   }
 
-  const userSafeSummary = evidence.slice(0, matchCount).map((item) => String(item?.heading || item?.source_name || "Approved information").slice(0, 120));
-  return ok("found", evidence, { userSafeSummary, modelObservation: buildApprovedKnowledgeObservation("found", evidence) });
+  const userSafeSummary = evidence.map((item) => String(item?.heading || item?.source_name || "Approved information").slice(0, 120));
+  const modelObservation = buildApprovedKnowledgeObservation("found", evidence);
+  if (eligible.length > evidence.length) modelObservation.truncated = true;
+  return ok("found", evidence, { userSafeSummary, modelObservation });
 }
 
 // --- getCustomerContext ------------------------------------------------------
@@ -595,25 +575,27 @@ async function saveCustomerFact(args, { store, userId, currentMessage, sourceTur
   const evidence = extractLiteralEvidence(currentMessage, value);
   if (!evidence || !sourceTurnId) return fail("not_authorized", "UNVERIFIED_CUSTOMER_VALUE");
   if (isNegatedLiteralMention(currentMessage, value)) return fail("not_authorized", "NON_AFFIRMATIVE_CUSTOMER_VALUE");
+  const rawCustomerValue = extractLiteralSpan(currentMessage, value);
+  if (!rawCustomerValue) return fail("not_authorized", "UNVERIFIED_CUSTOMER_VALUE");
   const crmField = Object.keys(CRM_FIELDS).find((candidate) => candidate.toLowerCase() === canonicalField)
     || (canonicalField === "companyactivity" ? "businessActivity" : null);
   if (!crmField) return fail("not_authorized", "UNSUPPORTED_CRM_FIELD");
   const candidate = crmField ? normalizeCrmCandidate({
     field: crmField,
     value: String(value),
-    rawValue: String(value),
+    rawValue: rawCustomerValue,
     provenance: CUSTOMER_PROVENANCE,
     confidence: 1,
     sourceTurnId: String(sourceTurnId),
     evidence,
-    selfIdentified: crmField === "name" && isSelfIdentifiedName(currentMessage, value)
+    selfIdentified: crmField === "name" && isSelfIdentifiedName(currentMessage, rawCustomerValue)
   }) : null;
   if (crmField && !candidate?.ok) return fail("not_authorized", candidate?.reason === "name_not_self_identified" ? "NAME_NOT_SELF_IDENTIFIED" : "INVALID_CRM_CANDIDATE");
   const storedValue = candidate.record.normalizedValue;
   const safeEvidence = candidate.record.evidence;
   if (typeof store?.saveCrmProfile === "function") {
     try {
-      const result = await store.saveCrmProfile({ userId, field: crmField, value: storedValue, sourceTurnId: String(sourceTurnId) });
+      const result = await store.saveCrmProfile({ userId, field: crmField, rawValue: candidate.record.rawValue, normalizedValue: storedValue, sourceTurnId: String(sourceTurnId) });
       if (result?.status === "correction_needed") {
         return ok("correction_needed", { field: canonicalField, correctionNeeded: true });
       }
@@ -631,23 +613,39 @@ async function saveCustomerFact(args, { store, userId, currentMessage, sourceTur
       draft.profile = draft.profile || {};
       draft.profile.agentFacts = { ...(draft.profile.agentFacts || {}) };
       const current = draft.profile.agentFacts[canonicalField];
-      const resolvesPendingCorrection = draft.profile.crmCorrectionNeeded?.field === canonicalField
+      const priorCorrection = draft.profile.crmCorrectionNeeded;
+      const pendingFields = Array.isArray(priorCorrection?.fields)
+        ? priorCorrection.fields.map((field) => String(field).toLowerCase())
+        : priorCorrection?.field ? [String(priorCorrection.field).toLowerCase()] : [];
+      const resolvesPendingCorrection = pendingFields.includes(canonicalField)
         && isExplicitCorrectionMessage(currentMessage);
       if (current && resolvesPendingCorrection) {
         draft.profile.agentFacts[canonicalField] = {
           ...candidate.record, value: storedValue, provenance,
           sourceTurnId: String(sourceTurnId), evidence: safeEvidence, savedAt: new Date().toISOString()
         };
-        delete draft.profile.crmCorrectionNeeded;
+        draft.profile.agentFacts[canonicalField].correctionNeeded = false;
+        const remainingFields = pendingFields.filter((field) => field !== canonicalField);
+        for (const field of remainingFields) {
+          if (draft.profile.agentFacts[field]) draft.profile.agentFacts[field] = { ...draft.profile.agentFacts[field], correctionNeeded: true };
+        }
+        if (remainingFields.length) {
+          draft.profile.crmCorrectionNeeded = { ...priorCorrection, field: remainingFields[0], fields: remainingFields };
+        } else {
+          delete draft.profile.crmCorrectionNeeded;
+        }
         return;
       }
-      if (current && String(current.value ?? current.normalizedValue ?? "").trim().toLocaleLowerCase() !== storedValue.trim().toLocaleLowerCase()) {
+      if (current && normalizeForComparison(current.value ?? current.normalizedValue ?? "") !== normalizeForComparison(storedValue)) {
         // Never silently replace a different stated value. Leave the prior
         // record intact and request a clarification in the conversation.
+        const fields = [...new Set([...pendingFields, canonicalField])].sort();
         draft.profile.crmCorrectionNeeded = {
-          field: canonicalField,
+          ...(priorCorrection || {}),
+          field: fields[0],
+          fields,
           sourceTurnId: String(sourceTurnId),
-        proposedValue: storedValue,
+          proposedValue: storedValue,
           recordedAt: new Date().toISOString()
         };
         draft.profile.agentFacts[canonicalField] = { ...current, correctionNeeded: true };

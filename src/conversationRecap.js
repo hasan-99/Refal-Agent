@@ -83,6 +83,20 @@ function collectRecapFacts(history, language) {
     return matches.length ? matches[last ? matches.length - 1 : 0] : "";
   };
   const lastQuestion = eligible.filter((message) => /[,،]$/u.test(message) && /\b(?:what|how|can|could|do|does|is|are|which|when|where|why)\b|شو|كيف|فيني|ممكن|هل|ماذا|ما\s*هو|(?:τι|πώς|μπορεί|είναι|ποιο|πότε)/iu.test(message)).at(-1) || "";
+  const complaintText = find(RECAP_PATTERNS.complaint, { last: true });
+  // Complaint details can be stated in the turns immediately around the
+  // complaint itself (for example, first naming the service, then explaining
+  // what went wrong). Derive only coarse, explicitly mentioned categories
+  // from the customer's eligible history; never invent a default case type.
+  const complaintContext = eligible.join(" ");
+  const complaintTopic = complaintText
+    ? /\b(?:refund|reimbursement|money back)\b|استرجاع\s*(?:المبلغ|المصاري|المال)|المبلغ\s*المسترجع|επιστροφ(?:ή|ά)\s+(?:χρημάτων|ποσού)/iu.test(complaintContext) ? "refund"
+      : /\b(?:company setup|company formation|incorporation)\b|σύσταση\s+εταιρεία|تأسيس\s+شركة/iu.test(complaintContext) ? "company_setup"
+        : /\b(?:payment|charge|invoice|billing)\b|دفعة|دفع|فاتورة|χρέωσ(?:η|εις)|πληρωμ(?:ή|ές)/iu.test(complaintContext) ? "payment"
+          : /\b(?:bank|account)\b|البنك|الحساب|τράπεζα|λογαριασμό/iu.test(complaintContext) ? "banking"
+            : /\b(?:service|support|treatment)\b|الخدمة|المعاملة|υπηρεσία|εξυπηρέτηση/iu.test(complaintContext) ? "service"
+              : "unspecified" : "";
+  const complaintTiming = complaintText && /\b(?:last month|last week|yesterday|today|this morning)\b|الشهر الماضي|الأسبوع الماضي|مبارح|اليوم|χθες|σήμερα|τον περασμένο μήνα|την περασμένη εβδομάδα/iu.test(complaintText);
   return {
     goal: find(RECAP_PATTERNS.goal) || find(/(?:[bب]دي|baddi|bdi|bade).{0,100}(?:تأسيس|شركة|company|business)/iu),
     activity: find(RECAP_PATTERNS.activity, { last: true }) || find(/\b(?:shoghlha|online furniture shop)\b/iu, { last: true }),
@@ -98,6 +112,8 @@ function collectRecapFacts(history, language) {
     priceApplicability: Boolean(find(RECAP_PATTERNS.priceApplicability, { last: true })),
     limitedPropertyDetails: Boolean(find(RECAP_PATTERNS.limitedPropertyDetails, { last: true })),
     complaint: Boolean(find(RECAP_PATTERNS.complaint, { last: true })),
+    complaintTopic,
+    complaintTiming,
     caseReferenceOnly: Boolean(find(RECAP_PATTERNS.caseReferenceOnly, { last: true })),
     writtenOnly: Boolean(find(RECAP_PATTERNS.writtenOnly, { last: true })),
     noSharingWithoutConsent: Boolean(find(RECAP_PATTERNS.noSharingWithoutConsent, { last: true })),
@@ -112,7 +128,25 @@ function collectRecapFacts(history, language) {
 
 function composeRecap({ facts, language, boundedEvidence, actionStatusAsked, verifiedHandoverStatus }) {
   const clauses = [];
-  if (facts.complaint) clauses.push(language === "arabic" ? "قدّمت شكوى عن معاملة تأسيس شركة الشهر الماضي، وتريد توضيحاً للمشكلة والمسؤولية" : language === "greek" ? "Αναφέρατε παράπονο για υπόθεση σύστασης εταιρείας τον περασμένο μήνα και ζητάτε εξήγηση και υπευθυνότητα" : "You raised a complaint about a company-setup case submitted last month and want an explanation and accountability");
+  if (facts.complaint) {
+    const topic = {
+      refund: { arabic: "استرجاع المبلغ", greek: "επιστροφή χρημάτων", english: "a refund" },
+      company_setup: { arabic: "تأسيس شركة", greek: "σύσταση εταιρείας", english: "company setup" },
+      payment: { arabic: "الدفع أو الفاتورة", greek: "πληρωμή ή τιμολόγηση", english: "a payment or invoice" },
+      banking: { arabic: "الحساب أو البنك", greek: "τον λογαριασμό ή την τράπεζα", english: "an account or banking matter" },
+      service: { arabic: "الخدمة", greek: "την υπηρεσία", english: "the service" },
+      unspecified: { arabic: "مشكلة ذكرتها", greek: "ένα ζήτημα που αναφέρατε", english: "an issue you described" }
+    }[facts.complaintTopic || "unspecified"];
+    const timing = facts.complaintTiming
+      ? { arabic: " الشهر الماضي", greek: " τον περασμένο μήνα", english: " last month" }[language]
+      : "";
+    const complaint = language === "arabic"
+      ? `قدّمت شكوى بخصوص ${topic.arabic}${timing} وتريد توضيحاً لما حدث`
+      : language === "greek"
+        ? `Αναφέρατε παράπονο για ${topic.greek}${timing} και ζητάτε διευκρίνιση για το τι συνέβη`
+        : `You raised a complaint about ${topic.english}${timing} and want an explanation of what happened`;
+    clauses.push(complaint);
+  }
   else if (facts.goal) clauses.push(language === "arabic" ? `هدفك: ${recapCustomerStatement(facts.goal, language)}` : language === "greek" ? `Στόχος σας: ${recapCustomerStatement(facts.goal, language)}` : `Your goal: ${recapCustomerStatement(facts.goal, language)}`);
   if (facts.activity) clauses.push(language === "arabic" ? `والنشاط المذكور: ${recapCustomerStatement(facts.activity, language)}` : language === "greek" ? `Δραστηριότητα που αναφέρατε: ${recapCustomerStatement(facts.activity, language)}` : `Activity you mentioned: ${recapCustomerStatement(facts.activity, language)}`);
 

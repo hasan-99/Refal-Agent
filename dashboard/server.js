@@ -12,15 +12,20 @@ import { assertPasteWithinLimit, chunkKnowledge, extractKnowledgeText, extractUp
 import { contactActivityStats, operatorSignals, recentConversations } from "./activity.js";
 import { createWhatsAppController } from "./whatsappController.js";
 import { aggregateModelUsage, normalizeQualificationStatus } from "./performance.js";
+import { buildModelUsageEvent } from "./modelUsageTelemetry.js";
 import { createAgentRateLimit } from "./agentRateLimit.js";
 import { deleteConversationTranscript } from "./conversationDelete.js";
 import { displayName, isPlausibleCustomerName } from "./contactIdentity.js";
 import { countUniqueHandoverContacts } from "./handoverGrouping.js";
-import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
+import { dueFacts, editFactReview, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
 import { registerContactCorrectionAdminRoutes } from "./contactCorrectionAdmin.js";
-import { previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { approveKnowledgeDocumentAfterIndex, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { normalizeHandoverLanguage } from "./handoverFilters.js";
+import { readAllRows, withStableCreatedAtIdOrder, withStableIdOrder } from "./readAllRows.js";
+import { mapWithConcurrency } from "./mapWithConcurrency.js";
+import { HandoverStatusSyncError, syncHandoverStatus } from "./handoverStatusSync.js";
 import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
 
@@ -34,9 +39,7 @@ const require = createRequire(import.meta.url);
 const { generateConversationReport } = require("../src/report.js");
 const { createStore } = require("../src/supabaseStore.js");
 const { embedText, embedTexts, normalizeOpenRouterUsage, DEFAULT_EMBEDDING_MODEL, warmEmbeddingPipeline } = require("../src/ai.js");
-const { containsProhibitedClaim, restrictedRefalcoReply } = require("../src/refalcoAnswer.js");
 const { containsUnconsentedContactCommitment } = require("../src/responsePolicy.js");
-const { buildBrainPrompt: buildOperatorPrompt } = require("../src/brainPrompt.js");
 const { formatBookingTime, suggestAvailableTimes } = require("../src/booking.js");
 const { createCalendarReadinessTracker, isBookingPolicyReady } = require("../src/calendarReadiness.js");
 const { validateBookingPolicy } = require("../src/bookingPolicy.js");
@@ -44,8 +47,7 @@ const { workerCredentialsReady } = require("../scripts/googleCalendarCredentialS
 const { dashboardFailureReply } = await import("./agentFallback.js");
 const {
   DEFAULT_OPENROUTER_MODEL,
-  resolveOpenRouterModel,
-  withOpenRouterPrivacyPolicy
+  resolveOpenRouterModel
 } = require("../src/openrouterPrivacy.js");
 const dashboardRoot = __dirname;
 const botRoot = path.resolve(dashboardRoot, "..");
@@ -285,9 +287,10 @@ app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
 app.get("/api/knowledge", async (req, res) => {
   try {
     const isAdmin = req.dashboardUser.role === "admin";
+    const documentQuery = `rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata${isAdmin ? "" : "&review_status=eq.approved"}&order=fetched_at.desc,id.desc`;
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?select=id,canonical_url,display_name,source_kind,trust_tier,enabled,approved,approval_note,last_status,last_error,last_fetched_at,last_success_at,last_content_hash,created_at,updated_at${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&order=updated_at.desc`),
-      supabaseRest(`rafa_knowledge_documents?select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata${isAdmin ? "" : "&review_status=eq.approved"}&order=fetched_at.desc&limit=200`)
+      isAdmin ? readAllSupabaseRows(withStableIdOrder(documentQuery, "fetched_at")) : supabaseRest(`${documentQuery}&limit=200`)
     ]);
     res.json({ sources, documents });
   } catch (error) {
@@ -421,13 +424,33 @@ app.get("/api/knowledge/:id", async (req, res) => {
   try {
     const id = requireUuid(req.params.id);
     const isAdmin = req.dashboardUser.role === "admin";
+    const documentQuery = `rafa_knowledge_documents?source_id=eq.${id}${isAdmin ? "" : "&review_status=eq.approved"}&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata&order=revision.desc,id.desc`;
     const [sources, documents] = await Promise.all([
       supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=*${isAdmin ? "" : "&enabled=eq.true&approved=eq.true"}&limit=1`),
-      supabaseRest(`rafa_knowledge_documents?source_id=eq.${id}${isAdmin ? "" : "&review_status=eq.approved"}&select=id,source_id,revision,title,canonical_content,content_sha256,language_code,review_status,fetched_at,approved_at,approved_by,valid_until,metadata&order=revision.desc&limit=${isAdmin ? "20" : "1"}`)
+      isAdmin ? readAllSupabaseRows(withStableIdOrder(documentQuery, "revision")) : supabaseRest(`${documentQuery}&limit=1`)
     ]);
     if (!sources[0]) return res.status(404).json({ error: "Knowledge source not found." });
-    const chunks = documents.length ? await supabaseRest(`rafa_knowledge_chunks?document_id=in.(${documents.map((doc) => doc.id).join(",")})&select=id,document_id,chunk_index,heading,content,metadata,embedding_model,embedded_at&order=chunk_index.asc`) : [];
-    res.json({ source: sources[0], documents: documents.map((doc) => ({ ...doc, chunks: chunks.filter((chunk) => chunk.document_id === doc.id) })) });
+    const documentIdBatches = [];
+    for (let index = 0; index < documents.length; index += 50) documentIdBatches.push(documents.slice(index, index + 50).map((doc) => doc.id));
+    const chunks = (await mapWithConcurrency(documentIdBatches, (batch) => readAllSupabaseRows(
+      `rafa_knowledge_chunks?document_id=in.(${batch.join(",")})&select=id,document_id,chunk_index,heading,content,metadata,embedding_model,embedded_at&order=chunk_index.asc,id.asc`
+    ))).flat();
+    const reviewAuditBatches = [];
+    for (let index = 0; index < documents.length; index += 50) reviewAuditBatches.push(documents.slice(index, index + 50).map((doc) => doc.id));
+    const reviewAudit = isAdmin ? (await mapWithConcurrency(reviewAuditBatches, (batch) => readAllSupabaseRows(
+      `rafa_knowledge_review_audit?document_id=in.(${batch.join(",")})&select=id,document_id,previous_status,new_status,reviewer,reason,created_at&order=created_at.asc,id.asc`
+    ))).flat() : [];
+    const reviewAuditByDocument = new Map();
+    for (const entry of reviewAudit) {
+      const history = reviewAuditByDocument.get(entry.document_id) || [];
+      history.push(entry);
+      reviewAuditByDocument.set(entry.document_id, history);
+    }
+    res.json({ source: sources[0], documents: documents.map((doc) => ({
+      ...doc,
+      chunks: chunks.filter((chunk) => chunk.document_id === doc.id),
+      ...(isAdmin ? { reviewHistory: reviewAuditByDocument.get(doc.id) || [] } : {})
+    })) });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -439,27 +462,28 @@ app.patch("/api/knowledge/documents/:id/review", requireAdmin, async (req, res) 
     const status = req.body?.status;
     if (!["approved", "rejected", "pending"].includes(status)) return res.status(400).json({ error: "Review status must be approved, rejected, or pending." });
     const reviewer = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
-    const decision = await reviewKnowledgeDocument(supabaseRest, {
-      documentId: id,
-      status,
-      reviewer,
-      reason: req.body?.reason
-    });
+    let decision;
     let embeddedChunks = 0;
-    let embeddingWarning = "";
     if (status === "approved") {
-      try {
-        const chunks = await supabaseRest(`rafa_knowledge_chunks?document_id=eq.${id}&select=chunk_index,content&order=chunk_index.asc`);
-        const vectors = await embedTexts(chunks.map((chunk) => chunk.content));
-        embeddedChunks = await supabaseRest("rpc/rafa_store_knowledge_embeddings", {
-          method: "POST",
-          body: JSON.stringify({ p_document_id: id, p_model: DEFAULT_EMBEDDING_MODEL, p_embeddings: chunks.map((chunk, index) => ({ chunk_index: chunk.chunk_index, embedding: vectors[index] })) })
-        });
-      } catch (error) {
-        embeddingWarning = String(error.message || "Embedding failed").slice(0, 240);
-      }
+      const indexed = await approveKnowledgeDocumentAfterIndex(supabaseRest, {
+        documentId: id,
+        reviewer,
+        reason: req.body?.reason,
+        embeddingModel: DEFAULT_EMBEDDING_MODEL,
+        loadChunks: (documentId) => supabaseRest(`rafa_knowledge_chunks?document_id=eq.${documentId}&select=chunk_index,content&order=chunk_index.asc`),
+        embedTexts
+      });
+      decision = indexed.document;
+      embeddedChunks = indexed.embeddedChunks;
+    } else {
+      decision = await reviewKnowledgeDocument(supabaseRest, {
+        documentId: id,
+        status,
+        reviewer,
+        reason: req.body?.reason
+      });
     }
-    res.json({ document: decision, embeddedChunks, embeddingWarning });
+    res.json({ document: decision, embeddedChunks, review: { previous: decision.previous, status: decision.review_status, reviewer: decision.reviewer, reason: decision.reason } });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
   }
@@ -516,17 +540,40 @@ app.post("/api/facts/:factId/reapprove", requireAdmin, async (req, res) => {
       factId: req.params.factId,
       reviewer,
       cadenceDays: req.body?.cadenceDays,
-      reason: "Re-verified from the Facts register."
+      reason: req.body?.reason
     }));
   } catch (error) { factRouteError(res, error); }
 });
 
 app.post("/api/facts/:factId/status", requireAdmin, async (req, res) => {
   try {
+    const status = String(req.body?.status || "").trim().toLowerCase();
+    if (status === "approved") {
+      return res.status(400).json({ error: "Use the evidence review action to approve a fact." });
+    }
+    const actor = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
+    if (!actor) return res.status(403).json({ error: "Your signed-in admin account has no reviewer identity." });
     res.json(await setFactStatus(supabaseRest, {
       factId: req.params.factId,
-      status: req.body?.status,
-      actor: req.body?.actor,
+      status,
+      actor,
+      reason: req.body?.reason
+    }));
+  } catch (error) { factRouteError(res, error); }
+});
+
+app.post("/api/facts/:factId/review", requireAdmin, async (req, res) => {
+  try {
+    const actor = String(req.dashboardUser?.email || req.dashboardUser?.id || "").trim();
+    if (!actor) return res.status(403).json({ error: "Your signed-in admin account has no reviewer identity." });
+    res.json(await editFactReview(supabaseRest, {
+      factId: req.params.factId,
+      sourceDocument: req.body?.sourceDocument,
+      sourceRef: req.body?.sourceRef,
+      notes: req.body?.notes,
+      cadenceDays: req.body?.cadenceDays,
+      approvedLanguages: req.body?.approvedLanguages,
+      actor,
       reason: req.body?.reason
     }));
   } catch (error) { factRouteError(res, error); }
@@ -859,20 +906,9 @@ app.get("/api/notifications", requireAdmin, async (_req, res) => {
 
 app.get("/api/handovers/summary", requireAdmin, async (_req, res) => {
   try {
-    // Page to exhaustion so the badge reflects the durable handover ledger,
-    // including acknowledged requests and every retry/failure past page 1.
-    const readAll = async (path) => {
-      const rows = [];
-      const pageSize = 1000;
-      for (let offset = 0; ; offset += pageSize) {
-        const page = await supabaseRest(path, { headers: { Range: `${offset}-${offset + pageSize - 1}` } });
-        rows.push(...page);
-        if (page.length < pageSize) return rows;
-      }
-    };
     const [openRows, problemRows] = await Promise.all([
-      readAll("rafa_handovers?select=id,contact_id&status=in.(open,acknowledged)&order=created_at.desc"),
-      readAll("refal_handover_delivery?select=id&status=in.(retry,failed)")
+      readAllSupabaseRows(withStableCreatedAtIdOrder("rafa_handovers?select=id,contact_id&status=in.(open,acknowledged)&order=created_at.desc")),
+      readAllSupabaseRows(withStableIdOrder("refal_handover_delivery?select=id&status=in.(retry,failed)", "updated_at"))
     ]);
     const openCount = countUniqueHandoverContacts(openRows);
     const deliveryIssueCount = problemRows.length;
@@ -883,12 +919,16 @@ app.get("/api/handovers/summary", requireAdmin, async (_req, res) => {
 
 app.get("/api/handovers", requireAdmin, async (_req, res) => {
   try {
-    const handovers = await supabaseRest("rafa_handovers?select=id,department,priority,status,summary,source_turn_id,created_at,contact:rafa_contacts!rafa_handovers_contact_id_fkey(id,whatsapp_jid,phone,profile,whatsapp)&status=in.(open,acknowledged)&order=created_at.desc&limit=200");
+    const handovers = await readAllSupabaseRows(withStableCreatedAtIdOrder("rafa_handovers?select=id,department,priority,status,summary,source_turn_id,created_at,contact:rafa_contacts!rafa_handovers_contact_id_fkey(id,whatsapp_jid,phone,profile,whatsapp)&status=in.(open,acknowledged)&order=created_at.desc"));
     const ids = handovers.map((item) => item.id).filter((id) => /^[0-9a-f-]{36}$/i.test(String(id || "")));
     let jobs = [];
     let notificationSchemaReady = true;
     if (ids.length) {
-      try { jobs = await supabaseRest(`rafa_notification_jobs?select=id,handover_id,kind,channel,recipient,payload,status,created_at,last_error&kind=in.(admin_followup,handover_review)&handover_id=in.(${ids.join(",")})&order=created_at.desc&limit=500`); }
+      try {
+        const idBatches = [];
+        for (let index = 0; index < ids.length; index += 50) idBatches.push(ids.slice(index, index + 50));
+        jobs = (await mapWithConcurrency(idBatches, (batch) => readAllSupabaseRows(withStableCreatedAtIdOrder(`rafa_notification_jobs?select=id,handover_id,kind,channel,recipient,payload,status,created_at,last_error&kind=in.(admin_followup,handover_review)&handover_id=in.(${batch.join(",")})&order=created_at.desc`)))).flat();
+      }
       catch (error) {
         if (!/handover_id|admin_followup|handover_review|schema cache|column/i.test(String(error?.message || ""))) throw error;
         notificationSchemaReady = false;
@@ -906,6 +946,7 @@ app.get("/api/handovers", requireAdmin, async (_req, res) => {
         status: row.status,
         summary: row.summary || {},
         createdAt: row.created_at,
+        language: normalizeHandoverLanguage(row.summary?.language || profile.preferredLanguage || profile.language),
         contact: {
           id: contact.id,
           userId: contact.whatsapp_jid,
@@ -925,36 +966,51 @@ app.patch("/api/handovers/:id", requireAdmin, authRateLimit, async (req, res) =>
   const status = String(req.body?.status || "");
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id) || !["acknowledged", "resolved"].includes(status)) return res.status(400).json({ error: "Choose a valid handover status." });
   try {
-    const target = await supabaseRest(`rafa_handovers?id=eq.${encodeURIComponent(req.params.id)}&status=in.(open,acknowledged)&select=id,contact_id,department&limit=1`);
-    if (!target.length) return res.status(404).json({ error: "Open specialist request not found." });
-    const scope = /^[0-9a-f-]{36}$/i.test(String(target[0].contact_id || ""))
-      ? `contact_id=eq.${encodeURIComponent(target[0].contact_id)}`
-      : `id=eq.${encodeURIComponent(req.params.id)}`;
-    const rows = await supabaseRest(`rafa_handovers?${scope}&status=in.(open,acknowledged)&select=id,department,status`, {
-      method: "PATCH",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ status, resolved_at: status === "resolved" ? new Date().toISOString() : null })
-    });
-    const changedAt = new Date().toISOString();
-    const closedAt = status === "resolved" ? changedAt : null;
-    for (const handover of rows) {
-      await supabaseRest("refal_handover_delivery?on_conflict=handover_id", {
+    const result = await syncHandoverStatus({
+      handoverId: req.params.id,
+      status,
+      readTarget: async (id) => {
+        const rows = await supabaseRest(`rafa_handovers?id=eq.${encodeURIComponent(id)}&select=id,contact_id,department,status&limit=1`);
+        return rows[0] || null;
+      },
+      readGroup: async (target) => {
+        const scope = /^[0-9a-f-]{36}$/i.test(String(target.contact_id || ""))
+          ? `contact_id=eq.${encodeURIComponent(target.contact_id)}`
+          : `id=eq.${encodeURIComponent(target.id)}`;
+        return supabaseRest(`rafa_handovers?${scope}&select=id,contact_id,department,status`);
+      },
+      readDelivery: (ids) => {
+        if (!ids.length) return Promise.resolve([]);
+        const list = ids.map((id) => encodeURIComponent(id)).join(",");
+        return supabaseRest(`refal_handover_delivery?handover_id=in.(${list})&select=handover_id,status,acknowledged_at,closed_at,closure_reason`);
+      },
+      cancelActiveReviewNotifications: (ids, changedAt) => {
+        const list = ids.map((id) => encodeURIComponent(id)).join(",");
+        return supabaseRest(`rafa_notification_jobs?handover_id=in.(${list})&kind=eq.handover_review&status=in.(queued,processing)`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "cancelled", locked_at: null, last_error: "Handover is closed.", updated_at: changedAt })
+        });
+      },
+      updateActive: (rows, nextStatus, changedAt) => {
+        const ids = rows.map((row) => encodeURIComponent(row.id)).join(",");
+        return supabaseRest(`rafa_handovers?id=in.(${ids})&status=in.(open,acknowledged)&select=id,contact_id,department,status`, {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({ status: nextStatus, resolved_at: nextStatus === "resolved" ? changedAt : null })
+        });
+      },
+      upsertDelivery: (rows) => supabaseRest("refal_handover_delivery?on_conflict=handover_id", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({
-          handover_id: handover.id,
-          department: handover.department,
-          recipient_lane: "sandbox",
-          status: status === "resolved" ? "closed" : "acknowledged",
-          acknowledged_at: changedAt,
-          ...(status === "resolved" ? { closed_at: closedAt, closure_reason: "operator_resolved" } : {}),
-          updated_at: changedAt
-        })
-      });
-    }
-    await logDashboardEvent("handover_admin_status_updated", { handoverId: req.params.id, groupedRequestCount: rows.length, status, actor: req.dashboardUser.email || req.dashboardUser.id });
-    res.json({ handover: rows[0], updatedCount: rows.length });
-  } catch (error) { res.status(502).json({ error: String(error?.message || "Could not update specialist request.").slice(0, 250) }); }
+        body: JSON.stringify(rows)
+      })
+    });
+    await logDashboardEvent("handover_admin_status_updated", { handoverId: req.params.id, groupedRequestCount: result.reconciledCount, status, actor: req.dashboardUser.email || req.dashboardUser.id });
+    res.json(result);
+  } catch (error) {
+    const statusCode = error instanceof HandoverStatusSyncError ? error.status : 502;
+    res.status(statusCode).json({ error: String(error?.message || "Could not update specialist request.").slice(0, 250) });
+  }
 });
 
 app.post("/api/handovers/:id/follow-ups", requireAdmin, authRateLimit, async (req, res) => {
@@ -1497,6 +1553,14 @@ async function readEvents() {
   return [];
 }
 
+// PostgREST commonly caps a response at 1,000 rows. Queue pages and badge
+// counts must inspect the same complete unresolved ledger, not a silent first
+// page; callers fail as a whole if any page fails so partial data is never
+// presented as a reconciled total.
+async function readAllSupabaseRows(path) {
+  return readAllRows((query, range) => supabaseRest(query, { headers: { Range: range } }), path);
+}
+
 async function logDashboardEvent(event, fields = {}) {
   if (store.logEvent) {
     await store.logEvent(event, fields);
@@ -1711,16 +1775,8 @@ function finiteNonnegative(value) {
 }
 
 function logOpenRouterUsage(source, userId, usage) {
-  const event = usage.providerReported ? "ai_usage" : "ai_usage_missing";
-  return store.logEvent(event, {
-    source,
-    userId,
-    model: usage.model,
-    promptTokens: usage.promptTokens,
-    completionTokens: usage.completionTokens,
-    totalTokens: usage.totalTokens,
-    costUsd: usage.costUsd
-  }).catch((error) => {
+  const { event, fields } = buildModelUsageEvent(source, userId, usage);
+  return store.logEvent(event, fields).catch((error) => {
     console.error("OpenRouter usage log failed:", error.message);
   });
 }
@@ -1912,111 +1968,12 @@ async function relevantAgentMemories(text) {
 }
 
 async function askDashboardAgent({ text, messages, model: sessionModel, memories, evidence, signal, onToken, onUsage }) {
-  // P2.2/W2.2.3 — the operator asking about a published programme gets the
-  // grounded answer when approved evidence was retrieved for it (BLK-2).
-  const refusal = restrictedRefalcoReply(text, { evidence });
-  if (refusal) {
-    onToken(refusal);
-    return refusal;
-  }
-
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    const message = "OpenRouter is not configured yet. Add the model key and I can answer from this RAFA chat workspace.";
-    onToken(message);
-    return message;
-  }
-
+  // Evidence is only authoritative after the Edge generation endpoint reloads
+  // its canonical chunks and fact-register rows. Do not fall back to a local
+  // model that would receive the raw dashboard search results.
   const model = resolveOpenRouterModel(sessionModel || process.env.OPENROUTER_MODEL).slice(0, 160);
-
-  const remoteReply = await askSupabaseAgent({
-    text,
-    messages,
-    model,
-    memories,
-    evidence,
-    signal,
-    onToken,
-    onUsage
-  }).catch((error) => {
-    if (!apiKey) throw error;
-    console.error("Supabase agent generation failed; falling back to local OpenRouter:", error.message);
-    return null;
-  });
-  if (remoteReply) return remoteReply;
-
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      signal,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost/rafa-dashboard",
-        "X-OpenRouter-Title": "RAFA Dashboard"
-      },
-      body: JSON.stringify(withOpenRouterPrivacyPolicy({
-        model,
-        stream: true,
-        usage: { include: true },
-        max_tokens: 650,
-        temperature: 0.35,
-        messages: [
-          {
-            role: "system",
-            content: [
-              // P1.1 / W1.1.4 — removes BLK-3 on the dashboard surface too. The
-              // customer-facing prompt in src/ai.js carried the same blanket
-              // identity denial; the two must stay in step or the operator and
-              // the customer get different answers about who REFAL works for.
-              // P1.7 / W1.7.3 — the operator prompt is now BUILT from the same shared
-              // blocks as the customer prompt. Previously this array was a hand-
-              // maintained near-copy, which is how the operator and the customer came
-              // to be told different things about the same policy (BLK-5, BLK-6).
-              // Only genuinely operator-specific lines are kept below.
-              // No leadTier is passed, and that is correct rather than a
-              // leftover: askDashboardAgent answers a free-form operator
-              // question and has no single customer conversation in scope, so
-              // there is no tier to classify. The builder's default emits the
-              // protective "do not offer a call at this stage" instruction.
-              ...buildOperatorPrompt({ variant: "operator" }),
-              "Apply the REFAL operating order: understand, help, discover, qualify, build trust, capture, convert, book, handover, follow up.",
-              "Be concise, practical, calm, and direct. Answer first when possible; ask only one useful next question and do not over-qualify a clear opportunity.",
-              "When drafting customer replies, mirror the customer's language and dialect; use clear, simple Syrian/Levantine Arabic when they write colloquial Arabic. Help with the question before collecting details. For company setup, explain approved basics first, then ask one short question about the company's purpose/activity if still unknown. Gather other details progressively only when they help the next step. Ask for a proposed company name only when the customer chooses a name-reservation step, not during early information gathering. Do not nudge toward booking, name reservation, or payment just because the customer described an activity; wait until they ask how to proceed or clearly say they are ready.",
-              "Use saved memory when relevant, but do not claim live access to WhatsApp unless data is provided.",
-              "If the operator asks a general-knowledge question unrelated to Refalco Group or dashboard operations, briefly redirect to Refalco Group; do not answer from general knowledge.",
-              "For Refalco Group facts, rely only on retrieved approved knowledge; do not invent facts, prices, availability, deadlines, legal/tax/immigration outcomes, bank approval, permits, or expected investment returns. Answer service/package/fee questions only when asked. Keep internal source names, owner confirmations, review status, and verification steps private. Do not claim legal registration/status or provide legal/tax/immigration advice.",
-              "Silently classify intent, multiple intents, need, value, timing, authority, readiness, and fit. Flag high-value, sensitive, complex, complaint, existing-client, development, construction, investment, and partnership cases internally. A priority label is internal only; create a customer handover or follow-up only after the customer gives clear consent by affirming a tracked offer or directly asking for specialist contact. Link consent to its source turn and recheck it before outbound follow-up.",
-              "When drafting a customer reply, use internal tiers only: Informational 0-7, Cold 8-13, Warm 14-19, Hot 20-24, Strategic 25-30. Informational/Cold must not push booking; Warm permits a flexible, non-repeated appointment offer. At Hot/Strategic suppress every cross-sell hook and benefit hint and focus on logistics. Tiers and buying signals never grant consent or confirm a booking. Never expose scores, dimensions, or tier labels.",
-              "Do not mention internal source names, owner confirmations, review status, or verification steps. Include source links only when the operator asks for provenance or needs to verify a material conflict.",
-              "Retrieved approved company knowledge:",
-              evidence?.length ? evidence.map((item, index) => `[${index + 1}] ${item.source_name} (${item.source_url})\n${item.heading || ""}\n${item.content}`).join("\n\n") : "No approved company knowledge retrieved.",
-              "",
-              "Saved RAFA memory:",
-              memories.length
-                ? memories.map((memory) => `- ${memory.label}: ${memory.content}`).join("\n")
-                : "No saved memories yet."
-            ].join("\n")
-          },
-          ...messages.slice(-12).map((message) => ({
-            role: message.role === "assistant" ? "assistant" : "user",
-            content: String(message.content || "")
-          }))
-        ]
-      }))
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body?.error?.message || `OpenRouter HTTP ${response.status}`);
-    }
-    return await readOpenRouterStream(response, onToken, model, onUsage);
-  } catch (error) {
-    if (signal?.aborted) throw new Error("The model response timed out or was interrupted.");
-    throw error;
-  }
+  return askSupabaseAgent({ text, messages, model, memories, evidence, signal, onToken, onUsage });
 }
-
 async function askSupabaseAgent({ text, messages, model, memories, evidence, signal, onToken, onUsage }) {
   const apiUrl = process.env.RAFA_API_URL || `${String(process.env.SUPABASE_URL || "").replace(/\/$/, "")}/functions/v1/rafa-agent-api`;
   const apiSecret = process.env.RAFA_API_SECRET;
@@ -2039,25 +1996,6 @@ async function askSupabaseAgent({ text, messages, model, memories, evidence, sig
   return reply;
 }
 
-async function readOpenRouterStream(response, onToken, model, onUsage) {
-  const { readSseData } = await import("./src/sse.js");
-  let answer = "";
-  let usage = null;
-  for await (const data of readSseData(response.body)) {
-    if (!data || data === "[DONE]") continue;
-    let payload;
-    try { payload = JSON.parse(data); } catch { continue; }
-    if (payload?.usage && typeof payload.usage === "object") usage = normalizeOpenRouterUsage(payload, model);
-    const token = payload?.choices?.[0]?.delta?.content;
-    if (typeof token !== "string" || !token) continue;
-    if (containsProhibitedClaim(answer + token)) throw new Error("RAFA blocked restricted legal or financial content from the model.");
-    if (containsUnconsentedContactCommitment(answer + token)) throw new Error("RAFA blocked an unconfirmed promise of customer follow-up.");
-    answer += token;
-    onToken(token);
-  }
-  await onUsage?.(usage || normalizeOpenRouterUsage({}, model));
-  return answer.trim() || "I could not generate a reply.";
-}
 
 function extractMemory(text) {
   const match = String(text || "").match(/\b(?:remember|save this|memorize)\b(?: that| this|:)?\s+(.{8,500})/i);

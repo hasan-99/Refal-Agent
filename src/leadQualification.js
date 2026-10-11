@@ -37,6 +37,45 @@ function textOfHistory(history = []) {
   return history.map((turn) => String(turn?.message || turn?.text || "")).filter(Boolean).join("\n");
 }
 
+function isConsentDenial(turn) {
+  const text = String(turn?.message || turn?.text || "");
+  const explicitState = turn?.metadata?.followUpConsent?.state;
+  return [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(consentFromText(text))
+    || [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(explicitState);
+}
+
+// Contact histories may be rehydrated from stores that do not preserve the
+// append order. Consent is temporal state, so valid timestamps must decide
+// order. Untimestamped grants are placed before dated events and untimestamped
+// denials after them, so uncertain legacy ordering cannot restore permission.
+function chronologicalHistory(history = []) {
+  const entries = history.map((turn, index) => ({ turn, index, at: Date.parse(turn?.at || "") }));
+  return entries
+    .sort((left, right) => {
+      const leftValid = Number.isFinite(left.at);
+      const rightValid = Number.isFinite(right.at);
+      if (leftValid !== rightValid) {
+        const unknown = leftValid ? right : left;
+        const text = String(unknown.turn?.message || unknown.turn?.text || "");
+        // With no timestamp, a grant must not reopen contact after a known
+        // opt-out; an opt-out must still suppress after a known grant.
+        const unknownIsDenial = [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(consentFromText(text))
+          || [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(unknown.turn?.metadata?.followUpConsent?.state);
+        return leftValid ? (unknownIsDenial ? -1 : 1) : (unknownIsDenial ? 1 : -1);
+      }
+      if (leftValid && rightValid && left.at !== right.at) return left.at - right.at;
+      // Equal timestamps do not establish which event happened last. Place a
+      // denial after any grant at that instant so array order or rehydration
+      // cannot accidentally restore outbound permission.
+      if (leftValid && rightValid && left.at === right.at) {
+        const leftDenied = isConsentDenial(left.turn);
+        const rightDenied = isConsentDenial(right.turn);
+        if (leftDenied !== rightDenied) return leftDenied ? 1 : -1;
+      }
+      return left.index - right.index;
+    }).map(({ turn }) => turn);
+}
+
 function detectPriority(text) {
   const value = String(text || "");
   for (const [reason, pattern] of PRIORITY_PATTERNS) if (pattern.test(value)) return { priority: true, priorityReason: reason };
@@ -95,7 +134,7 @@ function getConsentState({ user = {}, history = user.history || [] } = {}) {
   const stored = user.consent?.followUp || user.followUpConsent;
   let state = CONSENT_STATES.UNKNOWN;
   let latestGrantAt = NaN;
-  for (const turn of history) {
+  for (const turn of chronologicalHistory(history)) {
     const text = String(turn?.message || "");
     const detected = consentFromText(text);
     const trackedConsent = turn?.metadata?.specialistFollowUp?.consented === true && turn?.metadata?.specialistFollowUp?.purpose === "specialist_follow_up";
@@ -123,10 +162,11 @@ function hasFollowUpPermission(user, { requireExplicit = true } = {}) {
 // follow-up. A specialist-contact grant must never authorize the scheduler.
 // This scope is deliberately accepted only when its durable source turn is
 // present and identifies the channel and language used for the grant.
-function hasAutomatedReminderPermission(user) {
-  if (!user?.id || user.id.startsWith("self-test:") || user.blocked || user.consent?.blocked || user.followUpBlocked || user.optedOut === true) return false;
+function getAutomatedReminderConsent(user, now = new Date()) {
+  if (!user?.id || user.id.startsWith("self-test:") || user.blocked || user.consent?.blocked || user.followUpBlocked || user.optedOut === true) return null;
   let state = CONSENT_STATES.UNKNOWN;
-  for (const turn of user.history || []) {
+  let currentGrant = null;
+  for (const turn of chronologicalHistory(user.history || [])) {
     const messageState = consentFromText(turn?.message || "");
     const explicitState = turn?.metadata?.followUpConsent?.state;
     const deniedState = [CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(explicitState)
@@ -134,6 +174,7 @@ function hasAutomatedReminderPermission(user) {
       : messageState;
     if ([CONSENT_STATES.REVOKED, CONSENT_STATES.DENIED].includes(deniedState)) {
       state = deniedState;
+      currentGrant = null;
       continue;
     }
     const grant = turn?.metadata?.followUpConsent;
@@ -141,16 +182,29 @@ function hasAutomatedReminderPermission(user) {
     const channel = String(grant?.channel || turn?.channel || turn?.source || "").toLowerCase();
     const language = String(grant?.language || turn?.metadata?.intent?.language || "").toLowerCase();
     const validLanguage = ["en", "ar", "el", "english", "arabic", "greek"].includes(language);
+    const sourceTimestamp = Date.parse(turn?.at || "");
+    const nowTimestamp = now instanceof Date ? now.getTime() : Date.parse(now || "");
     const isValidGrant = grant?.state === CONSENT_STATES.GRANTED
       && grant?.purpose === "automated_reminder"
       && Boolean(sourceId)
       && grant?.sourceTurnId === sourceId
       && Boolean(channel)
       && validLanguage
-      && Number.isFinite(Date.parse(turn?.at || ""));
-    if (isValidGrant) state = CONSENT_STATES.GRANTED;
+      && Number.isFinite(sourceTimestamp)
+      // Allow small clock skew, but never let a future-dated turn authorize
+      // outbound contact before that consent actually occurred.
+      && Number.isFinite(nowTimestamp)
+      && sourceTimestamp <= nowTimestamp + 5 * 60 * 1000;
+    if (isValidGrant) {
+      state = CONSENT_STATES.GRANTED;
+      currentGrant = { language: grant.language, channel, sourceTurnId: sourceId };
+    }
   }
-  return state === CONSENT_STATES.GRANTED;
+  return state === CONSENT_STATES.GRANTED ? currentGrant : null;
+}
+
+function hasAutomatedReminderPermission(user) {
+  return getAutomatedReminderConsent(user) !== null;
 }
 
 function recordFollowUpConsent(user, message, now = new Date()) {
@@ -171,11 +225,13 @@ module.exports = {
   OPT_OUT_RE,
   DENY_RE,
   clampScore,
+  chronologicalHistory,
   consentFromText,
   detectPriority,
   getConsentState,
   hasFollowUpPermission,
   hasAutomatedReminderPermission,
+  getAutomatedReminderConsent,
   inferDimensions,
   ownerThresholds,
   qualifyLead,

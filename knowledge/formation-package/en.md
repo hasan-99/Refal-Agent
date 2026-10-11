@@ -3,17 +3,19 @@ topic: formation-package
 lang: en
 title: What the Cyprus company formation package includes
 facts: MB-F2, MB-F3, MB-F4, MB-F5, MB-F6, MB-F7, MB-F8, MB-F9
-aliases: what is included in the formation package | cyprus company formation package | how much does it cost to open a company in cyprus | company formation cost in cyprus | is the package price inclusive of vat | are the secretary and registered office included | hidden costs cyprus company formation | what do i pay in the second year | cyprus ltd setup package | company secretary and registered address included | how long does company registration take | do you offer a payment plan | price of setting up a cyprus company | what exactly is included in the package | are there hidden costs beyond the package | i found a cheaper offer why are you more expensive | the package feels expensive | just send me everything on whatsapp | how much do i pay in total
+aliases: what is included in the formation package | cyprus company formation package | how much does it cost to open a company in cyprus | company formation cost in cyprus | is the package price inclusive of vat | are the secretary and registered office included | hidden costs cyprus company formation | what do i pay in the second year | cyprus ltd setup package | company secretary and registered address included | how long does company registration take | do you offer a payment plan | price of setting up a cyprus company | what exactly is included in the package | are there hidden costs beyond the package | i found a cheaper offer why are you more expensive | the package feels expensive | just send me everything on whatsapp | how much do i pay in total | is the current company formation offer still available | what is the current price for company formation | current cyprus company formation offer and vat
 ---
 
 ## The seven things the package covers
 <!-- facts: MB-F2, MB-F3, MB-F4, MB-F5, MB-F6, MB-F7, MB-F8 -->
 The formation package is a fixed bundle of seven items. This is exactly what is included, and the list does not change from one file to the next.
 
-1. **Cyprus Ltd formation.** The full official procedure, usually about two weeks after the documents are complete. This is what creates the formal legal entity you can operate with inside the EU.
+In short, it covers Cyprus Ltd formation, name reservation, preparation and filing of the Memorandum and Articles of Association, the Certificate of Incorporation, a company secretary and registered address for four consecutive months each, and remote file management.
+
+1. **Cyprus Ltd formation.** The incorporation procedure, usually about two weeks after the documents are complete, subject to Registrar processing.
 2. **Company name reservation and approval.** The name is filed and reserved with the Cyprus Registrar of Companies, which is where the commercial identity formally begins.
-3. **Document preparation and attestation.** The Memorandum and Articles of Association are drafted and filed, so the file is correct and is not rejected on administrative grounds.
-4. **Certificate of Incorporation.** The official company certificates are issued. This is the core document for opening accounts and signing contracts.
+3. **Document preparation and filing.** The Memorandum and Articles of Association are prepared and submitted as part of the incorporation file.
+4. **Certificate of Incorporation.** The Registrar issues the official certificate confirming the company’s incorporation. A bank or other institution makes its own account and service decisions.
 5. **Company Secretary.** Included for 4 consecutive months.
 6. **Registered Address.** Included for 4 consecutive months.
 7. **Remote file management.** The procedures are completed without you travelling in the early stages, which saves an international founder both time and cost.

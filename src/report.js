@@ -3,22 +3,80 @@ const os = require("node:os");
 const path = require("node:path");
 const writeXlsxFile = require("write-excel-file/node");
 const nodemailer = require("nodemailer");
+const { redactSensitiveData } = require("./sensitiveData");
 
-const DEFAULT_REPORT_TO = "hasan.cy99@gmail.com";
+function collectKnownPrivateValues(user) {
+  const values = new Set();
+  for (const value of [user?.phone, user?.profile?.name, user?.profile?.company, user?.profile?.need,
+    user?.profile?.address, user?.profile?.email]) {
+    const text = String(value || "").trim();
+    if (text.length >= 3) values.add(text);
+  }
+  for (const token of String(user?.profile?.name || "").split(/\s+/u)) {
+    if (token.length >= 3) values.add(token);
+  }
+  const selfIdentification = [
+    /\b(?:my name is|call me)\s+([\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*){0,2})(?=\s+(?:and|و|και)(?:\s|$)|[,،;.!?\n]|$)/giu,
+    /(?:اسمي(?:\s+هو)?|ناديني|(?:أنا|انا)(?:\s+اسمي)?)\s+([\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*){0,2})(?=\s+(?:و|and)(?:\s|$)|[,،;.!?\n]|$)/gu,
+    /(?:Με λένε|το όνομά μου είναι|Ονομάζομαι)\s+([\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*){0,2})(?=\s+(?:and|و|και)(?:\s|$)|[,،;.!?\n]|$)/giu
+  ];
+  for (const item of user?.history || []) {
+    const message = String(item?.message || "");
+    for (const pattern of selfIdentification) {
+      pattern.lastIndex = 0;
+      for (const match of message.matchAll(pattern)) {
+        const name = String(match[1] || "").trim();
+        if (name.length >= 2) {
+          values.add(name);
+          for (const token of name.split(/\s+/u)) {
+            values.add(token);
+            if (/\p{Script=Greek}/u.test(token) && /ος$/iu.test(token)) {
+              values.add(token.replace(/ος$/iu, "ο"));
+              values.add(token.replace(/ος$/iu, "ου"));
+            }
+          }
+        }
+      }
+    }
+  }
+  return [...values];
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function redactReportText(value, privateValues = []) {
+  let text = redactSensitiveData(String(value || ""))
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, "[email]")
+    .replace(/(?:\+?\d[\d\s().-]{7,}\d)/gu, "[phone]")
+    .replace(/\b(?:my name is|call me)\s+[^,.!?\n]+/giu, "[personal detail]")
+    .replace(/(?:اسمي(?:\s+هو)?|ناديني|(?:أنا|انا)(?:\s+اسمي)?)\s*[^،,.!?\n]+/gu, "[personal detail]")
+    .replace(/(?:Με λένε|το όνομά μου είναι|Ονομάζομαι)\s+[\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*){0,2}(?=\s+(?:and|και|و)(?:\s|$)|[,;.!?\n]|$)/giu, "[personal detail]")
+    .replace(/(?:my (?:home )?address is|address\s*:|عنوان(?:ي| العمل| السكن)?|διεύθυνση(?: μου)?|διεύθυνσή μου)(?:\s*(?:is|هو|هي|είναι|:|=))?\s*[^\n]{3,240}/giu, "[address]")
+    .replace(/(?:phone|mobile|my number|call me at|رقمي|رقم هاتفي|هاتف(?:ي)?|τηλέφωνό μου|το τηλέφωνό μου|ο αριθμός(?: τηλεφώνου)? μου)\s*(?:is|هو|هي|είναι|:|=)?\s*[+\d٠-٩۰-۹][\d٠-٩۰-۹\s().-]{5,}[\d٠-٩۰-۹]/giu, "[phone]");
+  for (const value of privateValues) {
+    if (value.length >= 3) text = text.replace(new RegExp(escapeRegExp(value), "giu"), "[personal detail]");
+  }
+  return text;
+}
 
 function conversationRows(data) {
   const users = data.users || {};
   const rows = [];
+  const contactRefs = new Map();
+  const contactRef = (userId) => {
+    const id = String(userId || "");
+    if (!contactRefs.has(id)) contactRefs.set(id, `Contact ${String(contactRefs.size + 1).padStart(4, "0")}`);
+    return contactRefs.get(id);
+  };
 
-  for (const user of Object.values(users)) {
+  for (const [userKey, user] of Object.entries(users)) {
+    const privateValues = collectKnownPrivateValues(user);
     const history = user.history || [];
     if (!history.length) {
       rows.push({
-        userId: user.id,
-        phone: user.phone,
-        name: user.profile?.name || "",
-        company: user.profile?.company || "",
-        need: user.profile?.need || "",
+        userId: contactRef(user.id || userKey),
         timestamp: "",
         message: "",
         response: ""
@@ -28,14 +86,10 @@ function conversationRows(data) {
 
     for (const item of history) {
       rows.push({
-        userId: user.id,
-        phone: user.phone,
-        name: user.profile?.name || "",
-        company: user.profile?.company || "",
-        need: user.profile?.need || "",
+        userId: contactRef(user.id || userKey),
         timestamp: item.at || "",
-        message: item.message || "",
-        response: item.response || ""
+        message: redactReportText(item.message, privateValues),
+        response: redactReportText(item.response, privateValues)
       });
     }
   }
@@ -56,11 +110,7 @@ async function generateConversationReport({ store, outputDir, now = new Date() }
   const userCount = Object.keys(data.users || {}).length;
   const header = (value) => ({ value, fontWeight: "bold" });
   const columns = [
-    { header: header("User ID"), cell: (row) => ({ value: row.userId }), width: 34 },
-    { header: header("Phone"), cell: (row) => ({ value: row.phone }), width: 18 },
-    { header: header("Name"), cell: (row) => ({ value: row.name }), width: 22 },
-    { header: header("Company/project"), cell: (row) => ({ value: row.company }), width: 24 },
-    { header: header("Need"), cell: (row) => ({ value: row.need }), width: 30 },
+    { header: header("Contact reference"), cell: (row) => ({ value: row.userId }), width: 20 },
     { header: header("Timestamp"), cell: (row) => ({ value: row.timestamp }), width: 28 },
     { header: header("Question/message"), cell: (row) => ({ value: row.message }), width: 48 },
     { header: header("RAFA response"), cell: (row) => ({ value: row.response }), width: 64 }
@@ -100,13 +150,17 @@ function assertEmailConfig() {
   }
 }
 
-async function emailReport({ report, to = process.env.REPORT_EMAIL_TO || DEFAULT_REPORT_TO }) {
+async function emailReport({ report, to = process.env.REPORT_EMAIL_TO }) {
+  const recipient = String(to || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    throw new Error("A valid REPORT_EMAIL_TO recipient must be explicitly configured before sending conversation data.");
+  }
   assertEmailConfig();
   const transporter = nodemailer.createTransport(smtpConfig());
 
   await transporter.sendMail({
     from: process.env.REPORT_EMAIL_FROM || process.env.SMTP_USER,
-    to,
+    to: recipient,
     subject: `RAFA monthly report - ${new Date().toISOString().slice(0, 10)}`,
     text: [
       "Attached is the RAFA conversation report.",
@@ -135,8 +189,8 @@ async function generateAndEmailReport({ store, now = new Date() }) {
 }
 
 module.exports = {
-  DEFAULT_REPORT_TO,
   conversationRows,
+  emailReport,
   generateConversationReport,
   generateAndEmailReport,
 };

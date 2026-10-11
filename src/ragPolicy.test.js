@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply, containsProhibitedClaim } = require("./refalcoAnswer");
-const { askOpenRouter, embedText, embedTexts, embedQueryTexts, suppressRepeatedSpecialistOffer, containsUnsupportedPackageInclusion, DEFAULT_EMBEDDING_MODEL } = require("./ai");
+const { askOpenRouter, embedText, embedTexts, embedQueryTexts, suppressMeetingAfterDecline, suppressRepeatedSpecialistOffer, containsUnsupportedPackageInclusion, DEFAULT_EMBEDDING_MODEL } = require("./ai");
 const {
   DEFAULT_OPENROUTER_FALLBACK_MODEL,
   DEFAULT_OPENROUTER_MODEL,
@@ -91,7 +91,7 @@ test("Refalco Group-only questions without approved evidence abstain", async () 
   });
 
   assert.equal(result.shouldUseAi, true);
-  assert.equal(noApprovedEvidenceReply(), "I don't have approved information to confirm that yet. I can help with another part of your question.");
+  assert.equal(noApprovedEvidenceReply(), "I don't have approved information to confirm that yet, and I don't want to guess. Would you like me to check with the team?");
   assert.match(noApprovedEvidenceReply("arabic"), /ما عندي معلومة معتمدة/);
   assert.match(noApprovedEvidenceReply("arabic", { pricing: true }), /رسوم تأسيس معتمدة/);
   assert.match(noApprovedEvidenceReply("greek", { pricing: true }), /εγκεκριμένη τιμή ίδρυσης/);
@@ -142,6 +142,23 @@ test("evidence formatter returns grounded customer prose and keeps citations in 
 test("deterministic evidence answers abstain on unrelated or wrong-language top chunks", () => {
   assert.equal(answerFromEvidence([evidenceFixture], { customerQuestion: "Who won the football match?" }), null);
   assert.equal(answerFromEvidence([evidenceFixture], { customerQuestion: "Ποιες υπηρεσίες προσφέρετε;" }), null);
+});
+
+test("Arabic package fallback keeps safe details from a mixed legacy chunk", () => {
+  const content = "باقة التأسيس عبارة عن سبع خدمات ثابتة:\n\n1. **تأسيس شركة قبرصية (Ltd).** الإجراءات الرسمية الكاملة، وعادةً بتاخد حوالي أسبوعين بعد ما تكتمل المستندات. هون بينوجد الكيان القانوني اللي بتقدر تشتغل فيه داخل الاتحاد الأوروبي.\n2. **حجز واعتماد اسم الشركة.** تقديم الاسم وحجزه لدى سجل الشركات القبرصي، وهون بتبدأ الهوية التجارية رسمياً.\n3. **تجهيز وتوثيق المستندات.** صياغة عقد التأسيس والنظام الأساسي وتقديمهم، حتى يكون الملف سليم وما ينرفض لأسباب إدارية.\n4. **شهادة التأسيس (Certificate of Incorporation).** إصدار الشهادات الرسمية للشركة، وهي المستند الأساسي لفتح الحسابات والتعاقد.\n5. **أمانة السر (Company Secretary).** مشمولة لمدة 4 أشهر متتالية.\n6. **العنوان المسجل (Registered Address).** مشمول لمدة 4 أشهر متتالية.\n7. **إدارة الملف عن بُعد.** إنجاز الإجراءات بدون ما تسافر بالمراحل الأولى، وهاد بيوفر على المستثمر الدولي وقت وتكلفة.";
+  const evidence = [{
+    ...evidenceFixture,
+    source_name: "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط",
+    content,
+    review_status: "approved"
+  }];
+  const result = answerFromEvidence(evidence, { customerQuestion: "مرحبا، شو بتشمل باقة تأسيس الشركة؟" });
+  assert.ok(result, "safe package details should survive a mixed legacy chunk");
+  assert.match(result.answer, /حجز واعتماد اسم الشركة/u);
+  assert.doesNotMatch(result.answer, /الاتحاد الأوروبي|ما ينرفض|فتح الحسابات|999|٩٩٩/u);
+  assert.equal(containsProhibitedClaim("هون بينوجد الكيان القانوني اللي بتقدر تشتغل فيه داخل الاتحاد الأوروبي.", { evidence, language: "arabic" }), true);
+  assert.equal(containsProhibitedClaim("حتى يكون الملف سليم وما ينرفض لأسباب إدارية.", { evidence, language: "arabic" }), true);
+  assert.equal(containsProhibitedClaim("الشهادة الرسمية تفتح الحسابات البنكية.", { evidence, language: "arabic" }), true);
 });
 
 test("a price freshness question needs an approved, unexpired price revision", () => {
@@ -332,6 +349,16 @@ test("knowledge retrieval uses only the current question and actual conversation
   assert.equal(buildKnowledgeSearchQuery("بدي تفاصيل اكتر", { history: [] }), "بدي تفاصيل اكتر");
 });
 
+test("meeting references are removed after a customer declines in Arabic, English, or Greek", () => {
+  const english = "The package includes the incorporation documents. I will not suggest a meeting. What activity will the company have?";
+  const greek = "Η εταιρεία παρέχει τις αναφερόμενες υπηρεσίες. Κατανοητό, δεν θα προτείνω ραντεβού. Κοιτάζετε εταιρική ή φορολογική υποστήριξη;";
+  const arabic = "تشمل الباقة إعداد مستندات التأسيس. فهمت، لن أقترح اجتماعاً. ما النشاط الذي ستزاوله الشركة؟";
+  assert.equal(suppressMeetingAfterDecline(english, { text: "I don't want a meeting now." }), "The package includes the incorporation documents.\nWhat activity will the company have?");
+  assert.equal(suppressMeetingAfterDecline(greek, { text: "Δεν θέλω ραντεβού τώρα." }), "Η εταιρεία παρέχει τις αναφερόμενες υπηρεσίες.\nΚοιτάζετε εταιρική ή φορολογική υποστήριξη;");
+  assert.equal(suppressMeetingAfterDecline(arabic, { text: "ما بدي احجز موعد حالياً." }), "تشمل الباقة إعداد مستندات التأسيس.\nما النشاط الذي ستزاوله الشركة؟");
+  assert.equal(suppressMeetingAfterDecline(greek, { text: "Θέλω να κανονίσουμε ραντεβού." }), greek, "a customer request for contact must not be rewritten");
+});
+
 test("deterministic evidence fallback truncates only at complete sentence boundaries", () => {
   const evidence = {
     ...evidenceFixture,
@@ -351,37 +378,80 @@ test("deterministic evidence fallback truncates only at complete sentence bounda
 });
 
 test("broad company questions search each knowledge area before composing an answer", () => {
-  const broad = buildKnowledgeSearchQueries("ما هي خدمات الشركة؟", { history: [] }, ["services"]);
-  assert.equal(broad.length, 5);
-  assert.doesNotMatch(broad[0], /ما هي خدمات الشركة/u);
-  assert.match(broad[0], /company formation package/u);
-  assert.match(broad[1], /corporate tax Cyprus/u);
-  assert.match(broad[2], /banking and payment gateways/u);
-  assert.match(broad[3], /permanent residency Cyprus/u);
-  assert.match(broad[4], /buying property in Cyprus/u);
+  const broad = buildKnowledgeSearchQueries("ما هي خدمات الشركة؟", { history: [] }, ["services"], "arabic");
+  assert.equal(broad.length, 8);
+  assert.equal(broad[0], "ما هي خدمات الشركة؟", "the customer's precise question is retained as the lead retrieval query");
+  assert.equal(broad[1], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
+  assert.match(broad[2], /ضريبة الشركات في قبرص/u);
+  assert.match(broad[3], /المصرفية وبوابات الدفع لشركة قبرصية/u);
+  assert.match(broad[4], /الإقامة الدائمة في قبرص/u);
+  assert.equal(broad[5], "شراء العقار في قبرص");
   const businessAreas = buildKnowledgeSearchQueries("What business areas does Refalco Group work in?", {}, ["business_areas"], "english");
-  assert.match(businessAreas[0], /Refalco Group business areas and services/u);
-  assert.equal(businessAreas.length, 6);
+  assert.equal(businessAreas[0], "What business areas does Refalco Group work in?");
+  assert.deepEqual(businessAreas, ["What business areas does Refalco Group work in?", "Not a narrow company registration office"]);
   const profile = buildKnowledgeSearchQueries("Who are you?", {}, ["company_info"]);
-  assert.match(profile[0], /Refalco Group business areas and services/u);
-  assert.equal(profile.length, 6);
-  assert.match(profile[4], /permanent residency Cyprus/u);
-  assert.match(profile[5], /buying property in Cyprus/u);
+  assert.deepEqual(profile, ["Who are you?", "Not a narrow company registration office"]);
+  const arabicDomains = buildKnowledgeSearchQueries("شو مجالات خدماتكم؟", {}, ["services"], "arabic");
+  const greekDomains = buildKnowledgeSearchQueries("Ποιες υπηρεσίες προσφέρετε;", {}, ["services"], "greek");
+  assert.equal(arabicDomains[1], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
+  assert.equal(greekDomains[1], "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας");
+  assert.equal(arabicDomains[6], "شراكات ملاك الأراضي ومناقصات الإنشاءات");
+  assert.equal(arabicDomains[7], "العلامات التجارية واتفاقيات الشركاء والعقود");
+  assert.equal(greekDomains[6], "συνεργασίες ιδιοκτητών γης και κατασκευαστικοί διαγωνισμοί");
+  assert.equal(greekDomains[7], "εμπορικά σήματα συμφωνίες μετόχων συμβάσεις Κύπρος");
+  assert.deepEqual(buildKnowledgeSearchQueries("شو مجالات عمل مجموعة الشركة؟", {}, ["company_info"], "arabic"), [
+    "شو مجالات عمل مجموعة الشركة؟", "مو مكتب تسجيل شركات ضيق"
+  ]);
+  assert.deepEqual(buildKnowledgeSearchQueries("Ποιοι είναι οι βασικοί τομείς της Refalco Group;", {}, ["business_areas"], "greek"), [
+    "Ποιοι είναι οι βασικοί τομείς της Refalco Group;", "Όχι ένα στενό γραφείο εγγραφής εταιρειών"
+  ]);
   const packageDetails = buildKnowledgeSearchQueries("شو بتشمل باقة تأسيس الشركة القبرصية؟", {}, ["company_info"], "arabic");
   assert.equal(packageDetails[0], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
   assert.match(packageDetails[1], /شو بتشمل باقة تأسيس الشركة القبرصية/u);
-  assert.match(packageDetails[2], /مجالات وخدمات Refalco Group/u);
+  assert.equal(packageDetails.length, 2, "a focused package question should not spend retrieval budget on unrelated service domains");
+  for (const [query, language] of [
+    ["What do I get with company formation in Cyprus?", "english"],
+    ["شو باخد إذا سجلت شركة بقبرص؟", "arabic"],
+    ["Τι παίρνω αν ιδρύσω εταιρεία στην Κύπρο;", "greek"]
+  ]) {
+    const focused = buildKnowledgeSearchQueries(query, {}, ["services"], language);
+    assert.equal(focused.length, 2, `${language} package paraphrase should search the canonical offer document directly`);
+    assert.match(focused[0], /formation package|πακέτο ίδρυσης|باقة تأسيس/u);
+    assert.equal(focused[1], query);
+  }
   assert.deepEqual(buildKnowledgeSearchQueries("How much is setup?", {}, ["pricing"]), ["How much is setup?"]);
   const arabic = buildKnowledgeSearchQueries("شو خدماتكم؟", {}, ["services"], "arabic");
   const greek = buildKnowledgeSearchQueries("Τι υπηρεσίες προσφέρετε;", {}, ["services"], "greek");
-  assert.match(arabic[0], /باقة تأسيس الشركة القبرصية/u);
-  assert.match(greek[0], /πακέτο ίδρυσης κυπριακής εταιρείας/u);
-  assert.doesNotMatch(arabic.join(" "), /company formation package/u);
-  assert.doesNotMatch(greek.join(" "), /company formation package/u);
-  assert.match(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic")[0], /مجالات وخدمات Refalco Group/u);
+  assert.equal(arabic[0], "شو خدماتكم؟");
+  assert.equal(arabic[1], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
+  assert.equal(greek[0], "Τι υπηρεσίες προσφέρετε;");
+  assert.equal(greek[1], "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας");
+  assert.doesNotMatch(arabic.join(" "), /jurisdiction comparison|corporate tax 15%/iu);
+  assert.doesNotMatch(greek.join(" "), /jurisdiction comparison|corporate tax 15%/iu);
+  assert.equal(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic")[0], "مين أنتم؟");
 });
 
-test("broad retrieval supplies one distinct content chunk per facet and skips finding aids", async () => {
+test("targeted company-profile query retains approved profile evidence", async () => {
+  const calls = [];
+  const policyMetadata = { topic: "company-profile", facts: ["MB-F1"], factRegisterRows: [{ id: "MB-F1", status: "approved",
+    reviewer: "test-reviewer", verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en", "ar", "el"] }] };
+  const result = await retrieveKnowledgeForTurn("What business areas does Refalco Group work in?", {
+    intents: ["business_areas"], language: "english", embedQueryTexts: async (queries) => queries,
+    store: { searchKnowledge: async (query) => {
+      calls.push(query);
+      return query === "Not a narrow company registration office" ? [{ chunk_kind: "fact", source_name: "Refalco Group",
+        document_title: "Who Refalco Group is", chunk_id: "company-profile-areas", heading: "Not a narrow company registration office",
+        content: "The approved profile describes company formation, tax and accounting, and development services.",
+        metadata: { facts: ["MB-F1"] }, policyMetadata }] : [];
+    } }
+  });
+  assert.equal(result.complete, true);
+  assert.equal(result.queryCount, 2);
+  assert.deepEqual(calls, ["What business areas does Refalco Group work in?", "Not a narrow company registration office"]);
+  assert.ok(result.evidence.some((row) => row.chunk_id === "company-profile-areas"));
+});
+
+test("broad retrieval keeps a balanced bounded set of eligible chunks and skips finding aids", async () => {
   const calls = [];
   let activeSearches = 0;
   let maxActiveSearches = 0;
@@ -400,19 +470,28 @@ test("broad retrieval supplies one distinct content chunk per facet and skips fi
       activeSearches -= 1;
         return [
           { chunk_kind: "aliases", chunk_id: `aid-${index}`, heading: "Aliases", content: "Question phrases" },
-          { chunk_kind: "discovery", chunk_id: `discovery-${index}`, heading: "Discovery prompts", content: "Questions for a specialist" },
-          { chunk_kind: "fact", chunk_id: `content-${index}`, heading: `Facet ${index}`, content: `Approved content ${index}` }
+          { chunk_kind: "fact", chunk_id: `content-${index}`, heading: `Facet ${index}`, content: `Approved content ${index}`,
+            metadata: { facts: ["MB-F1"] },
+            policyMetadata: { facts: ["MB-F1"], factRegisterRows: [{ id: "MB-F1", status: "approved", reviewer: "test-reviewer", verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en", "ar", "el"] }] } },
+          { chunk_kind: "discovery", chunk_id: `discovery-${index}`, heading: "Discovery section", content: "Approved discovery guidance" },
+          { chunk_kind: "fact", chunk_id: `detail-${index}`, heading: `Detail ${index}`, content: `Additional approved detail ${index}`,
+            metadata: { facts: ["MB-F1"] },
+            policyMetadata: { facts: ["MB-F1"], factRegisterRows: [{ id: "MB-F1", status: "approved", reviewer: "test-reviewer", verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en", "ar", "el"] }] } }
         ];
       }
     }
   });
-  assert.equal(retrieval.queryCount, 5);
+  assert.equal(retrieval.queryCount, 8);
   assert.equal(retrieval.failures.length, 0);
   assert.equal(retrieval.complete, true);
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 8);
+  assert.equal(calls[0].query, "What services do you offer?");
+  assert.deepEqual(calls.map((call) => call.query), buildKnowledgeSearchQueries("What services do you offer?", {}, ["services"], "english"));
   assert.ok(maxActiveSearches > 1);
   assert.ok(calls.every((call) => call.model === "test-model" && call.count === 6 && call.embedding === call.query.length));
-  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "content-2", "content-3", "content-4", "content-5"]);
+  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "content-2", "content-3", "content-4", "content-5", "content-6", "content-7", "content-8"]);
+  assert.ok(retrieval.evidence.length <= 8);
+  assert.ok(retrieval.evidenceChars <= 10000);
 
   let failedSearch = false;
   const incomplete = await retrieveKnowledgeForTurn("What services do you offer?", {
@@ -426,6 +505,87 @@ test("broad retrieval supplies one distinct content chunk per facet and skips fi
   // Deterministic failure coverage: the first facet fails, the rest have no results.
   assert.equal(incomplete.complete, false);
   assert.equal(incomplete.failures.length, 1);
+});
+
+test("all approved indexed Knowledge section kinds reach retrieval without reference or Fact Register metadata", async () => {
+  const sectionKinds = ["fact", "boundary", "example", "discovery"];
+  const result = await retrieveKnowledgeForTurn("What does the approved information say?", {
+    store: { searchKnowledge: async () => [
+      ...sectionKinds.map((kind) => ({
+        chunk_kind: kind,
+        chunk_id: `approved-${kind}`,
+        heading: `${kind} section`,
+        content: `Approved ${kind} section text.`,
+        review_status: "approved",
+        documentMetadata: { supporting: [] }
+      })),
+      { chunk_kind: "aliases", chunk_id: "finding-aid", heading: "Aliases", content: "Question phrases", review_status: "approved" }
+    ] }
+  });
+  assert.deepEqual(result.evidence.map((row) => row.chunk_id), sectionKinds.map((kind) => `approved-${kind}`));
+  assert.equal(result.evidence.some((row) => row.chunk_id === "finding-aid"), false);
+});
+
+test("a specific service question is searched verbatim and its approved match survives the broad facets", async () => {
+  const question = "Does Refalco help with shareholder changes?";
+  const calls = [];
+  const facts = ["MB-F14"];
+  const policyMetadata = { facts, factRegisterRows: [{ id: "MB-F14", status: "approved", reviewer: "test-reviewer",
+    verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en", "ar", "el"] }] };
+  const result = await retrieveKnowledgeForTurn(question, {
+    intents: ["corporate_services"], language: "english", embedText: async (query) => query,
+    store: { searchKnowledge: async (query) => {
+      calls.push(query);
+      return query === question ? [{ chunk_kind: "fact", chunk_id: "shareholder-change", heading: "Shareholder changes",
+        content: "The current approved information about shareholder changes.", metadata: { facts }, policyMetadata }] : [];
+    } }
+  });
+  assert.equal(calls[0], question);
+  assert.equal(result.queryCount, 8);
+  assert.ok(result.evidence.some((row) => row.chunk_id === "shareholder-change"));
+  assert.equal(result.complete, true);
+});
+
+test("broad retrieval globally deduplicates, filters pending revisions, and enforces its character ceiling", async () => {
+  const approved = { facts: ["MB-F1"], factRegisterRows: [{ id: "MB-F1", status: "approved", reviewer: "test-reviewer", verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en", "ar", "el"] }] };
+  const retrieval = await retrieveKnowledgeForTurn("What services do you offer?", {
+    language: "english", embedText: async () => [1],
+    store: { searchKnowledge: async (_query, _embedding, _model, count) => {
+      assert.equal(count, 6);
+      return [
+        { chunk_kind: "fact", chunk_id: "shared", heading: "Shared", content: "Shared approved fact.", metadata: { facts: ["MB-F1"] }, policyMetadata: approved },
+        { chunk_kind: "fact", chunk_id: `large-${_query.slice(0, 4)}`, heading: "Large", content: "x".repeat(2400), metadata: { facts: ["MB-F1"] }, policyMetadata: approved },
+        { chunk_kind: "fact", chunk_id: `detail-${_query.slice(0, 4)}`, heading: "Detail", content: "A useful additional detail.", metadata: { facts: ["MB-F1"] }, policyMetadata: approved },
+        { chunk_kind: "fact", chunk_id: `stale-${_query.slice(0, 4)}`, heading: "Stale", content: "Stale content.", metadata: { facts: ["MB-F1"] }, policyMetadata: { facts: ["MB-F1"], factRegisterRows: [{ ...approved.factRegisterRows[0], status: "expired" }] } },
+        { chunk_kind: "fact", chunk_id: `pending-${_query.slice(0, 4)}`, review_status: "pending", heading: "Pending", content: "Pending content.", metadata: { facts: ["MB-F1"] }, policyMetadata: approved }
+      ];
+    } }
+  });
+  assert.equal(retrieval.complete, true);
+  assert.equal(retrieval.evidence.filter((row) => row.chunk_id === "shared").length, 1);
+  assert.ok(retrieval.evidence.length <= 8);
+  assert.ok(retrieval.evidenceChars <= 10000);
+  assert.ok(retrieval.evidence.some((row) => row.chunk_id.startsWith("detail-")), "short eligible rows still fit after a large row is skipped");
+  assert.equal(retrieval.evidence.some((row) => row.chunk_id.startsWith("stale-")), true, "Fact Register freshness does not hide approved revision text");
+  assert.equal(retrieval.evidence.some((row) => row.chunk_id.startsWith("pending-")), false, "pending Knowledge revisions stay excluded");
+});
+
+test("live RAG returns approved Knowledge text even when its Fact Register row is pending", async () => {
+  const pending = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"], language: "english", embedText: async () => [1],
+    store: { searchKnowledge: async () => [{
+      chunk_kind: "fact", chunk_id: "pending-live-fact", review_status: "approved",
+      metadata: { facts: ["MB-F19"] }, content: "Approved Knowledge text from this linked section.",
+      policyMetadata: { facts: ["MB-F19"], factRegisterRows: [{
+        id: "MB-F19", status: "pending", reviewer: "reviewer", verifiedAt: "2026-01-01",
+        expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en"]
+      }] }
+    }] }
+  });
+  assert.equal(pending.evidence.length, 1);
+  assert.equal(pending.evidence[0].content, "Approved Knowledge text from this linked section.");
+  assert.equal(pending.failures.length, 0);
+  assert.equal(pending.complete, true);
 });
 
 test("price answers cannot attach nearby company services to the paid package without explicit evidence", () => {
@@ -455,12 +615,17 @@ test("OpenRouter prompt redacts credentials in customer turns, memory, and retri
   });
   await askOpenRouter({
     text: "Password: CustomerSecret-7241. What services does Refalco Group provide?",
-    evidence: [{ ...evidenceFixture, content: "Company services are available. API key: EvidenceSecret-7241." }],
+    evidence: [
+      { ...evidenceFixture, chunk_id: "context-0", heading: "Context 0", content: "Company services are available. API key: EvidenceSecret-7241." },
+      ...Array.from({ length: 9 }, (_, index) => ({ ...evidenceFixture, chunk_id: `context-${index + 1}`, heading: `Context ${index + 1}`, content: `Approved service detail ${index + 1}.` }))
+    ],
     conversationSummary: "Token: MemorySecret-7241",
     conversationTurns: [{ role: "user", content: "PIN: TurnSecret-7241" }],
     includeSources: false
   });
   assert.doesNotMatch(requestBody, /CustomerSecret-7241|EvidenceSecret-7241|MemorySecret-7241|TurnSecret-7241/);
+  assert.match(requestBody, /Approved service detail 7/u);
+  assert.doesNotMatch(requestBody, /Approved service detail [89]/u, "the model context is bounded to the first eight eligible chunks");
 });
 
 test("model price drafts and activity-suitability claims are rejected", async (t) => {
@@ -479,6 +644,28 @@ test("model price drafts and activity-suitability claims are rejected", async (t
   await assert.rejects(askOpenRouter({ text: "I want to open a company in Cyprus. Can you explain the service?", evidence: [evidenceFixture], includeSources: false }), /unsolicited or unsupported price/);
   draft = "An online shop is a straightforward activity, so the standard setup should fit.";
   await assert.rejects(askOpenRouter({ text: "My company will run an online shop.", evidence: [evidenceFixture], includeSources: false }), /restricted legal or financial content/);
+});
+
+test("shared response validation preserves a restricted programme fact backed by approved evidence", async (t) => {
+  const originalFetch = global.fetch;
+  const keys = ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODEL"];
+  const env = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.OPENROUTER_MODEL = "primary/test";
+  process.env.OPENROUTER_FALLBACK_MODEL = "primary/test";
+  const fact = "The Cyprus IP Box regime exempts 80% of qualifying net profit from tax.";
+  const evidence = {
+    ...evidenceFixture,
+    review_status: "approved",
+    content: fact
+  };
+  global.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: fact } }] }) });
+  t.after(() => {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(env)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  });
+
+  assert.equal(await askOpenRouter({ text: "How does the Cyprus IP Box regime work?", evidence: [evidence], includeSources: false }), fact);
 });
 
 test("turn evidence metadata preserves all bounded, deduplicated sources actually sent to the model", () => {
@@ -503,8 +690,8 @@ test("turn evidence metadata preserves all bounded, deduplicated sources actuall
     ...Array.from({ length: 6 }, (_, index) => ({ ...evidenceFixture, source_id: `source-${index}`, document_id: `doc-${index}`, chunk_id: `chunk-${index}`, rank: index === 0 ? Infinity : index / 100 }))];
   const metadata = knowledgeEvidenceMetadata(manySources, { modelRequestMade: true, modelResponseUsed: true, fallbackCitations: [{ name: "fallback", url: "https://example.test/" }] });
 
-  assert.equal(metadata.retrieved.length, 6, "retrieval provenance is bounded to six distinct chunks");
-  assert.equal(metadata.providedToModel.length, 4, "model-input provenance is deduplicated within the five evidence chunks supplied by askOpenRouter");
+  assert.equal(metadata.retrieved.length, 8, "retrieval provenance is bounded to eight distinct chunks");
+  assert.equal(metadata.providedToModel.length, 7, "model-input provenance is deduplicated within the eight evidence chunks supplied by askOpenRouter");
   assert.equal(metadata.providedToModel.find((source) => source.sourceId === "source-external").url, "https://example.test/");
   assert.equal(metadata.providedToModel.find((source) => source.sourceId === "source-business").name, "Refalco Group Overview");
   assert.equal(metadata.providedToModel.find((source) => source.sourceId === "source-external").score, 0.031);

@@ -45,6 +45,7 @@ const { isFactId, normalizeFactId } = require("../src/brainFactMap.js");
 const HIGH_RISK_SET = new Set(HIGH_RISK_FACTS);
 
 export const FACT_REGISTER_MIGRATION = "supabase/migrations/20261009180000_refal_fact_register.sql";
+export const FACT_REVIEW_EDITOR_MIGRATION = "supabase/migrations/20261011134848_refal_fact_review_editor.sql";
 
 // W3.9.7 defaults to a seven day horizon. Exported so the route, the page and
 // the tests cannot drift into three different "soon"s.
@@ -62,7 +63,7 @@ export const STATUS_EXPLANATIONS = Object.freeze({
 });
 
 export const MIGRATION_NOT_APPLIED_MESSAGE =
-  `The fact register migration has not been applied yet, so there is no register to review. Apply ${FACT_REGISTER_MIGRATION} and its generated seed companion, then reload this page. This is not the same as "no facts need review".`;
+  `The fact register or review editor migration has not been applied yet. Apply ${FACT_REGISTER_MIGRATION}, its generated seed companion, and ${FACT_REVIEW_EDITOR_MIGRATION}, then reload this page. This is not the same as "no facts need review".`;
 
 export const MIGRATION_NOT_APPLIED_REASON = "fact_register_migration_not_applied";
 
@@ -78,7 +79,7 @@ const ANONYMOUS_NAMES = new Set([
 // cache has never heard of the table / function, which is what an unapplied
 // migration actually looks like through the REST API.
 const MISSING_OBJECT_CODES = new Set(["42P01", "42883", "PGRST202", "PGRST205"]);
-const REGISTER_OBJECTS = /refal_fact_register|refal_facts_due_for_review|refal_reapprove_fact|refal_set_fact_status|refal_fact_effective_status/i;
+const REGISTER_OBJECTS = /refal_fact_register|refal_facts_due_for_review|refal_reapprove_fact|refal_set_fact_status|refal_edit_fact_review|refal_fact_effective_status/i;
 const MISSING_OBJECT_WORDS = /(does not exist|could not find|not found in the schema cache|schema cache|no function matches)/i;
 
 const REGISTER_SELECT = [
@@ -116,6 +117,7 @@ export function migrationNotApplied() {
   return factError(503, MIGRATION_NOT_APPLIED_MESSAGE, {
     migrationApplied: false,
     migration: FACT_REGISTER_MIGRATION,
+    reviewEditorMigration: FACT_REVIEW_EDITOR_MIGRATION,
     reason: MIGRATION_NOT_APPLIED_REASON
   });
 }
@@ -349,8 +351,15 @@ export async function reapproveFact(rest, { factId, reviewer, cadenceDays, reaso
     ? null
     : requireCadence(cadenceDays);
   const trimmedReason = String(reason ?? "").trim().slice(0, 500);
+  if (!trimmedReason) throw factError(400, "Enter the evidence you checked and why this fact is safe to approve.");
 
   const current = await readFactRow(rest, id);
+  if (current.sourceType === "mb-manual" || /Master Brain & Operating Rules Manual/i.test(current.sourceDocument)) {
+    throw factError(400, "The owner manual is reference material, not approval evidence. Edit the fact with a current company or authority source first.");
+  }
+  if (!current.sourceRef.trim()) {
+    throw factError(400, "Add an exact evidence citation or section before approving this fact.");
+  }
   try {
     // refal_reapprove_fact() defaults a null cadence to the row's stored
     // review_cadence_days, so the dry run is given the same number the database
@@ -395,6 +404,46 @@ export async function setFactStatus(rest, { factId, status, actor, reason = "" }
   });
 
   return { migrationApplied: true, updated: true, factId: id, status: wanted, actor: namedActor, result: result ?? null };
+}
+
+// Edit operator-managed evidence metadata without duplicating the canonical
+// claim wording or figures owned by the brain catalogue and multilingual corpus.
+export async function editFactReview(rest, {
+  factId, sourceDocument, sourceRef, notes, cadenceDays, approvedLanguages,
+  actor, reason = ""
+} = {}) {
+  const id = requireFactId(factId);
+  const namedActor = requireNamedPerson(actor, "A fact edit needs the signed-in administrator's identity.");
+  const why = String(reason ?? "").trim().slice(0, 500);
+  if (!why) throw factError(400, "Enter a reason so the fact change is auditable.");
+  const document = String(sourceDocument ?? "").trim();
+  if (document.length < 1 || document.length > 500) throw factError(400, "Evidence source must be between 1 and 500 characters.");
+  const reference = String(sourceRef ?? "").trim().slice(0, 500);
+  const noteText = String(notes ?? "").trim().slice(0, 2000);
+  const cadence = requireCadence(cadenceDays);
+  const languages = [...new Set((Array.isArray(approvedLanguages) ? approvedLanguages : [])
+    .map((language) => String(language).trim().toLowerCase()).filter(Boolean))];
+  if (!languages.length || languages.some((language) => !["ar", "en", "el"].includes(language))) {
+    throw factError(400, "Choose one or more supported languages: Arabic, English, or Greek.");
+  }
+  const current = await readFactRow(rest, id);
+  if (current.highRisk && cadence > HIGH_RISK_MAX_CADENCE_DAYS) {
+    throw factError(400, `${id} is high risk and cannot be given a ${cadence} day review cadence.`);
+  }
+  const result = await callRest(rest, "rpc/refal_edit_fact_review", {
+    method: "POST",
+    body: JSON.stringify({
+      p_fact_id: id,
+      p_source_url_or_document: document,
+      p_source_ref: reference,
+      p_notes: noteText,
+      p_review_cadence_days: cadence,
+      p_approved_languages: languages,
+      p_actor: namedActor,
+      p_reason: why
+    })
+  });
+  return { migrationApplied: true, updated: true, factId: id, actor: namedActor, result: result ?? null };
 }
 
 // GET /api/facts/:factId/audit — the append only history, newest first. This is

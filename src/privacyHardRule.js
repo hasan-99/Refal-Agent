@@ -39,9 +39,9 @@ const CREDENTIAL_KINDS = Object.freeze({
   BANKING_CREDENTIALS: "banking_credentials"
 });
 
-const EN_REQUEST = "(?:send|sending|share|sharing|provide|providing|give|giving|type|typing|enter|entering|paste|reply with|confirm|forward|upload|attach|email|tell me|i need|we need|please supply|supply|what is|what's|what’s|may i have|can you give)";
-const AR_REQUEST = "(?:أرسل|ارسل|أرسلي|ابعت|ابعتلي|بعتلي|شاركني|أعطني|اعطني|أعطيني|اعطيني|زودني|زوّدني|اكتب|اكتبلي|احكيلي|قلي|ما هي|ما هو|شو هي|شو هو|رجاء|رجاءً|من فضلك|بحاجة|نحتاج|لازم ترسل|ارفع|أرفق|ارفق)";
-const EL_REQUEST = "(?:στείλτε|στείλε|στείλτε μου|μοιραστείτε|μοιράσου|δώστε|δώσε|γράψτε|γράψε|πληκτρολογήστε|επιβεβαιώστε|προωθήστε|ανεβάστε|επισυνάψτε|χρειάζομαι|χρειαζόμαστε|ποιος είναι|ποιο είναι|παρακαλώ στείλτε)";
+const EN_REQUEST = "(?:send|sending|share|sharing|provide|providing|give|giving|type|typing|enter|entering|paste|reply with|confirm|forward|upload|attach|email|tell me|tell us|(?:could|can|would) you tell (?:me|us)|i need|we need|please supply|supply|what is|what's|what’s|may i have|can you give)";
+const AR_REQUEST = "(?:أرسل|ارسل|أرسلي|ابعت|ابعتلي|بعتلي|شاركني|أعطني|اعطني|أعطيني|اعطيني|زودني|زوّدني|اكتب|اكتبلي|احكيلي|قلي|ما هي|ما هو|شو هي|شو هو|شو|رجاء|رجاءً|من فضلك|بحاجة|نحتاج|لازم ترسل|ارفع|أرفق|ارفق)";
+const EL_REQUEST = "(?:στείλτε|στείλε|στείλτε μου|μοιραστείτε|μοιράσου|δώστε|δώσε|πείτε(?:\\s+μου)?|πες(?:\\s+μου)?|γράψτε|γράψε|πληκτρολογήστε|επιβεβαιώστε|προωθήστε|ανεβάστε|επισυνάψτε|χρειάζομαι|χρειαζόμαστε|ποιος είναι|ποιο είναι|παρακαλώ στείλτε)";
 
 function requestRule(id, en, ar, el) {
   const parts = [
@@ -56,7 +56,7 @@ const rawRules = [
   requestRule(
     CREDENTIAL_KINDS.PASSWORD,
     "(?:your |the |a |my )?(?:passwords?|passcodes?|login password|account password)",
-    "(?:كلمة المرور|كلمة السر|كلمات المرور|كلمات السر|الرمز السري|رمز الدخول السري)",
+    "(?:كلمة المرور|كلمة السر|كلمه مرورك|كلمه سرك|كلمات المرور|كلمات السر|الرمز السري|رمز الدخول السري)",
     "(?:κωδικ[\\p{L}]*\\s+πρόσβασ[\\p{L}]*|μυστικ[\\p{L}]*\\s+κωδικ[\\p{L}]*|κωδικ[\\p{L}]*\\s+εισόδου)"
   ),
   requestRule(
@@ -93,9 +93,11 @@ const rules = foldRulePatterns(rawRules);
 // prompt, which is the approved mechanism rather than a violation.
 const rawOtp = [
   ["verb", new RegExp(`\\b${EN_REQUEST}\\b|${AR_REQUEST}|${EL_REQUEST}`, "iu")],
-  ["code", /\b(?:otp|one[ -]?time (?:code|password|pin)|verification code|authentication code|sms code|security code|access code)\b|(?:رمز التحقق|رمز التفعيل|كود التحقق|رمز لمرة واحدة|الرمز اللي وصلك|الكود اللي وصلك)|(?:κωδικό επαλήθευσης|κωδικό μίας χρήσης|OTP|κωδικό που λάβατε)/iu],
+  ["code", /\b(?:otp|one[ -]?time (?:code|password|pin)|verification code|authentication code|sms code|security code|access code)\b|(?:رمز التحقق|رمز التفعيل|كود التحقق|رمز لمرة واحدة|الرمز اللي وصلك|الكود اللي وصلك)|(?:κωδικ\p{L}*|OTP)/iu],
   ["thirdParty", /\b(?:your bank|the bank|your provider|your (?:email|app|wallet|exchange)|another (?:company|service|provider|app)|third party|you received|received from|sent to you by|they sent you|the bank sent)\b|(?:البنك|بنكك|مزود الخدمة|وصلك من|أرسله لك البنك|تطبيق تاني|جهة تانية)|(?:η τράπεζα|την τράπεζα|ο πάροχος|λάβατε από|σας έστειλε η τράπεζα|άλλη εταιρεία|τρίτο μέρος)/iu]
 ];
+
+const OTP_PAIRED_SENSITIVE_TARGET = /\b(?:passport|national id|identity card|account number|bank account|card details?)\b|(?:رقم\s*(?:الجواز|الهوية|الحساب)|رقم\s*البطاقة|بيانات\s*البطاقة)|(?:διαβατηρ\p{L}*|ταυτότητ\p{L}*|λογαριασμ\p{L}*|κάρτ\p{L}*)/iu;
 
 const otpParts = Object.fromEntries(foldRulePatterns(rawOtp));
 
@@ -103,6 +105,43 @@ function normalizeOutboundText(text) {
   return foldArabicLetters(
     String(text || "").normalize("NFKC").replace(/[ً-ٰٟـ]/gu, "").replace(/\s+/gu, " ").trim()
   );
+}
+
+function isNegatedRequestAt(text, index) {
+  const prefix = text.slice(Math.max(0, index - 48), index).split(/[.!?؟;؛,،]/u).at(-1) || "";
+  return /\b(?:do not|don't|never|should not|shouldn't|must not|mustn't|cannot|can't)\s*$/iu.test(prefix)
+    || /(?:لا|ما\s*بدي|ممنوع|μην|μη|ποτέ\s+μην)\s*$/iu.test(prefix);
+}
+
+function isInformationalCredentialQuestion(text, match) {
+  // Scope every carve-out to this specific request-pattern match. A definition
+  // elsewhere in the same sentence must never excuse another request match.
+  const matchedText = match[0].trim();
+  const followingText = text.slice(match.index + match[0].length, match.index + match[0].length + 60).split(/[.!?؟;؛]/u)[0];
+  const context = `${matchedText}${followingText}`;
+  return /^what\s+(?:is|are)\s+(?:(?:the\s+)?(?:definition|meaning)\s+of\s+(?:a|an|the)\s+)?(?:(?:a|an)\s+)?(?:password|passcode|pin|bank statement|account statement|card details?|credentials?)\s*$/iu.test(matchedText)
+    || /^what\s+(?:does|do)\s+(?:a|an|the)?\s*(?:password|passcode|pin|bank statement|account statement|card details?|credentials?)\s+mean\s*$/iu.test(matchedText)
+    || /^tell me what\s+(?:a|an|the)\s+(?:password|passcode|pin|bank statement|account statement|card detail|credential)s?\s+(?:is|are|means?|includes?|contains?|shows?|used)\s*$/iu.test(context)
+    || /^(?:could|can)\s+you\s+tell\s+(?:me|us)\s+what\s+(?:a|an|the)\s+(?:password|passcode|pin|bank statement|account statement|card detail|credential)s?\s+(?:is|are|means?|includes?|contains?|shows?|used)\s*$/iu.test(context)
+    || /^share\s+what\s+(?:a|an|the)\s+(?:password|passcode|pin|bank statement|account statement|card detail|credential)s?\s+(?:is|are|means?|includes?|contains?|shows?|used)\s*$/iu.test(context)
+    || /^(?:شو\s+هي|ما\s+هي|ما\s+هو)\s+(?:كلمه المرور|كلمه السر|كشف الحساب|بيان الحساب)\s*$/u.test(matchedText)
+    || /^شو\s+يعني[^.!?؟;؛,،]{0,32}(?:كلمه المرور|كلمه السر|كشف الحساب|بيان الحساب)\s*$/u.test(matchedText)
+    || /^(?:ما\s*(?:هي|هو)|شو\s*(?:هي|هو)|كيف)\s*[^.!?؟;؛,،]{0,48}(?:كلمة المرور|كلمة السر|رقم التعريف الشخصي|كشف الحساب|بيانات البطاقة)[^.!?؟;؛,،]{0,24}(?:يعني|يتضمن|يشمل|يحتوي)\s*$/iu.test(matchedText)
+    || /^(?:ποιο\s+είναι|τι\s+είναι)\s+(?:το\s+)?(?:τραπεζικό\s+αντίγραφο|αντίγραφο\s+κίνησης)\s*$/iu.test(matchedText)
+    || /^(?:τι|ποιο|πώς)\s*[^.!?;؛,،]{0,48}(?:κωδικ\p{L}*\s+πρόσβασ\p{L}*|τραπεζικ\p{L}*\s+αντίγραφ\p{L}*|στοιχεί\p{L}*\s+κάρτ\p{L}*)[^.!?;؛,،]{0,24}(?:είναι|περιλαμβάνει|περιέχει|σημαίνει)\s*$/iu.test(matchedText)
+    || /^share\s+what\s+(?:a|an|the)\s+(?:password|passcode|pin|bank statement|account statement|card detail|credential)s?\s+(?:is|are|means?|includes?|contains?|shows?|used)\b/iu.test(context);
+}
+
+function hasUnnegatedRequest(pattern, text) {
+  const matcher = new RegExp(pattern.source, `${pattern.flags.replace(/g/gu, "")}g`);
+  let match;
+  while ((match = matcher.exec(text)) !== null) {
+    if (!isNegatedRequestAt(text, match.index) && !isInformationalCredentialQuestion(text, match)) return true;
+    // Deliberately scan overlapping matches too: an initial negated warning
+    // can match across punctuation and consume a later affirmative request.
+    matcher.lastIndex = match.index + 1;
+  }
+  return false;
 }
 
 /**
@@ -116,9 +155,10 @@ function requestsForbiddenCredential(text) {
   const language = detectMessageLanguage(text);
   if (!value) return { violation: false, kinds: [], language };
 
-  const kinds = rules.filter(([, pattern]) => pattern.test(value)).map(([kind]) => kind);
+  const kinds = rules.filter(([, pattern]) => hasUnnegatedRequest(pattern, value)).map(([kind]) => kind);
 
-  if (otpParts.verb.test(value) && otpParts.code.test(value) && otpParts.thirdParty.test(value)) {
+  if (hasUnnegatedRequest(otpParts.verb, value) && otpParts.code.test(value)
+      && (otpParts.thirdParty.test(value) || OTP_PAIRED_SENSITIVE_TARGET.test(value))) {
     kinds.push(CREDENTIAL_KINDS.OTP_OUT_OF_BAND);
   }
 

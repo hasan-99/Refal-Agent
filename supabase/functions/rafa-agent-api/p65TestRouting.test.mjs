@@ -26,13 +26,14 @@ test("only a tagged synthetic open handover can create a controlled test notific
 });
 
 test("claim-by-ID policy requires the exact tagged admin handover job and rejects customer jobs", () => {
-  const job = { id: "3a623eb1-0a75-4df7-9fb8-258a70cc2922", kind: "handover_review", testRunId: runId, recipient, status: "queued", payload: { p65TestRunId: runId } };
+  const job = { id: "3a623eb1-0a75-4df7-9fb8-258a70cc2922", kind: "handover_review", testRunId: runId, recipient, status: "queued", idempotency_key: `p65-handover:${runId}`, payload: { p65TestRunId: runId } };
   const base = { ...job, requestedId: job.id, configuredRecipient: recipient };
   assert.equal(canClaimP65TestNotification(base), true);
   assert.equal(canClaimP65TestNotification({ ...base, requestedId: "3a623eb1-0a75-4df7-9fb8-258a70cc2923" }), false);
   assert.equal(canClaimP65TestNotification({ ...base, kind: "customer_message" }), false);
   assert.equal(canClaimP65TestNotification({ ...base, recipient: "customer@example.com" }), false);
   assert.equal(canClaimP65TestNotification({ ...base, payload: {} }), false);
+  assert.equal(canClaimP65TestNotification({ ...base, idempotency_key: "unrelated-key" }), false, "a marker alone is insufficient without the P6.5 idempotency key");
   assert.equal(canClaimP65TestNotification({ ...base, status: "sent" }), false);
   assert.equal(canClaimP65TestNotification({ ...base, status: "processing" }), false, "an ambiguous or expired claim cannot be reclaimed and resend mail");
   assert.equal(canClaimP65TestNotification({ ...base, status: "failed" }), false, "a test failure requires a new audited run rather than a potentially duplicate retry");

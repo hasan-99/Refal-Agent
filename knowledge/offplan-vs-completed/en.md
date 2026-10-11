@@ -3,7 +3,7 @@ topic: offplan-vs-completed
 lang: en
 title: Off-plan or completed property in Cyprus, who each one suits
 facts: MB-F46, MB-F47
-aliases: difference between off plan and completed property | off plan vs ready property cyprus | risks of buying off plan | payments for a property under construction | what does first sale from the developer mean | when do i get the keys | is there a warranty on the construction | what if the developer delays delivery | is completed property more expensive | which is better for permanent residency | buying under construction in cyprus | ready to move in property cyprus
+aliases: difference between off plan and completed property | off plan vs ready property cyprus | risks of buying off plan | payments for a property under construction | what does first sale from the developer mean | when do i get the keys | is there a warranty on the construction | what if the developer delays delivery | is completed property more expensive | which is better for permanent residency | buying under construction in cyprus | ready to move in property cyprus | Will the property price go up over the next two years
 ---
 
 ## Completed property and who it suits

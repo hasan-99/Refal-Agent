@@ -42,7 +42,7 @@ const ENTRIES = [
     ],
     en: [
       "Who are you? Tell me about the company.",
-      "What are you?",
+      "What kind of company are you?",
       "How long have you been in the market?",
       "How many projects have you delivered?",
       { q: "I don't know you, how do I know this isn't a scam?", objection: "MB-O5", humour: H.SERIOUS },

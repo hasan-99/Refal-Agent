@@ -137,12 +137,21 @@ test("H2 does not associate a client ID with a separate below-threshold budget",
   assert.equal(select("I am non-EU, client ID 350000, budget €350000", "permanent-residency")?.id, "H2_RESIDENCY");
 });
 
-test("H3 names GESY and the 17-year Non Dom programme only when all three current evidence topics exist", () => {
+test("H3 names GESY and the 17-year Non-Dom programme only when all three current evidence topics exist", () => {
+  const cases = [
+    ["Moving with my family and children", "english"],
+    ["بدي انتقل مع عيلتي وأولادي", "arabic"],
+    ["Θέλω να μετακομίσω με την οικογένειά μου", "greek"]
+  ];
+  for (const [message, language] of cases) {
+    const result = select(message, "relocation-checklist", { evidence: relocationEvidence(), language });
+    assert.equal(result?.id, "H3_RELOCATION", language);
+    assert.match(result.phrase, /GESY/u, language);
+    assert.match(result.phrase, /Non-Dom/u, language);
+    assert.doesNotMatch(result.phrase, /ΓεΣΥ|Non Dom/u, language);
+    assert.match(result.phrase, /17 years|17 سنة|17 χρόνια/u, language);
+  }
   const message = "Moving with my family and children";
-  const result = select(message, "relocation-checklist", { evidence: relocationEvidence() });
-  assert.equal(result?.id, "H3_RELOCATION");
-  assert.match(result.phrase, /GESY/u);
-  assert.match(result.phrase, /17 years/u);
   assert.equal(select(message, "relocation-checklist"), null);
   assert.equal(select(message, "relocation-checklist", { evidence: relocationEvidence().slice(0, 2) }), null);
 });

@@ -4,7 +4,7 @@ lang: en
 title: The full life cycle of a Cyprus company, from idea to closure
 facts: MB-F1
 supporting: MB-F2, MB-F18
-aliases: company life cycle cyprus | what happens after i open a company | stages of a cyprus company | steps to set up a company in cyprus | what comes after incorporation | how to open a company in cyprus | ongoing obligations cyprus company | cyprus ltd stages | how long does company registration take | if i want to close the company later | i want to incorporate but i don't know where to start | difference between reserving a name and actual registration | who signs the documents me or your team | what should i know before i begin the process | registering a cyprus company while living abroad | set up a company in cyprus from scratch
+aliases: company life cycle cyprus | what happens after i open a company | stages of a cyprus company | steps to set up a company in cyprus | what comes after incorporation | how to open a company in cyprus | ongoing obligations cyprus company | cyprus ltd stages | how long does company registration take | if i want to close the company later | i want to incorporate but i don't know where to start | difference between reserving a name and actual registration | who signs the documents me or your team | what should i know before i begin the process | registering a cyprus company while living abroad | set up a company in cyprus from scratch | Do I need to be physically in Cyprus to register | Who signs the documents, me or your team
 ---
 
 ## The ten stages of a Cyprus company
@@ -58,7 +58,7 @@ If you tell us which stage you are at right now, the answer stops being generic 
 
 ## Closure is a procedure, not a decision to stop
 <!-- facts: MB-F18 -->
-Stage ten deserves a straight answer, because it is the stage people assume takes care of itself. Closing a Cyprus company follows formal legal liquidation procedures, and simply neglecting the company is not a way of closing it.
+Stage ten deserves a straight answer, because it is the stage people assume takes care of itself. Formal closure routes can include liquidation or, where the company and circumstances qualify, strike-off. Simply neglecting the company does not close it; the available route and required filings must be checked for the specific company.
 
 A company left alone stays on the register. Its filing obligations continue and the responsibilities of its directors continue with them, so an abandoned file normally costs more to tidy up later than a planned closure costs now.
 

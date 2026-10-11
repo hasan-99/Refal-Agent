@@ -127,6 +127,7 @@ test("the 'the business' placeholder is absent from the whole repository", () =>
     "docs/brain/SURFACE-AND-GATE-INVENTORY.md",
     "docs/brain/ROADMAP-COMPARISON.html",
     "docs/brain/PLAN-PROGRESS.html",                   // generated from the plan
+    "docs/brain/FACT-APPROVAL-REVIEW-PACKET.md",        // generated worklist embeds ordinary corpus prose
     "scripts/reproduceKnownDefects.js",                // reproduces it on purpose
     "src/companyProfile.js",                           // the validator rejects it
     "src/companyProfile.test.js"                       // this file

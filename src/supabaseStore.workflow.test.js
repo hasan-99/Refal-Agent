@@ -11,6 +11,8 @@ test("workflow store methods use protected normalized workflow endpoints", async
     if (path.endsWith("/intents")) return { intents: [{ intent: "investment" }] };
     if (path.endsWith("/consent")) return { consent: { state: "granted" } };
     if (path.endsWith("/follow-up")) return { followUp: { status: "eligible" } };
+    if (path.endsWith("/follow-up-claim")) return { claimed: true };
+    if (path.endsWith("/follow-up-result")) return { finished: true };
     if (path.endsWith("/handover")) return { handover: { id: "h-1" } };
     if (path.endsWith("/priority-alert")) return { alert: { id: "a-1" } };
     if (path.endsWith("/complaint")) return { complaint: { id: "c-1" } };
@@ -23,17 +25,25 @@ test("workflow store methods use protected normalized workflow endpoints", async
   assert.deepEqual(await store.saveConsent("123@s.whatsapp.net", "granted"), { state: "granted" });
   await store.saveConsent("123@s.whatsapp.net", "granted", { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: "turn-confirm", offerSourceTurnId: "turn-offer", language: "en", channel: "whatsapp" });
   assert.deepEqual(await store.saveFollowUpState("123@s.whatsapp.net", { consentState: "granted", status: "eligible" }), { status: "eligible" });
+  assert.equal(await store.claimFollowUpSend("123@s.whatsapp.net", { claimId: "claim-1", consentSourceTurnId: "consent-turn", triggerTurnId: "trigger-turn" }), true);
+  assert.equal(await store.finishFollowUpSend("123@s.whatsapp.net", { claimId: "claim-1", triggerTurnId: "trigger-turn", outcome: "sent", finishedAt: "2026-10-11T00:00:00Z", providerMessageId: "provider-1" }), true);
   assert.deepEqual(await store.createHandover("123@s.whatsapp.net", { department: "investment" }), { id: "h-1" });
   assert.deepEqual(await store.createPriorityAlert("123@s.whatsapp.net", { level: "high", trigger: "institutional_investment" }), { id: "a-1" });
   assert.deepEqual(await store.createComplaint("123@s.whatsapp.net", { severity: "high", summary: "A complaint" }), { id: "c-1" });
   assert.deepEqual(await store.saveExistingClientVerification("123@s.whatsapp.net", { state: "authenticated" }), { state: "authenticated" });
   assert.deepEqual(await store.logAuditEvent("123@s.whatsapp.net", "workflow_saved"), { id: "e-1" });
   assert.deepEqual(calls.map((call) => call.path), [
-    "/workflows/qualification", "/workflows/intents", "/workflows/consent", "/workflows/consent", "/workflows/follow-up",
+    "/workflows/qualification", "/workflows/intents", "/workflows/consent", "/workflows/consent", "/workflows/follow-up", "/workflows/follow-up-claim", "/workflows/follow-up-result",
     "/workflows/handover", "/workflows/priority-alert", "/workflows/complaint", "/workflows/existing-client-verification", "/workflows/audit-event"
   ]);
   assert.deepEqual(calls.find((call) => call.path.endsWith("/consent") && call.body.consentType === "automated_reminder").body, {
     userId: "123@s.whatsapp.net", consentType: "automated_reminder", state: "granted", purpose: "automated_reminder", sourceTurnId: "turn-confirm", offerSourceTurnId: "turn-offer", language: "en", channel: "whatsapp"
+  });
+  assert.deepEqual(calls.find((call) => call.path.endsWith("/follow-up-claim")).body, {
+    userId: "123@s.whatsapp.net", claimId: "claim-1", consentSourceTurnId: "consent-turn", triggerTurnId: "trigger-turn", sourceTurnId: "trigger-turn"
+  });
+  assert.deepEqual(calls.find((call) => call.path.endsWith("/follow-up-result")).body, {
+    userId: "123@s.whatsapp.net", claimId: "claim-1", triggerTurnId: "trigger-turn", outcome: "sent", finishedAt: "2026-10-11T00:00:00Z", providerMessageId: "provider-1", sourceTurnId: "trigger-turn"
   });
 });
 

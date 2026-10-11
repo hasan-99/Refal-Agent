@@ -157,7 +157,6 @@ function hasCalendarConfig(policy) {
   return Boolean(
     calendarId(policy) &&
     (hasOAuthCalendarCredentials() || hasServiceAccountCalendarCredentials()) &&
-    policy.createMeetLink &&
     policy.durationOwnerConfirmed && policy.durationMinutes &&
     policy.minimumNoticeHours !== null && policy.reminderHours.length
   );
@@ -210,7 +209,7 @@ async function approvePendingAppointmentUnlocked({ store, appointmentId, reviewe
   if (!user) throw new Error("The customer contact could not be loaded.");
   const eventId = `rafa${appointment.id.replace(/-/g, "")}`;
   const event = await createBookingEvent({ user, userId: appointment.whatsapp_jid, details, eventId, policy });
-  if (!event.meetLink) throw new Error("Google Calendar did not return a Meet link. The appointment remains pending review; check Calendar conference settings and retry.");
+  if (policy.createMeetLink && !event.meetLink) throw new Error("Google Calendar did not return a Meet link. The appointment remains pending review; check Calendar conference settings and retry.");
   const saved = await store.updateAppointment(appointment.id, {
     status: "confirmed",
     googleEventId: event.id,
@@ -435,7 +434,7 @@ async function createBookingEvent({ user, userId, details, eventId, policy }) {
       requestBody,
       ...(policy.createMeetLink ? { conferenceDataVersion: 1 } : {})
     });
-    return withMeetLink(response.data, false);
+    return withMeetLink(response.data, false, policy.createMeetLink);
   } catch (error) {
     if (error?.code !== 409 && error?.response?.status !== 409) throw error;
     const response = await calendar.events.get({ calendarId: calendarId(policy), eventId });
@@ -452,16 +451,16 @@ async function createBookingEvent({ user, userId, details, eventId, policy }) {
         conferenceDataVersion: 1,
         requestBody: { conferenceData: { createRequest: { requestId: `${eventId}-meet-retry`, conferenceSolutionKey: { type: "hangoutsMeet" } } } }
       });
-      return withMeetLink(updated.data, true);
+      return withMeetLink(updated.data, true, policy.createMeetLink);
     }
-    return withMeetLink(existing, true);
+    return withMeetLink(existing, true, policy.createMeetLink);
   }
 }
 
-function withMeetLink(event, alreadyExisted) {
-  const meetLink = event?.hangoutLink ||
+function withMeetLink(event, alreadyExisted, includeMeetLink = true) {
+  const meetLink = includeMeetLink ? (event?.hangoutLink ||
     (event?.conferenceData?.entryPoints || []).find((entry) => entry.entryPointType === "video" && /^https:\/\/meet\.google\.com\//.test(entry.uri || ""))?.uri ||
-    "";
+    "") : "";
   return { ...event, meetLink, _rafaAlreadyExisted: alreadyExisted };
 }
 

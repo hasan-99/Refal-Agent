@@ -1,40 +1,40 @@
 ---
 topic: vat-and-eori
 lang: en
-title: VAT, EORI and payroll, the registrations a trading company actually needs
+title: VAT, EORI and payroll requirements to check for a Cyprus trading company
 facts: MB-F26, MB-F27
 aliases: when do i need to register for vat in cyprus | do i have to register for vat from day one | what is an eori number | why do i need eori | vat and eori registration cyprus | vat number for a cyprus company | customs registration for importing goods | is there a vat registration threshold | how often are vat returns filed | difference between vat and vies | can i reclaim vat on expenses | do digital services carry vat | payroll and social insurance cyprus | work permit for non-eu staff
 ---
 
 ## The VAT number and when registration becomes necessary
 <!-- facts: MB-F26 -->
-The VAT number is what lets a Cyprus company charge VAT on its supplies, account for it properly, and deal with EU counterparties as a registered business.
+VAT registration is governed by rules separate from EORI. Whether a company must register depends on the applicable VAT rules and its actual transactions; confirm the requirement with a Cyprus tax specialist or the Tax Department.
 
-Whether you need one is a question about activity, not about ambition. A company making taxable supplies of goods or services registers because of those supplies, and it registers before they start rather than after. Registration can also be triggered by what the company buys from abroad, not only by what it sells.
+The question depends on the company's activity and transactions. Do not assume every trading company needs VAT registration or that every case follows the same trigger.
 
-Cyprus sets the conditions for mandatory registration by reference to turnover and to the type of supply. We do not put a figure on this page, because the condition that applies depends on what your company actually sells and to whom, and a number copied from a general page is worse than no number at all. It is checked against your real activity before anything is filed.
+Applicable registration conditions should be checked against the current Cyprus rules and the company's actual activity before filing. REFAL does not infer a threshold or requirement from the label "trading company."
 
-A company that only holds shares and makes no taxable supplies is a different case, and often does not register at all.
+A company that only holds shares is a different factual case; its VAT position still needs to be assessed under the applicable rules.
 
 ## EORI, the number customs works with
 <!-- facts: MB-F26 -->
-EORI stands for Economic Operators Registration and Identification. It is the identifier customs authorities use for a business that moves goods into or out of the EU customs territory.
+EORI stands for Economic Operators Registration and Identification. It is a unique number issued by customs authorities to economic operators or other persons for customs purposes. Holders use it in communications with EU customs authorities when customs code identification is necessary; whether a company needs one depends on the applicable rules and its customs activity.
 
-If your company imports or exports physical goods, it needs an EORI number. Without one, a shipment arriving at the border has no registered operator attached to it and clearance stops there.
+If the company plans to import or export goods, check the EORI requirement with Cyprus Customs before the customs procedure. Do not assume every trading company needs one.
 
-VAT and EORI are two separate registrations solving two separate problems. VAT is about tax on supplies. EORI is about identifying the company to customs. Having one does not give you the other, and a trading company that imports usually needs both.
+VAT and EORI are separate registrations governed by different rules. A need for one does not by itself establish a need for the other; check VAT and customs activity separately.
 
-A company selling only services, or only holding shares and assets, normally has no reason to register for EORI.
+Whether services-only or holding activity requires EORI depends on the actual customs activity; check the case with Cyprus Customs.
 
 ## Shipping and transport procedures
 <!-- facts: MB-F26 -->
-The third piece is not a number, it is a set of decisions that have to exist in writing before the first shipment moves.
+For a planned shipment, it can help to agree the relevant responsibilities and documents in writing before it moves.
 
 Defining shipping and transport procedures means being clear on who carries the goods, who acts as customs agent and files the declaration, where the goods are stored on arrival, and which documents travel with each consignment.
 
-This is the part that most often gets left until a container is already in transit. At that point the questions are the same, but they are being answered under time pressure and at the port, which is the expensive way to answer them.
+If these responsibilities are unclear, questions may arise while goods are in transit. Agree the roles and documents for the specific shipment before it moves.
 
-If you hold stock or use a warehouse, say so early. Storage changes both the customs picture and the VAT picture, and it is far cheaper to map it before the goods move.
+If you hold stock or use a warehouse, include that in the review. Storage location may affect which customs and VAT rules apply.
 
 ## The VAT rate in Cyprus, and why no figure sits on this page
 <!-- kind: boundary; facts: MB-F26 -->
@@ -42,36 +42,34 @@ The VAT rate in Cyprus is not one single number, and that is the reason no rate 
 
 Cyprus runs a standard rate alongside reduced rates, and the rate that lands on an invoice follows the type of supply behind it. Goods, services and digital products are not all treated alike, and the rate on property follows separate rules again on its own page.
 
-So the honest answer to a question about the VAT rate in Cyprus starts with a question back: on which supply, and to whom. The rate that applies to your own sales is confirmed against your real activity before anything is filed or invoiced, and that check costs nothing next to charging the wrong rate for a year and correcting it afterwards.
+The applicable rate depends on the type of supply and who receives it. Confirm the rules for the company's actual transactions before filing or invoicing.
 
-The registration threshold is handled the same way. The condition that makes VAT registration mandatory is read against your real turnover and your real supplies rather than copied from a general page.
+Registration conditions should also be checked against the company's actual transactions and current rules, rather than inferred from a general description.
 
 ## Payroll, social insurance and permits
 <!-- facts: MB-F27 -->
 Hiring turns the company into an employer, and that is its own set of obligations.
 
-Payroll has to be run for the staff. Social insurance contributions are made for each employee. And staff from outside the Union need permits for non-EU labour before they begin work, not after they arrive.
+Employer, payroll and social-insurance requirements depend on the employment arrangement and applicable rules. Employment of third-country nationals depends on the relevant procedure and the worker's status. Check current requirements with the authorities before work begins.
 
-Each of these is a recurring monthly routine rather than a one-off form, so each belongs in the running cost picture from the start rather than being discovered in the third month of trading.
+The procedures and timing may differ by employment arrangement and worker status, so confirm them before hiring.
 
-A holding company is usually limited to senior management teams and carries a much lighter version of this. A trading company with warehouse, logistics or sales staff carries the full version.
+A holding-company label does not determine staffing levels or employer requirements. The company's actual employees, roles and worker statuses matter.
 
-## The order these registrations usually happen in
+## Checks to make for your actual activity
 <!-- kind: example; facts: MB-F26, MB-F27 -->
-A typical trading file runs roughly in this order.
+There is no fixed sequence that applies to every business. Review the relevant requirements and timing for the actual activity and planned transactions.
 
-1. The company is incorporated and the Registrar issues the certificates.
-2. The company is registered with the Tax Department.
-3. VAT registration is arranged where the activity requires it.
-4. EORI is registered if physical goods will cross the EU border.
-5. Shipping and transport procedures are agreed with the carrier and the customs agent.
-6. Payroll and social insurance are set up when the first employee is hired, with permits for non-EU staff arranged ahead of their start date.
+1. Check which VAT rules and registration triggers apply to the company's transactions.
+2. Check whether the planned customs activity requires EORI identification and who will handle the customs declaration.
+3. Confirm the relevant employer, payroll, social-insurance, and worker-status requirements before hiring.
+4. Agree who handles transport, customs declarations, storage, and shipment documents for each movement.
 
-The order matters because steps 3 and 4 run through the authorities and their timing is not ours to set. A shipment that arrives before them waits, and a wait at the border costs more than planning the sequence did.
+The relevant order and timing depend on the case and the authorities involved. Confirm them with the responsible specialist or authority before taking the related step.
 
 ## What we need from you to list your registrations
 <!-- kind: discovery -->
-Four answers are enough to turn this general page into your own registration list.
+These details can help a specialist identify which requirements need checking for your activity.
 
 What does the company sell: physical goods, services, or digital products?
 
@@ -81,7 +79,7 @@ Do goods cross a border, and do you hold stock or use a warehouse anywhere?
 
 Will you employ anyone, and is any of that staff from outside the EU?
 
-With those four, we can say which registrations are required, which are optional for your activity, and which ones have to be in place before you trade rather than after.
+With those four, a specialist can identify which requirements need checking for your activity. REFAL should not declare registrations mandatory until the applicable authority rules and facts are confirmed.
 
 ## What this page does not settle
 <!-- kind: boundary -->

@@ -18,6 +18,21 @@ Exit `0` means no gap. Exit `1` means at least one gap. Exit `2` means you typed
 `PENDING DB` lines are **not** gaps: they are checks that did not run. A green offline run says
 nothing at all about what is in Supabase.
 
+To compare the full local corpus with the currently approved live revisions, run the read-only
+parity check:
+
+```bash
+npm run check:brain-live
+npm run check:brain-live -- --json
+```
+
+It prints topic, language, SHA-256 parity, approved revision, pending revision count and expiry
+metadata only; it never prints corpus text. Exit `1` means review mismatch, missing, expired, or
+pending-revision rows before any real-customer factual trial. The command requires all 87 local
+cells and rejects filters, `--allow-partial`, and `--apply`. A matching document hash still does
+**not** make its claims statable: every associated fact must independently be approved and current
+in the fact register.
+
 ---
 
 ## 0. The map: what lives where
@@ -27,7 +42,8 @@ nothing at all about what is in Supabase.
 | Topic slugs, domains, languages | `src/brainTaxonomy.js` | a **frozen** taxonomy change, see §1 |
 | Which topic must state which fact | `src/brainFactMap.js` | a map edit plus corpus edits |
 | What a fact actually claims, and its numbers | `src/factCatalogue.js` | a claim edit, see §2 |
-| Status, reviewer, expiry of a fact | `refal_fact_register` (MIG-01) + the seed in `src/factRegister.js` | a **data** edit, see §3 |
+| Claim wording and numbers | `src/factCatalogue.js` + `knowledge/<topic>/<lang>.md` | a catalogue and multilingual authoring change |
+| Evidence URL/citation/notes, review status, reviewer, expiry | `refal_fact_register` (MIG-01), edited from the admin Facts page | an audited **data** edit, see §3 |
 | The customer-facing prose | `knowledge/<topic>/<lang>.md` | an authoring edit |
 | The headline package price | `refal_offers_and_pricing` (MB-DYN6, **MIG-02, not yet written**) | a data edit, **never** a corpus edit |
 | The 870 golden questions | `src/brainGoldenSet.*.js` | see §1 step 5 |
@@ -82,7 +98,7 @@ node scripts/validateCorpus.js --topic my-new-topic > /tmp/vc.log 2>&1; echo "ex
 ```
 
 **Step 4 — the register row.** The seed in `src/factRegister.js` builds a row for every catalogue
-row automatically (Rule 1: MB facts are seeded **approved**). Confirm it:
+row automatically. New claims remain **pending** until a reviewer approves current supporting evidence; the owner manual alone does not authorize customer-facing factual claims. Confirm the candidate row and its current status:
 
 ```bash
 node -e 'const {seedRegister,factBehaviour}=require("./src/factRegister");
@@ -107,8 +123,7 @@ node --test src/brainHealth.test.js                > /tmp/t.log 2>&1; echo "exit
 A topic is added when that first command exits `0` with 3/3 present, 3/3 clean and 3/3 lexically
 healthy.
 
-**Step 7 — ingest.** `node scripts/ingestBrainCorpus.js --topic my-new-topic --apply` (**`--apply` is required — dry run is the default and writes nothing**), then re-run
-`node scripts/brainHealth.js --db --topic my-new-topic` and read the `BH-DB-*` lines.
+**Step 7 — queue and review.** `node scripts/ingestBrainCorpus.js --topic my-new-topic --apply` (**`--apply` is required — dry run is the default and writes nothing**). Changed revisions are stored as `pending`; ingestion never approves its own content. The existing approved revision remains active until an independent reviewer checks the sources, wording, dates, domain and language, then approves through the dashboard. Run `node scripts/brainHealth.js --db --topic my-new-topic` and read the `BH-DB-*` lines after approval and indexing.
 
 ---
 
@@ -160,10 +175,9 @@ grep -rn "300,000\|300.000\|٣٠٠" src/factCatalogue.js knowledge/permanent-res
    node scripts/validateCorpus.js --topic permanent-residency > /tmp/vc.log 2>&1; echo "exit=$?"; tail -20 /tmp/vc.log
    node scripts/brainHealth.js --topic permanent-residency    > /tmp/bh.log 2>&1; echo "exit=$?"; tail -30 /tmp/bh.log
    ```
-4. **Re-ingest.** `node scripts/ingestBrainCorpus.js --topic permanent-residency --apply` (**without `--apply` this is a dry run and changes nothing**). Until this runs,
-   the database still serves the old number: the corpus file is the source, the chunks are the copy.
+4. **Queue the document revision.** `node scripts/ingestBrainCorpus.js --topic permanent-residency --apply` (**without `--apply` this is a dry run and changes nothing**). A changed revision remains pending; the previous approved revision stays active until the replacement is independently reviewed and approved in the dashboard.
 5. **Re-approve the register row**, because the figure changed and the old approval was for the old
-   figure. See §3's `refal_reapprove_fact`.
+   figure. See §3's `refal_reapprove_fact`. A document approval alone does not approve any linked fact.
 
 Then confirm the stored copy matches the file:
 
@@ -192,6 +206,12 @@ The behaviour is decided in one place, `factBehaviour()` in `src/factRegister.js
 `guidance` strings there are what the composer reads. `expired` never guesses and never goes
 silent; `blocked` is a hard removal and is filtered twice on purpose, because one layer is not a
 guarantee.
+
+Admins can edit the evidence URL/document, exact citation, reviewer notes, review cadence, and
+approved languages from the Facts page. Saving a changed evidence URL or citation returns an
+approved fact to `pending`; review it again only after checking the new source. Every save requires a
+reason and is written to the append-only audit trail. Claim wording and numbers remain tied to the
+catalogue and all three language files, so those must be edited through the corpus authoring workflow.
 
 **To block a fact** (migration `20261009180000_refal_fact_register.sql`):
 
@@ -315,3 +335,149 @@ lower one, `body+headings only`, is what a chunk's generated `search_vector` act
 that column is `to_tsvector('simple', heading || ' ' || content)`. If the gap between them is large
 for a language, that language's retrieval is leaning on aliases, and aliases only reach the index if
 the ingester writes them into a chunk.
+
+---
+
+## 6. New knowledge intake and release (P15.1)
+
+Every proposed fact or correction gets an intake packet before it is saved in the dashboard. The
+packet records the source, accountable owner, submitter, exact taxonomy topic, domain, language,
+effective date, expiry, and reviewer. The validator rejects exact, abbreviated, or reordered name
+matches between submitter and reviewer, checks that the topic matches the domain, and requires a
+subject expert for taxonomy-regulated or explicitly sensitive claims. Name matching is a guard
+against obvious self-review, not proof of separate identities; aliases and staff-directory identity
+are not verified. Source trust, reviewer qualifications, and subject-expert identity also require
+human verification.
+
+```bash
+npm run knowledge:packet:validate -- path/to/knowledge-change.json
+```
+
+Example packet (replace every value with the evidence for the actual change):
+
+```json
+{
+  "changeId": "KB-2026-0042",
+  "title": "Company registration document change",
+  "summary": "Update the document checklist from the current authority source.",
+  "owner": "Corporate Services",
+  "submittedBy": "Hasan A.",
+  "topic": "company-lifecycle",
+  "domain": "corporate",
+  "language": "en",
+  "source": { "type": "government authority", "reference": "https://example.gov.cy/guidance" },
+  "effectiveFrom": "2026-10-01",
+  "expiresAt": "2027-10-01",
+  "status": "draft",
+  "reviewer": { "name": "Reviewer Name", "qualification": "Relevant role or qualification" }
+}
+```
+
+Then follow this order:
+
+1. Save the revision through the dashboard. Saves are pending and are not indexed for customer
+   answers. Preserve the packet with the proposed revision ID.
+2. A reviewer independent of the submitter checks the cited source, wording, dates, domain, and
+   language. For regulated or sensitive material, the named subject expert must approve the claim.
+   Record the decision and reason in the dashboard review action.
+3. Approve the revision. For a pending revision, the dashboard first stages embeddings for every
+   stored chunk, then records the audited approval that makes the revision available to retrieval.
+   If chunk loading, embedding, or reindexing fails, the approval decision is not recorded. A
+   successful local response still does not prove live retrieval quality; continue to the smoke tests.
+4. Run the corpus and brain health checks, then run the retrieval smoke cases in English, Arabic,
+   and Greek. The live retrieval evaluator is `node scripts/evaluateRag.js <artifact.json>`; it
+   requires the verified read-only environment described in `SUPABASE-ACCESS-GUIDE.md`.
+5. Inspect the stored revision and audit decision in the dashboard. Confirm its language, reviewer,
+   revision number, expiry, and indexed chunk count. Keep the intake packet and evaluator artifact
+   with the change record.
+6. If any check fails, return the revision to pending in the dashboard, inform the named owner,
+   record the failure and reason, and do not tell REFAL staff the change is ready. Rework and review
+   a new version, then repeat the release checks.
+
+**Current implementation limits:** the packet validator is an offline completeness check, not a
+workflow-enforcing API. Reviewer qualification and subject-expert identity are supplied metadata and
+are not checked against a staff directory. For a pending revision, the dashboard now stages all
+embeddings before recording approval, so an embedding or reindex failure leaves that revision
+unapproved. If the final approval write itself fails after indexing, those vectors remain attached to
+the pending revision and are not available through approved-only retrieval. This ordering does not
+prove live retrieval quality or provide a transactional live rollback. Returning one failed revision
+to pending does not by itself prove that older approved revisions are retrievable again. Until
+release-specific retrieval and rollback behavior are verified against the live database, treat a
+failed publication as requiring operator follow-up and do not claim rollback is complete. No
+knowledge changes should be made directly from this runbook or packet validator.
+
+---
+
+## 7. Capture and close the feedback loop (P15.2)
+
+Capture customer corrections, unanswered questions, retrieval misses, tool failures,
+complaints, and staff edits as review cases. The case is an internal diagnostic, not
+approved knowledge and not a prompt instruction. Never copy a customer message,
+transcript, contact detail, account identifier, credential, or private case history into
+the feedback packet. Keep any operationally required original evidence in its existing
+access-controlled system and refer to it only by an opaque case reference. Summarize the
+behavior in generic terms and remove names, dates, or amounts that could identify a customer.
+
+```bash
+npm run knowledge:feedback:validate -- scripts/fixtures/feedback-case.captured.json
+```
+
+The validator accepts only a fixed, minimized set of fields, constrains the case ID and
+topic to opaque sequence/taxonomy values, checks that the UTC timestamp is a real date,
+rejects obvious contact or secret patterns (including Unicode phone digits and bearer
+credentials) and unknown fields, and enforces review metadata. Its checks are a
+structural aid; they cannot prove that a summary is anonymous or that the referenced
+evidence is authorized. A human must review that before the record is stored or shared.
+
+Use one stable `caseId` per issue. Record a language (`en`, `ar`, `el`, `mixed`, or
+`unknown`), the affected topic, observed behavior, expected behavior, severity, and a
+restricted opaque evidence reference. Capture the issue without transcribing the user.
+Route complaints and sensitive cases through their existing escalation workflow; this
+feedback process does not replace customer acknowledgement, ownership, or resolution.
+
+Triage each case with a named reviewer and decision. Resolve valid failures by adding a
+regression case that reproduces the behavior without customer data. Run and review that
+test before changing a prompt, knowledge source, retrieval rule, or tool. Record the test
+ID, file, exact command, passing result, and reviewer in the case. Only then may the
+proposed change proceed through the applicable P15.1 knowledge approval/release flow or
+the prompt/code review flow. Close non-actionable cases with the reviewer and rationale;
+do not silently discard them. A released case links to its change/release identifier.
+
+Every release that includes a feedback-driven fix must run the full regression command
+(`npm run test:all`) and preserve its output with the release evidence. Retrieval and
+answer changes also require the applicable multilingual retrieval/answer evaluation;
+synthetic tests cannot claim real customer or live database behavior. Re-evaluate previous
+regression cases on later releases so fixes do not regress. Do not auto-approve facts,
+learn from a raw customer message, or publish feedback directly into the knowledge base.
+
+**Implementation boundary:** this CLI validates one local JSON case; it does not create a
+ticket, encrypt/store the record, control access to evidence, verify anonymization, prove a
+test actually ran, or enforce release gates. The owning team must use its approved
+restricted case system and preserve evidence there. P15.2 is not complete until that
+operational storage/review practice and release evidence are independently audited.
+
+## 7. Scheduled review status (P15.3)
+
+Run this review on the agreed operating cadence and immediately after a cited source changes:
+
+```bash
+node scripts/scheduledKnowledgeReview.js --owner "Named knowledge owner" --reviewer "Independent reviewer" --json
+# Immediately flag source changes, even before their old review date:
+node scripts/scheduledKnowledgeReview.js --owner "Named knowledge owner" --reviewer "Independent reviewer" --source-changed MB-F19,MB-F20 --json
+```
+
+The report measures current, due, expired, pending, and blocked fact rows; reports missing or invalid
+corpus cells and exact duplicate documents; and surfaces source changes as due now. `freshness.percent`
+is the share of register rows that are approved and still before their review date. `REVIEW_REQUIRED`
+is an intentional fail-closed result for any pending/expired/due/source-changed fact, missing owner or
+independent reviewer, owner/reviewer names that normalize to the same token set or overlap through initials, corpus defect, or exact duplicate. Exit `0` means only that this local snapshot
+has no such finding; it does not prove live source status, approval parity, retrieval, or generated
+answer quality. Exit `1` means review is required; exit `2` means invalid command arguments.
+
+The tool reads only `src/factCatalogue.js`, the checked-in register seed, and local corpus files. It
+does not inspect or change Supabase and does not approve any fact. Record reviews and source changes
+through the existing dashboard process. Model/provider version, language quality, dormancy, and cost
+are included as a recurring human checklist because local files cannot establish those live metrics.
+The existing failed-publication rollback is not verified: use a separately reviewed dashboard
+revision, then verify live retrieval before declaring rollback complete. Live rollback evidence remains
+an exit gate for P15.3.

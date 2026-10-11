@@ -15,6 +15,7 @@ const { runAgentTurn } = require("./agentLoop");
 const { decideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { buildAgentContext } = require("./agentContext");
+const { evaluateAnswerClaims } = require("./claimPolicy");
 
 test("IMPORTANT: after a RAG tool call, the real decision model's next prompt contains the actual approved chunk content, not just the document heading", async () => {
   const store = {
@@ -60,6 +61,66 @@ test("IMPORTANT: after a RAG tool call, the real decision model's next prompt co
   // result.userSafeSummary (here, "Overview"/"Refalco Group Services"), never the
   // chunk content itself.
   assert.ok(secondDecisionUserMessage.length > 0);
+});
+
+test("empty or general Evidence references do not block approved content from retrieval or grounded answers", async () => {
+  const referenceCases = [
+    { label: "empty references", references: [] },
+    { label: "general references", references: [{ type: "general_reference", label: "General REFALCO website reference", url: "https://refalco.com/" }] }
+  ];
+
+  for (let index = 0; index < 87; index += 1) {
+    const { label, references } = referenceCases[index % referenceCases.length];
+    const content = `Approved revision ${index + 1} states that company setup includes registration support.`;
+    const answer = `Company setup includes registration support.`;
+    const store = {
+      searchKnowledge: async () => [{
+        document_title: `Approved revision ${index + 1}`,
+        heading: "Company setup",
+        content,
+        chunk_id: `approved-revision-${index + 1}`,
+        review_status: "approved",
+        valid_until: null,
+        // This mirrors document Evidence references. These may be empty or
+        // general context, and do not determine whether indexed text is usable.
+        documentMetadata: { supporting: references },
+        policyMetadata: {
+          facts: ["MB-F19"],
+          supporting: [],
+          governedFacts: ["MB-F19"],
+          factRegisterRows: [{ id: "MB-F19", status: "pending", approvedLanguages: [] }]
+        }
+      }]
+    };
+    const modelCalls = [];
+    const callModel = async (messages) => {
+      modelCalls.push(messages);
+      if (modelCalls.length === 1) {
+        return JSON.stringify({ type: "tool", tool: "searchApprovedKnowledge", args: { query: "company setup registration support" } });
+      }
+      return JSON.stringify({ type: "respond", text: answer });
+    };
+    const result = await runAgentTurn(buildAgentContext({
+      currentMessage: "What does company setup include?",
+      locale: "english"
+    }), {
+      decideNextStep: (args) => decideNextStep(args, { callModel, tools: TOOL_REGISTRY }),
+      tools: TOOL_REGISTRY,
+      toolContext: { store, embedText: async () => null, language: "english" }
+    });
+
+    assert.equal(result.outcome, "responded", `${label}, revision ${index + 1}`);
+    assert.equal(modelCalls.length, 2, `${label}, revision ${index + 1}`);
+    assert.ok(modelCalls[1][1].content.includes(content), `${label}, revision ${index + 1} content reaches the answer model`);
+    const evidence = {
+      content,
+      review_status: "approved",
+      valid_until: null,
+      metadata: { evidenceReferences: references, supporting: references }
+    };
+    assert.equal(evaluateAnswerClaims(answer, { evidence: [evidence], language: "english" }).allowed, true,
+      `${label}, revision ${index + 1} should support a factual answer`);
+  }
 });
 
 test("after a real no_evidence result, the decision model's next prompt contains no fabricated company facts", async () => {

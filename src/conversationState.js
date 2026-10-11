@@ -43,12 +43,26 @@ function getConversationState(user = {}) {
     noProactiveBookingOrContact: Boolean(profile.conversationPreferences?.noProactiveBookingOrContact),
     consent: Object.freeze({ followUp: getConsentState({ user, history: user.history || [] }) || "unknown" }),
     agentFacts: Object.freeze(
-      Object.fromEntries(Object.entries(profile.agentFacts || {}).map(([field, record]) => [field, record?.correctionNeeded ? null : record?.value ?? null]))
+      Object.fromEntries(Object.entries(profile.agentFacts || {}).map(([field, record]) => [
+        field,
+        record?.correctionNeeded || record?.provenance !== "customer_message" || record?.inferred === true
+          ? null
+          : record?.value ?? record?.normalizedValue ?? null
+      ]))
     ),
     crmCorrectionNeeded: profile.crmCorrectionNeeded && typeof profile.crmCorrectionNeeded === "object"
-      ? Object.freeze({
-        field: String(profile.crmCorrectionNeeded.field || "").slice(0, 64)
-      })
+      ? (() => {
+        const fields = Array.isArray(profile.crmCorrectionNeeded.fields)
+          ? profile.crmCorrectionNeeded.fields.map((field) => String(field).toLowerCase().slice(0, 64)).filter(Boolean)
+          : profile.crmCorrectionNeeded.field ? [String(profile.crmCorrectionNeeded.field).toLowerCase().slice(0, 64)] : [];
+        if (!fields.length) return null;
+        const uniqueFields = [...new Set(fields)].sort();
+        const preferred = String(profile.crmCorrectionNeeded.field || "").toLowerCase();
+        const first = uniqueFields.includes(preferred) ? preferred : uniqueFields[0];
+        return Object.freeze(Array.isArray(profile.crmCorrectionNeeded.fields)
+          ? { field: first, fields: Object.freeze(uniqueFields) }
+          : { field: first });
+      })()
       : null
   });
 }

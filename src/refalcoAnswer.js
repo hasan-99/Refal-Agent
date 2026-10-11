@@ -48,7 +48,19 @@ function answerFromEvidence(evidence, { allowPricing = false, customerQuestion =
     !/[؟?]/u.test(sentence) &&
     !/(?:what services does|what does business offer|شو خدمات الشركة|ما هي الخدمات التي تقدمها|بدي اسجل شركة|طلب عن تأسيس الشركة|retrieval\s+query|search\s+query|customer\s+question|user\s+query)/iu.test(sentence)
   );
-  const groundedSentences = sentences.filter((sentence) => allowPricing || !PRICE_BEARING.test(sentence));
+  const groundedSentences = sentences.filter((sentence) => {
+    if (!allowPricing) {
+      // A package overview may begin "... seven services: 1. **Formation**".
+      // Do not interpret that list ordinal as an amount after the word package.
+      const withoutListOrdinals = sentence.replace(/(^|:\s*)(?:\d{1,2})\.(?=\s|$)/gu, "$1");
+      if (PRICE_BEARING.test(withoutListOrdinals)) return false;
+    }
+    // Mixed or stale chunks should not lose every useful sentence because one
+    // sentence contains an unsafe legacy outcome. Keep only sentences that
+    // pass the same unconditional and evidence-aware gates; the combined text
+    // is checked again below as defense in depth.
+    return !containsProhibitedClaim(sentence, { evidence }) && !containsPromptInjection(sentence);
+  });
   let excerpt = groundedSentences.join(" ").trim();
   // W2.2.2 — the excerpt is built FROM this evidence, so it is judged against
   // this evidence. Before M2 the blanket gate deleted every grounded excerpt
@@ -127,12 +139,20 @@ function hasQuestionEvidenceOverlap(question, evidenceText) {
   const evidenceTerms = new Set(tokenize(evidenceText));
   if (queryTerms.length === 0) return false;
   const overlap = queryTerms.filter((term) => evidenceTerms.has(term)).length;
+  // Arabic morphology attaches conjunctions and prepositions to words, and
+  // dialect verbs often differ from the source's more formal wording. Requiring
+  // two exact tokens for three query terms therefore rejects relevant chunks
+  // such as "بتشمل باقة تأسيس الشركة" against a heading/content that says
+  // "باقة التأسيس". Retrieval has already selected the ranked evidence; keep
+  // the overlap check as a relevance floor, but require one exact content word
+  // for Arabic instead of silently turning every such fallback into abstention.
+  if (detectMessageLanguage(question) === "arabic") return overlap >= 1;
   return queryTerms.length >= 3 ? overlap >= 2 : overlap >= 1;
 }
 
 function knowledgeSourceRecords(evidence, limit = 6) {
   if (!Array.isArray(evidence)) return [];
-  const max = Math.max(0, Math.min(6, Number.isInteger(limit) ? limit : 6));
+  const max = Math.max(0, Math.min(8, Number.isInteger(limit) ? limit : 8));
   if (!max) return [];
   const records = [];
   const seen = new Set();
@@ -166,8 +186,8 @@ function knowledgeSourceRecords(evidence, limit = 6) {
 function knowledgeEvidenceMetadata(evidence, { modelRequestMade = false, modelResponseUsed = false, fallbackCitations = [] } = {}) {
   const items = Array.isArray(evidence) ? evidence : [];
   return {
-    retrieved: knowledgeSourceRecords(items, 6),
-    providedToModel: modelRequestMade ? knowledgeSourceRecords(items.slice(0, 5), 5) : [],
+    retrieved: knowledgeSourceRecords(items, 8),
+    providedToModel: modelRequestMade ? knowledgeSourceRecords(items.slice(0, 8), 8) : [],
     usedForFallback: modelResponseUsed ? [] : knowledgeSourceRecords(fallbackCitations, 1)
   };
 }
@@ -184,9 +204,9 @@ function noApprovedEvidenceReply(language = "english", { pricing = false } = {})
   if (pricing && language === "arabic") return "لا تتوفر لديّ حاليًا رسوم تأسيس معتمدة أستطيع تأكيدها. ما النشاط الذي ستزاوله الشركة؟";
   if (pricing && language === "greek") return "Δεν έχω εγκεκριμένη τιμή ίδρυσης που να μπορώ να επιβεβαιώσω αυτή τη στιγμή. Ποια δραστηριότητα θα έχει η εταιρεία;";
   if (pricing) return "I don’t have an approved company formation fee to confirm right now. What business activity will the company have?";
-  if (language === "arabic") return "ما عندي معلومة معتمدة أأكدها بهالنقطة حالياً. فيني ساعدك بأي جزء تاني من سؤالك.";
-  if (language === "greek") return "Δεν έχω εγκεκριμένη πληροφορία για να το επιβεβαιώσω τώρα. Μπορώ να βοηθήσω με κάποιο άλλο σημείο της ερώτησής σας.";
-  return "I don't have approved information to confirm that yet. I can help with another part of your question.";
+  if (language === "arabic") return "ما عندي معلومة معتمدة أأكدها حالياً، وما بدي أخمّن. بتحب أتأكدلك من الفريق؟";
+  if (language === "greek") return "Δεν έχω εγκεκριμένη πληροφορία για να το επιβεβαιώσω τώρα και δεν θέλω να μαντέψω. Θα θέλατε να το ελέγξω με την ομάδα;";
+  return "I don't have approved information to confirm that yet, and I don't want to guess. Would you like me to check with the team?";
 }
 
 // P2.2 / W2.2.1-W2.2.4 — the three patterns below were inline locals inside the
@@ -196,6 +216,15 @@ function noApprovedEvidenceReply(language = "english", { pricing = false } = {})
 // drifted into a fail-open (see scripts/generateEdgeMirrors.js), so there is
 // only ever one copy of each.
 const UNSUPPORTED_SUITABILITY = /\b(?:straightforward|standard|ordinary|simple)\s+(?:business\s+)?activity\b.{0,70}\b(?:suitable|eligible|approved|should fit|will fit|is allowed|can proceed)\b|\b(?:activity|business activity|industry)\b.{0,60}\b(?:is suitable|is eligible|is approved|should fit|will fit|is allowed)\b|(?:نشاط|النشاط).{0,50}(?:مناسب|مقبول|مؤهل|معتمد|ما في مشكلة|يمكن البدء)|(?:δραστηριότητα|κλάδος).{0,50}(?:κατάλληλη|επιλέξιμη|εγκρίνεται|μπορεί να προχωρήσει)/iu;
+// Owner-supplied legacy copy contained three materially unsafe shortcuts that
+// could still pass the evidence-aware claim gate simply because the stale text
+// itself was retrieved: Cyprus incorporation was described as permission to
+// operate across the EU, an application as certain not to be rejected, and an
+// incorporation certificate as enough to open bank accounts. These are
+// outcomes REFAL must never imply, even when a superseded approved chunk repeats
+// them. Keep this narrow and unconditional; ordinary company-formation facts
+// continue through the approved-evidence path.
+const UNSUPPORTED_FORMATION_OUTCOME = /(?:(?:ال)?كيان\s+(?:ال)?قانوني.{0,100}(?:تشتغل|تعمل|تزاول).{0,60}(?:الاتحاد\s+الأوروبي|أوروبا)|(?:الاتحاد\s+الأوروبي|أوروبا).{0,80}(?:تشتغل|تعمل|تزاول))|(?:الملف|الطلب).{0,60}(?:ما\s+ينرفض|لن\s+يُرفض|لا\s+يرفض).{0,50}(?:إدار|سبب)|(?:شهادة\s+التأسيس|الشهادات\s+الرسمية).{0,100}(?:فتح\s+الحساب|فتح\s+حساب)|(?:incorporation|company) certificate.{0,80}(?:open|opening) (?:a )?(?:bank )?account|(?:will not be rejected|cannot be rejected).{0,50}(?:administrative|filing)|(?:operate|work|trade).{0,60}(?:across|throughout|inside) the European Union/iu;
 // Absolute-certainty claims. Deliberately NOT a blanket ban on "100%":
 // "a non-resident can own 100% of a Cyprus company" is a correct and useful
 // fact, and blocking it would push REFAL into vagueness about ownership. Only
@@ -215,7 +244,7 @@ const BLANKET_RESTRICTED_TOPICS = /\b(?:investment\s+(?:returns?|roi|irr|yield|a
 // not because the supporting fact is missing, so this runs on both paths.
 function containsUnconditionalProhibition(text, options = {}) {
   const claimText = removeSafeDisclaimerClauses(String(text || "").replace(/https?:\/\/\S+/giu, "[source]"));
-  if (ABSOLUTE_CERTAINTY.test(claimText) || UNSUPPORTED_SUITABILITY.test(claimText)) return true;
+  if (ABSOLUTE_CERTAINTY.test(claimText) || UNSUPPORTED_SUITABILITY.test(claimText) || UNSUPPORTED_FORMATION_OUTCOME.test(claimText)) return true;
   // P2.6 finding G-01. A bare guarantee with no restricted-topic noun beside it
   // matched neither the blanket regex nor any output guard. It is unconditional
   // by definition, so it is tested here on both branches. `containsGuaranteeMarker`

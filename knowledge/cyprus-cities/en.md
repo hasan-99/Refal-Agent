@@ -3,7 +3,7 @@ topic: cyprus-cities
 lang: en
 title: Limassol, Larnaca, Paphos and Nicosia compared for living and investment
 facts: MB-F51, MB-F52, MB-F53, MB-F54, MB-F55
-aliases: which city is best for property investment in cyprus | difference between limassol and larnaca | cheapest place to live in cyprus | is paphos suitable for families | does nicosia have a coastline | where are most businesses in cyprus | which cyprus city is closest to the airport | do property prices differ between cities in cyprus | where are the international schools in cyprus | limassol lemesos | larnaca larnaka | paphos pafos | nicosia lefkosia | what is ayia napa like for permanent living | best city to buy an apartment in cyprus | rental yield by city cyprus | will property prices in cyprus go up | Λεμεσός Λάρνακα Πάφος Λευκωσία | ليماسول لارنكا بافوس نيقوسيا
+aliases: which city is best for property investment in cyprus | difference between limassol and larnaca | cheapest place to live in cyprus | is paphos suitable for families | does nicosia have a coastline | where are most businesses in cyprus | which cyprus city is closest to the airport | do property prices differ between cities in cyprus | where are the international schools in cyprus | limassol lemesos | larnaca larnaka | paphos pafos | nicosia lefkosia | what is ayia napa like for permanent living | best city to buy an apartment in cyprus | rental yield by city cyprus | will property prices in cyprus go up | Λεμεσός Λάρνακα Πάφος Λευκωσία | ليماسول لارنكا بافوس نيقوسيا | Where is the cheapest place to live | Where are most businesses concentrated
 ---
 
 ## Limassol, the international business city

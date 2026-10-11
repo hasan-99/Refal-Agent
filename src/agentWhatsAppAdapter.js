@@ -87,6 +87,16 @@ function normalizeAgentResponse(result) {
   return null;
 }
 
+// The deterministic router replaces credential-bearing text with a safe
+// question before it marks the turn AI-eligible. Preserve that boundary when
+// the live caller builds the Agent input and persisted source turn.
+function safeAgentSourceMessage(sourceMessage, prepared, routed) {
+  const safeQuestion = routed?.metadata?.privacySafeQuestion || prepared?.metadata?.privacySafeQuestion;
+  return typeof safeQuestion === "string" && safeQuestion.trim()
+    ? safeQuestion.trim()
+    : sourceMessage;
+}
+
 async function fallbackText(safeFallback, details) {
   if (typeof safeFallback === "function") {
     try {
@@ -121,6 +131,7 @@ async function runAgentAfterPreflight({
   persistTurn,
   runAgent,
   updateTurn,
+  afterTurnPersisted,
   send,
   safeFallback
 } = {}) {
@@ -205,6 +216,16 @@ async function runAgentAfterPreflight({
     response = await fallbackText(safeFallback, { stage: "update", error, locale, turn, userId });
   }
 
+  // Optional continuity work must never change the selected customer
+  // response or cause the outer router to retry a persisted source turn.
+  if (persistenceUpdated && typeof afterTurnPersisted === "function") {
+    try {
+      await afterTurnPersisted({ userId, turnId: sourceTurnId, message: sourceMessage, response, turn: updatedTurn });
+    } catch {
+      // The next turn can rebuild continuity from the durable history.
+    }
+  }
+
   try {
     await send(response, updatedTurn);
     return {
@@ -236,6 +257,7 @@ async function runAgentAfterPreflight({
 
 module.exports = {
   deriveDynamicActionCapabilities,
+  safeAgentSourceMessage,
   runAgentAfterPreflight,
   FORBIDDEN_INTENTS,
   DYNAMIC_ACTION_CAPABILITIES

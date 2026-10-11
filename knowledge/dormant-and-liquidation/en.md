@@ -8,58 +8,46 @@ aliases: dormant company cyprus | make the company dormant instead of closing it
 
 ## What a dormant company actually is
 <!-- facts: MB-F17 -->
-A dormant company is a company that still exists on the register but has no accounting transactions in a given period. It keeps its name, its number, its directors, its secretary, its registered address and its shareholder register. What it does not have is trading activity.
+People may use “dormant” or “inactive” informally when a company has stopped trading, but the exact accounting or legal meaning should be checked for the case. A company can remain on the register while inactive; inactivity alone does not establish that its filing duties have ended.
 
-Dormant is a factual description of what the company did, not a special status you switch on that suspends the rules. Pausing a project and keeping the entity for later is a perfectly normal choice, and plenty of owners do exactly that.
+Do not assume there is a simple status that suspends the company's rules. If activity is paused, ask a Cyprus accountant which reporting and accounting requirements apply to the company and period.
 
-The part that surprises people is this. Ceasing activity does not exempt a Cyprus company from its reporting and accounting obligations for as long as it remains on the official register. A company with no invoices still has a financial year, still prepares accounts, and still files. Zero activity means the figures are zero. It does not mean there is nothing to file.
+Ceasing activity should not be assumed to remove annual-return or financial-statement filing obligations. The applicable requirements and any exceptions depend on the company and reporting period, so a Cyprus accountant should check the current position for the specific company.
 
 ## What stays due while the company is dormant
 <!-- facts: MB-F17 -->
-While the company sits on the register, the annual cycle keeps running.
+Remaining on the register does not by itself establish that annual filings cease. Check the current filing requirements and any applicable exceptions for the company and period.
 
-- Accounting records and financial statements are prepared for the year, even when every figure is nil.
-- The audit requirement applies to Cyprus companies, so a dormant year is still an audited year unless an exemption is confirmed as applying to that specific company.
-- The tax return is filed with the Tax Department, and the company stays registered as a taxpayer.
-- The annual return keeps the company file current at the Registrar.
-- The statutory roles continue. A Cyprus company must have a secretary and a registered address at all times.
-- Where a levy or government charge applies, it applies to a dormant company on the same basis as an active one.
+- Annual-return and financial-statement requirements should be checked for the specific company and period; inactivity alone is not proof that no filing is due.
+- Other accounting, audit, tax, officer, address or government-charge duties may also apply, but exemptions and treatment are case-specific. Confirm them with a qualified Cyprus accountant or the relevant authority.
 
-On cost, a dormant year is lighter than a trading year because there is less to record, but it is not free. The renewal and service figures are confirmed live from the current schedule before anything is agreed, because they depend on the year, on the scope of service and on the government charges in force.
+Costs for an inactive company depend on the filings and services required, the period, and current government charges. Confirm applicable renewal and service fees against the current schedule before agreeing to anything.
 
-Missed filings do not quietly disappear. They accumulate as late filings and penalties attached to the company and to its officers, and they have to be cleared before the company can either trade again or be closed cleanly.
+The Registrar publishes annual-return filing requirements and late-filing information. Check the company's filing record and any current fees or consequences directly with the Registrar and an accountant; do not assume a backlog is cleared automatically.
 
 ## Keeping it dormant, closing it, or coming back later
 <!-- kind: example; facts: MB-F17 -->
-The choice between dormant and closed is mostly a question of whether the entity still has a future use.
+The choice between leaving an entity on the register and seeking a formal closure route depends on whether it has future use and on its circumstances.
 
-Keeping it dormant makes sense when the activity is paused rather than finished. The company keeps its name, its incorporation date, its track record and, where the bank agrees to keep the account open, its banking relationship. Reactivating is then straightforward, provided the filings were kept current throughout. A clean dormant company can start trading again without being incorporated from scratch.
+Keeping it inactive may be considered when activity is paused, but the company should first confirm which filings and other duties continue to apply. Any resumption steps depend on the company's record and circumstances.
 
-Closing makes sense when the entity has no future use. It ends the annual cycle permanently, which is the only way the recurring obligations actually stop.
+If the entity has no future use, ask a company specialist whether a formal strike-off or liquidation route is available and suitable. The Registrar lists voluntary striking-off as a closure service; liquidation is not the only possible route.
 
-The expensive option is the middle one that people drift into by accident: stopping the activity, stopping the filings, and leaving the company on the register. That produces the cost of an open company with none of the benefits, plus a backlog that has to be cleared later by the same person who wanted to spend less.
+Do not assume that simply stopping activity or filings closes the company. Check the current Registrar requirements and obtain specialist advice before deciding on a route.
 
 ## Closure is a procedure, not an act of neglect
 <!-- facts: MB-F18 -->
-Closing a Cyprus company has formal legal procedures that have to be followed. Simply abandoning the company is not closure.
+Formal voluntary strike-off is one route listed by the Cyprus Registrar for a company; liquidation is not the only closure route. The appropriate process and eligibility depend on the company's circumstances. Simply abandoning activity should not be treated as formal closure.
 
-An abandoned company stays on the register with its officers still named against it. Filings keep falling due, penalties keep building, and the directors and the secretary remain exposed to the consequences of a file that is not in order. Nothing is extinguished by silence.
+The Registrar's strike-off and restoration service describes a formal removal route. The cited guidance does not establish the consequences for every dormant or abandoned company; check filing status and legal consequences with the Registrar and a qualified specialist.
 
-A proper closure runs through defined steps. In broad terms the company deals with its liabilities, brings the accounting and tax position up to date, obtains the clearances the authorities require, appoints a liquidator where the chosen route calls for one, notifies creditors and the Registrar through the published steps, distributes whatever is left to the shareholders, and is finally removed from the register.
+The process differs between strike-off and liquidation. Check the Registrar's current strike-off criteria and obtain legal or accounting advice on the company's liabilities, filings and any other requirements before proceeding.
 
-Only that final removal ends the obligations. Up to that moment the company is still a live entity with live duties, whatever its bank balance says.
+The exact legal effect of removal and any remaining obligations must be confirmed for the chosen route and company. The Registrar's guidance should be checked directly.
 
 ## Voluntary, compulsory, and what happens to the debts
 <!-- facts: MB-F18 -->
-Winding up comes in more than one form, and which one applies depends on whether the company can pay what it owes.
-
-A members' voluntary liquidation is the solvent route. The directors make a declaration of solvency, meaning the company can settle its debts in full within the statutory period. The shareholders appoint a liquidator, assets are realised, creditors are paid, and the surplus goes back to the shareholders.
-
-A creditors' voluntary liquidation is used when that declaration cannot be made. Control of the process shifts towards the creditors, and the liquidator distributes according to the legal order of priority rather than to the shareholders.
-
-A compulsory liquidation is ordered by the court, usually on the petition of a creditor who has not been paid. It is the route that happens to a company rather than one the owner chooses.
-
-On debts, liquidation does not erase them. It is an orderly way of paying what can be paid out of the company's assets, in the order the law sets. Where the company cannot pay in full, creditors are paid by rank until the assets run out. Whether a director carries any personal liability is a separate question that turns on how the company was run, and it belongs with a lawyer rather than with a general description.
+Liquidation has different legal routes and consequences. The Registrar's strike-off guidance does not determine which liquidation route applies, how debts are treated, or whether an officer has personal liability. These points require review by a Cyprus lawyer or insolvency specialist against the company's records and current law.
 
 ## What this description does not settle
 <!-- kind: boundary -->
@@ -79,8 +67,8 @@ Four short answers turn this into a view on your company rather than a general d
 
 Has the company ever traded, and when did the activity stop? An entity that never started and one that traded for three years are very different files.
 
-Are the filings up to date? If the accounts, the audit and the tax returns were kept current, both routes are straightforward. If there is a backlog, clearing it is the first step either way.
+Are the filings up to date? The current record and any backlog should be checked with the Registrar and the company's accountant before choosing a route.
 
-Does the company owe anything? Suppliers, a bank, tax, staff, or a loan from the shareholder. That answer decides which liquidation route is even available.
+Does the company owe anything? Suppliers, a bank, tax, staff, or a shareholder loan. Debts may affect which route is suitable, but a specialist must assess legal eligibility.
 
-Do you expect to use the entity again? If yes, the dormant route keeps the name and the history alive. If no, a formal closure is what actually stops the annual cycle.
+Do you expect to use the entity again? That is one factor in discussing whether to retain the company or seek formal closure; ask a specialist to confirm the route and legal effect.

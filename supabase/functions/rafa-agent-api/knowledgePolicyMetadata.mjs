@@ -12,8 +12,10 @@ function cleanIds(values, pattern) {
 
 function policyMetadataForRow(row, chunkMetadata, factRows) {
   const facts = cleanIds(chunkMetadata?.facts, FACT_ID);
+  const supporting = cleanIds(chunkMetadata?.supporting, FACT_ID);
   const factById = new Map((Array.isArray(factRows) ? factRows : []).map((item) => [item.fact_id, item]));
-  const factRegisterRows = facts.map((id) => factById.get(id)).filter(Boolean).map((item) => ({
+  const governedFacts = [...new Set([...facts, ...supporting])];
+  const factRegisterRows = governedFacts.map((id) => factById.get(id)).filter(Boolean).map((item) => ({
     id: item.fact_id,
     status: item.status,
     reviewer: typeof item.reviewer === "string" ? item.reviewer.slice(0, 120) : "",
@@ -29,6 +31,8 @@ function policyMetadataForRow(row, chunkMetadata, factRows) {
     topic,
     topicNumber: Number.isInteger(topicNumber) && topicNumber >= 1 && topicNumber <= 100 ? topicNumber : null,
     facts,
+    supporting,
+    governedFacts,
     factRegisterRows,
     // Search RPC status and expiry remain authoritative for the document.
     reviewStatus: row?.review_status === "approved" ? "approved" : null,
@@ -44,7 +48,10 @@ async function attachKnowledgePolicyMetadata(supabase, rows) {
   const chunksResult = await supabase.from("rafa_knowledge_chunks").select("id,metadata").in("id", chunkIds);
   if (chunksResult?.error || !Array.isArray(chunksResult?.data)) return results.map((row) => ({ ...row, policyMetadata: null }));
   const chunkById = new Map(chunksResult.data.map((chunk) => [chunk.id, chunk.metadata || {}]));
-  const factIds = cleanIds(chunksResult.data.flatMap((chunk) => Array.isArray(chunk?.metadata?.facts) ? chunk.metadata.facts : []), FACT_ID);
+  const factIds = cleanIds(chunksResult.data.flatMap((chunk) => [
+    ...(Array.isArray(chunk?.metadata?.facts) ? chunk.metadata.facts : []),
+    ...(Array.isArray(chunk?.metadata?.supporting) ? chunk.metadata.supporting : [])
+  ]), FACT_ID);
 
   let factRows = [];
   if (factIds.length) {

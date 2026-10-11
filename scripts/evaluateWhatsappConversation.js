@@ -9,7 +9,8 @@ const { handleBookingMessage, isBookingRequest } = require("../src/booking");
 const { buildConversationContext } = require("../src/conversationMemory");
 const { retrieveKnowledgeForTurn } = require("../src/knowledgeQuery");
 const { prepareInboundMessage, routeMessageResult, recordHistory } = require("../src/messageRouter");
-const { answerFromEvidence } = require("../src/refalcoAnswer");
+const { answerFromEvidence, noApprovedEvidenceReply } = require("../src/refalcoAnswer");
+const { selectSafeEvidenceFallback } = require("../src/safeEvidenceFallback");
 const { createStore } = require("../src/supabaseStore");
 
 const cases = [
@@ -68,6 +69,8 @@ async function run() {
   if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required for live conversation evaluation.");
   const ragStore = createStore();
   const totals = [];
+  const qualityFailures = [];
+  let safeAbstentionCount = 0;
   for (const item of cases) {
     const startedAt = performance.now();
     const userId = `qa-${item.id}`;
@@ -102,41 +105,60 @@ async function run() {
       user, intents: routed.metadata.intent.intents, language: routed.metadata.intent.language,
       store: ragStore, embedQueryTexts, embeddingModel: DEFAULT_EMBEDDING_MODEL
     });
+    if (!retrieval.complete) throw new Error(`${item.id}: knowledge retrieval was incomplete; safe abstention cannot be counted as an approval check`);
     const evidence = retrieval.complete ? retrieval.evidence : [];
     const embeddingMs = retrieval.embeddingMs;
     const retrievalMs = retrieval.searchMs;
     stageStartedAt = performance.now();
-    if (!evidence.some((row) => row.source_name === item.source)) throw new Error(`${item.id}: expected approved evidence ${item.source}; got ${evidence.map((row) => row.source_name).join(", ") || "none"}`);
+    const expectedSourceAvailable = evidence.some((row) => row.source_name === item.source);
+    const safeAbstention = evidence.length === 0;
+    if (safeAbstention) safeAbstentionCount += 1;
+    if (!safeAbstention && !expectedSourceAvailable) throw new Error(`${item.id}: expected approved evidence ${item.source}; got ${evidence.map((row) => row.source_name).join(", ")}`);
 
     const context = buildConversationContext(user, { currentMessage: item.text });
     stageStartedAt = performance.now();
     let generated = null;
     let modelGuard = null;
-    try {
-      generated = await askOpenRouter({ text: item.text, evidence, includeSources: false, conversationSummary: context.summary, conversationTurns: context.turns });
-    } catch (error) {
-      // Match the production bot: if model output fails a policy guard, return
-      // the deterministic evidence answer instead of exposing the rejected draft.
-      modelGuard = String(error?.message || error).slice(0, 180);
+    if (!safeAbstention) {
+      try {
+        generated = await askOpenRouter({ text: item.text, evidence, includeSources: false, conversationSummary: context.summary, conversationTurns: context.turns });
+      } catch (error) {
+        // Match the production bot: if model output fails a policy guard, return
+        // the deterministic evidence answer instead of exposing the rejected draft.
+        modelGuard = String(error?.message || error).slice(0, 180);
+      }
+    } else {
+      modelGuard = "No approved current fact evidence; model call skipped.";
     }
     const modelMs = Math.round(performance.now() - stageStartedAt);
-    const response = generated || answerFromEvidence(evidence)?.answer;
+    const excerpt = answerFromEvidence(evidence, { customerQuestion: item.text });
+    const safeFallback = selectSafeEvidenceFallback(excerpt?.answer, {
+      customerMessage: item.text, evidence, language: item.language
+    });
+    const response = generated || safeFallback.answer;
     if (!response) throw new Error(`${item.id}: no grounded response generated`);
-    if (item.mustMention && !item.mustMention.test(response)) throw new Error(`${item.id}: generated response missed expected source-supported details: ${response}`);
-    if (item.mustNotMention && item.mustNotMention.test(response)) throw new Error(`${item.id}: generated response contradicted request/policy: ${response}`);
+    const answerIssues = [];
+    if (!safeAbstention && item.mustMention && !item.mustMention.test(response)) answerIssues.push("missing_expected_detail");
+    if (item.mustNotMention && item.mustNotMention.test(response)) answerIssues.push("contradicts_request_or_policy");
+    if (safeAbstention && response !== noApprovedEvidenceReply(item.language)) answerIssues.push("unsafe_no_evidence_reply");
+    else if (!safeAbstention && !generated && !safeFallback.accepted) answerIssues.push(`unsafe_evidence_fallback:${safeFallback.reasons.join(",")}`);
+    if (answerIssues.length) qualityFailures.push({ id: item.id, issues: answerIssues });
     await recordHistory(store, userId, item.text, response, { metadata: routed.metadata });
 
     const result = {
       id: item.id,
       language: routed.metadata.intent.language,
       intent: routed.metadata.intent.intents,
-      source: evidence.find((row) => row.source_name === item.source).source_name,
+      source: evidence.find((row) => row.source_name === item.source)?.source_name || null,
       response,
       capturedName: user.profile.name || null,
       bookingCreated: Boolean(user.booking),
       bookingIntent: isBookingRequest(item.text),
       handover: Boolean(routed.metadata.handover),
       modelUsed: Boolean(generated),
+      safeFallbackAccepted: generated ? null : safeFallback.accepted,
+      outcome: safeAbstention ? "safe_abstention_no_approved_evidence" : "answered_with_approved_evidence",
+      answerIssues,
       modelGuard,
       stagesMs: { route: routeMs, bookingGate: bookingMs, embedding: embeddingMs, retrieval: retrievalMs, model: modelMs, total: Math.round(performance.now() - startedAt) }
     };
@@ -146,6 +168,12 @@ async function run() {
   for (const stage of ["route", "bookingGate", "embedding", "retrieval", "model", "total"]) {
     const values = totals.map((item) => item[stage]);
     console.log(`Latency ${stage}: avg=${Math.round(values.reduce((a, b) => a + b, 0) / values.length)}ms n=${values.length} max=${Math.max(...values)}ms`);
+  }
+  if (qualityFailures.length) {
+    console.error(`Conversation answer quality failed for ${qualityFailures.length}/${cases.length} synthetic live-knowledge cases.`);
+    process.exitCode = 1;
+  } else {
+    console.log(`Conversation checks passed ${cases.length}/${cases.length} synthetic live-knowledge cases (${safeAbstentionCount} safe abstentions where no approved evidence exists).`);
   }
 }
 

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowUpRight, Bell, Check, Mail, MessageCircle, RefreshCcw, Save, Send } from "lucide-react";
-import { groupHandoversByContact } from "../handoverGrouping.js";
+import { groupHandoversByContact, handoverDraftContext } from "../handoverGrouping.js";
+import { filterHandovers } from "../handoverFilters.js";
 import "./handover-inbox.css";
 
 async function request(url, options = {}) {
@@ -27,6 +28,7 @@ export default function HandoverInbox({ onNavigate }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [filters, setFilters] = useState({ department: "all", priority: "all", status: "all", language: "all", from: "", to: "" });
 
   const load = useCallback(async () => {
     setError("");
@@ -42,8 +44,18 @@ export default function HandoverInbox({ onNavigate }) {
 
   useEffect(() => { void load(); const timer = setInterval(load, 20000); return () => clearInterval(timer); }, [load]);
 
-  const selected = useMemo(() => handovers.find((item) => item.groupKey === selectedId) || null, [handovers, selectedId]);
+  const visibleHandovers = useMemo(() => filterHandovers(handovers, filters), [handovers, filters]);
+  const selected = useMemo(() => visibleHandovers.find((item) => item.groupKey === selectedId) || null, [visibleHandovers, selectedId]);
+  const selectedRequest = selected?.matchedRecords?.[0] || selected;
+  const filterOptions = useMemo(() => ({
+    departments: [...new Set(handovers.map((item) => item.department || "general"))].sort(),
+    languages: [...new Set(handovers.map((item) => item.language).filter(Boolean))].sort()
+  }), [handovers]);
   const drafts = selected?.drafts || [];
+
+  useEffect(() => {
+    if (!visibleHandovers.some((item) => item.groupKey === selectedId)) setSelectedId(visibleHandovers[0]?.groupKey || "");
+  }, [visibleHandovers, selectedId]);
 
   useEffect(() => {
     if (!selected) return;
@@ -68,7 +80,7 @@ export default function HandoverInbox({ onNavigate }) {
     if (!selected || busy) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      await request(`/api/handovers/${encodeURIComponent(selected.id)}/follow-ups`, { method: "POST", body: JSON.stringify({ channel, recipient, subject, text }) });
+      await request(`/api/handovers/${encodeURIComponent(selectedRequest?.id || selected.id)}/follow-ups`, { method: "POST", body: JSON.stringify({ channel, recipient, subject, text }) });
       setNotice("Draft saved. It has not been sent; approve it below when ready.");
       setSubject(""); setText(""); await load();
     } catch (cause) { setError(cause.message || "Could not save this draft."); }
@@ -93,20 +105,31 @@ export default function HandoverInbox({ onNavigate }) {
     {!notificationSchemaReady && <div className="handover-alert" role="status">Handover records can be reviewed, but drafts and delivery tracking are not enabled in Supabase yet. Apply the latest handover-follow-ups migration and deploy the matching agent API before composing messages.</div>}
     <div className="handover-layout">
       <section className="handover-list panel" aria-label="Open specialist requests">
-        <div className="handover-list-head"><div><span className="handover-eyebrow">OPEN QUEUE</span><h3>Requests to review</h3></div><span className="handover-count">{handovers.length}</span></div>
-        {loading ? <p className="handover-empty">Loading requests…</p> : handovers.length === 0 ? <p className="handover-empty">No open specialist requests. New customer-approved handovers will appear here.</p> : <div className="handover-rows">{handovers.map((item) => <button key={item.groupKey} type="button" className={`handover-row${selectedId === item.groupKey ? " selected" : ""}`} onClick={() => setSelectedId(item.groupKey)}>
-          <span className="handover-row-top"><strong>{item.contact?.name || item.contact?.phone || "Unknown contact"}</strong><span className={`handover-priority ${item.priority || "normal"}`}>{item.priority || "normal"}</span></span>
-          <span>{item.department?.replaceAll("_", " ") || "General"} · {item.summary?.intent || "Request"}{item.groupCount > 1 ? ` · ${item.groupCount} linked requests` : ""}</span>
-          <small>{dateLabel(item.createdAt)}</small>
-        </button>)}</div>}
+        <div className="handover-list-head"><div><span className="handover-eyebrow">OPEN QUEUE</span><h3>Requests to review</h3></div><span className="handover-count" aria-label={`${visibleHandovers.length} of ${handovers.length} requests`}>{visibleHandovers.length}{visibleHandovers.length !== handovers.length ? ` / ${handovers.length}` : ""}</span></div>
+        {!loading && handovers.length > 0 && <div className="handover-filters" aria-label="Filter specialist requests">
+          <label>Department<select value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))}><option value="all">All</option>{filterOptions.departments.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
+          <label>Priority<select value={filters.priority} onChange={(event) => setFilters((current) => ({ ...current, priority: event.target.value }))}><option value="all">All</option>{["urgent", "high", "normal"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="all">All</option><option value="open">Open</option><option value="acknowledged">Acknowledged</option></select></label>
+          <label>Language<select value={filters.language} onChange={(event) => setFilters((current) => ({ ...current, language: event.target.value }))}><option value="all">All</option><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option><option value="unknown">Unknown</option>{filterOptions.languages.filter((value) => !["en", "ar", "el", "unknown"].includes(value)).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>From<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label>
+          <label>To<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label>
+          <button className="ghost" type="button" onClick={() => setFilters({ department: "all", priority: "all", status: "all", language: "all", from: "", to: "" })}>Clear filters</button>
+        </div>}
+        {loading ? <p className="handover-empty">Loading requests…</p> : handovers.length === 0 ? <p className="handover-empty">No open specialist requests. New customer-approved handovers will appear here.</p> : visibleHandovers.length === 0 ? <p className="handover-empty">No requests match these filters.</p> : <div className="handover-rows">{visibleHandovers.map((item) => { const match = item.matchedRecords?.[0] || item; return <button key={item.groupKey} type="button" className={`handover-row${selectedId === item.groupKey ? " selected" : ""}`} onClick={() => setSelectedId(item.groupKey)}>
+          <span className="handover-row-top"><strong>{item.contact?.name || item.contact?.phone || "Unknown contact"}</strong><span className={`handover-priority ${match.priority || "normal"}`}>{match.priority || "normal"}</span></span>
+          <span>{match.department?.replaceAll("_", " ") || "General"} · {match.summary?.intent || "Request"}{item.groupCount > 1 ? ` · ${item.groupCount} linked requests` : ""}</span>
+          <small>{match.status || "open"} · {match.language || "language unknown"}</small>
+          <small>{dateLabel(match.createdAt)}</small>
+        </button>; })}</div>}
       </section>
 
       <section className="handover-detail panel" aria-label="Selected specialist request">
         {!selected ? <div className="handover-empty">Select a specialist request to review its context.</div> : <>
           <article className="handover-request-card">
-            <div className="handover-request-topline"><span className="handover-request-label"><span className="handover-request-mark"><Bell size={14} /></span> Client request <span className="handover-request-department">{selected.department?.replaceAll("_", " ") || "General"}</span></span><span className={`handover-status-pill ${selected.status || "open"}`}><span />{selected.status || "open"}</span></div>
-            <div className="handover-request-main"><div className="handover-request-heading"><h3>{selected.contact?.name || selected.contact?.phone || "Unknown contact"}</h3><p>{selected.summary?.intent || "Intent not classified"}<span> · </span>{dateLabel(selected.createdAt)}</p></div><button className="ghost handover-open-conversation" type="button" disabled={!selected.contact?.userId} onClick={() => onNavigate?.("conversations", selected.contact.userId)}>Open conversation <ArrowUpRight size={14} /></button></div>
-            <div className="handover-need"><span>REQUEST SUMMARY</span><p>{selected.summary?.need || selected.summary?.opportunity || "No request summary was provided."}</p></div>
+            <div className="handover-request-topline"><span className="handover-request-label"><span className="handover-request-mark"><Bell size={14} /></span> Matching request <span className="handover-request-department">{selectedRequest.department?.replaceAll("_", " ") || "General"}</span></span><span className={`handover-status-pill ${selectedRequest.status || "open"}`}><span />{selectedRequest.status || "open"}</span></div>
+            <div className="handover-request-main"><div className="handover-request-heading"><h3>{selected.contact?.name || selected.contact?.phone || "Unknown contact"}</h3><p>{selectedRequest.summary?.intent || "Intent not classified"}<span> · </span>{selectedRequest.language || "Language unknown"}<span> · </span>{dateLabel(selectedRequest.createdAt)}</p></div><button className="ghost handover-open-conversation" type="button" disabled={!selected.contact?.userId} onClick={() => onNavigate?.("conversations", selected.contact.userId)}>Open conversation <ArrowUpRight size={14} /></button></div>
+            <div className="handover-need"><span>REQUEST SUMMARY</span><p>{selectedRequest.summary?.need || selectedRequest.summary?.opportunity || "No request summary was provided."}</p></div>
+            {selected.groupCount > 1 && <p className="handover-group-note">This contact has {selected.groupCount} linked requests. A follow-up draft attaches to the matching request; acknowledge and resolve actions apply to the contact’s outstanding requests.</p>}
             <div className="handover-context"><div><small>Email</small><strong>{selected.contact?.email || "Not on file"}</strong></div><div><small>WhatsApp</small><strong>{selected.contact?.phone || "Available in conversation"}</strong></div></div>
             <div className="handover-request-footer"><div className="handover-alert-status"><Bell size={14} /><span>Admin alert</span><strong>{selected.alerts?.[0]?.status || (notificationSchemaReady ? "Not queued" : "Unavailable")}</strong>{selected.alerts?.[0]?.lastError && <small>{selected.alerts[0].lastError}</small>}</div><div className="handover-actions"><button className="ghost" type="button" disabled={busy || selected.status === "acknowledged"} onClick={() => void updateStatus("acknowledged")}><Check size={14} /> Acknowledge</button><button className="ghost" type="button" disabled={busy} onClick={() => void updateStatus("resolved")}><Check size={14} /> Mark resolved</button></div></div>
           </article>
@@ -118,7 +141,7 @@ export default function HandoverInbox({ onNavigate }) {
             <label>Message<textarea required maxLength={channel === "whatsapp" ? 1500 : 4000} rows={5} value={text} onChange={(event) => setText(event.target.value)} placeholder="Write a concise follow-up that responds to this request. Verify any service, price, or commitment against approved knowledge before sending." /></label>
             <div className="handover-form-footer"><span>Saving creates a draft only. Sending requires a separate admin approval.</span><button className="primary" type="submit" disabled={!notificationSchemaReady || busy || !recipient.trim() || !text.trim()}><Save size={14} /> {busy ? "Saving…" : "Save draft"}</button></div>
           </form>
-          <section className="handover-drafts"><div className="handover-list-head"><div><span className="handover-eyebrow">OUTBOX</span><h4>Drafts and delivery</h4></div></div>{drafts.length ? drafts.map((draft) => <article className="handover-draft-card" key={draft.id}><div><strong>{draft.channel === "email" ? <Mail size={14} /> : <MessageCircle size={14} />} {draft.channel} · {draft.status}</strong><p>{draft.payload?.text || "Message content unavailable"}</p><small>{draft.recipient}</small></div>{draft.status === "draft" && <button className="primary" type="button" disabled={busy} onClick={() => void approveDraft(draft)}><Send size={14} /> Approve &amp; send</button>}</article>) : <p className="handover-empty">No follow-up drafts yet.</p>}</section>
+          <section className="handover-drafts"><div className="handover-list-head"><div><span className="handover-eyebrow">OUTBOX</span><h4>Drafts and delivery</h4></div></div>{drafts.length ? drafts.map((draft) => { const requestContext = handoverDraftContext(draft, selected); return <article className="handover-draft-card" key={draft.id}><div><strong>{draft.channel === "email" ? <Mail size={14} /> : <MessageCircle size={14} />} {draft.channel} · {draft.status}</strong><small>{requestContext ? `For ${requestContext.department?.replaceAll("_", " ") || "general"} · ${requestContext.summary?.intent || "specialist request"} · ${dateLabel(requestContext.createdAt)}` : "Linked request details unavailable"}</small><p>{draft.payload?.text || "Message content unavailable"}</p><small>{draft.recipient}</small></div>{draft.status === "draft" && <button className="primary" type="button" disabled={busy} onClick={() => void approveDraft(draft)}><Send size={14} /> Approve &amp; send</button>}</article>; }) : <p className="handover-empty">No follow-up drafts yet.</p>}</section>
         </>}
       </section>
     </div>

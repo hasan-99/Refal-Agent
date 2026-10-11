@@ -4,9 +4,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   deriveDynamicActionCapabilities,
+  safeAgentSourceMessage,
   runAgentAfterPreflight
 } = require("./agentWhatsAppAdapter");
 const { runRoutedTurn } = require("./turnRouting");
+const { runAgentTurnForContact } = require("./agentRuntime");
+const { prepareInboundMessage, routeMessageResult } = require("./messageRouter");
 
 function eligibleInput(overrides = {}) {
   return {
@@ -20,6 +23,72 @@ function eligibleInput(overrides = {}) {
     ...overrides
   };
 }
+
+test("credential-bearing AI question uses only its privacy-safe rewrite for model input and source-turn persistence", async () => {
+  const secret = "SecretPhrase-81";
+  const rawMessage = `My name is Rami. Password: ${secret}. Help me set up a company in Cyprus`;
+  const user = { id: "synthetic-privacy-contact", profile: {}, history: [] };
+  const store = {
+    ensureUser: async () => user,
+    getUser: async () => user,
+    updateUser: async (_id, updater) => updater(user),
+    addHistory: async (_id, message, response, extra) => {
+      const turn = { id: `turn-${user.history.length + 1}`, message, response, metadata: extra?.metadata || {} };
+      user.history.push(turn);
+      return turn;
+    },
+    searchKnowledge: async () => [{ chunk_id: "synthetic-approved-company-setup", source_name: "Synthetic approved fixture",
+      heading: "Company setup", content: "The approved test fixture says company setup includes registration and initial setup support.",
+      review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }],
+    saveQualification: async () => {},
+    saveIntents: async () => {}
+  };
+  const prepared = await prepareInboundMessage({ userId: user.id, incoming: rawMessage, user, store });
+  const routed = await routeMessageResult({ userId: user.id, text: rawMessage, store, existingUser: user, preparedInbound: prepared });
+  assert.equal(routed.shouldUseAi, true);
+  assert.ok(routed.metadata.privacySafeQuestion);
+  const safeMessage = safeAgentSourceMessage(rawMessage, prepared, routed);
+  assert.doesNotMatch(safeMessage, new RegExp(secret));
+  assert.match(safeMessage, /Help me set up a company in Cyprus/);
+
+  let providerInput = "";
+  const persisted = await runAgentAfterPreflight({
+    prepared, routed, userId: user.id, sourceMessage: safeMessage
+  }, {
+    persistTurn: async ({ message, response, metadata }) => store.addHistory(user.id, message, response, { metadata }),
+    runAgent: async () => {
+      const agentResult = await runAgentTurnForContact({
+        currentMessage: safeAgentSourceMessage(rawMessage, prepared, routed),
+        locale: "english",
+        contact: { id: user.id },
+        recentConversation: [],
+        store,
+        user,
+        userId: user.id,
+        intents: routed.metadata?.intent?.intents || [],
+        language: "english",
+        embedText: async () => [0.1]
+      }, {
+        decideNextStep: async ({ context, observations }) => {
+          providerInput = context.currentMessage;
+          assert.ok(observations[0].result.modelObservation.evidence.length > 0);
+          return { type: "respond", text: "The approved test fixture says company setup includes registration and initial setup support. What business activity are you considering?" };
+        }
+      });
+      return agentResult.response;
+    },
+    updateTurn: async ({ turnId, patch }) => {
+      const turn = user.history.find((row) => row.id === turnId);
+      Object.assign(turn, patch);
+      return turn;
+    },
+    send: async () => {}
+  });
+
+  assert.equal(persisted.sent, true);
+  assert.doesNotMatch(providerInput, new RegExp(secret), "the Agent provider input is sanitized");
+  assert.doesNotMatch(JSON.stringify(user.history), new RegExp(secret), "saved history contains no credential");
+});
 
 test("capability derivation grants only upsertLead on a clean AI-eligible turn", () => {
   const result = deriveDynamicActionCapabilities(eligibleInput());
@@ -101,6 +170,100 @@ test("AI outcome persists before Agent, passes turn id and narrow grants, then u
   assert.deepEqual(Object.keys(events[2][1].patch), ["response"], "the history update must respect the Edge metadata patch allowlist");
   assert.equal(events[3][1], "The current offer is available.");
   assert.equal(events[3][2].id, turn.id);
+  assert.equal(result.sent, true);
+  assert.equal(result.persistenceUpdated, true);
+});
+
+test("full synthetic customer-answer path retrieves approved fixture evidence, runs Agent gates, persists and sends one answer", async () => {
+  const events = [];
+  const turn = { id: "turn-e2e-1" };
+  const sourceMessage = "What is the price to create a Cyprus company?";
+  const expectedAnswer = "In this synthetic fixture, the example formation price is EUR 1500.";
+  const store = {
+    searchKnowledge: async (query, embedding, embeddingModel, matchCount) => {
+      events.push(["retrieve", query]);
+      assert.equal(embedding[0], query.length);
+      assert.equal(matchCount, 20);
+      return [{ chunk_id: "approved-formation-price", source_name: "Synthetic approved test fixture", heading: "Example price",
+        content: expectedAnswer, review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }];
+    }
+  };
+  const result = await runAgentAfterPreflight({
+    ...eligibleInput(), userId: "contact-e2e", sourceMessage, locale: "english"
+  }, {
+    persistTurn: async ({ userId, message, response }) => {
+      events.push(["persist", userId, message, response]);
+      return turn;
+    },
+    runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
+      events.push(["agent-start", sourceTurnId, allowedCapabilities]);
+      const agent = await runAgentTurnForContact({
+        currentMessage: sourceMessage,
+        locale: "english",
+        contact: { id: "contact-e2e", name: null },
+        recentConversation: [],
+        store,
+        user: { id: "contact-e2e", history: [] },
+        userId: "contact-e2e",
+        intents: ["pricing"],
+        language: "english",
+        sourceTurnId,
+        embedText: async (query) => [query.length]
+      }, {
+        decideNextStep: async ({ observations }) => {
+          assert.equal(observations[0].result.modelObservation.evidence[0].content, expectedAnswer);
+          assert.equal(observations[0].result.modelObservation.policyEvidence[0].review_status, "approved");
+          assert.equal(observations[0].result.modelObservation.policyEvidence[0].valid_until, "2099-01-01T00:00:00.000Z");
+          return { type: "respond", text: expectedAnswer };
+        }
+      });
+      events.push(["agent-done", agent.outcome, agent.toolsUsed]);
+      return agent.response;
+    },
+    updateTurn: async ({ userId, turnId, patch }) => {
+      events.push(["update", userId, turnId, patch.response]);
+      return { ...turn, response: patch.response };
+    },
+    send: async (response, sentTurn) => events.push(["send", response, sentTurn.id])
+  });
+
+  assert.equal(result.sent, true);
+  assert.equal(result.persistenceUpdated, true);
+  assert.deepEqual(events.map(([name]) => name), ["persist", "agent-start", "retrieve", "agent-done", "update", "send"]);
+  assert.equal(events.at(-1)[1], expectedAnswer);
+  assert.equal(events.at(-1)[2], turn.id);
+});
+
+test("continuity summary hook runs only after the source turn and response are durable", async () => {
+  const events = [];
+  const result = await runAgentAfterPreflight({
+    ...eligibleInput(), userId: "contact-1", sourceMessage: "I am looking at property in Limassol."
+  }, {
+    persistTurn: async () => ({ id: "turn-1" }),
+    runAgent: async () => "What kind of property are you considering?",
+    updateTurn: async ({ patch }) => ({ id: "turn-1", response: patch.response }),
+    afterTurnPersisted: async ({ userId, turnId, message }) => { events.push(["summary", userId, turnId, message]); },
+    send: async () => { events.push(["send"]); }
+  });
+  assert.deepEqual(events, [
+    ["summary", "contact-1", "turn-1", "I am looking at property in Limassol."],
+    ["send"]
+  ]);
+  assert.equal(result.sent, true);
+});
+
+test("continuity summary failure never changes the saved response or retries a persisted turn", async () => {
+  const events = [];
+  const result = await runAgentAfterPreflight({
+    ...eligibleInput(), userId: "contact-1", sourceMessage: "Tell me about property."
+  }, {
+    persistTurn: async () => ({ id: "turn-1" }),
+    runAgent: async () => "I can help with your question.",
+    updateTurn: async ({ patch }) => ({ id: "turn-1", response: patch.response }),
+    afterTurnPersisted: async () => { events.push("summary"); throw new Error("profile write failed"); },
+    send: async (response) => { events.push(["send", response]); }
+  });
+  assert.deepEqual(events, ["summary", ["send", "I can help with your question."]]);
   assert.equal(result.sent, true);
   assert.equal(result.persistenceUpdated, true);
 });

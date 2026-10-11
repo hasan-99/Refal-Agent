@@ -1,11 +1,11 @@
 # REFAL Master Brain — Deep Source Analysis
 
 **Analysed on:** 2026-10-07
-**Sources (the authority for this project):**
+**Sources (owner-provided reference material):**
 - **MB** = `Master Brain & Operating Rules Manual - REFAL AI.txt` (5 modules, 251 lines)
 - **AR** = `plan.txt` (3 layer architecture + developer action plan)
 
-**Authority rule.** Where these two files conflict with the current repository implementation, **the files win**. The repository's existing "no company identity, blanket refusal" posture is treated as a defect to be removed, not a constraint to be preserved. The only behaviours carried forward from the repo are the ones **MB itself demands** (section 7 below).
+**Interpretation and approval rule.** MB and AR describe the owner's intended identity, operating style, service domains, and architecture. They are source material for requirements, not automatic approval for customer-facing business claims. The current repository Constitution and `config/refal-agent-rules.md` govern customer answers: identity can be stated freely; company facts must come from approved, current knowledge or trusted live data. Several tax, residency, price, and eligibility claims in the supplied manual may be outdated or overbroad and must be checked against current authoritative sources and approved through the knowledge workflow before use. Stable IDs below record what the owner requested; they do not certify that a claim is current or speakable.
 
 Every requirement below carries a stable ID. The implementation plan (`.planning/REFAL-BRAIN-MASTER-PLAN.md`) traces to these IDs.
 
@@ -26,7 +26,7 @@ Her commercial mandate, stated explicitly in MB 1.0:
 | MB-1.0-e | Protect senior management time from non serious enquiries |
 | MB-1.0-f | Maximise total group revenue |
 
-**Design consequence.** Every feature in the plan must be justifiable against one of these six. A feature that adds safety but kills MB-1.0-b or MB-1.0-c is a net loss and must be redesigned, not accepted.
+**Design consequence.** Features should preserve the consultative, useful experience described here while following the current identity/fact boundary, privacy safeguards, and evidence gates. If a safeguard makes a valid, approved answer unnecessarily unhelpful, improve the retrieval or answer flow without weakening those safeguards.
 
 ---
 

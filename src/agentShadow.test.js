@@ -213,8 +213,9 @@ test("runShadowAgentTurn catches a thrown decision/tool error and logs agent_tur
 
 test("runShadowAgentTurn catches an unexpected throw from its own setup (e.g. a broken user object) and logs agent_shadow_turn_error without throwing", async () => {
   const events = [];
+  const secret = "sk-ABCDEFGHIJKLMNOPQRSTUVWX";
   const brokenUser = {
-    get history() { throw new Error("profile store corrupted"); }
+    get history() { throw new Error(`provider diagnostic echoed ${secret}`); }
   };
 
   const result = await runShadowAgentTurn(
@@ -233,7 +234,47 @@ test("runShadowAgentTurn catches an unexpected throw from its own setup (e.g. a 
   assert.equal(events.length, 1);
   assert.equal(events[0].event, "agent_turn_failed");
   assert.equal(events[0].fields.shadowMode, true);
-  assert.match(events[0].fields.message, /profile store corrupted/);
+  assert.equal(events[0].fields.reasonCode, "SHADOW_AGENT_TURN_FAILED");
+  assert.equal(events[0].fields.message, undefined, "exception text may contain customer data or provider secrets");
+  assert.equal(JSON.stringify(events).includes(secret), false, "shadow error telemetry must not leak exception text");
+});
+
+test("runShadowAgentTurn remains a non-rejecting no-op when concurrency-skip telemetry throws or rejects", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const first = runShadowAgentTurn({
+    userId: "u1", text: "hello", user: { id: "u1", history: [] }, store: {},
+    classification: { language: "english", intents: [] }
+  }, {
+    env: { REFAL_AGENT_SHADOW_ENABLED: "true", REFAL_AGENT_SHADOW_MAX_CONCURRENCY: "1" },
+    decideNextStep: async () => { await gate; return { type: "respond", text: "done" }; }
+  });
+  await Promise.resolve();
+
+  const second = await runShadowAgentTurn({
+    userId: "u2", text: "hello", user: { id: "u2", history: [] }, store: {},
+    classification: { language: "english", intents: [] },
+    logEvent: () => { throw new Error("telemetry sink failed"); }
+  }, {
+    env: { REFAL_AGENT_SHADOW_ENABLED: "true", REFAL_AGENT_SHADOW_MAX_CONCURRENCY: "1" },
+    decideNextStep: async () => ({ type: "respond", text: "must not run" })
+  });
+  assert.equal(second, null, "a capped shadow turn stays a resolved skip even if synchronous logging throws");
+
+  let logged = false;
+  const third = await runShadowAgentTurn({
+    userId: "u3", text: "hello", user: { id: "u3", history: [] }, store: {},
+    classification: { language: "english", intents: [] },
+    logEvent: () => { logged = true; return Promise.reject(new Error("async telemetry sink failed")); }
+  }, {
+    env: { REFAL_AGENT_SHADOW_ENABLED: "true", REFAL_AGENT_SHADOW_MAX_CONCURRENCY: "1" },
+    decideNextStep: async () => ({ type: "respond", text: "must not run" })
+  });
+  assert.equal(third, null);
+  assert.equal(logged, true);
+
+  release();
+  assert.equal((await first).outcome, "responded");
 });
 
 test("REFAL-AGENT-013: a throwing logEvent on the success path does not discard an otherwise-successful turn result (test 10)", async () => {

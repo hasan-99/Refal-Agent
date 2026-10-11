@@ -709,6 +709,26 @@ test("classifyClaim ignores malformed evidence entries without throwing", () => 
   assert.equal(classifyClaim(sentence, { evidence: [null, undefined, 3, "x", approved(sentence)] }).allowed, true);
 });
 
+test("approved document text supports grounded claims without evidence references or a second Fact Register approval", () => {
+  const content = "The corporate tax rate is 15 percent from 2026.";
+  const evidence = {
+    ...approved(content),
+    metadata: { facts: ["MB-F19"], supporting: [] },
+    policyMetadata: {
+      facts: ["MB-F19"], governedFacts: ["MB-F19"],
+      factRegisterRows: [{ id: "MB-F19", status: "pending", reviewer: "reviewer", verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en"] }]
+    }
+  };
+  assert.equal(isApprovedEvidence(evidence, { language: "english" }), true);
+  assert.equal(classifyClaim(content, { evidence: [evidence], language: "english" }).allowed, true);
+  evidence.metadata.supporting = [{ type: "general_reference", url: "https://refalco.com/" }];
+  evidence.policyMetadata.factRegisterRows = [];
+  assert.equal(isApprovedEvidence(evidence, { language: "english" }), true);
+  assert.equal(classifyClaim(content, { evidence: [evidence], language: "greek" }).allowed, true);
+  evidence.policyMetadata.factRegisterRows = [{ id: "MB-F19", status: "blocked" }];
+  assert.equal(isApprovedEvidence(evidence, { language: "english" }), false, "an explicit owner block remains enforced");
+});
+
 test("evaluateAnswerClaims is safe for empty, null and undefined input", () => {
   for (const value of ["", null, undefined, "   "]) {
     const result = evaluateAnswerClaims(value, { evidence: [] });

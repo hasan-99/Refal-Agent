@@ -3,7 +3,7 @@ topic: source-of-funds-vs-wealth
 lang: en
 title: Source of Funds and Source of Wealth, what each one means and why they are asked
 facts: MB-F35, MB-F36, MB-F37
-aliases: source of funds vs source of wealth | what is source of funds | what is source of wealth | difference between sof and sow | why does the bank ask where the money came from | documents to prove source of funds | proof of funds cyprus | kyc source of funds | aml compliance source of wealth | how do i prove an inheritance | proof of funds from a property sale | are company profits enough as source of funds | am i being suspected of something | i don't want to send my bank statement in the chat | how long does the document review take | do immigration authorities ask for the same thing
+aliases: source of funds vs source of wealth | what is source of funds | what is source of wealth | difference between sof and sow | why does the bank ask where the money came from | documents to prove source of funds | proof of funds cyprus | kyc source of funds | aml compliance source of wealth | how do i prove an inheritance | proof of funds from a property sale | are company profits enough as source of funds | am i being suspected of something | i don't want to send my bank statement in the chat | how long does the document review take | do immigration authorities ask for the same thing | Is this a normal step or am I being suspected of something | I don't want to send my bank statement here in the chat.
 ---
 
 ## Two different questions, usually asked together

@@ -128,8 +128,8 @@ assert.match(await routeMessage({ userId, text: "hello", store }), /digital assi
 
 assert.equal(detectMessageLanguage("Tell me about Refalco Group projects"), "english");
 assert.equal(detectMessageLanguage("شو مشاريع الشركة؟"), "arabic");
-assert.match(languageInstruction("arabic"), /Reply in Arabic/);
-assert.match(languageInstruction("english"), /Reply in English/);
+assert.match(languageInstruction("arabic"), /Reply in .*Arabic/);
+assert.match(languageInstruction("english"), /Reply in .*English/);
 assert.equal(isBookingRequest("I want to book a meeting"), true);
 assert.equal(isBookingRequest("how can I call you?"), false);
 assert.equal(isBookingRequest("بدي احجز موعد"), true);

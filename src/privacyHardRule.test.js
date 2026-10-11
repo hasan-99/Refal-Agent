@@ -82,6 +82,89 @@ test("ordinary wording does not false positive (BLK-15 class)", () => {
   }
 });
 
+test("tell-us requests and common Greek tell imperatives cannot bypass credential or out-of-band code checks", () => {
+  for (const text of [
+    "Tell us your password.",
+    "Could you tell me your account password?",
+    "Πείτε μου τον κωδικό πρόσβασής σας.",
+    "Πες μου το PIN σου."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, true, text);
+  assert.ok(requestsForbiddenCredential("Πείτε μου τον κωδικό που σας έστειλε η τράπεζα.").kinds.includes(CREDENTIAL_KINDS.OTP_OUT_OF_BAND));
+});
+
+test("an OTP request paired with another identity or account detail is blocked even without naming the issuer", () => {
+  for (const text of [
+    "Send me the one time password and I will confirm the passport number.",
+    "Στείλτε μου τον κωδικό μίας χρήσης και θα επιβεβαιώσω τον αριθμό διαβατηρίου 7741920.",
+    "ابعتلي رمز التحقق ورقم الجواز حتى أكد هويتك."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, true, text);
+});
+
+test("explicit privacy warnings are not mistaken for credential requests", () => {
+  for (const text of [
+    "For your privacy, please don't send passwords, card details, or account credentials here.",
+    "Never share your password or PIN in this chat.",
+    "لحماية خصوصيتك، لا تبعت كلمات المرور أو بيانات البطاقات هون.",
+    "Για την προστασία σας, μην στείλετε κωδικούς ή στοιχεία κάρτας εδώ."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, false, text);
+});
+
+test("a later affirmative credential request remains visible after a privacy warning", () => {
+  for (const text of [
+    "Don't send your password, instead send me your password.",
+    "Please don't send your password, send me your PIN here.",
+    "ما تبعت كلمة المرور، ابعتلي رقم التعريف الشخصي هون.",
+    "Μην στείλετε τον κωδικό πρόσβασης, στείλτε μου τον PIN σας εδώ."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, true, text);
+});
+
+test("questions asking what a sensitive document contains are not treated as requests to provide it", () => {
+  for (const text of [
+    "Could you share what a bank statement includes?",
+    "Can you explain what a password is?",
+    "شو يعني كشف الحساب؟",
+    "Τι περιλαμβάνει ένα τραπεζικό αντίγραφο;"
+  ]) assert.equal(requestsForbiddenCredential(text).violation, false, text);
+  assert.equal(requestsForbiddenCredential("Please send me a bank statement.").violation, true);
+});
+
+test("bare credential definitions are informational while possessive requests stay blocked", () => {
+  for (const text of [
+    "What is a password?",
+    "What is a bank statement?",
+    "What is the definition of a password?",
+    "What is the meaning of a bank statement?",
+    "What does a password mean?",
+    "Could you tell me what a password is?",
+    "Could you tell me what a bank statement includes?",
+    "Can you tell me what a bank statement includes?",
+    "Tell me what a password is.",
+    "شو هي كلمة المرور؟",
+    "Ποιο είναι το τραπεζικό αντίγραφο;"
+  ]) assert.equal(requestsForbiddenCredential(text).violation, false, text);
+  for (const text of [
+    "What is your password?",
+    "What is the password?",
+    "What is the PIN?",
+    "شو كلمة مرورك؟",
+    "Send me a bank statement.",
+    "Στείλτε μου το τραπεζικό αντίγραφο."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, true, text);
+});
+
+test("a definition cannot exempt a separate credential request later in the reply", () => {
+  for (const text of [
+    "What is a password? Please send me your password.",
+    "What is a bank statement? Please upload the bank statement.",
+    "شو هي كلمة المرور؟ ابعتلي كلمة مرورك.",
+    "Ποιο είναι το τραπεζικό αντίγραφο; Στείλτε μου το τραπεζικό αντίγραφο.",
+    "What is a password, and please send me your password.",
+    "Tell me what a password is, and send me your password.",
+    "شو هي كلمة المرور، وابعتلي كلمة مرورك.",
+    "Ποιο είναι το τραπεζικό αντίγραφο, στείλτε μου το τραπεζικό αντίγραφο."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, true, text);
+});
+
 test("null, empty, and undefined input are safe", () => {
   for (const text of [null, undefined, "", "   "]) {
     const result = requestsForbiddenCredential(text);

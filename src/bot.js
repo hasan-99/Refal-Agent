@@ -24,12 +24,13 @@ const { startNotificationSchedule } = require("./notificationScheduler");
 const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
 const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
 const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply } = require("./refalcoAnswer");
-const { detectMessageLanguage } = require("./language");
+const { selectSafeEvidenceFallback } = require("./safeEvidenceFallback");
+const { detectMessageLanguage, inboundRetryMessage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
 const { isPairingOnly } = require("./runtimePolicy");
 const { classifyLeadTemperature } = require("./leadTemperature");
 const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = require("./whatsappPairing");
-const { buildConversationContext, refreshCustomerTopicSummary } = require("./conversationMemory");
+const { buildConversationContext, refreshCustomerTopicSummary, refreshCustomerTopicSummaryFromStore } = require("./conversationMemory");
 const { buildLocalConversationRecap } = require("./conversationRecap");
 const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTelemetry");
 const { runShadowAgentTurn, recordShadowComparison, buildRecentConversation } = require("./agentShadow");
@@ -42,10 +43,13 @@ const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutco
 const { retrieveKnowledgeForTurn } = require("./knowledgeQuery");
 const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
 const { detectIntent, INTENTS } = require("./intent");
-const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
+const { runAgentAfterPreflight, safeAgentSourceMessage } = require("./agentWhatsAppAdapter");
 const { appendGroundedHook, guardJurisdictionAnswer, observationPolicyRows, hasInformationalIntent } = require("./salesIntelligence");
 const { selectOfferForTurn } = require("./offerOrchestration");
 const { shouldEnterBookingPath, shouldDeferBookingHandler } = require("./buyingSignals");
+const { createMessageExecutor, parseMessageQueueLimit } = require("./messageConcurrency");
+const { claimInboundReceipt } = require("./inboundMessageReceipt");
+const { runAgentLiveAnswerTurn: runAgentLiveAnswerTurnComposition } = require("./agentLiveAnswerTurn");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -57,6 +61,10 @@ const selfTestPrefix = process.env.SELF_TEST_PREFIX || "!rafa";
 
 const store = createStore();
 const processedMessageIds = new Set();
+const inboundMessageExecutor = createMessageExecutor({
+  concurrency: Number(process.env.RAFA_INBOUND_CONCURRENCY) || 8,
+  maxQueue: parseMessageQueueLimit(process.env.RAFA_INBOUND_QUEUE_LIMIT)
+});
 let followUpTask = null;
 let reminderTask = null;
 let notificationTask = null;
@@ -437,6 +445,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     const grounded = answerFromEvidence(evidence, { allowPricing: routed.metadata?.intent?.intents?.includes("pricing") === true, customerQuestion: redactPersonalData(customerText) });
     let modelRequestMade = false;
     let modelResponseUsed = false;
+    let fallbackRejected = false;
     const localRecap = buildLocalConversationRecap({ history: routed.user?.history || [], evidence, currentMessage: customerText, language: detectMessageLanguage(customerText), workflowState: { handover: routed.user?.profile?.handover, specialistFollowUp: routed.user?.profile?.specialistFollowUp } });
     const citations = localRecap?.citations || grounded?.citations || [];
     response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
@@ -495,6 +504,7 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
                 completionTokens: usage.completionTokens,
                 totalTokens: usage.totalTokens,
                 costUsd: usage.costUsd,
+                providerLatencyMs: usage.providerLatencyMs,
                 // W1.7.8 — so a bad answer in the logs can be traced to the
                 // exact prompt version that produced it. M14 rolls the prompt
                 // back independently of the code; that needs this field.
@@ -513,9 +523,17 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
         logEvent("ai", { enabled: Boolean(aiResponse), sourceCount: citations.length });
       } catch (error) {
         console.error("OpenRouter failed; using a localized safe reply:", safeErrorDiagnostics(error));
-        // Keep the answer selected above: it is either a relevant, validated
-        // excerpt from approved evidence or a precise no-approved-evidence
-        // reply. Replacing it with a generic prompt loses the customer's ask.
+        // Validate the deterministic excerpt under the same response policy as
+        // model output. Older approved documents can contain stale or overly
+        // broad prose; never let that bypass the final customer-facing gates.
+        const safeFallback = selectSafeEvidenceFallback(response, {
+          customerMessage: customerText,
+          evidence,
+          language: detectMessageLanguage(customerText),
+          pricing: routed.metadata?.intent?.intents?.includes("pricing") === true
+        });
+        response = safeFallback.answer;
+        fallbackRejected = !safeFallback.accepted;
         stage("model_generation", stageAt, { modelUsed: false });
         logEvent("ai_error", { ...safeErrorDiagnostics(error), sourceCount: citations.length });
       }
@@ -558,10 +576,10 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     const knowledgeEvidence = knowledgeEvidenceMetadata(evidence, {
       modelRequestMade,
       modelResponseUsed,
-      fallbackCitations: citations
+      fallbackCitations: fallbackRejected ? [] : citations
     });
     routed.turn = (await recordHistory(store, userId, text, response, {
-      metadata: { ...routed.metadata, retrieval: dynamicResult.requested.length ? "approved_knowledge_and_live_data" : "approved_knowledge", dynamicData: dynamicResult.statuses, dynamicConflictDecisions: precedence.decisions, citations, knowledgeEvidence, abstained: !grounded }
+      metadata: { ...routed.metadata, retrieval: dynamicResult.requested.length ? "approved_knowledge_and_live_data" : "approved_knowledge", dynamicData: dynamicResult.statuses, dynamicConflictDecisions: precedence.decisions, citations, knowledgeEvidence, abstained: !grounded || fallbackRejected }
     })).turn;
     stage("turn_and_workflow_persistence", stageAt, { route: "knowledge_answer" });
   }
@@ -612,105 +630,28 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
 // decision/tool/policy outcome (see agentLoop.js), it only ever resolves
 // with a safe response text, which is sent exactly once below.
 async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
-  await setTyping(socket, chatId, true);
-  const user = await store.ensureUser(userId);
-  const bookingState = user?.booking?.status;
-  // Booking has a deterministic state machine and remains its sole owner.
-  // Route it to legacy before preflight can persist or trigger anything.
-  if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || detectIntent(text).intents.includes(INTENTS.APPOINTMENT)) {
-    throw new Error("Appointment turn remains owned by the deterministic booking workflow.");
-  }
-  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
-  const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
-  const language = prepared.classification?.language || user?.profile?.language || "english";
-  let selectedSalesOffer = null;
-  let selectedSpecialistOffer = null;
-  const result = await runAgentAfterPreflight({
-    prepared,
-    routed,
-    userId,
-    sourceMessage: String(text || ""),
-    locale: language,
-    metadata: prepared.metadata || {},
-    pendingResponse: "Your message is being processed."
-  }, {
-    persistTurn: async ({ message, response, metadata }) => (await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true })).turn,
-    runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
-      const currentUser = await store.getUser(userId);
-      const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
-      const conversationState = getConversationState(currentUser || {});
-      const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
-      const commitState = createCommitState();
-      const agentResult = await runAgentTurnForContact({
-        currentMessage: String(text || ""),
-        locale: language,
-        contact: { id: userId, name: currentUser?.profile?.name || null },
-        recentConversation: buildRecentConversation(history.filter((turn) => turn.id !== sourceTurnId)),
-        conversationState,
-        knownCustomerFacts: conversationState.agentFacts,
-        currentOpenQuestion: null,
-        consentState,
-        allowedCapabilities,
-        sourceTurnId,
-        store,
-        user: currentUser,
-        userId,
-        intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
-        language,
-        inboundMessageId: providerMessageId || null,
-        leadTier: routed.metadata?.leadTier || "",
-        buyingSignals: routed.metadata?.buyingSignals || []
-      }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
-      const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
-      if (!decision.send) {
-        const failedStep = Array.isArray(agentResult.steps)
-          ? agentResult.steps.find((step) => step?.result?.ok === false)
-          : null;
-        const knowledgeStep = Array.isArray(agentResult.steps)
-          ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge")
-          : null;
-        await logEvent("agent_turn_not_clean", {
-          outcome: String(agentResult.outcome || "unknown").slice(0, 40),
-          reasonCode: /^[A-Za-z0-9_:,-]{1,100}$/u.test(String(agentResult.reason || ""))
-            ? String(agentResult.reason).slice(0, 100)
-            : String(failedStep?.result?.reasonCode || "not_clean").slice(0, 80),
-          stepCount: Number.isInteger(agentResult.stepCount) ? agentResult.stepCount : 0,
-          knowledgeStatus: String(knowledgeStep?.result?.modelObservation?.status || "not_retrieved").slice(0, 30),
-          toolsUsed: Array.isArray(agentResult.toolsUsed) ? agentResult.toolsUsed.filter((tool) => typeof tool === "string").slice(0, 12) : []
-        });
+  return runAgentLiveAnswerTurnComposition(
+    { socket, chatId, userId, text, providerMessageId },
+    {
+      store,
+      logEvent,
+      setTyping,
+      sendStoredTextReply,
+      embedText,
+      agentOptions: {
+        onModelCall: ({ durationMs }) => logEvent("agent_model_call", { durationMs }),
+        onModelUsage: (usage) => logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
+          source: "whatsapp-agent",
+          model: usage.model,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          costUsd: usage.costUsd,
+          providerReported: usage.providerReported
+        })
       }
-      if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
-      const policyRows = observationPolicyRows(agentResult.steps);
-      const jurisdiction = guardJurisdictionAnswer({ message: text, response: decision.responseText, rows: policyRows, language });
-      let response = jurisdiction.response;
-      const hook = appendGroundedHook({
-        message: text, response, language, history: history.filter((turn) => turn.id !== sourceTurnId),
-        user: currentUser, rows: policyRows,
-        specialistEligible: routed.metadata?.priority?.handoverRequired === true,
-        answerComplete: true,
-        suppressed: {
-          informational: hasInformationalIntent(routed.metadata?.intent?.intents),
-          complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
-          sensitive: Boolean(prepared.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
-          optOut: ["denied", "revoked"].includes(consentState),
-          pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(currentUser?.booking?.status),
-          handoverActive: Boolean(currentUser?.profile?.handover?.status === "active"),
-          complianceLock: Boolean(routed.metadata?.complianceLock?.active)
-        }
-      });
-      response = hook.response;
-      selectedSalesOffer = hook.salesOffer;
-      selectedSpecialistOffer = hook.specialistOffer;
-      return response;
-    },
-    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId,
-      selectedSalesOffer || selectedSpecialistOffer ? { ...patch, metadata: { ...(selectedSalesOffer ? { salesOffer: selectedSalesOffer } : {}), ...(selectedSpecialistOffer ? { specialistOffer: selectedSpecialistOffer } : {}) } } : patch),
-    send: async (response, turn) => {
-      await setTyping(socket, chatId, false);
-      await sendStoredTextReply(socket, chatId, response, userId, turn);
     }
-  });
-  return { outcome: result.route, responseLength: result.response.length, sourceTurnId: result.sourceTurnId || null };
+  );
 }
 
 // REFAL-AGENT-030 — the one live decision point: legacy vs. Agent, exactly
@@ -914,6 +855,7 @@ async function handleMessage(socket, message, upsertType) {
   const id = `${remoteJid || "unknown"}:${message.key?.id || "no-id"}:${fromMe}`;
   const providerMessageId = String(message.key?.id || "");
   let persistentReceipt = false;
+  let receiptLeaseToken = null;
   let receiptShouldComplete = false;
 
   if (processedMessageIds.has(id)) return;
@@ -938,18 +880,27 @@ async function handleMessage(socket, message, upsertType) {
       return;
     }
 
-    if (!fromMe && providerMessageId && typeof store.claimInboundMessage === "function") {
+    if (!fromMe) {
       try {
         const stageStartedAt = performance.now();
-        const receipt = await store.claimInboundMessage(remoteJid, providerMessageId);
-        stage("inbound_receipt_claim", stageStartedAt, { duplicate: Boolean(receipt.duplicate) });
-        if (receipt.duplicate || receipt.claimed === false) {
+        const receipt = await claimInboundReceipt(store, remoteJid, providerMessageId);
+        stage("inbound_receipt_claim", stageStartedAt, { duplicate: receipt.duplicate });
+        if (receipt.duplicate) {
           logEvent("duplicate_inbound_message_ignored", { duplicate: true });
           return;
         }
         persistentReceipt = true;
+        receiptLeaseToken = receipt.leaseToken;
       } catch (error) {
         logEvent("inbound_message_dedupe_error", safeErrorDiagnostics(error));
+        // The durable receipt is the cross-worker duplicate guard. Processing
+        // when it cannot be verified could repeat a handover or other action.
+        try {
+          await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
+        } catch (sendError) {
+          logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
+        }
+        return;
       }
     }
 
@@ -1012,7 +963,10 @@ async function handleMessage(socket, message, upsertType) {
     }
   } finally {
     if (persistentReceipt && receiptShouldComplete) {
-      try { await store.completeInboundMessage(remoteJid, providerMessageId); }
+      try {
+        const completion = await store.completeInboundMessage(remoteJid, providerMessageId, receiptLeaseToken);
+        if (completion?.processed !== true) logEvent("inbound_message_receipt_fence_lost", {});
+      }
       catch (error) { logEvent("inbound_message_receipt_complete_error", safeErrorDiagnostics(error)); }
     } else if (!receiptShouldComplete && !fromMe) {
       processedMessageIds.delete(id);
@@ -1204,9 +1158,26 @@ async function startBaileysClient() {
       if (messages?.length) logEvent("pairing_only_messages_ignored", { count: messages.length });
       return;
     }
-    for (const message of messages || []) {
-      await handleMessage(socket, message, type);
-    }
+    await Promise.all((messages || []).map(async (message) => {
+      const userId = message.key?.remoteJid;
+      try {
+        await inboundMessageExecutor.run(userId, () => handleMessage(socket, message, type));
+      } catch (error) {
+        if (error?.code !== "MESSAGE_QUEUE_FULL") {
+          logEvent("inbound_message_executor_error", safeErrorDiagnostics(error));
+          return;
+        }
+        const stats = inboundMessageExecutor.getStats();
+        logEvent("inbound_message_queue_full", { active: stats.active, queued: stats.queued });
+        if (!message.key?.fromMe && isSupportedChatId(userId)) {
+          try {
+            await sendTextReplyWithPresence(socket, userId, inboundRetryMessage(detectMessageLanguage(extractText(message)), "busy"));
+          } catch (sendError) {
+            logEvent("whatsapp_overload_reply_failed", safeErrorDiagnostics(sendError));
+          }
+        }
+      }
+    }));
   });
 }
 

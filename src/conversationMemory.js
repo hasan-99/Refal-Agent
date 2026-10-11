@@ -6,8 +6,18 @@ const { classifySafety } = require("./safetyPolicy");
 const MAX_RECENT_TURNS = 6;
 const MAX_SUMMARY_LENGTH = 700;
 
+function redactResidentialAddresses(value) {
+  return String(value || "")
+    .replace(/\b(?:my\s+)?(?:home\s+)?address\s*(?:is|:|=)\s*[^.!?;\n]{1,120}/giu, "[home address omitted]")
+    .replace(/\b\d{1,6}\s+[\p{L}\d.'-]+(?:\s+[\p{L}\d.'-]+){0,4}\s+(?:street|st\.?|road|rd\.?|avenue|ave\.?|lane|ln\.?|drive|dr\.?|boulevard|blvd\.?|square|sq\.?|terrace|close)\b(?:\s*,?\s*(?:apartment|apt\.?|flat|unit)\s*[\p{L}\d-]+)?/giu, "[residential address omitted]")
+    .replace(/(?<!\[)(?:عنوان\s+(?:المنزل|السكن)|عنوان\s+منزلي|عنوان\s+سكني|العنوان\s+المنزلي|عنواني\s+(?:المنزل|السكن))\s*(?:هو|هي|:|=)?\s*[^.!؟?؛،;\n]{1,120}/giu, "[عنوان السكن محذوف]")
+    .replace(/(?:أعيش|اعيش|أسكن|اسكن|أقيم|اقيم)\s+(?:في|بـ)\s+(?:شارع|طريق)\s+[\p{L}\p{N}.'-]+(?:\s+[\p{L}\p{N}.'-]+){0,4}\s+\d{1,5}\b/giu, "[عنوان السكن محذوف]")
+    .replace(/(?:μένω|κατοικώ|διαμένω)\s+(?:στη|στον|στην)\s+(?:διεύθυνση|οδό)\s+[\p{L}\p{N}.'-]+(?:\s+[\p{L}\p{N}.'-]+){0,4}\s+\d{1,5}\b/giu, "[η διεύθυνση κατοικίας αφαιρέθηκε]")
+    .replace(/(?<!\[)(?:μένω|κατοικώ|διαμένω)\s+(?:στη|στον|στην)\s+(?:διεύθυνση|οδό)\s+[^.!;,\n]{1,120}/giu, "[η διεύθυνση κατοικίας αφαιρέθηκε]");
+}
+
 function safeMemoryText(value, maxLength = 700) {
-  return redactSensitiveData(redactPersonalData(String(value || "")))
+  return redactResidentialAddresses(redactSensitiveData(redactPersonalData(String(value || ""))))
     .replace(/\n\s*(?:sources?|المصادر)\s*:\s*[\s\S]*$/iu, "")
     .replace(/https?:\/\/\S+/giu, "[link omitted]")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, " ")
@@ -66,15 +76,26 @@ function buildConversationContext(user, { currentMessage = "", limit = MAX_RECEN
   };
 }
 
-async function refreshCustomerTopicSummary({ store, userId, user, currentMessage }) {
+async function refreshCustomerTopicSummary({ store, userId, user, currentMessage, sourceTurnId = null }) {
   const summary = buildCustomerTopicSummary(user?.history, currentMessage);
   if (!summary || typeof store?.updateUser !== "function") return summary;
   await store.updateUser(userId, (draft) => {
     draft.profile = draft.profile || {};
     draft.profile.conversationSummary = summary;
     draft.profile.conversationSummaryUpdatedAt = new Date().toISOString();
+    if (typeof sourceTurnId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(sourceTurnId)) {
+      draft.profile.conversationSummarySourceTurnId = sourceTurnId;
+    }
   });
   return summary;
+}
+
+async function refreshCustomerTopicSummaryFromStore({ store, userId, currentMessage, sourceTurnId = null }) {
+  if (typeof store?.getUser !== "function") return "";
+  // Called after the source turn is durable, so read the persisted history
+  // instead of relying on a pre-turn user snapshot captured by the Agent.
+  const user = await store.getUser(userId);
+  return refreshCustomerTopicSummary({ store, userId, user, currentMessage, sourceTurnId });
 }
 
 module.exports = {
@@ -82,5 +103,6 @@ module.exports = {
   buildCustomerTopicSummary,
   buildConversationContext,
   refreshCustomerTopicSummary,
+  refreshCustomerTopicSummaryFromStore,
   safeMemoryText
 };

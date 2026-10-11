@@ -1,0 +1,13 @@
+{
+  "caseId": "FB-2026-0001",
+  "capturedAt": "2026-10-11T09:30:00Z",
+  "signal": "unanswered_question",
+  "language": "ar",
+  "topic": "banking-and-payment-gateways",
+  "severity": "normal",
+  "summary": "Arabic answer did not explain who decides account approval.",
+  "observedBehavior": "The reply gave a generic fallback despite relevant approved guidance.",
+  "expectedBehavior": "State the bank makes the final decision and ask one useful activity question.",
+  "evidenceRef": "restricted-case:opaque-7f31",
+  "status": "captured"
+}

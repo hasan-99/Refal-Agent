@@ -1,4 +1,4 @@
-const { redactSensitiveData } = require("./sensitiveData");
+const { redactSensitiveData, redactAuditEventFields } = require("./sensitiveData");
 
 function requireRafaApiConfig() {
   const url = process.env.SUPABASE_URL;
@@ -119,30 +119,53 @@ class EdgeApiStore {
     });
   }
 
-  async saveCrmProfile({ userId, field, value, sourceTurnId }) {
-    const result = await this.request("/crm/profile", {
+  async saveCrmProfile({ userId, field, rawValue, normalizedValue, sourceTurnId }) {
+    // The Edge RPC is idempotent on its contact + sourceTurnId + field tuple.
+    // A bounded retry can therefore reconcile a lost response after commit
+    // without creating another contact/profile record or overwriting a newer
+    // source turn. Explicit client errors are definitive and are not retried.
+    const options = {
       method: "POST",
       timeoutMs: 8000,
-      body: JSON.stringify({ userId, field, value, sourceTurnId })
-    });
+      body: JSON.stringify({ userId, field, rawValue, normalizedValue, sourceTurnId })
+    };
+    let result;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        result = await this.request("/crm/profile", options);
+        break;
+      } catch (error) {
+        const transient = !Number.isInteger(error?.status) || error.status >= 500;
+        if (!transient || attempt >= 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
     const user = this.data.users[userId];
     if (user) {
       user.profile = user.profile || {};
       user.profile.agentFacts = { ...(user.profile.agentFacts || {}) };
       if (result?.status === "saved") {
         user.profile.agentFacts[field.toLowerCase()] = {
-          value, normalizedValue: value, provenance: "customer_message", confidence: 1,
+          value: normalizedValue, rawValue, normalizedValue, provenance: "customer_message", confidence: 1,
           sourceTurnId, savedAt: new Date().toISOString(), durable: true
         };
       }
       if (result?.status === "correction_needed") {
-        const correctionField = String(result.correctionField || field).toLowerCase();
-        user.profile.crmCorrectionNeeded = { field: correctionField };
-        if (user.profile.agentFacts[correctionField]) {
-          user.profile.agentFacts[correctionField] = { ...user.profile.agentFacts[correctionField], correctionNeeded: true };
+        const correctionFields = Array.isArray(result.correctionFields) ? result.correctionFields.map((item) => String(item).toLowerCase()) : [field.toLowerCase()];
+        user.profile.crmCorrectionNeeded = { field: correctionFields[0], fields: correctionFields };
+        for (const correctionField of correctionFields) {
+          if (user.profile.agentFacts[correctionField]) {
+            user.profile.agentFacts[correctionField] = { ...user.profile.agentFacts[correctionField], correctionNeeded: true };
+          }
         }
-      } else if (result?.correctionField) {
-        user.profile.crmCorrectionNeeded = { field: String(result.correctionField).toLowerCase() };
+      } else if (Array.isArray(result?.correctionFields) && result.correctionFields.length) {
+        const correctionFields = result.correctionFields.map((item) => String(item).toLowerCase());
+        user.profile.crmCorrectionNeeded = { field: correctionFields[0], fields: correctionFields };
+        for (const correctionField of correctionFields) {
+          if (user.profile.agentFacts[correctionField]) {
+            user.profile.agentFacts[correctionField] = { ...user.profile.agentFacts[correctionField], correctionNeeded: true };
+          }
+        }
       } else {
         delete user.profile.crmCorrectionNeeded;
       }
@@ -273,7 +296,7 @@ class EdgeApiStore {
   async logEvent(event, fields = {}) {
     await this.request("/events", {
       method: "POST",
-      body: JSON.stringify({ event, fields })
+      body: JSON.stringify({ event, fields: redactAuditEventFields(fields) })
     });
   }
 
@@ -314,6 +337,26 @@ class EdgeApiStore {
   async saveFollowUpState(userId, state) {
     const { followUp } = await this.persistWorkflow("follow-up", { userId, ...state });
     return followUp;
+  }
+
+  async claimFollowUpSend(userId, { claimId, consentSourceTurnId, triggerTurnId }) {
+    const { claimed } = await this.persistWorkflow("follow-up-claim", {
+      userId,
+      claimId,
+      consentSourceTurnId,
+      triggerTurnId,
+      sourceTurnId: triggerTurnId
+    });
+    return claimed === true;
+  }
+
+  async finishFollowUpSend(userId, result) {
+    const { finished } = await this.persistWorkflow("follow-up-result", {
+      userId,
+      ...result,
+      sourceTurnId: result.triggerTurnId
+    });
+    return finished === true;
   }
 
   async saveOpportunityIntake(userId, intake, options = {}) {
@@ -479,8 +522,8 @@ class EdgeApiStore {
     return this.request("/messages/claim", { method: "POST", body: JSON.stringify({ userId, messageId }) });
   }
 
-  async completeInboundMessage(userId, messageId) {
-    return this.request("/messages/complete", { method: "POST", body: JSON.stringify({ userId, messageId }) });
+  async completeInboundMessage(userId, messageId, leaseToken) {
+    return this.request("/messages/complete", { method: "POST", body: JSON.stringify({ userId, messageId, leaseToken }) });
   }
 
   async listContactBlocks() {

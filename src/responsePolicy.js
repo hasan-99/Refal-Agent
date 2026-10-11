@@ -11,6 +11,8 @@ const DEFAULT_MAX_SENTENCES = 5;
 const DEFAULT_MAX_QUESTIONS = 1;
 const { containsProhibitedClaim } = require("./refalcoAnswer");
 const { containsRawSecretValue } = require("./sensitiveData");
+const { containsLabeledSensitiveValue } = require("./sensitiveOutputPolicy");
+const { requestsForbiddenCredential } = require("./privacyHardRule");
 
 // REFAL-AGENT-011: named, reusable threshold presets — the single place all
 // three callers (ai.js's model-direct path, agentLoop.js's Agent respond
@@ -57,10 +59,10 @@ const INTERNAL_REASONING_PATTERNS = Object.freeze([
   // Arabic equivalents of the same concepts (hidden/internal instructions,
   // chain-of-thought, internal scoring/labels) — internal-reasoning leakage
   // is not an English-only failure mode.
-  /(?:تعليمات\s*(?:داخلية|النظام)|موجه\s*النظام|سلسلة\s*التفكير|التفكير\s*الداخلي|ملاحظات\s*داخلية)/iu,
+  /(?:تعليمات\s*(?:داخلية|النظام|سرية)|تعليماتك\s*(?:السرية|الخاصة)|الموجه\s*(?:الخفي|السري)|سلسلة\s*التفكير|التفكير\s*الداخلي|ملاحظات\s*داخلية)/iu,
   /(?:درجة\s*(?:التأهيل|الأولوية)|تصنيف\s*(?:العميل|الأولوية)|معرف\s*داخلي)\s*[:=]?/iu,
   // Greek equivalents.
-  /(?:εσωτερικ(?:ές|ή)\s*(?:οδηγίες|σημειώσεις)|οδηγίες\s*συστήματος|αλυσίδα\s*σκέψης|εσωτερική\s*σκέψη)/iu,
+  /(?:εσωτερικ(?:ές|ή)\s*(?:οδηγίες|σημειώσεις)|(?:κρυφ(?:ές|ή)|μυστικ(?:ές|ή))\s+οδηγί(?:ες|α)|οδηγίες\s*συστήματος|αλυσίδα\s*σκέψης|εσωτερική\s*σκέψη)/iu,
   /(?:βαθμολογία\s*(?:προτεραιότητας|αξιολόγησης)|ταξινόμηση\s*(?:πελάτη|προτεραιότητας)|εσωτερικό\s*αναγνωριστικό)\s*[:=]?/iu,
   /\b(?:your|lead|need|value|readiness)\s+(?:need\s+|value\s+|readiness\s+)?score\s*(?:is|:|=)?\s*[0-5](?:\s*(?:\/|out of)\s*5)?\b|\b(?:hot|warm|cold|strategic)\s+(?:lead|customer)\b/iu,
   /(?:أنت\s*(?:عميل\s*)?(?:ساخن|دافئ|بارد)|درجة\s*(?:الاحتياج|القيمة|الجاهزية)\s*(?:هي|:|=)?\s*[٠-٥0-5](?:\s*من\s*٥)?)/iu,
@@ -127,12 +129,12 @@ function containsUnconsentedContactCommitment(text) {
 function sentenceCount(text) {
   const value = String(text || "").trim();
   if (!value) return 0;
-  return value.split(/[.!?؟。！？]+(?:["'”»)]*)?(?=\s|$)|(?<=\p{Script=Greek});(?:["'”»)]*)?(?=\s|$)/u).map((part) => part.trim()).filter(Boolean).length;
+  return value.split(/[.!?؟。！？]+(?:["'”»)]*)?(?=\s|$)|(?<=\p{Script=Greek})[;;](?:["'”»)]*)?(?=\s|$)/u).map((part) => part.trim()).filter(Boolean).length;
 }
 
 function questionCount(text) {
   const value = String(text || "");
-  return (value.match(/[?؟]/gu) || []).length + (value.match(/(?<=\p{Script=Greek});/gu) || []).length;
+  return (value.match(/[?؟]/gu) || []).length + (value.match(/(?<=\p{Script=Greek})[;;]/gu) || []).length;
 }
 
 /**
@@ -147,7 +149,7 @@ function questionsAreCoupled(text) {
   if (!value) return false;
   if (questionCount(value) !== 2) return false;
 
-  const firstMark = value.search(/[?؟]|(?<=\p{Script=Greek});/u);
+  const firstMark = value.search(/[?؟]|(?<=\p{Script=Greek})[;;]/u);
   if (firstMark === -1) return false;
   const second = value.slice(firstMark + 1).trim();
   if (!second) return false;
@@ -184,6 +186,10 @@ function findPattern(text, patterns) {
   return patterns.find((pattern) => pattern.test(String(text || ""))) || null;
 }
 
+function containsForbiddenCredentialRequest(text) {
+  return requestsForbiddenCredential(text).violation;
+}
+
 function validateResponse(response, options = {}) {
   const text = String(response || "").trim();
   const minSentences = Number.isInteger(options.minSentences) ? options.minSentences : DEFAULT_MIN_SENTENCES;
@@ -200,7 +206,8 @@ function validateResponse(response, options = {}) {
   const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
   const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);
-  const sensitiveValueEcho = containsRawSecretValue(text);
+  const sensitiveValueEcho = containsRawSecretValue(text) || containsLabeledSensitiveValue(text);
+  const forbiddenCredentialRequest = containsForbiddenCredentialRequest(text);
   const constructionPriceEstimate = options.customerMessage
     ? containsProhibitedConstructionEstimate(options.customerMessage, text)
     : false;
@@ -230,6 +237,7 @@ function validateResponse(response, options = {}) {
   if (unverifiedHandoverAction) reasons.push("unverified_handover_action");
   if (unverifiedBookingAction) reasons.push("unverified_booking_action");
   if (sensitiveValueEcho) reasons.push("sensitive_value_echo");
+  if (forbiddenCredentialRequest) reasons.push("forbidden_credential_request");
   if (constructionPriceEstimate) reasons.push("construction_pricing_prohibited");
   return {
     valid: reasons.length === 0,
@@ -244,6 +252,7 @@ function validateResponse(response, options = {}) {
     unverifiedHandoverAction,
     unverifiedBookingAction,
     sensitiveValueEcho,
+    forbiddenCredentialRequest,
     constructionPriceEstimate
   };
 }
@@ -276,7 +285,10 @@ function hasVerifiedBookingClaim(metadata = {}) {
 }
 
 function safeFallbackData({ language = "en", category = "uncertainty" } = {}) {
-  const key = String(language).toLowerCase().slice(0, 2);
+  // Callers usually pass a two-letter locale, but the language detector and
+  // several policies use the full name "greek". Slicing that value produced
+  // "gr", silently selecting English for Greek fallbacks.
+  const key = languagePackKey(language);
   const fallbacks = {
     en: {
       price: "I understand that cost matters. We can first clarify your needs and then arrange a review of the suitable options. What budget range should we keep in mind?",

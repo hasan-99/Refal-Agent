@@ -30,6 +30,8 @@ test("policy metadata enrichment batches chunk and fact reads and returns only b
     topic: "jurisdiction-dubai",
     topicNumber: 26,
     facts: ["MB-J0", "MB-J1"],
+    supporting: [],
+    governedFacts: ["MB-J0", "MB-J1"],
     factRegisterRows: [{ id: "MB-J0", status: "approved", reviewer: "BOSS", verifiedAt: "2026-10-01T00:00:00Z", effectiveFrom: null, expiryOrReviewAt: "2026-12-30", approvedLanguages: ["ar", "el", "en"] }],
     reviewStatus: "approved",
     validUntil: "2026-12-01T00:00:00Z"

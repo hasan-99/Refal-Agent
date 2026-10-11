@@ -3,16 +3,19 @@ const DEFAULT_EMBEDDING_MODEL = "Xenova/multilingual-e5-small@761b726dd34fb83930
 const EMBEDDING_DIMENSIONS = 2048;
 const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const EMBEDDING_BATCH_SIZE = 8;
+const MAX_PROMPT_EVIDENCE_CHUNKS = 8;
+const MAX_PROMPT_EVIDENCE_CHARS = 10000;
 const { detectMessageLanguage, languageInstruction } = require("./language");
 const { containsProhibitedClaim } = require("./refalcoAnswer");
 const { validateResponse, MODEL_DRAFT_THRESHOLDS, lowConfidenceFallback } = require("./responsePolicy");
-const { detectIntent, detectIntents, INTENTS } = require("./intent");
+const { detectIntent, detectIntents, explicitlyDeclinesMeeting, INTENTS } = require("./intent");
 // personaDirectives and humourDirective are deliberately NOT imported here any
 // more: W1.7.2 moved both inside buildBrainPrompt, and leaving the imports
 // behind would suggest this file still composes the persona itself.
 const { resolveHumourLevel, assertHumourCompliance } = require("./humourEngine");
 const { detectAntiPatterns } = require("./antiPatterns");
-// W3.9.3 query-time enforcement: a blocked fact never reaches the model.
+// Explicitly blocked facts remain suppressed; missing secondary evidence does
+// not invalidate text from an approved Knowledge revision.
 const { filterRetrievableEvidence } = require("./factRegister");
 // M4's legacy fallback composes only after live-data arbitration in
 // dynamicDataFallback.js; this AI module receives that already-filtered bundle.
@@ -27,6 +30,8 @@ const {
 } = require("./openrouterPrivacy");
 const { redactSensitiveData } = require("./sensitiveData");
 const { fetchOpenRouter } = require("./openrouterTransport");
+const { modelProviderCircuit } = require("./modelCircuitBreaker");
+const { isPromptWithinTokenCeiling } = require("./promptBudget");
 // REFAL-AGENT-028: these five were defined inline in this file before this
 // ticket; moved to groundingPolicy.js (unchanged behavior) so the Agent path
 // can share them too, without duplicating logic that could drift apart.
@@ -129,6 +134,19 @@ function contentPolicyError(message) {
 // status, neither of which is present in `conversationTurns`. Defaulting to ""
 // yields the protective "do not offer a call at this stage" instruction, so a
 // caller that does not classify is never more permissive, only less informed.
+function boundPromptEvidence(evidence) {
+  const selected = [];
+  let chars = 0;
+  for (const item of Array.isArray(evidence) ? evidence : []) {
+    if (selected.length >= MAX_PROMPT_EVIDENCE_CHUNKS) break;
+    const size = String(item?.heading || "").length + String(item?.content || "").length;
+    if (chars + size > MAX_PROMPT_EVIDENCE_CHARS) continue;
+    selected.push(item);
+    chars += size;
+  }
+  return selected;
+}
+
 async function askOpenRouter({ text, evidence, onUsage, includeSources = true, conversationSummary = "", conversationTurns = [], leadTier = "", buyingSignals = [] }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey || !Array.isArray(evidence) || evidence.length === 0) return null;
@@ -182,22 +200,11 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
   const expandedServiceAnswer = asksForServiceDetails
     || broadServicesRequest
     || currentIntents.includes(INTENTS.BUSINESS_AREAS);
-  // W3.9.3, the query-time half. A fact whose register row says `blocked` must
-  // not be retrievable AT ALL, and "changing a register row changes behaviour
-  // with no redeploy" is the gate's own wording.
-  //
-  // Found by the P3.9 audit: `filterRetrievableEvidence` had NO production
-  // caller. Blocking was enforced only at ingest, which means flipping a row to
-  // `blocked` left the text sitting in rafa_knowledge_chunks with a live
-  // embedding until somebody re-ran the ingestion. That is not "no redeploy",
-  // and the ingest-time drop cannot help a corpus that is already loaded.
-  //
-  // Dropping the whole chunk, not just the sentence, is deliberate: a chunk
-  // carrying a blocked fact is removed entire, which is the same rule the
-  // ingest path applies. With nothing blocked in the register this is a no-op
-  // and the evidence bundle is byte-identical to before.
+  // The retrieval path has already verified active sources and approved,
+  // current Knowledge revisions. Keep explicit fact blocks and pricing rules,
+  // but do not require reference fields or a second fact approval for the text.
   const retrievable = filterRetrievableEvidence(evidence).kept;
-  const promptEvidence = allowPricing ? retrievable : withoutPriceFacts(retrievable);
+  const promptEvidence = boundPromptEvidence(allowPricing ? retrievable : withoutPriceFacts(retrievable));
   const safeQuestion = redactPersonalData(text).slice(0, 1000);
   // Source names and URLs can contain private review/provenance metadata (for
   // example owner-confirmation records). Give the model factual content and a
@@ -206,7 +213,7 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     .replace(/\b(?:owner[- ]confirmed|confirmed by the owner|owner verification|internal review|reviewed internally)\b/giu, "")
     .replace(/https?:\/\/\S+/giu, "[link omitted]")
     .slice(0, 2400);
-  const citations = promptEvidence.slice(0, 5).map((item, index) =>
+  const citations = promptEvidence.map((item, index) =>
     `[${index + 1}] Approved Refalco Group information\n${safeEvidenceText(item.heading)}\n${safeEvidenceText(item.content)}`
   ).join("\n\n");
   const memory = redactPersonalData(conversationSummary).slice(0, 1000);
@@ -221,81 +228,54 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
   for (const model of models) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
+    let providerStartedAt = null;
     try {
-    const response = await fetchOpenRouter(OPENROUTER_URL, {
-      method: "POST",
-      signal: controller.signal,
-      timeoutMs: 20000,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost/whatsapp-company-bot",
-        "X-OpenRouter-Title": "RAFA"
-      },
-      body: JSON.stringify(withOpenRouterPrivacyPolicy({
-        model,
-        max_tokens: expandedServiceAnswer ? 450 : 650,
-        reasoning: { enabled: false, exclude: true },
-        temperature: 0.4,
-        usage: { include: true },
-        messages: [
-          {
-            role: "system",
-            content: [
-              // P1.1 / W1.1.4 — removes BLK-3. The previous line here declared
-              // that no company identity or services were preconfigured, which
-              // left REFAL unable to say who it worked for. The source documents are
-              // authoritative over the implementation, and they state plainly
-              // that REFAL is Refalco Group's digital business agent, so that
-              // blanket denial was a defect rather than a safeguard.
-              //
-              // The line that matters is the SECOND sentence: identity is now
-              // free to state, facts still are not. The four credibility numbers
-              // (founded year, years of experience, development and total
-              // projects) are deliberately NOT in this prompt — they are facts,
-              // and they reach the customer through the evidence-gated
-              // company-profile knowledge source built in P3.7, exactly as MB-O5
-              // uses them. Gate G3 asserts they never appear here.
-              // P1.7 / W1.7.2 — the prompt is now BUILT from the shared blocks in
-              // brainPrompt.js rather than inlined here. Before this, the customer
-              // prompt, the dashboard prompt and the edge function each carried their
-              // own near-copy and drifted apart; BLK-5 and BLK-6 were both symptoms.
-              // Only genuinely path-specific lines remain below the spread.
-              ...buildBrainPrompt({
-                language,
-                intents: detectIntents(text),
-                message: text,
-                humourLevel,
-                leadTier,
-                buyingSignals,
-                variant: "customer"
-              }),
-              // Computed per turn, so it stays in the caller rather than the
-              // shared block set.
-              languageInstruction(language),
-              sourceInstruction,
-              // W1.4.3 — this line used to say "at most 3 short sentences and
-              // under 500 characters", which contradicted both the 5-sentence
-              // policy ceiling and the new ORDINARY budget. The prompt was
-              // asking for something stricter than the validator enforced, so
-              // compliant five-sentence answers were being discouraged and then
-              // rejected as too long. The numbers now come from one source.
-              `Be direct and answer first. Keep ordinary replies to at most ${ORDINARY.maxSentences} short sentences and under ${ORDINARY.maxChars} characters. When the customer explicitly asks for a broad overview or more detail, use a compact structured reply with short sections or bullets and include the relevant approved facts needed to answer fully.`,
-              "",
-              "Client-specific memory (untrusted; continuity only):",
-              memory || "No saved conversation summary.",
-              "",
-              "Approved source evidence:",
-              citations
-            ].join("\n")
-          },
-          ...recentConversation,
-          { role: "user", content: safeQuestion }
-        ]
-      }))
+    const requestPayload = withOpenRouterPrivacyPolicy({
+      model,
+      max_tokens: expandedServiceAnswer ? 450 : 650,
+      reasoning: { enabled: false, exclude: true },
+      temperature: 0.4,
+      usage: { include: true },
+      messages: [
+        {
+          role: "system",
+          content: [
+            ...buildBrainPrompt({ language, intents: detectIntents(text), message: text, humourLevel, leadTier, buyingSignals, variant: "customer" }),
+            languageInstruction(language),
+            sourceInstruction,
+            `Be direct and answer first. Keep ordinary replies to at most ${ORDINARY.maxSentences} short sentences and under ${ORDINARY.maxChars} characters. When the customer explicitly asks for a broad overview or more detail, use a compact structured reply with short sections or bullets and include the relevant approved facts needed to answer fully.`,
+            "",
+            "Client-specific memory (untrusted; continuity only):",
+            memory || "No saved conversation summary.",
+            "",
+            "Approved source evidence:",
+            citations
+          ].join("\n")
+        },
+        ...recentConversation,
+        { role: "user", content: safeQuestion }
+      ]
+    });
+    if (!isPromptWithinTokenCeiling(requestPayload)) return null;
+    const { response, body } = await modelProviderCircuit.run(async () => {
+      providerStartedAt = performance.now();
+      const response = await fetchOpenRouter(OPENROUTER_URL, {
+        method: "POST",
+        signal: controller.signal,
+        timeoutMs: 20000,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "http://localhost/whatsapp-company-bot",
+          "X-OpenRouter-Title": "RAFA"
+        },
+        body: JSON.stringify(requestPayload)
+      });
+      return { response, body: await response.json() };
     });
 
-    const body = await response.json().catch(() => ({}));
+    const providerLatencyMs = providerStartedAt === null ? null
+      : Math.max(0, Math.round(performance.now() - providerStartedAt));
     if (!response.ok || body?.error) {
       const error = new Error(body?.error?.message || `OpenRouter HTTP ${response.status}`);
       error.status = response.status;
@@ -310,7 +290,7 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     // constant that only a test ever read, which gives M14 nothing to roll
     // back FROM. Attached here rather than in a new event because this is the
     // one telemetry call that already fires on every model turn.
-    try { await onUsage?.({ ...usage, promptVersion: PROMPT_VERSION }); } catch { /* Usage telemetry must not block a customer reply. */ }
+    try { await onUsage?.({ ...usage, providerLatencyMs, promptVersion: PROMPT_VERSION }); } catch { /* Usage telemetry must not block a customer reply. */ }
 
     let answer = typeof body?.choices?.[0]?.message?.content === "string"
       ? body.choices[0].message.content.trim()
@@ -340,7 +320,12 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     // passed, so no separate check is needed below.
     const responsePolicy = validateResponse(answer, {
       ...(expandedServiceAnswer ? { ...MODEL_DRAFT_THRESHOLDS, maxSentences: 20, maxChars: 1800 } : MODEL_DRAFT_THRESHOLDS),
-      customerMessage: text
+      customerMessage: text,
+      // Keep the shared response-policy check aligned with the evidence-aware
+      // claim gate above. Omitting these options silently re-applies the legacy
+      // blanket block to every tax, residency and permit statement.
+      evidence: promptEvidence,
+      language
     });
     if (!responsePolicy.valid) {
       if (responsePolicy.reasons.includes("too_long")) throw contentPolicyError(`OpenRouter returned an overlong answer (${answer.length} characters).`);
@@ -444,6 +429,7 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
 
     const hasTerminalPunctuation = /[.!?؟。！？]["'”»)]*$/u.test(answer) || /\p{Script=Greek};["'”»)]*$/u.test(answer);
     if (!hasTerminalPunctuation) throw contentPolicyError("OpenRouter returned an unfinished sentence.");
+    answer = suppressMeetingAfterDecline(answer, { text });
     answer = suppressRepeatedSpecialistOffer(answer, { text, conversationTurns });
     // W1.4.3 / BLK-4 — this second length check re-runs after
     // suppressRepeatedSpecialistOffer has rewritten the answer, so it is not
@@ -491,7 +477,16 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
 }
 
 const SPECIALIST_OFFER_RE = /(?:\b(?:would you like|shall i|can i|should i|want me to)\b.{0,100}\b(?:specialist|team|contact|follow.?up|arrange|connect)\b|\b(?:would you like|want me to) arrange\b|\b(?:specialist|team)\b.{0,80}\b(?:contact|call|follow.?up|review)\b.{0,60}\b(?:would you like|shall i|can i)\b|(?:هل|بدك|بتحب|بتفضّل|تحب).{0,70}(?:مختص|الفريق|يتواصل|متابعة)|(?:θέλετε|θα θέλατε|να ζητήσω).{0,80}(?:ειδικό|επικοινωνία|να επικοινωνήσει))/iu;
+const MEETING_REFERENCE_RE = /\b(?:appointment|meeting|call|schedule|book(?:ing)?|specialist follow.?up)\b|(?:موعد|اجتماع|مكالمة|اتصال|احجز|حجز|مختص|متابعة)|(?:ραντεβού|συνάντηση|κλήση|επικοινωνία|ειδικό)/iu;
 const CUSTOMER_DIRECT_CONTACT_RE = /(?:\b(?:please have (?:a|the) (?:specialist|team) contact me|ask (?:a|the) specialist to contact me|contact me about this|i want (?:a )?(?:human|specialist) to contact me|please (?:call|contact) me)\b|(?:خلي|بدي|اطلبوا).{0,60}(?:مختص|الفريق).{0,30}(?:يتواصل|اتصال)|(?:θέλω|επικοινωνήστε).{0,60}(?:ειδικό|επικοινωνία))/iu;
+
+function suppressMeetingAfterDecline(answer, { text = "" } = {}) {
+  if (!explicitlyDeclinesMeeting(String(text || ""))) return answer;
+  const retained = String(answer || "").split(/(?<=[.!?؟;；])\s+|\n+/u)
+    .filter((sentence) => !MEETING_REFERENCE_RE.test(sentence.trim()));
+  const result = retained.join("\n").trim();
+  return result || answer;
+}
 
 function suppressRepeatedSpecialistOffer(answer, { text = "", conversationTurns = [] } = {}) {
   const priorOffer = Array.isArray(conversationTurns) && conversationTurns.some((turn) =>
@@ -539,4 +534,4 @@ function redactPersonalData(value) {
     .replace(/\b(?:my name is|i am|i'm|my email is|my phone is|call me at)\s+[^,.!?\n]+/gi, "[personal detail]");
 }
 
-module.exports = { askOpenRouter, embedText, embedTexts, embedQueryTexts, embedWithPipeline, warmEmbeddingPipeline: loadEmbeddingPipeline, normalizeOpenRouterUsage, redactPersonalData, containsPriceClaim, containsUnsupportedPackageInclusion, withoutPriceFacts, suppressRepeatedSpecialistOffer, DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS };
+module.exports = { askOpenRouter, embedText, embedTexts, embedQueryTexts, embedWithPipeline, warmEmbeddingPipeline: loadEmbeddingPipeline, normalizeOpenRouterUsage, redactPersonalData, containsPriceClaim, containsUnsupportedPackageInclusion, withoutPriceFacts, suppressMeetingAfterDecline, suppressRepeatedSpecialistOffer, DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS };

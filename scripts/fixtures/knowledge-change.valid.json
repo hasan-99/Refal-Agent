@@ -1,0 +1,15 @@
+{
+  "changeId": "KB-2026-0042",
+  "title": "Company registration document change",
+  "summary": "Update the document checklist from the current authority source.",
+  "owner": "Corporate Services",
+  "submittedBy": "Hasan A.",
+  "topic": "formation-package",
+  "domain": "corporate",
+  "language": "en",
+  "source": { "type": "government authority", "reference": "https://example.gov.cy/guidance" },
+  "effectiveFrom": "2026-10-01",
+  "expiresAt": "2027-10-01",
+  "status": "draft",
+  "reviewer": { "name": "Reviewer Name", "qualification": "Relevant role or qualification" }
+}

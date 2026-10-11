@@ -52,6 +52,31 @@ test("the pre-send gate rejects questions about already known customer facts and
   assert.match(result.response, /next steps/i);
 });
 
+test("the pre-send gate catches natural business-activity repeats in all three supported languages", async () => {
+  const cases = [
+    { locale: "english", question: "What kind of work do you do?", next: "I have that noted. What would you like to know next?" },
+    { locale: "arabic", question: "ما طبيعة عملك؟", next: "سجلت ذلك. ما الذي تريد معرفته الآن؟" },
+    { locale: "greek", question: "Με τι ασχολείστε;", next: "Το έχω σημειώσει. Τι θα θέλατε να μάθετε τώρα;" }
+  ];
+  for (const item of cases) {
+    const context = buildAgentContext({
+      currentMessage: "Please continue helping me.",
+      locale: item.locale,
+      knownCustomerFacts: { businessActivity: { value: "software consultancy", normalizedValue: "software consultancy", provenance: "customer_message", confidence: 1 } }
+    });
+    const result = await runAgentTurn(context, {
+      decideNextStep: scriptedDecider([
+        { type: "clarify", text: item.question },
+        { type: "respond", text: item.next }
+      ]),
+      tools: {}
+    });
+    assert.equal(result.outcome, "responded", item.locale);
+    assert.equal(result.steps[0].result.reasonCode, "never_reask:businessActivity", item.locale);
+    assert.equal(result.response, item.next, item.locale);
+  }
+});
+
 test("the pre-send gate permits clarification when stored facts are inferred or conflict", async () => {
   const context = buildAgentContext({
     currentMessage: "Tell me what you have recorded.",

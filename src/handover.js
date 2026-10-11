@@ -246,12 +246,12 @@ function separateCustomerAndInternalMessages({ customerMessage = "", internalMes
 // English text for an Arabic/Greek customer. Localized using the same
 // `language` value already threaded through to buildRefalLeadSummary.
 function defaultHandoverCustomerMessage(language) {
-  if (language === "arabic") return "شكرًا لك. شاركت هذا مع فريق الشركة المختص، وسيتابعون معك.";
-  if (language === "greek") return "Ευχαριστώ. Το μοιράστηκα με την αρμόδια ομάδα της Refalco Group, και θα επικοινωνήσουν μαζί σας.";
-  return "Thank you. I’ve shared this with the appropriate Refalco Group team, and they will follow up with you.";
+  if (language === "arabic") return "شكرًا لك. أستطيع تجهيز ملخص لفريق الشركة المختص، وسأخبرك عندما تتم مشاركته.";
+  if (language === "greek") return "Ευχαριστώ. Μπορώ να ετοιμάσω μια σύνοψη για την αρμόδια ομάδα της Refalco Group και να σας ενημερώσω όταν κοινοποιηθεί.";
+  return "Thank you. I can prepare a summary for the appropriate Refalco Group team and let you know once it has been shared.";
 }
 
-function createHandover({ input, customerMessage, customer, conversation, intent, intents, need, timing, value, authority, contact, language, notes, qualification, opportunityIntake, sharingScope } = {}) {
+function createHandover({ input, customerMessage, customer, conversation, intent, intents, need, timing, value, authority, contact, language = customer?.language, notes, qualification, opportunityIntake, sharingScope } = {}) {
   const routing = routeIntentToDepartment({ intent, intents });
   const summary = buildRefalLeadSummary({ customer, conversation, intent: routing.matchedIntents, need, timing, value, authority, contact, language, notes, qualification, opportunityIntake, sharingScope });
   const priority = assessPriority({ intent: routing.matchedIntents, text: input || need || notes });

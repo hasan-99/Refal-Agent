@@ -155,4 +155,4 @@ function detectIntent(text) {
   return { primary, intents, language: detectMessageLanguage(text), isMultiIntent: intents.length > 1 };
 }
 
-module.exports = { INTENTS, INTENT_TAXONOMY: INTENTS, normalizeIntentText, detectIntents, detectIntent, PRIORITY };
+module.exports = { INTENTS, INTENT_TAXONOMY: INTENTS, normalizeIntentText, detectIntents, detectIntent, explicitlyDeclinesMeeting, PRIORITY };

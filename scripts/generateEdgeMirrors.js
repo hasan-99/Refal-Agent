@@ -191,12 +191,22 @@ const BANNER = (sources) => `// GENERATED FILE — do not edit by hand.
 
 const TARGETS = [
   {
+    file: "sensitiveOutputPolicy.mjs",
+    sources: ["src/sensitiveOutputPolicy.js"],
+    build() {
+      return mirrorModule(path.join(REPO, "src", "sensitiveOutputPolicy.js"), {
+        exportNames: ["containsLabeledSensitiveValue", "containsSensitiveOutputValue"]
+      });
+    }
+  },
+  {
     file: "responsePolicy.mjs",
-    sources: ["src/responsePolicy.js"],
+    sources: ["src/responsePolicy.js", "src/privacyHardRule.js"],
     build() {
       const src = path.join(REPO, "src", "responsePolicy.js");
       return [
         BANNER(["src/responsePolicy.js"]),
+        'import { requestsForbiddenCredential } from "./privacyHardRule.mjs";',
         extract(src, "UNCONSENTED_CONTACT_COMMITMENT"),
         extract(src, "CONTACT_CAPABILITY_OFFER"),
         extract(src, "EXPLICIT_PERMISSION_QUESTION"),
@@ -205,8 +215,18 @@ const TARGETS = [
         "",
         extract(src, "containsUnconsentedContactCommitment").replace(/^function /, "export function "),
         extract(src, "containsProhibitedConstructionEstimate").replace(/^function /, "export function "),
+        extract(src, "containsForbiddenCredentialRequest").replace(/^function /, "export function "),
         ""
       ].join("\n");
+    }
+  },
+  {
+    file: "privacyHardRule.mjs",
+    sources: ["src/privacyHardRule.js"],
+    build() {
+      return mirrorModule(path.join(REPO, "src", "privacyHardRule.js"), {
+        importMap: { "./language": "./language.mjs", "./safetyPolicy": "./safetyPolicy.mjs" }
+      });
     }
   },
   {
@@ -234,7 +254,7 @@ const TARGETS = [
     sources: ["src/safetyPolicy.js"],
     build() {
       return mirrorModule(path.join(REPO, "src", "safetyPolicy.js"), {
-        importMap: { "./language": "./language.mjs" }
+        importMap: { "./language": "./language.mjs", "./sensitiveOutputPolicy": "./sensitiveOutputPolicy.mjs" }
       });
     }
   },
@@ -318,6 +338,7 @@ const TARGETS = [
         // path and the evidence-aware path read these same consts, exactly as
         // src/refalcoAnswer.js does.
         extract(src, "UNSUPPORTED_SUITABILITY"),
+        extract(src, "UNSUPPORTED_FORMATION_OUTCOME"),
         extract(src, "ABSOLUTE_CERTAINTY"),
         extract(src, "BLANKET_RESTRICTED_TOPICS"),
         "",

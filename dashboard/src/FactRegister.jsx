@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, History, RefreshCcw, ShieldBan, ShieldCheck } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clock3, History, MoreHorizontal, Pencil, RefreshCcw, Save, ShieldBan, ShieldCheck, X } from "lucide-react";
 import "./fact-register.css";
 
 // W3.9.7 — the fact register admin surface.
@@ -61,11 +61,13 @@ export default function FactRegister({ isAdmin }) {
   const [register, setRegister] = useState(null);
   const [due, setDue] = useState(null);
   const [migration, setMigration] = useState(null);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [topicFilter, setTopicFilter] = useState("");
-  const [dueOnly, setDueOnly] = useState(false);
-  const [dueDays, setDueDays] = useState(7);
+  const dueDays = 7;
   const [expandedId, setExpandedId] = useState("");
+  const [actionMenuFactId, setActionMenuFactId] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [editDraft, setEditDraft] = useState(null);
+  const [approvalFactId, setApprovalFactId] = useState("");
+  const [approvalReason, setApprovalReason] = useState("");
   const [auditByFact, setAuditByFact] = useState({});
   const [loading, setLoading] = useState(true);
   const [busyFactId, setBusyFactId] = useState("");
@@ -75,11 +77,8 @@ export default function FactRegister({ isAdmin }) {
   const load = useCallback(async () => {
     setError("");
     try {
-      const query = new URLSearchParams();
-      if (statusFilter && statusFilter !== "all") query.set("status", statusFilter);
-      if (topicFilter) query.set("topic", topicFilter);
       const [facts, soon] = await Promise.all([
-        request(`/api/facts${query.toString() ? `?${query}` : ""}`),
+        request("/api/facts"),
         request(`/api/facts/due?days=${encodeURIComponent(dueDays)}`)
       ]);
       setRegister(facts);
@@ -99,27 +98,43 @@ export default function FactRegister({ isAdmin }) {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, topicFilter, dueDays]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  const dueIds = useMemo(() => new Set((due?.facts || []).map((fact) => fact.id)), [due]);
-  const facts = useMemo(() => {
-    const rows = register?.facts || [];
-    return dueOnly ? rows.filter((fact) => dueIds.has(fact.id)) : rows;
-  }, [register, dueOnly, dueIds]);
+  const facts = register?.facts || [];
 
-  const explanations = register?.statusExplanations || {};
+  const explanations = {
+    approved: "REFAL states it with its evidence.",
+    expired: "Not currently confirmed; offers a specialist.",
+    blocked: "REFAL cannot retrieve it.",
+    pending: "Authored, but not in force; REFAL does not state it yet.",
+  };
   const counts = register?.counts || null;
 
-  async function reapprove(fact) {
+  function beginApproval(fact) {
+    setExpandedId(fact.id);
+    setEditingId(""); setEditDraft(null);
+    setApprovalFactId(fact.id); setApprovalReason("");
+    setError(""); setNotice("");
+  }
+
+  async function reapprove(fact, reason) {
     if (!fact || !isAdmin || busyFactId) return;
     setBusyFactId(fact.id); setError(""); setNotice("");
     try {
-      const result = await request(`/api/facts/${encodeURIComponent(fact.id)}/reapprove`, { method: "POST" });
+      const result = await request(`/api/facts/${encodeURIComponent(fact.id)}/reapprove`, { method: "POST", body: JSON.stringify({ reason }) });
       const reviewer = result.reviewer || "the signed-in administrator";
       const nextReview = result.result?.expiry_or_review_at;
-      setNotice(`${fact.id} re-approved by ${reviewer}${nextReview ? `. Next review ${nextReview}.` : "."} The date was re-set from today, not extended from the old one.`);
+      const outcome = fact.status === "pending"
+        ? "approved"
+        : fact.effectiveStatus === "expired"
+          ? "re-approved"
+          : fact.status === "blocked"
+            ? "re-enabled"
+            : "review renewed";
+      setNotice(`${fact.id} ${outcome} by ${reviewer}${nextReview ? `. Next review ${nextReview}.` : "."} The date was re-set from today, not extended from the old one.`);
+      setApprovalFactId(""); setApprovalReason(""); setExpandedId("");
       await load();
     } catch (cause) {
       if (cause.payload?.migrationApplied === false) setMigration(cause.payload);
@@ -129,9 +144,51 @@ export default function FactRegister({ isAdmin }) {
     }
   }
 
+  function editFact(fact) {
+    setExpandedId(fact.id);
+    setEditingId(fact.id);
+    setApprovalFactId(""); setApprovalReason("");
+    setEditDraft({
+      sourceDocument: fact.sourceDocument,
+      sourceRef: fact.sourceRef,
+      notes: fact.notes,
+      cadenceDays: String(fact.reviewCadenceDays || 90),
+      approvedLanguages: [...fact.approvedLanguages],
+      reason: ""
+    });
+    setError(""); setNotice("");
+  }
+
+  async function saveFactEdit(event, fact) {
+    event.preventDefault();
+    if (!isAdmin || !editDraft || busyFactId) return;
+    setBusyFactId(fact.id); setError(""); setNotice("");
+    try {
+      const result = await request(`/api/facts/${encodeURIComponent(fact.id)}/review`, {
+        method: "POST",
+        body: JSON.stringify({ ...editDraft, cadenceDays: Number(editDraft.cadenceDays) })
+      });
+      setNotice(result.result?.evidence_changed
+        ? `${fact.id} evidence saved. Its status is now pending review because the source changed.`
+        : `${fact.id} review details saved with an audit record.`);
+      setEditingId(""); setEditDraft(null); setExpandedId("");
+      await load();
+    } catch (cause) {
+      if (cause.payload?.migrationApplied === false) setMigration(cause.payload);
+      else setError(cause.message || `Could not save ${fact.id}.`);
+    } finally {
+      setBusyFactId("");
+    }
+  }
+
+  function updateEdit(patch) {
+    setEditDraft((current) => current ? { ...current, ...patch } : current);
+  }
+
   async function toggleAudit(fact) {
     if (expandedId === fact.id) { setExpandedId(""); return; }
     setExpandedId(fact.id);
+    setApprovalFactId(""); setApprovalReason("");
     if (auditByFact[fact.id]) return;
     try {
       const audit = await request(`/api/facts/${encodeURIComponent(fact.id)}/audit`);
@@ -144,9 +201,9 @@ export default function FactRegister({ isAdmin }) {
   return <div className="page-stack facts-page">
     <section className="facts-hero">
       <div>
-        <span className="facts-kicker"><ShieldCheck size={14} /> RULE 2 · FACT REGISTER</span>
-        <h2>Facts REFAL may state</h2>
-        <p>Every number REFAL asserts carries provenance and a review date. A fact past its date stops being stated on its own, with no code change. Re-approving re-dates it from today.</p>
+        <span className="facts-kicker"><ShieldCheck size={14} /> KNOWLEDGE GOVERNANCE · RULE 2</span>
+        <h2>Fact &amp; evidence register</h2>
+        <p>Review the claim, its evidence, and when it needs checking again. Only approved, current facts may support customer answers. Evidence changes return the fact to review.</p>
       </div>
       <button className="ghost facts-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCcw size={15} /> Refresh</button>
     </section>
@@ -157,6 +214,7 @@ export default function FactRegister({ isAdmin }) {
         <strong>The fact register migration has not been applied yet.</strong>
         <p>{migration.error || "There is no register to read, so this page cannot tell you which facts need review. This is not the same as “no facts need review”."}</p>
         {migration.migration && <code>{migration.migration}</code>}
+        {migration.reviewEditorMigration && <code>{migration.reviewEditorMigration}</code>}
       </div>
     </div>}
 
@@ -165,25 +223,25 @@ export default function FactRegister({ isAdmin }) {
 
     {!migration && <>
       <section className="facts-banner" aria-label="Review workload">
+        <article className="facts-stat pending">
+          <span>PENDING REVIEW</span>
+          <strong>{counts ? counts.pending : "—"}</strong>
+          <small>Not available for customer answers.</small>
+        </article>
+        <article className="facts-stat approved">
+          <span>CURRENT &amp; USABLE</span>
+          <strong>{counts ? counts.approved : "—"}</strong>
+          <small>May be used while evidence stays current.</small>
+        </article>
+        <article className={counts?.expired ? "facts-stat overdue" : "facts-stat"}>
+          <span>EXPIRED</span>
+          <strong>{counts ? counts.expired : "—"}</strong>
+          <small>Stopped until reviewed again.</small>
+        </article>
         <article className={counts?.dueWithin7 ? "facts-stat soon" : "facts-stat"}>
           <span>DUE IN {due?.days ?? 7} DAYS</span>
           <strong>{counts ? counts.dueWithin7 : "—"}</strong>
-          <small>Still stated, but the review date is close.</small>
-        </article>
-        <article className={counts?.expired ? "facts-stat overdue" : "facts-stat"}>
-          <span>ALREADY EXPIRED</span>
-          <strong>{counts ? counts.expired : "—"}</strong>
-          <small>REFAL has already stopped stating these.</small>
-        </article>
-        <article className="facts-stat">
-          <span>BLOCKED</span>
-          <strong>{counts ? counts.blocked : "—"}</strong>
-          <small>Removed from retrieval entirely.</small>
-        </article>
-        <article className="facts-stat">
-          <span>IN THE REGISTER</span>
-          <strong>{counts ? counts.total : "—"}</strong>
-          <small>{counts ? `${counts.highRisk} marked high risk.` : "Facts under Rule 2."}</small>
+          <small>{counts ? `${counts.total} total · ${counts.highRisk} high risk.` : "Review schedule."}</small>
         </article>
       </section>
 
@@ -191,69 +249,95 @@ export default function FactRegister({ isAdmin }) {
         {STATUS_ORDER.filter((status) => explanations[status]).map((status) => {
           const Icon = STATUS_ICONS[status] || Clock3;
           return <div className={`facts-legend-item ${status}`} key={status}>
-            <span className={`facts-pill ${status}`}><Icon size={12} /> {status}</span>
+            <span className={`facts-pill ${status}`} aria-label={status} title={status === "approved" ? "Approved and current" : status}><Icon size={12} aria-hidden="true" />{status !== "approved" && <span>{status}</span>}</span>
             <small>{explanations[status]}</small>
           </div>;
         })}
-      </section>
-
-      <section className="facts-controls" aria-label="Filters">
-        <label>Status
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">All statuses</option>
-            {STATUS_ORDER.map((status) => <option key={status} value={status}>{status}</option>)}
-          </select>
-        </label>
-        <label>Topic
-          <select value={topicFilter} onChange={(event) => setTopicFilter(event.target.value)}>
-            <option value="">All topics</option>
-            {(register?.topics || []).map((topic) => <option key={topic} value={topic}>{topic}</option>)}
-          </select>
-        </label>
-        <label>Review horizon
-          <input type="number" min={0} max={365} value={dueDays} onChange={(event) => setDueDays(Math.max(0, Math.min(365, Number(event.target.value) || 0)))} />
-        </label>
-        <label className="facts-toggle">
-          <input type="checkbox" checked={dueOnly} onChange={(event) => setDueOnly(event.target.checked)} />
-          Only facts due within {dueDays} days{due ? ` (${due.counts.total})` : ""}
-        </label>
       </section>
 
       <section className="facts-table-wrap panel" aria-label="Fact register">
         {loading && !register ? <p className="facts-empty">Loading the fact register…</p> : facts.length === 0 ? <p className="facts-empty">No fact in the register matches these filters. The register itself holds {counts?.total ?? 0} facts.</p> : <table className="facts-table">
           <thead>
             <tr>
-              <th>Fact</th><th>Claim</th><th>Topics</th><th>Jurisdiction</th><th>Status</th>
-              <th>Verified</th><th>Review date</th><th>Days left</th><th>Risk</th><th aria-label="Actions" />
+              <th>Fact</th><th>Claim</th><th>Evidence</th><th>Scope</th><th>Status</th>
+              <th>Verified</th><th>Review date</th><th>Days left</th><th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
             {facts.map((fact) => {
               const Icon = STATUS_ICONS[fact.effectiveStatus] || Clock3;
               const audit = auditByFact[fact.id];
+              const actionLabel = fact.status === "pending"
+                ? "Approve"
+                : fact.effectiveStatus === "expired"
+                  ? "Re-approve"
+                  : fact.status === "blocked"
+                    ? "Re-enable"
+                    : fact.effectiveStatus === "approved"
+                      ? "Approved"
+                      : "Approve";
+              const actionTitle = fact.status === "pending"
+                ? "Approve this pending fact and start its review period"
+                : fact.effectiveStatus === "expired"
+                  ? "Re-approve this expired fact and reset its review date from today"
+                  : fact.status === "blocked"
+                    ? "Re-enable this blocked fact and reset its review date from today"
+                    : fact.effectiveStatus === "approved"
+                      ? "This fact is already approved"
+                      : "Approve this fact and start its review period";
               return <React.Fragment key={fact.id}>
                 <tr className={`facts-row ${fact.effectiveStatus}`}>
-                  <td className="facts-id">{fact.id}</td>
-                  <td className="facts-claim" title={fact.claimText}>{fact.claimText}</td>
-                  <td className="facts-topics">{fact.topics.length ? fact.topics.map((topic) => <span className="facts-chip" key={topic}>{topic}</span>) : <small>—</small>}</td>
-                  <td>{fact.jurisdiction || "—"}</td>
-                  <td><span className={`facts-pill ${fact.effectiveStatus}`} title={fact.statusExplanation}><Icon size={12} /> {fact.effectiveStatus}</span>{fact.status !== fact.effectiveStatus && <small className="facts-stored">stored: {fact.status}</small>}</td>
-                  <td>{fact.verifiedAt || "—"}</td>
-                  <td>{fact.expiryOrReviewAt || "—"}</td>
-                  <td><span className={`facts-days ${daysLeftTone(fact.daysLeft)}`}>{daysLeftLabel(fact.daysLeft)}</span></td>
-                  <td>{fact.highRisk ? <span className="facts-risk">High risk</span> : <small>—</small>}</td>
-                  <td className="facts-actions">
-                    <button className="primary" type="button" disabled={!isAdmin || Boolean(busyFactId)} onClick={() => void reapprove(fact)} title={isAdmin ? "Re-verify this fact and record your signed-in admin account" : "Admins can re-approve facts"}>
-                      <CheckCircle2 size={14} /> {busyFactId === fact.id ? "Working…" : "Re-approve"}
+                  <td className="facts-id" data-label="Fact">{fact.id}</td>
+                  <td className="facts-claim" data-label="Claim" title={fact.claimText}>{fact.claimText}</td>
+                  <td className="facts-evidence" data-label="Evidence"><strong>{fact.sourceType.replaceAll("-", " ") || "Unspecified"}</strong><span>{fact.sourceDocument || "Evidence not recorded"}</span>{fact.sourceRef && <small>{fact.sourceRef}</small>}</td>
+                  <td className="facts-scope" data-label="Scope">
+                    <div className="facts-scope-content">
+                      {fact.topics.map((topic) => <span className="facts-chip" key={topic}>{topic}</span>)}
+                      {fact.jurisdiction && <span className="facts-chip facts-jurisdiction">{fact.jurisdiction}</span>}
+                      {fact.highRisk && <span className="facts-risk">High risk</span>}
+                      {!fact.topics.length && !fact.jurisdiction && !fact.highRisk && <small>—</small>}
+                    </div>
+                  </td>
+                  <td data-label="Status"><span className={`facts-pill ${fact.effectiveStatus}`} aria-label={fact.effectiveStatus} title={fact.statusExplanation}><Icon size={12} aria-hidden="true" />{fact.effectiveStatus !== "approved" && <span>{fact.effectiveStatus}</span>}</span>{fact.status !== fact.effectiveStatus && <small className="facts-stored">stored: {fact.status}</small>}</td>
+                  <td data-label="Verified">{fact.verifiedAt || "—"}</td>
+                  <td data-label="Review date">{fact.expiryOrReviewAt || "—"}</td>
+                  <td data-label="Days left"><span className={`facts-days ${daysLeftTone(fact.daysLeft)}`}>{daysLeftLabel(fact.daysLeft)}</span></td>
+                  <td className="facts-actions" data-label="Actions">
+                    <button className="ghost facts-action-trigger" type="button" disabled={Boolean(busyFactId)} onClick={() => setActionMenuFactId((current) => current === fact.id ? "" : fact.id)} aria-expanded={actionMenuFactId === fact.id} aria-controls={`fact-actions-${fact.id}`}>
+                      <MoreHorizontal size={15} /> Actions
                     </button>
-                    <button className="ghost" type="button" onClick={() => void toggleAudit(fact)} aria-expanded={expandedId === fact.id}>
-                      <History size={14} /> Audit
-                    </button>
+                    {actionMenuFactId === fact.id && <div className="facts-action-menu" id={`fact-actions-${fact.id}`} aria-label={`Actions for ${fact.id}`}>
+                      {isAdmin && <button className="ghost facts-action-edit" type="button" onClick={() => { setActionMenuFactId(""); editFact(fact); }} title="Edit evidence and review settings; all changes are audited">
+                        <Pencil size={14} /> Edit evidence
+                      </button>}
+                      <button className="primary facts-action-approve" type="button" disabled={!isAdmin || Boolean(busyFactId) || fact.effectiveStatus === "approved"} onClick={() => { setActionMenuFactId(""); beginApproval(fact); }} title={isAdmin ? actionTitle : "Only an administrator can change fact approval"}>
+                        <CheckCircle2 size={14} /> {busyFactId === fact.id ? "Working…" : actionLabel}
+                      </button>
+                      <button className="ghost facts-action-audit" type="button" onClick={() => { setActionMenuFactId(""); setEditingId(""); setEditDraft(null); void toggleAudit(fact); }} aria-expanded={expandedId === fact.id}>
+                        <History size={14} /> Audit history
+                      </button>
+                    </div>}
                   </td>
                 </tr>
                 {expandedId === fact.id && <tr className="facts-audit-row">
-                  <td colSpan={10}>
-                    <div className="facts-audit">
+                  <td colSpan={9}>
+                    {editingId === fact.id && editDraft ? <form className="facts-editor" onSubmit={(event) => void saveFactEdit(event, fact)}>
+                      <div className="facts-editor-head"><div><span className="facts-editor-kicker">EDIT REGISTER EVIDENCE</span><h3>{fact.id}</h3><p>Claim wording and figures stay tied to the multilingual brain. If evidence source or citation changes, an approved fact returns to pending review.</p></div><button className="ghost" type="button" onClick={() => { setEditingId(""); setEditDraft(null); setExpandedId(""); }} aria-label="Cancel fact edit"><X size={16} /></button></div>
+                      <div className="facts-editor-grid">
+                        <div className="facts-evidence-class"><span>REQUIRED EVIDENCE CLASS</span><strong>{fact.sourceType.replaceAll("-", " ")}</strong><small>This comes from the fact definition and cannot be changed here.</small></div>
+                        <label>Evidence document or URL<input required maxLength={500} value={editDraft.sourceDocument} onChange={(event) => updateEdit({ sourceDocument: event.target.value })} /></label>
+                        <label className="facts-editor-wide">Exact section, citation, or evidence note<input maxLength={500} value={editDraft.sourceRef} onChange={(event) => updateEdit({ sourceRef: event.target.value })} placeholder="Page, section, official notice, approved schedule…" /></label>
+                        <label>Review every (days)<input type="number" min="1" max={fact.highRisk ? 90 : 365} value={editDraft.cadenceDays} onChange={(event) => updateEdit({ cadenceDays: event.target.value })} /></label>
+                        <fieldset><legend>Approved answer languages</legend>{[["en", "English"], ["ar", "Arabic"], ["el", "Greek"]].map(([code, name]) => <label className="facts-language-option" key={code}><input type="checkbox" checked={editDraft.approvedLanguages.includes(code)} onChange={(event) => updateEdit({ approvedLanguages: event.target.checked ? [...editDraft.approvedLanguages, code] : editDraft.approvedLanguages.filter((language) => language !== code) })} /> {name}</label>)}</fieldset>
+                        <label className="facts-editor-wide">Reviewer notes<textarea maxLength={2000} rows={3} value={editDraft.notes} onChange={(event) => updateEdit({ notes: event.target.value })} placeholder="Limits, conditions, and context for future reviewers." /></label>
+                        <label className="facts-editor-wide">Reason for this change<textarea required maxLength={500} rows={2} value={editDraft.reason} onChange={(event) => updateEdit({ reason: event.target.value })} placeholder="Why are these evidence or review details changing?" /></label>
+                      </div>
+                      <div className="facts-editor-actions"><small>Saved by your signed-in admin account to the append-only audit trail.</small><button className="primary" type="submit" disabled={Boolean(busyFactId) || !editDraft.reason.trim() || !editDraft.approvedLanguages.length}><Save size={14} /> {busyFactId === fact.id ? "Saving…" : "Save review details"}</button></div>
+                    </form> : approvalFactId === fact.id ? <form className="facts-editor facts-approval" onSubmit={(event) => { event.preventDefault(); void reapprove(fact, approvalReason); }}>
+                      <div className="facts-editor-head"><div><span className="facts-editor-kicker">EVIDENCE REVIEW</span><h3>{fact.status === "pending" ? "Approve this fact" : fact.effectiveStatus === "expired" ? "Re-approve this fact" : "Re-enable this fact"}</h3><p>Confirm the current source and enter what you checked. The reviewer is recorded from your signed-in admin account.</p><p className="facts-approval-source"><strong>Source:</strong> {fact.sourceDocument || "Not recorded"} · <strong>Citation:</strong> {fact.sourceRef || "Not recorded"}</p></div><button className="ghost" type="button" onClick={() => { setApprovalFactId(""); setApprovalReason(""); setExpandedId(""); }} aria-label="Cancel approval"><X size={16} /></button></div>
+                      <label className="facts-approval-reason">Evidence checked and decision reason<textarea required maxLength={500} rows={3} value={approvalReason} onChange={(event) => setApprovalReason(event.target.value)} placeholder="For example: checked the current Cyprus authority notice, section 4, published on …" /></label>
+                      <div className="facts-editor-actions"><small>Owner-manual-only evidence cannot be approved. Update the source and citation first.</small><button className="primary" type="submit" disabled={Boolean(busyFactId) || !approvalReason.trim()}><CheckCircle2 size={14} /> {busyFactId === fact.id ? "Approving…" : "Confirm approval"}</button></div>
+                    </form> : <div className="facts-audit">
                       <div className="facts-audit-head"><strong>Who changed {fact.id}</strong><small>Append only · newest first · feeds the M12 audit view</small></div>
                       {!audit ? <p className="facts-empty">Loading the audit trail…</p>
                         : audit.error ? <p className="facts-alert">{audit.error}</p>
@@ -264,7 +348,7 @@ export default function FactRegister({ isAdmin }) {
                           <small>{timestampLabel(entry.createdAt)}</small>
                           <p>{auditChange(entry)}{entry.reason ? ` — ${entry.reason}` : ""}</p>
                         </li>)}</ul>}
-                    </div>
+                    </div>}
                   </td>
                 </tr>}
               </React.Fragment>;

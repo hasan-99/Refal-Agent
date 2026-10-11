@@ -97,6 +97,8 @@ function operatorSignals(user) {
   const consent = firstValue(profile.consent?.followUp, profile.followUpConsent, profile.follow_up_consent);
   const consentState = CONSENT_STATES.has(String(consent)) ? String(consent) : "unknown";
   const lastFollowUpSent = firstValue(user.lastFollowUpSent, profile.lastFollowUpSent, profile.followUp?.lastSent);
+  const durableFollowUpState = user.followUpState || user.followUpDelivery || {};
+  const durableDeliveryStatus = String(firstValue(durableFollowUpState.delivery_state, durableFollowUpState.state, durableFollowUpState.status) || "").trim().toLowerCase();
   const rawHandoverSummary = firstValue(handover.summary, handover.internalSummary, profile.internalHandoverSummary);
   const handoverSummary = cleanHandoverSummary(rawHandoverSummary);
   const department = cleanOperatorText(firstValue(handover.department, handover.routing?.department, classification.department), 80);
@@ -109,7 +111,15 @@ function operatorSignals(user) {
     priority: ["urgent", "high", "normal"].includes(String(firstValue(handover.priority, profile.priority, qualification.priority))) ? String(firstValue(handover.priority, profile.priority, qualification.priority)) : "normal",
     dimensions,
     consent: { followUp: consentState, updatedAt: profile.consent?.followUpUpdatedAt || profile.followUpConsentUpdatedAt || null },
-    followUp: { status: user.blocked || profile.followUpBlocked ? "blocked" : lastFollowUpSent ? "sent" : consentState === "granted" ? "eligible" : "consent_required", lastSentAt: lastFollowUpSent || null },
+    followUp: {
+      status: user.blocked || profile.followUpBlocked
+        ? "blocked"
+        : ["sending", "uncertain", "retryable", "sent"].includes(durableDeliveryStatus)
+          ? durableDeliveryStatus
+          : lastFollowUpSent ? "sent" : consentState === "granted" ? "eligible" : "consent_required",
+      lastSentAt: lastFollowUpSent || null,
+      deliveryClaimedAt: durableFollowUpState.delivery_claimed_at || durableFollowUpState.claimedAt || null
+    },
     handover: { required: Boolean(handover.required || handover.handoverRequired || profile.handoverRequired), department: department || "general", summary: handoverSummary, nextAction },
     flags: { complaint: Boolean(profile.isComplaint || profile.complaint || classification.complaint || primaryIntent === "complaint"), existingClient: Boolean(profile.existingClient || profile.isExistingClient || classification.existingClient || primaryIntent === "existing_client") }
   };

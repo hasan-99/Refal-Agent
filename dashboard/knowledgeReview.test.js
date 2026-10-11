@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { approveKnowledgeDocumentAfterIndex, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
 
 const id = "123e4567-e89b-42d3-a456-426614174000";
 
@@ -30,6 +30,76 @@ test("knowledge review rejects missing reviewer, malformed ID, and unsupported s
   await assert.rejects(reviewKnowledgeDocument(rest, { documentId: "bad", status: "approved", reviewer: "Reviewer" }), /Invalid knowledge document ID/);
   await assert.rejects(reviewKnowledgeDocument(rest, { documentId: id, status: "active", reviewer: "Reviewer" }), /Review status must be/);
   assert.equal(calls, 0);
+});
+
+test("review reason is required and bounded before any database write", async () => {
+  let calls = 0;
+  const rest = async () => { calls += 1; };
+  await assert.rejects(reviewKnowledgeDocument(rest, { documentId: id, status: "rejected", reviewer: "reviewer@example.com" }), /review reason is required/u);
+  await assert.rejects(reviewKnowledgeDocument(rest, { documentId: id, status: "rejected", reviewer: "reviewer@example.com", reason: "x".repeat(501) }), /500 characters/u);
+  assert.equal(calls, 0);
+});
+
+test("approval stages the complete embedding batch before the audited decision publishes the revision", async () => {
+  const calls = [];
+  const rest = async (...args) => {
+    calls.push(args);
+    return args[0] === "rpc/rafa_store_knowledge_embeddings" ? 2 : { review_status: "approved" };
+  };
+  const result = await approveKnowledgeDocumentAfterIndex(rest, {
+    documentId: id,
+    reviewer: "reviewer@refalco.com",
+    reason: "Verified against source",
+    embeddingModel: "test-model",
+    loadChunks: async (documentId) => {
+      assert.equal(documentId, id);
+      calls.push(["load-chunks"]);
+      return [{ chunk_index: 0, content: "English" }, { chunk_index: 1, content: "Arabic" }];
+    },
+    embedTexts: async (texts) => {
+      calls.push(["embed", texts]);
+      return [[0.1, 0.2], [0.3, 0.4]];
+    }
+  });
+
+  assert.deepEqual(calls.map(([name]) => name), ["load-chunks", "embed", "rpc/rafa_store_knowledge_embeddings", "rpc/rafa_review_knowledge_document"]);
+  assert.equal(JSON.parse(calls[2][1].body).p_model, "test-model");
+  assert.equal(JSON.parse(calls[3][1].body).p_review_status, "approved");
+  assert.deepEqual(result, { document: { review_status: "approved" }, embeddedChunks: 2 });
+});
+
+test("incomplete embedding or reindex failure leaves the revision unapproved", async () => {
+  let approvalCalls = 0;
+  const rest = async (route) => {
+    if (route === "rpc/rafa_review_knowledge_document") approvalCalls += 1;
+    if (route === "rpc/rafa_store_knowledge_embeddings") throw new Error("index unavailable");
+    return 1;
+  };
+  const options = {
+    documentId: id,
+    reviewer: "reviewer@refalco.com",
+    reason: "Reviewed against authoritative source",
+    embeddingModel: "test-model",
+    loadChunks: async () => [{ chunk_index: 0, content: "English" }],
+    embedTexts: async () => [[0.1, 0.2]]
+  };
+  await assert.rejects(approveKnowledgeDocumentAfterIndex(rest, options), /index unavailable/u);
+  assert.equal(approvalCalls, 0);
+  await assert.rejects(approveKnowledgeDocumentAfterIndex(rest, { ...options, embedTexts: async () => [] }), /incomplete revision batch/u);
+  assert.equal(approvalCalls, 0);
+});
+
+test("approval validates reviewer and reason before loading or embedding chunks", async () => {
+  let loads = 0;
+  const options = {
+    documentId: id,
+    reviewer: "reviewer@refalco.com",
+    embeddingModel: "test-model",
+    loadChunks: async () => { loads += 1; return [{ chunk_index: 0, content: "English" }]; },
+    embedTexts: async () => [[0.1, 0.2]]
+  };
+  await assert.rejects(approveKnowledgeDocumentAfterIndex(async () => 1, { ...options, reason: "" }), /review reason is required/u);
+  assert.equal(loads, 0);
 });
 
 test("trilingual preview runs the three supplied language queries independently and returns language-labelled results", async () => {

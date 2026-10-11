@@ -3,7 +3,7 @@ topic: company-structures
 lang: en
 title: Branch, Subsidiary or a new Cyprus Ltd, three different answers
 facts: MB-F10
-aliases: branch vs subsidiary cyprus | difference between a limited company and a branch | types of companies in cyprus | open a branch of a foreign company in cyprus | cyprus subsidiary of an international company | which company type suits my business | do i need a new ltd in cyprus | what does private limited company mean | expanding an existing company into cyprus | corporate structure options cyprus | can i change the company type later | shareholders outside the eu
+aliases: branch vs subsidiary cyprus | difference between a limited company and a branch | types of companies in cyprus | open a branch of a foreign company in cyprus | cyprus subsidiary of an international company | which company type suits my business | do i need a new ltd in cyprus | what does private limited company mean | expanding an existing company into cyprus | corporate structure options cyprus | can i change the company type later | shareholders outside the eu | How many partners do I need to open a company | Holding company or operating company, what is the difference
 ---
 
 ## A new Ltd is not the automatic answer

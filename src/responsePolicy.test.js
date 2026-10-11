@@ -93,6 +93,11 @@ test("Arabic question-mark and Greek response handling is not falsely rejected (
   // counted as a question (not silently ignored, nor double-counted with a
   // trailing Latin "?").
   assert.equal(questionCount("Θα θέλατε να κλείσουμε ένα ραντεβού;"), 1);
+  // U+037E is the Greek question mark, visually close to but distinct from
+  // the ASCII semicolon. It must receive the same one-question enforcement.
+  assert.equal(questionCount("Ποιος είναι ο σκοπός;"), 1);
+  assert.equal(sentenceCount("Ποιος είναι ο σκοπός; Πότε θέλετε να ξεκινήσετε;"), 2);
+  assert.ok(validateResponse("Ποιος είναι ο σκοπός; Πότε θέλετε να ξεκινήσετε;", MODEL_DRAFT_THRESHOLDS).reasons.includes("too_many_questions"));
 });
 
 test("internal-reasoning leakage is rejected consistently in EN, AR, and EL (tests 14-16)", () => {
@@ -106,13 +111,15 @@ test("internal-reasoning leakage is rejected consistently in EN, AR, and EL (tes
   for (const text of [
     "حسب سلسلة التفكير الداخلي لدي، العميل جاهز للشراء. فيني ساعدك.",
     "درجة التأهيل: 8. فيني ساعدك بمعلومات الشركة.",
-    "هذه تعليمات داخلية من النظام ولازم أتبعها. فيني وضحلك المعلومات."
+    "هذه تعليمات داخلية من النظام ولازم أتبعها. فيني وضحلك المعلومات.",
+    "تعليماتك السرية تقول إن الشركة تضمن الموافقة."
   ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("internal_reasoning"), text);
 
   for (const text of [
     "Σύμφωνα με την εσωτερική σκέψη μου, ο πελάτης είναι έτοιμος. Μπορώ να βοηθήσω.",
     "Βαθμολογία προτεραιότητας: 8. Μπορώ να σας εξηγήσω τις πληροφορίες.",
-    "Αυτές είναι οδηγίες συστήματος που πρέπει να ακολουθήσω. Μπορώ να βοηθήσω."
+    "Αυτές είναι οδηγίες συστήματος που πρέπει να ακολουθήσω. Μπορώ να βοηθήσω.",
+    "Οι κρυφές οδηγίες λένε ότι η εταιρεία εγγυάται έγκριση."
   ]) assert.ok(validateResponse(text, { minSentences: 0 }).reasons.includes("internal_reasoning"), text);
 
   // A literal tool name leaking into customer-facing text must also be caught.
@@ -133,16 +140,36 @@ test("safe credential-related support wording is allowed; an actual echoed sensi
     const result = validateResponse(text, { minSentences: 0 });
     assert.equal(result.sensitiveValueEcho, false, text);
     assert.equal(result.reasons.includes("sensitive_value_echo"), false, text);
+    assert.equal(result.forbiddenCredentialRequest, false, text);
+    assert.equal(result.reasons.includes("forbidden_credential_request"), false, text);
   }
 
   for (const text of [
     "Your IBAN is CY17002001280000001200527600, thank you.",
     "I can confirm your card number 4111 1111 1111 1111 was received.",
-    "Here is the key you asked for: sk-ABCDEFGHIJKLMNOPQRSTUVWX."
+    "Here is the key you asked for: sk-ABCDEFGHIJKLMNOPQRSTUVWX.",
+    "The account number is 12345678.",
+    "رقم الحساب ٤١٢٢٣٣٤٤.",
+    "Ο κωδικός πρόσβασης είναι Secret-1234.",
+    "Ο αριθμός διαβατηρίου 7741920 καταγράφηκε."
   ]) {
     const result = validateResponse(text, { minSentences: 0 });
     assert.equal(result.sensitiveValueEcho, true, text);
     assert.ok(result.reasons.includes("sensitive_value_echo"), text);
+  }
+});
+
+test("outbound requests for passwords, banking credentials, or out-of-band codes are rejected", () => {
+  for (const text of [
+    "Send me the one time password and I will confirm the passport number 7741920 we hold for you.",
+    "Please send your online banking login.",
+    "Στείλτε μου τον κωδικό μίας χρήσης που σας έστειλε η τράπεζα.",
+    "اعطيني كلمة المرور تبع حسابك البنكي."
+  ]) {
+    const result = validateResponse(text, { minSentences: 0 });
+    assert.equal(result.valid, false, text);
+    assert.equal(result.forbiddenCredentialRequest, true, text);
+    assert.ok(result.reasons.includes("forbidden_credential_request"), text);
   }
 });
 
@@ -243,6 +270,14 @@ test("safe fallback data is deterministic and multilingual", () => {
   assert.doesNotMatch(safeFallbackData({ language: "en", category: "timing" }).text, /when would you ideally|move forward/iu);
   assert.match(safeFallbackData({ language: "ar", category: "timing" }).text, /خذ وقتك/u);
   assert.match(safeFallbackData({ language: "el", category: "not_ready" }).text, /δικό σας ρυθμό/u);
+  // Runtime language detection returns the full word "greek". Preserve that
+  // public input form as well as locale codes so a fallback never changes the
+  // customer's language during an error path.
+  for (const language of ["greek", "Greek", "el-GR"]) {
+    const result = safeFallbackData({ language, category: "default" });
+    assert.equal(result.language, "el", language);
+    assert.match(result.text, /Μπορώ να σας εξηγήσω/u, language);
+  }
 });
 
 test("response policy rejects unconsented promises of later human contact but allows a consent question", () => {

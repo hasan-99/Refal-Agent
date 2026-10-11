@@ -383,22 +383,16 @@ test("[014-14] a correct one-sentence answer is not rejected for being short, EN
 
 // --- 15. Credential type mentioned safely ---------------------------------------------
 
-test("[014-15] KNOWN BUG (deferred, not fixed in this ticket): a bare mention of a credential TYPE is STILL misclassified as a privacy risk, symmetrically in EN/AR/EL", () => {
-  // safetyPolicy.js's PRIVACY rule (src/safetyPolicy.js:17) was assumed by
-  // ticket 011's trace to require a value-looking token after the keyword
-  // (e.g. "password: xyz123"), but that value requirement only applies to
-  // the OTP/one-time-code sub-pattern. "password"/"secret"/"access token"/
-  // "api key" etc. are separate, UNCONDITIONAL bare-word alternatives in the
-  // same regex, so an ordinary support question is still misclassified —
-  // equally in all three languages, confirmed here, not just in English.
-  // This directly reproduces the original pre-ticket-011 audit finding; see
-  // the progress doc's new ticket proposal for safetyPolicy.js.
+test("[014-15] support questions that mention credential types are not misclassified as disclosures", () => {
   for (const text of [
     "How do I reset my password?",
     "كيف بقدر أغيّر كلمة المرور تبعي؟",
-    "Πώς μπορώ να επαναφέρω τον κωδικό μου;"
+    "Πώς μπορώ να επαναφέρω τον κωδικό μου;",
+    "I will not share my access token.",
+    "ما رح أرسل رمز الدخول تبعي.",
+    "Δεν θα στείλω τον κωδικό πρόσβασής μου."
   ]) {
-    assert.equal(classifySafety(text).risks.includes(SAFETY_CATEGORIES.PRIVACY), true, text);
+    assert.equal(classifySafety(text).risks.includes(SAFETY_CATEGORIES.PRIVACY), false, text);
   }
 });
 
@@ -418,18 +412,10 @@ test("[014-16] an actual secret-like value is detected and never echoed back, EN
 
 // --- 17. Refusal to share credentials ------------------------------------------------------
 
-test("[014-17] KNOWN BUG (deferred, not fixed in this ticket): a refusal to share a credential is STILL sometimes misread as disclosure, symmetrically in EN/AR/EL", () => {
-  // NON_DISCLOSURE_CLAUSE's noun list only has bare "tokens?", not the
-  // compound phrase "access token(s)" that the main PRIVACY rule matches as
-  // a unit — so "I will not share my access token" is not fully stripped
-  // before rule-matching and the bare "access token" phrase still trips the
-  // PRIVACY rule. Same root cause/scope as [014-15]; see the progress doc.
-  assert.equal(classifySafety("I will not share my access token.").risks.includes(SAFETY_CATEGORIES.PRIVACY), true);
-  assert.equal(classifySafety("ما رح أرسل رمز الدخول تبعي.").risks.includes(SAFETY_CATEGORIES.PRIVACY), true);
-  assert.equal(classifySafety("Δεν θα στείλω τον κωδικό πρόσβασής μου.").risks.includes(SAFETY_CATEGORIES.PRIVACY), true);
-  // A refusal phrased around the exact noun NON_DISCLOSURE_CLAUSE DOES list
-  // (bare "password", not "access token") is correctly recognized as safe —
-  // confirming the carve-out mechanism itself works, the gap is coverage.
+test("[014-17] refusals to share credentials remain safe in EN/AR/EL", () => {
+  assert.equal(classifySafety("I will not share my access token.").risks.includes(SAFETY_CATEGORIES.PRIVACY), false);
+  assert.equal(classifySafety("ما رح أرسل رمز الدخول تبعي.").risks.includes(SAFETY_CATEGORIES.PRIVACY), false);
+  assert.equal(classifySafety("Δεν θα στείλω τον κωδικό πρόσβασής μου.").risks.includes(SAFETY_CATEGORIES.PRIVACY), false);
   assert.equal(classifySafety("I will not share my password.").risks.includes(SAFETY_CATEGORIES.PRIVACY), false);
 });
 
@@ -550,7 +536,7 @@ test("[014-25] a brand/technical English term inside a normal Arabic/Greek sente
 
 // --- 26. Complaint handling --------------------------------------------------------------------
 
-test("[014-26] KNOWN BUG (deferred, not fixed in this ticket): complaint recap reuses a fixed backstory regardless of the real complaint topic, EN/AR/EL", () => {
+test("[014-26] complaint recaps reflect the stated issue and never invent a case type or date, EN/AR/EL", () => {
   const CASES = {
     english: ["This is a complaint: my refund was never processed and no one has explained why.", "Please summarize what I told you."],
     arabic: ["عندي شكوى: المبلغ المسترجع ما تحول أبداً وحدا ما فسرلي ليش.", "لخّص شو قلتلك."],
@@ -559,13 +545,16 @@ test("[014-26] KNOWN BUG (deferred, not fixed in this ticket): complaint recap r
   for (const [locale, [complaintMessage, recapRequest]] of Object.entries(CASES)) {
     const history = [{ message: complaintMessage }];
     const result = buildLocalConversationRecap({ history, currentMessage: recapRequest, language: locale });
-    // The recap mentions a "company-setup case submitted last month" even
-    // though this complaint was about a refund — the invented backstory does
-    // not reflect the actual complaint content. This is REFAL-AGENT-014's
-    // required characterization of a known, still-present bug (see the
-    // "Complaint handling" ticket proposal in the progress doc), not a fix.
-    assert.match(result.response, /company-setup case submitted last month|معاملة تأسيس شركة الشهر الماضي|υπόθεση σύστασης εταιρείας τον περασμένο μήνα/, locale);
-    assert.doesNotMatch(result.response, /refund|استرجاع|επιστροφή/iu, locale);
+    if (locale === "english") {
+      assert.match(result.response, /refund/iu, locale);
+      assert.doesNotMatch(result.response, /company setup|last month/iu, locale);
+    } else if (locale === "arabic") {
+      assert.match(result.response, /استرجاع المبلغ/iu, locale);
+      assert.doesNotMatch(result.response, /تأسيس شركة/iu, locale);
+    } else {
+      assert.match(result.response, /επιστροφή χρημάτων/iu, locale);
+      assert.doesNotMatch(result.response, /σύσταση εταιρεία|περασμένο μήνα/iu, locale);
+    }
   }
 });
 
@@ -667,10 +656,10 @@ test("[014-telemetry] questionSignalsFrom emits raw counts, not a semantic 'unne
   assert.deepEqual(questionSignalsFrom("No questions here.", "responded"), { questionCount: 0, hasQuestion: false, clarificationRequested: false });
 });
 
-// --- handover default-message localization (small fix made in this ticket) ------------------------
+// --- prepared handover wording stays truthful before persistence -------------------------------
 
-test("[014-fix] proposeHandover's default customer message is localized, not English-only, EN/AR/EL", () => {
-  for (const [language, expect] of [["arabic", /شاركت هذا مع فريق الشركة/], ["greek", /μοιράστηκα με την αρμόδια ομάδα/], ["english", /shared this with the appropriate Refalco Group team/]]) {
+test("prepared handover wording is localized and does not claim sharing happened, EN/AR/EL", () => {
+  for (const [language, expect] of [["arabic", /سأخبرك عندما تتم مشاركته/], ["greek", /να σας ενημερώσω όταν κοινοποιηθεί/], ["english", /let you know once it has been shared/]]) {
     const handover = createHandover({ input: "please connect me to a specialist", language });
     assert.match(handover.messages.customerMessage, expect, language);
   }

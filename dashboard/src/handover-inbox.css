@@ -9,6 +9,10 @@
 .handover-list-head,.handover-row-top,.handover-detail-head,.handover-actions,.handover-form-heading,.handover-form-footer,.handover-draft-card { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .handover-list-head h3,.handover-detail-head h3 { margin:4px 0 0; color:var(--handover-ink); font-size:16px; }
 .handover-count { display:grid; min-width:30px; height:30px; place-items:center; border-radius:50%; color:#286d76; background:#e7f3f3; font-weight:800; }
+.handover-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:14px; padding:10px; border:1px solid #e8eeee; border-radius:10px; background:#fafcfc; }
+.handover-filters label { display:grid; gap:4px; min-width:0; color:#6e8186; font-size:10px; font-weight:700; }
+.handover-filters select,.handover-filters input { width:100%; min-width:0; padding:7px 8px; border:1px solid #dce5e6; border-radius:7px; color:#30474e; background:#fff; font:inherit; font-size:11px; }
+.handover-filters button { grid-column:1 / -1; justify-self:start; min-height:30px; padding:5px 8px; font-size:11px; }
 .handover-rows { display:grid; gap:8px; margin-top:15px; }
 .handover-row { display:grid; gap:7px; width:100%; padding:12px; text-align:left; border:1px solid #e5ebec; border-radius:11px; background:white; color:#576c73; cursor:pointer; }
 .handover-row.selected { border-color:#68a6aa; background:#f2f9f8; box-shadow:0 0 0 2px #e5f2f1; }
@@ -37,6 +41,7 @@
 .handover-need { margin:0 18px; padding:12px 0 14px; border-bottom:1px solid #edf0f0; }
 .handover-need > span { color:#7a898d; font-size:9px; font-weight:800; letter-spacing:.09em; }
 .handover-need p { margin:6px 0 0; color:#34484e; font-size:13px; line-height:1.55; }
+.handover-group-note { margin:0 18px 12px; padding:8px 10px; border-left:2px solid #a8c5c7; color:#687e83; background:#f7fafa; font-size:10px; line-height:1.5; }
 .handover-context { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0; margin:0 18px; }
 .handover-context > div { display:grid; gap:4px; min-width:0; padding:12px 10px 13px 0; }
 .handover-context > div + div { padding-left:14px; border-left:1px solid #edf0f0; }

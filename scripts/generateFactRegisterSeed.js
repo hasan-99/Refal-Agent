@@ -37,6 +37,8 @@ const GENERATED_BY = "scripts/generateFactRegisterSeed.js";
 // repo rather than from user input, but a claim text with an apostrophe is
 // ordinary English and would otherwise end the string early.
 const q = (value) => `'${String(value).replace(/'/gu, "''")}'`;
+const nullableText = (value) => value == null ? "null" : q(value);
+const nullableDate = (value) => value == null ? "null" : `${q(value)}::date`;
 const qArray = (values) => `array[${values.map(q).join(", ")}]::text[]`;
 const qJson = (value) => `${q(JSON.stringify(value))}::jsonb`;
 
@@ -53,10 +55,10 @@ function rowValues(row) {
     q(row.volatility),
     q(row.trustTier),
     row.highRisk ? "true" : "false",
-    q(row.reviewer),
-    `${q(row.verifiedAt)}::date`,
+    nullableText(row.reviewer),
+    nullableDate(row.verifiedAt),
     row.effectiveFrom ? `${q(row.effectiveFrom)}::date` : "null",
-    `${q(row.expiryOrReviewAt)}::date`,
+    nullableDate(row.expiryOrReviewAt),
     String(row.reviewCadenceDays),
     qArray(row.approvedLanguages),
     q(row.status),
@@ -84,20 +86,20 @@ function render() {
   w(`-- Regenerate with: node ${GENERATED_BY}`);
   w(`-- Source of truth: src/factCatalogue.js + the seeding rules in src/factRegister.js.`);
   w(`--`);
-  w(`-- Rule 1, BOSS's authority instruction: MB manual facts are seeded APPROVED,`);
-  w(`-- reviewer ${SEED.reviewer}, verified ${SEED.verifiedAt}. They are live from day one and are`);
-  w(`-- NOT blocked waiting for an external reviewer.`);
+  w(`-- Owner-manual claims are seeded PENDING. The manual is source material, not`);
+  w(`-- approval for customer-facing factual claims. Explicit source-backed approvals`);
+  w(`-- must carry a reviewer and verification date in the catalogue.`);
   w(`--`);
   w(`-- Rule 2 is what makes that safe: every row carries expiry_or_review_at, so a`);
-  w(`-- figure that goes stale stops being asserted on its own, with no code change`);
+  w(`-- approved figure that goes stale stops being asserted on its own, with no code change`);
   w(`-- and no redeploy. The ${HIGH_RISK_FACTS.length} high risk facts named in W3.9.2 are capped at a`);
   w(`-- 90 day cadence, enforced by a check constraint as well as by this seed.`);
   w(`--`);
   w(`-- ${rows.length} rows. ${highRisk.length} high risk. ${withNumbers.length} carry at least one number.`);
   w(`--`);
   w(`-- Run AFTER 20261009180000_refal_fact_register.sql. Safe to run twice: an`);
-  w(`-- existing row is refreshed to the catalogue's claim and provenance, but its`);
-  w(`-- status, reviewer, verified_at and review date are LEFT ALONE, so re-running`);
+  w(`-- catalogue-owned claim fields are refreshed, but operator-reviewed evidence`);
+  w(`-- URL/citation/notes and approval lifecycle fields are LEFT ALONE, so re-running`);
   w(`-- this file can never silently un-expire a fact a reviewer retired or revive`);
   w(`-- one they blocked.`);
   w();
@@ -111,28 +113,26 @@ function render() {
     const sep = i === rows.length - 1 ? "" : ",";
     w(`  (${rowValues(row)})${sep}   -- ${row.id}${row.highRisk ? " [high risk]" : ""}`);
   });
-  w(`-- Re-running this file refreshes what the catalogue owns and leaves the`);
-  w(`-- reviewer's own columns alone, so a second run can never un-expire a fact`);
+  w(`-- Re-running this file refreshes the catalogue-owned fields and leaves the`);
+  w(`-- operator-managed evidence and review fields alone, so a second run can never un-expire a fact`);
   w(`-- someone retired or revive one they blocked.`);
   w(`on conflict (fact_id) do update set`);
   w(`  claim_text = excluded.claim_text,`);
   w(`  topics = excluded.topics,`);
   w(`  source_type = excluded.source_type,`);
-  w(`  source_url_or_document = excluded.source_url_or_document,`);
-  w(`  source_ref = excluded.source_ref,`);
   w(`  jurisdiction = excluded.jurisdiction,`);
   w(`  numbers = excluded.numbers,`);
   w(`  volatility = excluded.volatility,`);
   w(`  trust_tier = excluded.trust_tier,`);
-  w(`  high_risk = excluded.high_risk,`);
-  w(`  notes = excluded.notes;`);
+  w(`  high_risk = excluded.high_risk;`);
   w(`  -- status, reviewer, verified_at, effective_from, expiry_or_review_at,`);
-  w(`  -- review_cadence_days and approved_languages are intentionally untouched.`);
+  w(`  -- source_url_or_document, source_ref, notes, review_cadence_days and`);
+  w(`  -- approved_languages are intentionally untouched.`);
   w();
   w(`insert into public.refal_fact_register_audit (fact_id, action, actor, previous, next, reason)`);
   w(`select fact_id, 'seed', ${q(SEED.reviewer)}, '{}'::jsonb,`);
   w(`       jsonb_build_object('status', status, 'verified_at', verified_at, 'expiry_or_review_at', expiry_or_review_at),`);
-  w(`       'Rule 1 seed from the Master Brain manual'`);
+  w(`       'Candidate extracted from the Master Brain; approval remains pending'`);
   w(`from public.refal_fact_register r`);
   w(`where not exists (`);
   w(`  select 1 from public.refal_fact_register_audit a where a.fact_id = r.fact_id and a.action = 'seed'`);

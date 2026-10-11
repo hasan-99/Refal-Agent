@@ -15,6 +15,7 @@ const { canonicalUrl } = require("./brainTaxonomy");
 
 const FUTURE = new Date(Date.now() + 86_400_000).toISOString();
 const CURRENT_FACT_REGISTER = seedRegister();
+for (const [id, row] of CURRENT_FACT_REGISTER) CURRENT_FACT_REGISTER.set(id, { ...row, status: "approved" });
 function validateJurisdictionComparison(options) {
   return validateWithRegister({ factRegister: CURRENT_FACT_REGISTER, ...options });
 }
@@ -129,7 +130,7 @@ test("live fact-register status must allow both MB-J0 and the topic fact", () =>
     text: `Cyprus and Dubai have different considerations. ${DISCOVERY_QUESTION.en}`,
     evidence: evidence(topicSlug, "MB-J1"),
   };
-  assert.equal(validateJurisdictionComparison({ ...valid, factRegister: seedRegister() }).ok, true);
+  assert.equal(validateJurisdictionComparison({ ...valid, factRegister: CURRENT_FACT_REGISTER }).ok, true);
 
   for (const rowOverride of [
     { id: "MB-J0", status: "pending" },
@@ -137,7 +138,7 @@ test("live fact-register status must allow both MB-J0 and the topic fact", () =>
     { id: "MB-J0", expiryOrReviewAt: "2020-01-01" },
     { id: "MB-J1", expiryOrReviewAt: "2020-01-01" },
   ]) {
-    const register = applyOverrides(seedRegister(), [rowOverride]);
+    const register = applyOverrides(new Map(CURRENT_FACT_REGISTER), [rowOverride]);
     const result = validateJurisdictionComparison({ ...valid, factRegister: register });
     assert.equal(result.ok, false, JSON.stringify(rowOverride));
     assert.ok(result.issues.includes("facts_not_statable"), JSON.stringify(rowOverride));

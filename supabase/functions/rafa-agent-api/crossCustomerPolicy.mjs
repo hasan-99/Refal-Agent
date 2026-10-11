@@ -134,6 +134,26 @@ const EN_NOT_A_SURNAME = "(?!(?:The|A|An|My|Your|Our|Their|His|Her|Its|This|That
 // the message also talks about the sender's own file.
 // ---------------------------------------------------------------------------
 const rawStrongRules = [
+  // An explicitly identified remainder of the customer base is a third party
+  // even when the sender appends a self-scoped detail ("what did the rest pay
+  // for my setup?"). Do not let the weak-tier self anchor suppress this.
+  ["acting_party", new RegExp(`${LEFT}(?:what|how\\s+much)\\s+(?:did|do|does|have)\\s+(?:the\\s+)?(?:remaining|rest\\s+of\\s+the)\\s+(?:clients?|customers?|applicants?|buyers?|investors?)\\s+(?:usually\\s+|typically\\s+)?(?:pay|paid|spend|spent|buy|bought|purchase|purchased|reserve|reserved|book|booked|receive|received|deposit|deposited|were\\s+charged|get\\s+charged|get\\s+quoted)`, "iu")],
+  ["acting_party", new RegExp(`(?:كم|قديش|أديش|شو)\\s+(?:دفع|دفعت|دفعوا|اشترى|اشترت|اشتروا|حجز|حجزوا)\\s+(?:باقي|سائر)\\s+(?:ال)?(?:${AR_ROLE}|زباين)`, "iu")],
+  ["acting_party", new RegExp(`${GR_LEFT}(?:τι|πόσα)\\s+πλήρωσ(?:ε|αν)\\s+(?:οι\\s+)?(?:υπόλοιπ\\p{L}*|λοιπ\\p{L}*)\\s+(?:πελ[άα]τ|αγοραστ|επενδυτ|αιτητ)\\p{L}*`, "iu")],
+  // A possessive relationship plus a specific client's completed transaction
+  // is a third-party disclosure even without a name or "another". Keep this
+  // singular and transaction-specific so general market/pricing questions
+  // about what customers typically pay remain answerable.
+  ["acting_party", new RegExp(`${LEFT}(?:your|our)\\s+(?:other\\s+)?(?:client|customer|applicant|buyer|investor)\\s+(?:actually\\s+)?(?:paid|has\\s+paid|bought|purchased|reserved|booked|received|was\\s+quoted)${RIGHT}`, "iu")],
+  ["acting_party", new RegExp(`${LEFT}(?:what|how\\s+much)\\s+(?:did|has)\\s+(?:your|our)\\s+(?:other\\s+)?(?:client|customer|applicant|buyer|investor)\\s+(?:actually\\s+)?(?:pay|buy|purchase|reserve|book|receive)${RIGHT}`, "iu")],
+  // Habitual/present-tense wording still asks about a specific customer's
+  // transaction. Require the possessive relationship plus a transaction verb
+  // so generic service-price questions stay answerable.
+  ["acting_party", new RegExp(`${LEFT}(?:your|our)\\s+(?:other\\s+)?(?:clients?|customers?|applicants?|buyers?|investors?)\\s+(?:(?:usually|typically|normally)\\s+)?(?:pay|pays|paying|are\\s+quoted|were\\s+quoted|get\\s+quoted|gets\\s+quoted|are\\s+charged|get\\s+charged|buy|buys|receive|receives)${RIGHT}`, "iu")],
+  ["acting_party", new RegExp(`${LEFT}(?:how\\s+much|what\\s+(?:price|amount))\\s+(?:do|does|are)\\s+(?:your|our)\\s+(?:other\\s+)?(?:clients?|customers?|applicants?|buyers?|investors?)\\s+(?:usually\\s+|typically\\s+)?(?:pay|spend|get\\s+quoted|are\\s+quoted|paying|charged)${RIGHT}`, "iu")],
+  ["acting_party", /(?:(?:(?:عميل|عميلة|زبون|زبونة|مستثمر|مشتري)(?:كم|كن|نا|هم)|(?:ال)?(?:عميل|زبون|مستثمر|مشتري)كم)[^؟.!]{0,45}(?:دفع|دفعت|دفعوا|اشترى|اشترت|حجز|حجزت|استلم|استلمت|عرضوا|سعّروا)|(?:دفع|دفعت|دفعوا|اشترى|اشترت|حجز|حجزت|استلم|استلمت)[^؟.!]{0,45}(?:(?:عميل|عميلة|زبون|زبونة|مستثمر|مشتري)(?:كم|كن|نا|هم)|(?:ال)?(?:عميل|زبون|مستثمر|مشتري)كم))/iu],
+  ["acting_party", /(?:(?<![\p{L}\p{N}])(?:ο\s+)?(?:πελ[άα]τ|αγοραστ|επενδυτ)\p{L}*\s+σας(?![\p{L}\p{N}])[^.;!?·]{0,45}(?:πλήρωσ|αγόρασ|αγορασ|κράτησ|έκλεισ|κατέβαλ|έλαβε|προσφέρθηκε)\p{L}*|(?:πλήρωσ|αγόρασ|αγορασ|κράτησ|έκλεισ|κατέβαλ|έλαβε)[^.;!?·]{0,45}(?<![\p{L}\p{N}])(?:ο\s+)?(?:πελ[άα]τ|αγοραστ|επενδυτ)\p{L}*\s+σας(?![\p{L}\p{N}]))/iu],
+  ["acting_party", new RegExp(`${GR_LEFT}(?:ο\\s+)?(?:πελ[άα]τ|αγοραστ|επενδυτ)\\p{L}*\\s+σας(?![\\p{L}\\p{N}])[^.;!?·]{0,45}(?:πληρών|πλήρωσ|χρεών|χρέωσ)\\p{L}*|(?:πληρών|πλήρωσ|χρεών|χρέωσ)[^.;!?·]{0,45}${GR_LEFT}(?:ο\\s+)?(?:πελ[άα]τ|αγοραστ|επενδυτ)\\p{L}*\\s+σας(?![\\p{L}\\p{N}])`, "iu")],
   // 1. NAMED third party. Case-sensitive on purpose: with the `i` flag, `\p{Lu}`
   //    folds and matches lowercase, which would turn "your client details" into a
   //    match. These three patterns therefore carry "u" only.
@@ -165,7 +185,7 @@ const rawStrongRules = [
   ["relative_party", /(?:ال)?(?:عميل|عميلة|زبون|زبونة|مشتري|مستثمر|شخص)\s+(?:ال)?(?:سابق|ماضي)/iu],
   ["relative_party", /(?:ال)?(?:عميل|عميلة|زبون|زبونة|مشتري|مستثمر)\s+(?:ال)?(?:تاني|ثاني|آخر)/iu],
   ["relative_party", /(?:عميل|عميلة|زبون|زبونة|مشتري|مستثمر|شخص)\s+(?:يلي|اللي|الي|الذي)\s+(?:قبلي|سبقني|كان\s+قبلي)/iu],
-  ["relative_party", /(?<![p{L}p{N}])(?:προηγο[υύ]μ[εέ]ν|τελευτα[ίι]|προτεραι)\p{L}*\s+(?:πελ[άα]τ|αγοραστ|επενδυτ|αιτ(?:ητ|ούντ|ουντ|ών))\p{L}*/iu],
+  ["relative_party", /(?<![\p{L}\p{N}])(?:προηγο[υύ]μ[εέ]ν|τελευτα[ίι]|προτεραι)\p{L}*\s+(?:πελ[άα]τ|αγοραστ|επενδυτ|αιτ(?:ητ|ούντ|ουντ|ών))\p{L}*/iu],
 
   // 3. RELATIVE clause. "The investor who bought unit 4B" names a person by their
   //    dealing instead of by name, which is the same disclosure.
@@ -207,6 +227,10 @@ const rawWeakRules = [
   ["other_party", new RegExp(`${LEFT}(?:another|other|the\\s+other)\\s+(?:(?!than(?![\\p{L}]))\\p{L}+\\s+){0,2}${EN_ROLE}${RIGHT}`, "iu")],
   ["other_party", new RegExp(`${LEFT}(?:your\\s+other\\s+(?:clients?|customers?)|another\\s+(?:client|customer|applicant)|the\\s+(?:other|previous)\\s+(?:client|customer|applicant))${RIGHT}`, "iu")],
   ["other_party", new RegExp(`${LEFT}(?:what|how\\s+much)\\s+(?:did|was|were)\\s+(?:they|he|she|the\\s+other|your\\s+other|another)[^.?!]{0,60}${OTHER_PARTY_ACTIVITY}`, "iu")],
+  // Aggregate-group aliases are common ways to ask for the same protected
+  // details without saying "other" or naming a customer. Keep the rule tied
+  // to transaction activity so general questions about the customer base stay
+  // answerable.
 
   // Arabic. Authored pointed, folded at module load.
   ["other_party", new RegExp(`(?:مين\\s+(?:كمان|غير|غيري)|حدا\\s+(?:تاني|آخر)|شخص\\s+(?:تاني|آخر)|غيري)[^.؟!]{0,60}${ARABIC_ACTIVITY}`, "iu")],
@@ -222,7 +246,7 @@ const rawWeakRules = [
   // bare "who else" over-block this module already refuses to ship.
   ["other_party", new RegExp(`${GR_LEFT}(?:ποι(?:ος|οι|ον|ους|α|ες)|κάποι\\p{L}*)\\s+άλλ\\p{L}*[^.;!?·]{0,60}${GREEK_ACTIVITY}`, "iu")],
   ["other_party", new RegExp(`${GR_OTHER}(?:\\s+(?!από(?![\\p{L}]))\\p{L}+){0,2}\\s+${GR_ROLE}`, "iu")],
-  ["other_party", new RegExp(`${GR_LEFT}τι\\s+πλήρωσ(?:ε|αν)\\s+(?:οι\\s+)?(?:${GR_OTHER}|${GR_ROLE})`, "iu")]
+  ["other_party", new RegExp(`${GR_LEFT}τι\\s+πλήρωσ(?:ε|αν)\\s+(?:οι\\s+)?(?:${GR_OTHER}|${GR_ROLE})`, "iu")],
 ];
 
 // A message that binds the question to the sender. Suppresses the WEAK tier only.

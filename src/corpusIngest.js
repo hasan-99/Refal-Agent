@@ -116,8 +116,11 @@ const APPROVAL_NOTE = "Ingested from the authored M3 knowledge corpus.";
 // in the middle of a write, so the plan refuses to produce it in the first
 // place.
 const MIN_CHUNKS = 1;
-const REVIEW_STATUS_ON_INGEST = "approved";  // CR-014: stated, not assumed
-const INGEST_REVIEWER = "m3-corpus-ingestion";   // tells a generated ingest apart from a human save
+// Authored corpus files are source material, not approval evidence. New or
+// changed revisions must enter the review queue; an existing approved revision
+// stays available until a reviewer approves its replacement in the dashboard.
+const REVIEW_STATUS_ON_INGEST = "pending";
+const INGEST_REVIEWER = null;
 const MAX_CHUNKS = 500;              // rafa_store_knowledge_revision
 const MIN_CHUNK_CHARS = 1;           // chunks.content check
 const MAX_CHUNK_CHARS = 12000;       // chunks.content check
@@ -167,6 +170,14 @@ function triggersPriceExpiry(content) {
 // their embeddings.
 function contentSha256(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+// The revision RPC reports the requested status even when identical content
+// deduplicates to an existing document. In that no-op case an already approved
+// row remains approved; a genuinely new/changed revision must be pending.
+function readbackReviewStatusMatches(actual, requested, unchanged) {
+  if (unchanged) return actual === "pending" || actual === "approved";
+  return actual === requested;
 }
 
 // The canonical content, assembled exactly as src/corpusFile.js assembles it,
@@ -299,13 +310,9 @@ function buildDocumentPayload(parsed, body) {
     p_content: body,
     p_content_sha256: contentSha256(body),
     p_language_code: meta.lang,
-    // NOT optional. P3.9 / CR-014 changed rafa_store_knowledge_revision to
-    // default to `pending`, because a save silently approving itself was the
-    // conflict that phase had to remove. A call that omits these two still
-    // RESOLVES against the new signature, so leaving them off would queue all
-    // 87 documents and take retrieval dark while the script reported success.
-    // That is the exact silent-failure class this module guards against
-    // everywhere else, so it is stated here rather than inherited.
+    // State the pending review status explicitly. The default is also pending,
+    // but omission here could hide a future signature/default change. Never
+    // attach a generated reviewer identity to an unreviewed corpus revision.
     p_review_status: REVIEW_STATUS_ON_INGEST,
     p_approved_by: INGEST_REVIEWER,
     p_metadata: {
@@ -543,6 +550,7 @@ module.exports = {
   MAX_DOCUMENT_TITLE_CHARS, MAX_DISPLAY_NAME_CHARS, SHA256_PATTERN,
   PRICE_EXPIRY_PATTERN, PRICE_EXPIRY_DAYS, triggersPriceExpiry,
   contentSha256, canonicalContentFor, aliasChunkContent, sectionFactIds,
+  readbackReviewStatusMatches,
   buildChunks, buildSourceRow, buildDocumentPayload, assertPayload,
   planFile, planCorpus,
 };

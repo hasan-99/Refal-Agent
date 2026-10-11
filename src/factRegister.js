@@ -18,15 +18,9 @@
 //                again at query time, because one layer is not a guarantee.
 //   pending   -> authored but never approved. Treated as not statable.
 //
-// Rule 1 (W3.9.4, BOSS's authority instruction): MB manual facts are seeded
-// APPROVED from day one. They are not blocked waiting for an external reviewer.
-// Rule 2 (W3.9.5) is the safety net that makes Rule 1 survivable: each row
-// carries an expiry, so a stale figure stops being asserted on its own.
-//
-// W3.9.6, the 12.5% question, is the worked example. Cyprus corporate tax was
-// 12.5% historically and the manual says 15% from 2026. REFAL states 15% from
-// day one, the row carries effectiveFrom 2026-01-01 and a short review cadence,
-// and correcting it later is one field in one form rather than a release.
+// The owner manual is source material, not approval to make customer-facing
+// factual claims. Catalogue entries remain pending unless they carry explicit
+// verified source metadata. The manual is retained as provenance for review.
 
 const { ROWS } = require("./factCatalogue");
 const { reviewCadenceDays, TRUST_TIERS, VOLATILITY, LANGUAGES } = require("./brainTaxonomy");
@@ -40,13 +34,13 @@ const STATUS = Object.freeze({
 });
 const STATUSES = Object.freeze(Object.values(STATUS));
 
-// W3.9.4 — the seed identity. One place, so a migration, a test and the audit
-// script cannot disagree about what "seeded by Rule 1" means.
+// Pending entries have no reviewer or verification date. Only explicit,
+// source-backed approvals receive those fields.
 const SEED = Object.freeze({
   reviewer: "BOSS",
   verifiedAt: "2026-10-07",
   sourceDocument: "newplan/Master Brain & Operating Rules Manual - REFAL AI.txt",
-  status: STATUS.APPROVED,
+  status: STATUS.PENDING,
 });
 
 // W3.9.2 — the twenty high risk facts that get a MANDATORY review date. The
@@ -60,7 +54,7 @@ const HIGH_RISK_FACTS = Object.freeze([
   "MB-F7",   // Registered Address, 4 consecutive months
   "MB-F9",   // the formation package price
   "MB-F19",  // 15% corporate tax from 2026
-  "MB-F20",  // IP Box effective 2.5% to 3%
+  "MB-F20",  // IP Box 80% nexus-based exemption; 3% arithmetic is qualified
   "MB-F30",  // EUR 300,000 minimum qualifying investment
   "MB-F31",  // EUR 50,000 main applicant income
   "MB-F32",  // EUR 15,000 spouse
@@ -116,29 +110,33 @@ function cadenceForFact(row) {
 }
 
 // ------------------------------------------------------------------- seeding
-function seedRow(catalogueRow, { verifiedAt = SEED.verifiedAt } = {}) {
+function seedRow(catalogueRow, { verifiedAt = null } = {}) {
   const id = normalizeFactId(catalogueRow.id);
   if (!isFactId(id)) throw new Error(`factCatalogue carries an unknown id: ${catalogueRow.id}`);
   const cadence = cadenceForFact(catalogueRow);
+  const sourceVerifiedAt = catalogueRow.verifiedAt || verifiedAt || SEED.verifiedAt;
+  const explicitlyApproved = Boolean(catalogueRow.sourceDocument && sourceVerifiedAt && catalogueRow.approval?.reviewer);
+  const factVerifiedAt = sourceVerifiedAt;
+  const status = explicitlyApproved ? STATUS.APPROVED : STATUS.PENDING;
   return {
     id,
     topics: [...(catalogueRow.topics || [])],
     claimText: catalogueRow.claim,
     sourceType: catalogueRow.sourceType,
     sourceRef: catalogueRow.sourceRef,
-    sourceDocument: SEED.sourceDocument,
+    sourceDocument: catalogueRow.sourceDocument || SEED.sourceDocument,
     jurisdiction: catalogueRow.jurisdiction,
     numbers: (catalogueRow.numbers || []).map((n) => ({ ...n })),
     volatility: catalogueRow.volatility,
     trustTier: catalogueRow.trustTier,
     highRisk: HIGH_RISK_SET.has(id),
-    reviewer: SEED.reviewer,
-    verifiedAt,
+    reviewer: explicitlyApproved ? catalogueRow.approval.reviewer : SEED.reviewer,
+    verifiedAt: factVerifiedAt,
     effectiveFrom: catalogueRow.effectiveFrom || null,
-    expiryOrReviewAt: addDays(verifiedAt, cadence),
+    expiryOrReviewAt: factVerifiedAt ? addDays(factVerifiedAt, cadence) : null,
     reviewCadenceDays: cadence,
     approvedLanguages: [...LANGUAGES],
-    status: SEED.status,
+    status,
     notes: catalogueRow.notes || "",
   };
 }
@@ -232,9 +230,11 @@ function isRetrievable(factId, options) { return factBehaviour(factId, options).
 // path produced it. Chunks carry their fact ids in metadata.facts, written by
 // the ingestion script from the `<!-- facts: ... -->` directives.
 function chunkFactIds(chunk) {
-  const raw = chunk?.metadata?.facts ?? chunk?.facts ?? [];
+  const raw = chunk?.metadata?.facts ?? chunk?.policyMetadata?.facts ?? chunk?.facts ?? [];
   const list = Array.isArray(raw) ? raw : String(raw).split(",");
-  return list.map(normalizeFactId).filter(isFactId);
+  const supportingRaw = chunk?.metadata?.supporting ?? chunk?.policyMetadata?.supporting ?? [];
+  const supporting = Array.isArray(supportingRaw) ? supportingRaw : String(supportingRaw).split(",");
+  return [...new Set([...list, ...supporting].map(normalizeFactId).filter(isFactId))];
 }
 
 // CF-04. Chunk 0 of every document is a FINDING AID: the title, the section
@@ -276,6 +276,43 @@ function filterRetrievableEvidence(chunks, { register, now } = {}) {
     const blocked = ids.filter((id) => effectiveStatus(reg.get(id), now) === STATUS.BLOCKED);
     if (blocked.length) dropped.push({ chunk, blocked, reason: "blocked_fact" });
     else kept.push(chunk);
+  }
+  return { kept, dropped };
+}
+
+// Content that the language model may read must be limited to approved facts.
+// Pending and expired evidence can remain visible to staff for review, but its
+// raw claim text must not be placed in a customer answer context.
+function filterStatableEvidence(chunks, { register, now, lang } = {}) {
+  const fallbackRegister = register || seedRegister();
+  const kept = [];
+  const dropped = [];
+  for (const chunk of Array.isArray(chunks) ? chunks : []) {
+    const ids = chunkFactIds(chunk);
+    const metadataRows = Array.isArray(chunk?.policyMetadata?.factRegisterRows)
+      ? new Map(chunk.policyMetadata.factRegisterRows.map((row) => [normalizeFactId(row?.id), row]))
+      : null;
+    const rows = ids.map((id) => {
+      if (metadataRows) {
+        const item = metadataRows.get(id);
+        if (!item) return null;
+        return {
+          id,
+          status: item.status,
+          reviewer: item.reviewer,
+          verifiedAt: item.verifiedAt,
+          effectiveFrom: item.effectiveFrom,
+          expiryOrReviewAt: item.expiryOrReviewAt,
+          approvedLanguages: item.approvedLanguages
+        };
+      }
+      return fallbackRegister.get(id) || null;
+    });
+    const allStatable = ids.length > 0 && rows.every((row) => row && factBehaviour(row.id, {
+      register: new Map([[row.id, row]]), now, lang
+    }).statable);
+    if (allStatable) kept.push(chunk);
+    else dropped.push({ chunk, blocked: ids, reason: "fact_not_statable" });
   }
   return { kept, dropped };
 }
@@ -357,10 +394,12 @@ function auditRegister({ register, now } = {}) {
   }
   for (const row of reg.values()) {
     if (!row.claimText || row.claimText.length < 25) add(row.id, "high", "claim text is missing or too short to review");
-    if (!row.reviewer) add(row.id, "high", "no named reviewer");
-    if (!row.verifiedAt) add(row.id, "high", "no verified_at");
-    if (!row.expiryOrReviewAt) add(row.id, "blocker", "no expiry or review date, so Rule 2 cannot fire");
     if (!STATUSES.includes(row.status)) add(row.id, "blocker", `unknown status ${row.status}`);
+    if (row.status !== STATUS.PENDING) {
+      if (!row.reviewer) add(row.id, "high", "no named reviewer");
+      if (!row.verifiedAt) add(row.id, "high", "no verified_at");
+      if (!row.expiryOrReviewAt) add(row.id, "blocker", "no expiry or review date, so Rule 2 cannot fire");
+    }
     if (!row.approvedLanguages.length) add(row.id, "high", "no approved language, so it can never be stated");
     if (row.highRisk && row.reviewCadenceDays > HIGH_RISK_MAX_CADENCE_DAYS) {
       add(row.id, "blocker", `high risk fact has a ${row.reviewCadenceDays} day cadence, over the ${HIGH_RISK_MAX_CADENCE_DAYS} day cap`);
@@ -383,6 +422,6 @@ module.exports = {
   addDays, daysBetween, nowIsoDay, cadenceForFact,
   seedRow, seedRegister, applyOverrides,
   effectiveStatus, factBehaviour, isStatable, isRetrievable,
-  chunkFactIds, filterRetrievableEvidence, classifyEvidence, isFindingAid, FINDING_AID_KIND,
+  chunkFactIds, filterRetrievableEvidence, filterStatableEvidence, classifyEvidence, isFindingAid, FINDING_AID_KIND,
   factsExpiringWithin, expiredFacts, reapprove, auditRegister,
 };

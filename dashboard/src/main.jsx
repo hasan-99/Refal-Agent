@@ -896,14 +896,11 @@ function Knowledge({ isAdmin, onNavigate }) {
   const [knowledgeView, setKnowledgeView] = useState("content");
   const [editorMode, setEditorMode] = useState("update");
   const [editingDocument, setEditingDocument] = useState(null);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [previewQueries, setPreviewQueries] = useState({ en: "", ar: "", el: "" });
-  const [previewResults, setPreviewResults] = useState([]);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [archiveReason, setArchiveReason] = useState("");
   const [archiveUndo, setArchiveUndo] = useState(null);
+  const [reviewReasons, setReviewReasons] = useState({});
+  const [knowledgeSearch, setKnowledgeSearch] = useState("");
 
   useEffect(() => {
     if (!selectedId && data.documents?.length) setSelectedId(data.documents[0].source_id);
@@ -921,6 +918,13 @@ function Knowledge({ isAdmin, onNavigate }) {
 
   const sources = data.sources || [];
   const documents = data.documents || [];
+  const normalizeSearchText = (value) => String(value || "").normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
+  const normalizedSearch = normalizeSearchText(knowledgeSearch.trim());
+  const visibleDocuments = normalizedSearch ? documents.filter((doc) => {
+    const source = sources.find((item) => item.id === doc.source_id);
+    return [doc.title, doc.canonical_content, doc.language_code, doc.review_status, source?.display_name]
+      .some((value) => normalizeSearchText(value).includes(normalizedSearch));
+  }) : documents;
   const selected = detail?.source || sources.find((source) => source.id === selectedId);
 
   function openKnowledgeEditor(document = null) {
@@ -1003,22 +1007,6 @@ function Knowledge({ isAdmin, onNavigate }) {
     });
   }
 
-  async function searchKnowledge(event) {
-    event.preventDefault(); setSearching(true); setError("");
-    try { setResults((await api("/api/knowledge/search", { method: "POST", body: JSON.stringify({ query }) })).results || []); }
-    catch (value) { setError(value.message); }
-    finally { setSearching(false); }
-  }
-
-  async function previewAllLanguages(event) {
-    event.preventDefault(); setSearching(true); setError("");
-    try {
-      const value = await api("/api/knowledge/search/preview", { method: "POST", body: JSON.stringify({ queries: previewQueries }) });
-      setPreviewResults(value.results || []);
-    } catch (value) { setError(value.message); }
-    finally { setSearching(false); }
-  }
-
   async function archiveSource(source, archived, reason) {
     await run(`archive-${source.id}`, async () => {
       await api(`/api/knowledge/${source.id}/archive`, { method: "PATCH", body: JSON.stringify({ archived, reason }) });
@@ -1029,53 +1017,45 @@ function Knowledge({ isAdmin, onNavigate }) {
   }
 
   async function reviewDocument(document, status) {
+    const reason = String(reviewReasons[document.id] || "").trim();
+    if (!reason) { setError("Enter a reason for this review decision."); return; }
     await run(`review-${document.id}`, async () => {
       const result = await api(`/api/knowledge/documents/${document.id}/review`, {
         method: "PATCH",
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, reason })
       });
       setDetail(await api(`/api/knowledge/${document.source_id}`));
+      setReviewReasons((current) => ({ ...current, [document.id]: "" }));
       return { message: status === "approved" ? result.embeddingWarning ? `Revision approved, but search indexing needs attention: ${result.embeddingWarning}` : `Revision v${document.revision} approved and indexed in ${result.embeddedChunks} chunks.` : `Revision v${document.revision} marked ${status}.` };
     });
   }
 
   if (loading) return <Loading />;
   return (
-    <div className="page-stack overview-page">
+    <div className="page-stack knowledge-page">
       <section className="knowledge-hero">
         <div>
-          <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> REFAL KNOWLEDGE BASE</span>
-          <h2>Give REFAL better context</h2>
-          <p>Add or update company information. Each changed revision waits for administrator review before REFAL can use it.</p>
+          <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> KNOWLEDGE OPERATIONS</span>
+          <h2>Agent knowledge</h2>
+          <p>Find source material, inspect revisions, and review updates before REFAL uses them in customer answers.</p>
         </div>
-        <div className="knowledge-hero-note"><span className="knowledge-live-dot" /><span><strong>Review before use</strong><small>Approved revisions are indexed for REFAL.</small></span></div>
+        {isAdmin && <button type="button" className="primary knowledge-add-button" onClick={() => openKnowledgeEditor()}><Plus size={16} /> Add knowledge</button>}
       </section>
       <section className="knowledge-summary">
-        <div><span>Knowledge revisions</span><strong>{documents.length}</strong><small>visible to you</small></div>
-        <div><span>Awaiting review</span><strong>{documents.filter((doc) => doc.review_status === "pending").length}</strong><small>not used by REFAL</small></div>
-        <form className="knowledge-search" onSubmit={searchKnowledge}>
-          <label htmlFor="knowledge-query">Search approved knowledge</label>
-          <div><input id="knowledge-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try a company, project, or contact question" /><button className="primary" disabled={searching || !query.trim()}><Search size={16} /> {searching ? "Searching" : "Search"}</button>{isAdmin && <button type="button" className="primary knowledge-search-add" onClick={() => openKnowledgeEditor()}><Plus size={16} /> Add knowledge</button>}</div>
-        </form>
-        {isAdmin && <form className="knowledge-search knowledge-language-preview" onSubmit={previewAllLanguages}>
-          <label>Preview approved retrieval in all customer languages</label>
-          <div className="knowledge-language-preview-grid">
-            <input aria-label="English retrieval preview query" dir="auto" value={previewQueries.en} onChange={(event) => setPreviewQueries((current) => ({ ...current, en: event.target.value }))} placeholder="English query" />
-            <input aria-label="Arabic retrieval preview query" dir="auto" value={previewQueries.ar} onChange={(event) => setPreviewQueries((current) => ({ ...current, ar: event.target.value }))} placeholder="استعلام بالعربية" />
-            <input aria-label="Greek retrieval preview query" dir="auto" value={previewQueries.el} onChange={(event) => setPreviewQueries((current) => ({ ...current, el: event.target.value }))} placeholder="Ερώτημα στα Ελληνικά" />
-            <button className="primary" disabled={searching || Object.values(previewQueries).some((value) => !value.trim())}><Search size={16} /> {searching ? "Previewing" : "Preview EN · AR · EL"}</button>
-          </div>
-        </form>}
+        <article className="knowledge-stat"><span>ACTIVE SOURCES</span><strong>{sources.filter((source) => source.enabled).length}</strong><small>Available to REFAL.</small></article>
+        <article className="knowledge-stat approved"><span>APPROVED REVISIONS</span><strong>{documents.filter((doc) => doc.review_status === "approved").length}</strong><small>Ready for retrieval.</small></article>
+        <article className="knowledge-stat pending"><span>AWAITING REVIEW</span><strong>{documents.filter((doc) => doc.review_status === "pending").length}</strong><small>Not used by REFAL yet.</small></article>
+        <article className="knowledge-stat"><span>ALL REVISIONS</span><strong>{documents.length}</strong><small>Across your knowledge sources.</small></article>
       </section>
       {error && <p className="error knowledge-message">{error}</p>}
       {notice && <p className="notice knowledge-message">{notice}</p>}
-      {results.length > 0 && <section className="panel knowledge-results"><PanelTitle icon={Search} title={`Search results (${results.length})`} /><div className="knowledge-result-list">{results.map((result, index) => <article key={result.chunk_id || `${result.document_id}-${result.heading}-${index}`}><strong>{result.document_title}{result.heading ? ` · ${result.heading}` : ""}</strong><p>{result.content}</p><a href={result.source_url} target="_blank" rel="noreferrer">{result.source_name} <ChevronRight size={14} /></a></article>)}</div></section>}
-      {previewResults.length > 0 && <section className="panel knowledge-results knowledge-language-results"><PanelTitle icon={Search} title="Trilingual approved retrieval preview" /><div className="knowledge-language-result-grid">{previewResults.map(({ language, query: previewQuery, results: languageResults }) => <article key={language} lang={language} dir={language === "ar" ? "rtl" : "auto"}><h3>{({ en: "English", ar: "العربية", el: "Ελληνικά" })[language]}</h3><p className="knowledge-preview-query">{previewQuery}</p>{languageResults.length ? languageResults.map((result, index) => <section key={result.chunk_id || `${result.document_id}-${index}`}><strong>{result.document_title}{result.heading ? ` · ${result.heading}` : ""}</strong><p>{result.content}</p><small>{result.source_name}{result.valid_until ? ` · Valid until ${formatDate(result.valid_until)}` : ""}</small></section>) : <p>No approved retrieval result for this query.</p>}</article>)}</div></section>}
       <div className="knowledge-layout">
         <section className="panel knowledge-sources">
-          <PanelTitle icon={BookOpenCheck} title="Agent knowledge" />
+          <div className="knowledge-sources-heading"><div><span className="knowledge-section-kicker">LIBRARY</span><h2>Agent knowledge</h2></div><span className="knowledge-result-count">{visibleDocuments.length} {visibleDocuments.length === 1 ? "revision" : "revisions"}</span></div>
+          <label className="knowledge-search-label" htmlFor="knowledge-library-search">Search all knowledge</label>
+          <input id="knowledge-library-search" className="knowledge-search" type="search" value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="Search titles or content in any language" autoComplete="off" />
           <div className="knowledge-source-list">
-            {documents.map((doc) => {
+            {visibleDocuments.map((doc) => {
               const source = sources.find((item) => item.id === doc.source_id);
               const snippet = String(doc.canonical_content || "").replace(/\s+/g, " ").trim();
               return <button key={doc.id} className={`knowledge-source${selectedId === doc.source_id ? " selected" : ""}`} onClick={() => setSelectedId(doc.source_id)}>
@@ -1084,7 +1064,8 @@ function Knowledge({ isAdmin, onNavigate }) {
                 <span className="knowledge-source-preview">{snippet.slice(0, 150)}{snippet.length > 150 ? "…" : ""}</span>
               </button>;
             })}
-            {!documents.length && <p className="empty">Nothing active in REFAL’s knowledge database yet.</p>}
+            {!documents.length && <p className="knowledge-empty">Nothing active in REFAL’s knowledge database yet.</p>}
+            {documents.length > 0 && !visibleDocuments.length && <p className="knowledge-empty">No content matches “{knowledgeSearch.trim()}”. Try another search.</p>}
           </div>
         </section>
         <section className="panel knowledge-detail">
@@ -1122,17 +1103,20 @@ function Knowledge({ isAdmin, onNavigate }) {
             </section>}
             {knowledgeView === "content" && <div className="knowledge-revisions">
               {(detail?.documents || []).map((doc) => <article className="knowledge-revision" key={doc.id}>
-                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Revision v{doc.revision} · {doc.language_code || "language unspecified"} · Saved {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small><small>Reviewed by {doc.approved_by || "Not approved"} · Effective {formatDate(doc.approved_at)} · Expires {formatDate(doc.valid_until)}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></div>
+                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Revision v{doc.revision} · {doc.language_code || "language unspecified"} · Saved {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small><small>Approved by {doc.approved_by || "Not recorded"} · Approved on {formatDate(doc.approved_at)} · Expires {formatDate(doc.valid_until)}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></div>
                 <small className="knowledge-review-source">Source: {selected.display_name}{selected.canonical_url && !selected.canonical_url.startsWith("manual:") ? ` · ${selected.canonical_url}` : " · operator supplied"}{doc.metadata?.sourceFileName ? ` · File: ${doc.metadata.sourceFileName}` : ""}</small>
                 {(doc.metadata?.evidence || doc.metadata?.supporting) && <div className="knowledge-review-evidence"><strong>Evidence / supporting references</strong><p>{typeof (doc.metadata.evidence || doc.metadata.supporting) === "string" ? (doc.metadata.evidence || doc.metadata.supporting) : JSON.stringify(doc.metadata.evidence || doc.metadata.supporting)}</p></div>}
                 <div className="knowledge-revision-content" dir="auto">{doc.canonical_content}</div>
-                {isAdmin && <div className="knowledge-review-actions">
-                  <div>
-                    <button className="primary" onClick={() => reviewDocument(doc, "approved")} disabled={Boolean(busy) || doc.review_status === "approved"}>{busy === `review-${doc.id}` ? "Saving review…" : "Approve and index"}</button>
-                    <button className="ghost" onClick={() => reviewDocument(doc, "pending")} disabled={Boolean(busy) || doc.review_status === "pending"}>Return to pending</button>
-                    <button className="knowledge-delete-button" onClick={() => reviewDocument(doc, "rejected")} disabled={Boolean(busy) || doc.review_status === "rejected"}>Reject</button>
+                {isAdmin && doc.reviewHistory?.length > 0 && <details className="knowledge-review-evidence"><summary>Review decision history ({doc.reviewHistory.length})</summary><ol>{doc.reviewHistory.map((entry) => <li key={entry.id}><strong>{entry.previous_status} → {entry.new_status}</strong><span> · {entry.reviewer} · {formatDate(entry.created_at)}</span><p>{entry.reason}</p></li>)}</ol></details>}
+                {isAdmin && <section className="knowledge-review-panel" aria-label={`Review revision ${doc.revision}`}>
+                  <div className="knowledge-review-heading"><div><strong>Review this revision</strong><small>Add a reason to enable a decision.</small></div></div>
+                  <label htmlFor={`knowledge-review-reason-${doc.id}`}>Decision reason<textarea id={`knowledge-review-reason-${doc.id}`} aria-label={`Reason for review decision on ${doc.title}`} placeholder="Explain why this revision is approved, returned, or rejected." value={reviewReasons[doc.id] || ""} onChange={(event) => setReviewReasons((current) => ({ ...current, [doc.id]: event.target.value }))} maxLength={500} rows={3} /></label>
+                  <div className="knowledge-review-actions">
+                    <button className="primary" onClick={() => reviewDocument(doc, "approved")} disabled={Boolean(busy) || doc.review_status === "approved" || !reviewReasons[doc.id]?.trim()}>{busy === `review-${doc.id}` ? "Saving review…" : "Approve and index"}</button>
+                    <button className="ghost" onClick={() => reviewDocument(doc, "pending")} disabled={Boolean(busy) || doc.review_status === "pending" || !reviewReasons[doc.id]?.trim()}>Return to pending</button>
+                    <button className="knowledge-delete-button" onClick={() => reviewDocument(doc, "rejected")} disabled={Boolean(busy) || doc.review_status === "rejected" || !reviewReasons[doc.id]?.trim()}>Reject</button>
                   </div>
-                </div>}
+                </section>}
                 {isAdmin && <div className="knowledge-entry-actions"><button className="ghost" onClick={() => openKnowledgeEditor(doc)}><Save size={14} /> Edit</button></div>}
               </article>)}
               {!detail?.documents?.length && <p className="empty">No knowledge saved yet. Select Add knowledge to paste text or upload a file.</p>}

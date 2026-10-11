@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { countUniqueHandoverContacts, groupHandoversByContact } from "./handoverGrouping.js";
+import { countUniqueHandoverContacts, groupHandoversByContact, handoverDraftContext } from "./handoverGrouping.js";
 
 test("active handovers from one contact appear as one group while retaining their records", () => {
   const grouped = groupHandoversByContact([
@@ -12,6 +12,7 @@ test("active handovers from one contact appear as one group while retaining thei
   assert.equal(grouped.length, 2);
   assert.equal(grouped[0].groupCount, 2);
   assert.deepEqual(grouped[0].handoverIds, ["newer", "older"]);
+  assert.deepEqual(grouped[0].records.map((item) => item.id), ["newer", "older"]);
   assert.equal(grouped[0].id, "newer");
   assert.equal(grouped[0].status, "open");
   assert.equal(grouped[0].priority, "high");
@@ -42,4 +43,15 @@ test("one canonical handover still indicates how many historical requests were m
     summary: { relatedRequests: [{}, {}, {}] }
   }]);
   assert.equal(group.groupCount, 3);
+});
+
+test("a grouped outbox draft resolves to its own handover instead of the contact's newest request", () => {
+  const [group] = groupHandoversByContact([
+    { id: "newer", contact: { id: "contact-1" }, department: "accounting", summary: { intent: "tax filing" } },
+    { id: "draft-target", contact: { id: "contact-1" }, department: "property", summary: { intent: "purchase" } }
+  ]);
+
+  assert.equal(handoverDraftContext({ handover_id: "draft-target" }, group), group.records[1]);
+  assert.equal(handoverDraftContext({ handover_id: "unknown" }, group), null);
+  assert.equal(handoverDraftContext({}, group), null);
 });

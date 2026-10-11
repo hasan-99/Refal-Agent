@@ -3,7 +3,7 @@ topic: company-profile
 lang: en
 title: Who Refalco Group is, and what the experience numbers actually count
 facts: MB-C1, MB-C2, MB-C3, MB-C4, MB-C5
-aliases: who are you | tell me about the company | what are you | how long have you been in the market | how many projects have you delivered | i don't know you, how do i know this isn't a scam | are you a scam | is this legit | where are your offices in cyprus | what services do you offer | is there anyone on the team who speaks arabic | can i speak to someone on the phone | are you a bot or a human | refalco group background | years of experience | company track record
+aliases: who are you | tell me about the company | what are you | what kind of company are you | how long have you been in the market | how many projects have you delivered | i don't know you, how do i know this isn't a scam | are you a scam | is this legit | where are your offices in cyprus | what services do you offer | is there anyone on the team who speaks arabic | can i speak to someone on the phone | are you a bot or a human | refalco group background | years of experience | company track record | What is REFAL and who does it represent | was refalco founded in 2000 | how many real estate development projects has refalco delivered | how many projects across all sectors has refalco completed
 ---
 
 ## Where the group comes from
@@ -28,13 +28,9 @@ So the first number describes depth in one field, and the second describes bread
 
 ## Not a narrow company registration office
 <!-- facts: MB-C5 -->
-The positioning is deliberate. Refalco does not present itself as a narrow company registration office. It works as a gateway to comprehensive investment and structural solutions.
+Refalco Group works across company formation and corporate structuring, tax and accounting, investment, property and development, and residency and relocation.
 
-The services sit in a few connected groups rather than in one product. Company formation and corporate structuring. Tax and accounting services. Investment, property and development services, with the files that run alongside them. Residency and relocation services for the people behind the company. If what you are looking for is the registration on its own, that is available too, but it is the smallest of the services here. Those service lines do connect in practice, because a company formed here usually leads straight into the tax, accounting and residency work that follows it.
-
-The practical difference is simple. A registration office hands over a certificate and the file closes. A gateway keeps the same file open for what comes after, because incorporation is one stage out of many and the questions that follow it are structural: where the real presence sits, how tax and accounting are run, whether property or residency belong in the plan, and what changes when a partner or an investor arrives.
-
-So which of the services you need is usually decided by what the company is for. That is why the first question we ask is usually that one, rather than which name you want to reserve.
+Which area is relevant depends on what you want to do. What is the main goal for your enquiry?
 
 ## How to check us before anything is agreed
 <!-- kind: example; facts: MB-C1 -->

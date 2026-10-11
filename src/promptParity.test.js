@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -83,6 +83,27 @@ test("W6.2: five score tiers have their distinct action protocol", () => {
   assert.equal(new Set(tiers).size, 5, "tiers must not collapse to the same instruction");
 });
 
+test("active prompt surfaces direct English, Arabic, and Greek register mirroring", () => {
+  const instruction = new RegExp(REGISTER_MIRRORING_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  for (const variant of ["customer", "operator"]) {
+    assert.match(buildBrainPrompt({ variant }).join("\n"), instruction, `${variant} prompt lost register mirroring`);
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, instruction, "Edge prompt mirror lost register mirroring; regenerate it");
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "Could you please advise formally?", locale: "english" })[0].content,
+    instruction, "active Agent decision prompt lost register mirroring");
+});
+
+test("all prompt surfaces require fresh approved evidence when a customer refers to an earlier company-fact answer", () => {
+  const expected = /If the customer refers to an earlier company-fact answer, retrieve current approved evidence again before repeating or relying on it/i;
+  for (const variant of ["customer", "operator"]) {
+    assert.match(buildBrainPrompt({ variant }).join("\n"), expected, `${variant} prompt lost fresh-evidence rule`);
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected, "Edge prompt mirror lost fresh-evidence rule; regenerate it");
+});
+
 test("W6.3: recognized buying signals reach the shared prompt with guarded next steps", () => {
   assert.deepEqual(buyingSignalBlock([]), []);
   const prompt = buildBrainPrompt({ variant: "customer", leadTier: "hot", buyingSignals: [{ id: "MB-B4" }] }).join("\n");
@@ -130,23 +151,61 @@ test("W1.7.8: the prompt is versioned and the history is ordered and complete", 
   }
 });
 
-test("the runtime surfaces CALL the shared prompt builder, not merely import it", () => {
+test("runtime surfaces use the shared prompt builder or delegate to its trusted Edge runtime", () => {
   // The original version of this test only checked that `require(...)` was
   // present. That was too weak and it lied: brainPrompt was imported by both
   // surfaces while each still built its prompt from its own inline array, and
   // the test passed anyway. Importing a module proves nothing about using it.
   //
-  // This now asserts an actual CALL, and separately that the inline array those
-  // calls replaced has not grown back.
-  const surfaces = [
-    ["src/ai.js", /\.\.\.buildBrainPrompt\(/],
-    ["dashboard/server.js", /\.\.\.buildOperatorPrompt\(|\.\.\.buildBrainPrompt\(/]
-  ];
-  for (const [file, callPattern] of surfaces) {
-    const source = fs.readFileSync(path.join(REPO, file), "utf8");
-    assert.match(source, /require\(["'][^"']*brainPrompt(?:\.js)?["']\)/, `${file} no longer imports the shared brain prompt`);
-    assert.match(source, callPattern, `${file} imports the shared prompt but never calls it — that is drift, not reuse`);
+  // The customer Node runtime calls the shared builder directly. The
+  // dashboard now delegates to the Edge generation endpoint, which builds
+  // that same prompt after reloading trusted evidence; a local OpenRouter
+  // fallback would bypass Edge-side fact authorization.
+  const nodeSource = fs.readFileSync(path.join(REPO, "src/ai.js"), "utf8");
+  assert.match(nodeSource, /require\(["'][^"']*brainPrompt(?:\.js)?["']\)/);
+  assert.match(nodeSource, /\.\.\.buildBrainPrompt\(/);
+
+  const dashboard = fs.readFileSync(path.join(REPO, "dashboard/server.js"), "utf8");
+  assert.match(dashboard, /return askSupabaseAgent\(\{ text, messages, model, memories, evidence, signal, onToken, onUsage \}\)/);
+  assert.doesNotMatch(dashboard, /https:\/\/openrouter\.ai\/api\/v1\/chat\/completions/,
+    "dashboard must not bypass authoritative Edge evidence verification with a local model fallback");
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/index.ts"), "utf8");
+  assert.match(edge, /\.\.\.buildOperatorPrompt\(/, "Edge generation no longer calls the shared operator prompt builder");
+});
+
+test("Edge dashboard generation mirrors customer language instructions and rejects a wrong-language draft", async () => {
+  const source = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/index.ts"), "utf8");
+  assert.match(source, /detectMessageLanguage\(text\)/, "Edge must detect the operator's request language");
+  assert.match(source, /languageInstruction\(language\)/, "Edge must give the model a per-turn language instruction");
+  assert.match(source, /detectMessageLanguage\(reply\) !== language/, "Edge must reject a wrong-language draft");
+  const nodeLanguage = require("./language");
+  const edgeLanguage = await import(pathToFileURL(path.join(REPO, "supabase/functions/rafa-agent-api/language.mjs")).href);
+  for (const [text, expected] of [
+    ["Please explain the next step.", "english"],
+    ["شو الخطوة الجاية؟", "arabic"],
+    ["Ποιο είναι το επόμενο βήμα;", "greek"]
+  ]) {
+    const language = nodeLanguage.detectMessageLanguage(text);
+    assert.equal(language, expected);
+    assert.equal(edgeLanguage.detectMessageLanguage(text), language);
+    assert.equal(edgeLanguage.languageInstruction(language), nodeLanguage.languageInstruction(language));
   }
+});
+
+test("Edge and Node answer gates both check Refalco claims against approved evidence", async () => {
+  const nodeAnswer = require("./refalcoAnswer");
+  const edgeAnswer = await import(pathToFileURL(path.join(REPO, "supabase/functions/rafa-agent-api/refalcoAnswer.mjs")).href);
+  const evidence = [{ review_status: "approved", content: "Refalco Group provides company formation support in Cyprus." }];
+  for (const answer of [
+    "Refalco Group provides company formation support in Cyprus.",
+    "Refalco Group guarantees bank approval within 24 hours.",
+    "I cannot confirm whether a bank will approve the account."
+  ]) {
+    const nodeBlocked = nodeAnswer.containsProhibitedClaim(answer, { evidence, language: "english" });
+    const edgeBlocked = edgeAnswer.containsProhibitedClaim(answer, { evidence, language: "english" });
+    assert.equal(edgeBlocked, nodeBlocked, `Edge claim gate diverged for: ${answer}`);
+  }
+  assert.equal(edgeAnswer.containsProhibitedClaim("Refalco Group guarantees bank approval within 24 hours.", { evidence, language: "english" }), true);
 });
 
 test("the shared blocks are the ONLY source of the mandatory rules on each surface", () => {
@@ -307,6 +366,10 @@ test("BLK-3/5/6 are absent from the FOURTH prompt surface, the Agent decision st
   // evidence rule. Removing BLK-3 must not become "state anything".
   assert.match(system, /require current approved knowledge from a tool result/i,
     "the Agent decision prompt stopped gating facts on a tool result");
+  assert.match(system, /approved, current Knowledge revision from an active source is evidence itself/i,
+    "the Agent decision prompt made Evidence references a condition for approved Knowledge text");
+  assert.match(system, /do not require Evidence\/supporting-reference fields or a separate Fact Register approval/i,
+    "the Agent decision prompt restored a second approval requirement");
   // The replacement booking rule must be present, not merely the ban removed.
   assert.match(system, /Do not offer a call or meeting at this stage/,
     "removing BLK-6 here left no contact rule at all, which is a fail-open");

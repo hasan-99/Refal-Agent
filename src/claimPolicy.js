@@ -165,16 +165,20 @@ function extractNumbers(text) {
 
 // ------------------------------------------------------------------- evidence
 
-// An unapproved chunk is not evidence. An expired chunk is not evidence. An
-// unparseable `valid_until` is treated as expired: fail closed, never open.
+// Only current text from an approved Knowledge revision is answer evidence.
+// Evidence references and per-fact register links are optional annotations;
+// they do not add a second approval step to an already approved revision.
 function isApprovedEvidence(item) {
   if (!item || typeof item !== "object") return false;
   if (item.review_status !== "approved") return false;
   const validUntil = item.valid_until;
-  if (validUntil === undefined || validUntil === null || String(validUntil).trim() === "") return true;
-  const expiry = Date.parse(validUntil);
-  if (!Number.isFinite(expiry)) return false;
-  return expiry > Date.now();
+  if (validUntil !== undefined && validUntil !== null && String(validUntil).trim() !== "") {
+    const expiry = Date.parse(validUntil);
+    if (!Number.isFinite(expiry) || !(expiry > Date.now())) return false;
+  }
+  const factRows = item.policyMetadata?.factRegisterRows;
+  if (Array.isArray(factRows) && factRows.some((row) => row?.status === "blocked")) return false;
+  return true;
 }
 
 function evidenceContent(item) {
@@ -182,9 +186,9 @@ function evidenceContent(item) {
   return String(item.content ?? item.text ?? "");
 }
 
-function approvedEvidenceText(evidence) {
+function approvedEvidenceText(evidence, language) {
   if (!Array.isArray(evidence)) return "";
-  return normalizeClaimText(evidence.filter(isApprovedEvidence).map(evidenceContent).join("\n"));
+  return normalizeClaimText(evidence.filter((item) => isApprovedEvidence(item, { language })).map(evidenceContent).join("\n"));
 }
 
 // ------------------------------------------------------------- sentence split
@@ -442,7 +446,7 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["neutral"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
 
-  const evidenceText = approvedEvidenceText(evidence);
+  const evidenceText = approvedEvidenceText(evidence, resolvedLanguage);
   if (!evidenceText) {
     return { claimClass: CLAIM_CLASSES.PROGRAM_FACT, allowed: false, reasons: ["no_approved_evidence"], language: resolvedLanguage, unsupportedNumbers: numbers };
   }

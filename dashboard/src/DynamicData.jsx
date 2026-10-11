@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Clock3, Database, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
-import { fieldsFor, KINDS, SHAPES } from "./DynamicDataFields.js";
+import { buildPayload, fieldsFor, KINDS, SHAPES } from "./DynamicDataFields.js";
+import { createLatestRequestGate } from "../latestRequest.js";
 import "./dynamic-data.css";
 
 async function request(path, options = {}) {
@@ -67,28 +68,6 @@ function initialForm(kind, row = null) {
   return values;
 }
 
-function buildPayload(kind, form) {
-  const fields = fieldsFor(kind);
-  const payload = {};
-  for (const item of fields) {
-    const value = form[item.name];
-    if (item.name === "deposit_mode" || item.name === "deposit_value") continue;
-    if (item.type === "datetime-local") payload[item.name] = value ? new Date(value).toISOString() : "";
-    else if (item.type === "lines") payload[item.name] = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    else if (item.type === "json") payload[item.name] = JSON.parse(value || "{}");
-    else if (item.type === "number") payload[item.name] = value === "" && item.nullable ? null : value === "" ? "" : Number(value);
-    else if (item.type === "checkbox") payload[item.name] = Boolean(value);
-    else if (item.type === "selectNullable") payload[item.name] = value === "" ? null : value === "true";
-    else if (item.type !== "checkbox" && value !== "") payload[item.name] = value;
-  }
-  if (kind === "reservations") {
-    const amountMode = form.deposit_mode === "amount";
-    payload.deposit_amount = amountMode ? Number(form.deposit_value) : null;
-    payload.deposit_percent = amountMode ? null : Number(form.deposit_value);
-  }
-  return payload;
-}
-
 export default function DynamicData({ isAdmin }) {
   const [kind, setKind] = useState("offers");
   const [rows, setRows] = useState([]);
@@ -100,29 +79,36 @@ export default function DynamicData({ isAdmin }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(() => initialForm("offers"));
   const [reason, setReason] = useState("");
+  const requestGate = useMemo(() => createLatestRequestGate(), []);
   const currentKind = useMemo(() => KINDS.find((item) => item.id === kind), [kind]);
 
   const load = useCallback(async ({ preserveNotice = false } = {}) => {
+    const requestId = requestGate.begin();
     setLoading(true);
     setError("");
     if (!preserveNotice) setNotice("");
     try {
       const result = await request(`/api/dynamic-data/${encodeURIComponent(kind)}`);
+      if (!requestGate.isCurrent(requestId)) return;
       setRows(Array.isArray(result.rows) ? result.rows : []);
       setMigrationMissing(false);
     } catch (cause) {
+      if (!requestGate.isCurrent(requestId)) return;
       setRows([]);
       setMigrationMissing(cause.code === "dynamic_data_migration_missing");
       setError(cause.message || "Could not load commercial data.");
     } finally {
-      setLoading(false);
+      if (requestGate.isCurrent(requestId)) setLoading(false);
     }
-  }, [kind]);
+  }, [kind, requestGate]);
 
   useEffect(() => { void load(); }, [load]);
 
   function changeKind(nextKind) {
+    requestGate.invalidate();
     setKind(nextKind);
+    setRows([]);
+    setLoading(true);
     setEditing(null);
     setForm(initialForm(nextKind));
     setReason("");

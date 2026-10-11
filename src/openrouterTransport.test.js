@@ -12,6 +12,7 @@ const {
   buildCurlConfigFile,
   parseCurlOutput
 } = require("./openrouterTransport");
+const { createModelCircuitBreaker } = require("./modelCircuitBreaker");
 
 const PROXY_ENV_KEYS = ["OPENROUTER_CORPORATE_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"];
 
@@ -97,6 +98,57 @@ test("fetchOpenRouter: default (no flag) calls the global fetch, never the curl 
   }
 ));
 
+test("fetchOpenRouter: direct requests time out while waiting for headers and abort the underlying fetch", () => withProxyEnv(
+  {},
+  async () => {
+    const originalFetch = global.fetch;
+    let signal;
+    global.fetch = async (_url, options) => {
+      signal = options.signal;
+      return new Promise(() => {});
+    };
+    try {
+      await assert.rejects(fetchOpenRouter("https://openrouter.ai/x", { timeoutMs: 15 }), { name: "TimeoutError" });
+      assert.equal(signal.aborted, true);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }
+));
+
+test("fetchOpenRouter: direct response body parsing stays inside the timeout budget", () => withProxyEnv(
+  {},
+  async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({ ok: true, status: 200, json: () => new Promise(() => {}) });
+    try {
+      const response = await fetchOpenRouter("https://openrouter.ai/x", { timeoutMs: 15 });
+      await assert.rejects(response.json(), { name: "TimeoutError" });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }
+));
+
+test("a direct response-body timeout is visible to the model circuit breaker", () => withProxyEnv(
+  {},
+  async () => {
+    const originalFetch = global.fetch;
+    const circuit = createModelCircuitBreaker({ failureThreshold: 1, cooldownMs: 100 });
+    global.fetch = async () => ({ ok: true, status: 200, json: () => new Promise(() => {}) });
+    try {
+      await assert.rejects(() => circuit.run(async () => {
+        const response = await fetchOpenRouter("https://openrouter.ai/x", { timeoutMs: 15 });
+        return { response, body: await response.json() };
+      }), { name: "TimeoutError" });
+      assert.equal(circuit.snapshot().failures, 1);
+      await assert.rejects(() => circuit.run(async () => ({ ok: true, status: 200 })), { code: "MODEL_PROVIDER_CIRCUIT_OPEN" });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }
+));
+
 test("fetchOpenRouter: with the explicit opt-in flag + proxy, routes through the injected curl runner and never calls fetch", () => withProxyEnv(
   { OPENROUTER_CORPORATE_PROXY: "1", HTTPS_PROXY: "http://occyproxy.example:8080" },
   async () => {
@@ -172,6 +224,25 @@ test("buildCurlConfigFile: writes NTLM directives, the resolved proxy, and heade
   } finally {
     fs.rmSync(path.dirname(file), { recursive: true, force: true });
   }
+});
+
+test("buildCurlConfigFile rejects line breaks in values that could inject curl config directives", async () => {
+  const lf = String.fromCharCode(10);
+  const injected = `Bearer test${lf}url = "https://attacker.invalid"`;
+  await assert.rejects(buildCurlConfigFile({
+    url: "https://openrouter.ai/x",
+    method: "POST",
+    headers: { Authorization: injected },
+    proxyUrl: "http://proxy.example:8080",
+    timeoutMs: 1000
+  }), /cannot contain control characters/);
+  await assert.rejects(buildCurlConfigFile({
+    url: "https://openrouter.ai/x",
+    method: "POST",
+    headers: {},
+    proxyUrl: `http://proxy.example:8080${String.fromCharCode(13)}silent`,
+    timeoutMs: 1000
+  }), /cannot contain control characters/);
 });
 
 // Fakes child_process.spawn end-to-end so the full defaultCurlRunner path

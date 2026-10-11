@@ -23,7 +23,53 @@ const CUSTOMER_PROVENANCE = "customer_message";
 const DERIVED_PROVENANCE = "derived_from_customer_message";
 
 function normalizeForComparison(value) {
-  return String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/[\u064b-\u065f\u0670\u0640]/gu, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/gu, " ");
+  return String(value || "").normalize("NFKC").toLowerCase().replace(/[\u064b-\u065f\u0670\u0640]/gu, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/gu, " ");
+}
+
+function normalizeCrmValue(value) {
+  return String(value || "").normalize("NFKC").trim().replace(/\s+/gu, " ");
+}
+
+function extractLiteralSpan(message, value) {
+  const source = String(message || "");
+  const target = normalizeForComparison(value);
+  if (!source || !target) return "";
+  const originalStarts = [];
+  const originalEnds = [];
+  const normalizedParts = [];
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  for (const { segment, index } of segmenter.segment(source)) {
+    const normalizedSegment = segment.normalize("NFKC").toLowerCase()
+      .replace(/[\u064b-\u065f\u0670\u0640]/gu, "");
+    for (const character of Array.from(normalizedSegment)) {
+      if (/[\p{L}\p{N}]/u.test(character)) {
+        normalizedParts.push(character);
+        for (let unit = 0; unit < character.length; unit += 1) {
+          originalStarts.push(index);
+          originalEnds.push(index + segment.length);
+        }
+      } else if (normalizedParts.length && normalizedParts[normalizedParts.length - 1] !== " ") {
+        normalizedParts.push(" ");
+        originalStarts.push(index);
+        originalEnds.push(index + segment.length);
+      }
+    }
+  }
+  const normalizedSource = normalizedParts.join("").trim();
+  const leadingSpaces = normalizedParts.findIndex((character) => character !== " ");
+  const trailingSpaceCount = normalizedParts.length - [...normalizedParts].reverse().findIndex((character) => character !== " ");
+  const starts = originalStarts.slice(leadingSpaces, trailingSpaceCount);
+  const ends = originalEnds.slice(leadingSpaces, trailingSpaceCount);
+  const normalizedTarget = normalizedSource.indexOf(target);
+  if (normalizedTarget < 0) return "";
+  const targetEnd = normalizedTarget + target.length;
+  if ((normalizedTarget > 0 && /[\p{L}\p{N}]/u.test(normalizedSource[normalizedTarget - 1]))
+    || (targetEnd < normalizedSource.length && /[\p{L}\p{N}]/u.test(normalizedSource[targetEnd]))) return "";
+  // JS string offsets are UTF-16 units; the mapping arrays use the same
+  // indexing and map normalized compatibility forms back to original spelling.
+  const start = starts[normalizedTarget];
+  const end = ends[targetEnd - 1];
+  return Number.isInteger(start) && Number.isInteger(end) ? source.slice(start, end) : "";
 }
 
 function extractLiteralEvidence(message, value) {
@@ -51,12 +97,23 @@ function isNegatedLiteralMention(message, value) {
   const match = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "iu").exec(source);
   if (!match) return false;
   const prefix = source.slice(0, match.index).slice(-90);
+  const contrastPrefix = source.slice(0, match.index).trimEnd();
+  if (/(?:^|\s)not\s+only(?:\s+[\p{L}\p{N}]+){0,3}$/iu.test(contrastPrefix)
+    || /(?:^|\s)ليس\s+فقط(?:\s+[\p{L}\p{N}]+){0,3}$/u.test(contrastPrefix)) return false;
   const words = prefix.split(/\s+/u).filter(Boolean);
   const suffix = words.slice(-7).join(" ");
   if (/(?:^|\s)(?:not|don t|do not|never|no longer|without)(?:\s+[\p{L}\p{N}]+){0,5}$/iu.test(suffix)) return true;
   for (let index = Math.max(0, words.length - 7); index < words.length; index += 1) {
     if (["لا", "ليس", "ليست", "ما", "δεν", "όχι", "μην"].includes(words[index]) && words.length - index <= 6) return true;
   }
+  // Negation can follow the mentioned value: “Jordan is not where I live”,
+  // “الأردن ليس بلد إقامتي”, or “η Ιορδανία δεν είναι η χώρα μου”. Check
+  // clear predicate forms while leaving contrastive lists such as “Jordan,
+  // not Cyprus” affirmative for Jordan.
+  const afterMention = source.slice(match.index + match[0].length).trimStart();
+  if (/^(?:never|no longer)(?=$|\s)/iu.test(afterMention)) return true;
+  if (/^(?:(?:is|are|was|were|do|does|did)\s+not(?!\s+only\b)|(?:is|are|was|were)\s+no longer|(?:isn t|aren t|wasn t|weren t|don t|doesn t|didn t|can t|cannot)(?!\s+only\b)|(?:is|are|was|were)\s+never)\b/iu.test(afterMention)) return true;
+  if (/^(?:ليس\s+(?!فقط(?=$|\s))\p{L}+|ليست\s+(?!فقط(?=$|\s))\p{L}+|(?:مش|مو)\s+(?:بلد|مكان|مقر|حيث|دولة|إقامة|اقامة|إقامتي|اقامتي)|لا\s+(?:أعيش|اسكن|أسكن|أقيم|بلدي|مكان)|δεν\s+(?:είναι|μένω|κατοικώ)|(?:είναι|είμαι)\s+όχι)(?=$|\s)/iu.test(afterMention)) return true;
   return false;
 }
 
@@ -80,7 +137,6 @@ function isExplicitCorrectionMessage(message) {
 
 function normalizeCrmCandidate(candidate = {}) {
   const field = String(candidate.field || "");
-  const value = candidate.normalizedValue ?? candidate.value;
   const rawValue = candidate.rawValue ?? candidate.value;
   const provenance = candidate.provenance;
   const confidence = Number(candidate.confidence);
@@ -92,15 +148,16 @@ function normalizeCrmCandidate(candidate = {}) {
   if (![CUSTOMER_PROVENANCE, DERIVED_PROVENANCE].includes(provenance)) return { ok: false, reason: "invalid_provenance" };
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return { ok: false, reason: "invalid_confidence" };
   if (!evidence || evidence.length > 500 || !sourceTurnId || sourceTurnId.length > 160) return { ok: false, reason: "missing_provenance" };
-  if (typeof value !== "string" || !value.trim() || value.length > 500 || typeof rawValue !== "string" || !rawValue.trim() || rawValue.length > 500) {
+  if (typeof rawValue !== "string" || !rawValue.trim() || rawValue.length > 500) {
     return { ok: false, reason: "invalid_value" };
   }
+  const value = normalizeCrmValue(rawValue);
   // Inference is retained as inference, but never promoted into the
   // customer-stated record used by never-reask.
   return {
     ok: true,
     record: Object.freeze({
-      rawValue: redact(rawValue.trim()).slice(0, 500), normalizedValue: redact(value.trim()).slice(0, 500), provenance,
+      rawValue: redact(rawValue.trim()).slice(0, 500), normalizedValue: redact(value).slice(0, 500), provenance,
       confidence, sourceTurnId, evidence, inferred: provenance === DERIVED_PROVENANCE,
       group: CRM_FIELDS[field]
     })
@@ -113,8 +170,8 @@ function mergeCrmCandidate(existing = {}, candidate) {
   const current = existing[candidate.field];
   const next = normalized.record;
   if (!current) return { ok: true, record: next, correctionNeeded: false };
-  const currentValue = String(current.normalizedValue ?? current.value ?? "").trim().toLocaleLowerCase();
-  if (currentValue === next.normalizedValue.toLocaleLowerCase()) {
+  const currentValue = normalizeForComparison(current.normalizedValue ?? current.value ?? "");
+  if (currentValue === normalizeForComparison(next.normalizedValue)) {
     return { ok: true, record: current, correctionNeeded: false, unchanged: true };
   }
   // Conflicts must be reviewed or clarified; never silently replace the
@@ -127,4 +184,4 @@ function mergeCrmCandidate(existing = {}, candidate) {
   };
 }
 
-module.exports = { CRM_FIELDS, CUSTOMER_PROVENANCE, DERIVED_PROVENANCE, normalizeForComparison, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate, mergeCrmCandidate };
+module.exports = { CRM_FIELDS, CUSTOMER_PROVENANCE, DERIVED_PROVENANCE, normalizeForComparison, normalizeCrmValue, extractLiteralEvidence, extractLiteralSpan, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate, mergeCrmCandidate };

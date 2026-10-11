@@ -1,6 +1,36 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EdgeApiStore } = require("./supabaseStore");
+const { MemoryStore } = require("./store");
+const { recordHistory } = require("./messageRouter");
+const { hasAutomatedReminderPermission } = require("./leadQualification");
+
+test("MemoryStore preserves consent provenance and binds it to the inserted turn", async () => {
+  const store = new MemoryStore();
+  const at = "2026-10-10T10:00:00.000Z";
+  const { turn } = await recordHistory(store, "contact-1", "Yes, please send automated reminders", "Understood. Automated reminders are enabled for this request.", {
+    at,
+    metadata: {
+      intent: { language: "english" },
+      automatedReminderConsent: {
+        state: "granted",
+        purpose: "automated_reminder",
+        scope: "automated_reminder",
+        offerSourceTurnId: "offer-turn",
+        language: "en",
+        channel: "whatsapp",
+        observedAt: at
+      }
+    }
+  });
+
+  assert.match(turn.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
+  assert.equal(turn.at, at);
+  assert.equal(turn.source, "whatsapp");
+  assert.equal(turn.automated, true);
+  assert.equal(turn.metadata.followUpConsent.sourceTurnId, turn.id);
+  assert.equal(hasAutomatedReminderPermission(store.getUser("contact-1")), true);
+});
 
 test("addHistory returns the inserted turn including its ID", async () => {
   const originalFetch = global.fetch;
@@ -38,6 +68,31 @@ test("addHistory redacts credential and payment data before the Supabase request
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test("logEvent redacts contact identifiers, personal fields, and embedded secrets before the API request", async () => {
+  const store = new EdgeApiStore({ apiUrl: "https://example.test/rafa-agent-api", key: "public-key", apiSecret: "internal-secret" });
+  let payload;
+  store.request = async (path, options) => {
+    assert.equal(path, "/events");
+    payload = JSON.parse(options.body);
+    return { ok: true };
+  };
+  await store.logEvent("appointment_admin_rejected", {
+    action: "reject",
+    contactId: "123456789@s.whatsapp.net",
+    reviewer: "operator@example.test",
+    reason: "Customer asked for deletion",
+    details: { state: "failed", error: "password: SecretPhrase-81" }
+  });
+  assert.deepEqual(payload.fields, {
+    action: "reject",
+    contactId: "[redacted]",
+    reviewer: "[redacted]",
+    reason: "[redacted]",
+    details: { state: "failed", error: "[redacted]" }
+  });
+  assert.doesNotMatch(JSON.stringify(payload), /123456789|operator@example|Customer asked|SecretPhrase/u);
 });
 
 test("updateHistoryTurn sends a scoped PATCH and returns the saved turn", async () => {

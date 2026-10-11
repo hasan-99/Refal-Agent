@@ -95,6 +95,70 @@ test("specialist consent does not authorize automated reminder outreach", () => 
   assert.equal(hasAutomatedReminderPermission(user), false);
 });
 
+test("consent resolution follows source-turn timestamps after history is rehydrated out of order", () => {
+  const specialistGrant = {
+    id: "grant", at: "2026-10-01T10:00:00Z", message: "Please follow up",
+    metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } }
+  };
+  const optOut = { id: "opt-out", at: "2026-10-02T10:00:00Z", message: "Stop messaging me" };
+  assert.equal(getConsentState({ user: { id: "x", history: [optOut, specialistGrant] } }), CONSENT_STATES.REVOKED);
+  assert.equal(hasFollowUpPermission({ id: "x", history: [optOut, specialistGrant] }), false);
+
+  const reminderGrant = {
+    ...specialistGrant,
+    metadata: { followUpConsent: { state: "granted", purpose: "automated_reminder", sourceTurnId: "grant", channel: "whatsapp", language: "en" } }
+  };
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [optOut, reminderGrant] }), false);
+  const renewed = {
+    ...reminderGrant, id: "renewed", at: "2026-10-03T10:00:00Z",
+    metadata: { followUpConsent: { ...reminderGrant.metadata.followUpConsent, sourceTurnId: "renewed" } }
+  };
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [renewed, optOut, reminderGrant] }), true);
+});
+
+test("same-time opt-out wins over grants regardless of stored history order", () => {
+  const at = "2026-10-01T10:00:00Z";
+  const specialistGrant = {
+    id: "specialist-grant", at, message: "Please follow up",
+    metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } }
+  };
+  const specialistOptOut = { id: "specialist-opt-out", at, message: "Stop messaging me" };
+  for (const history of [[specialistGrant, specialistOptOut], [specialistOptOut, specialistGrant]]) {
+    const user = { id: "x", history };
+    assert.equal(getConsentState({ user }), CONSENT_STATES.REVOKED);
+    assert.equal(hasFollowUpPermission(user), false);
+  }
+
+  const reminderGrant = {
+    id: "reminder-grant", at, source: "whatsapp", message: "I agree to reminders",
+    metadata: { intent: { language: "en" }, followUpConsent: {
+      state: "granted", purpose: "automated_reminder", sourceTurnId: "reminder-grant", channel: "whatsapp", language: "en"
+    } }
+  };
+  const reminderOptOut = {
+    id: "reminder-opt-out", at, message: "", metadata: { followUpConsent: { state: "revoked", purpose: "automated_reminder" } }
+  };
+  for (const history of [[reminderGrant, reminderOptOut], [reminderOptOut, reminderGrant]]) {
+    assert.equal(hasAutomatedReminderPermission({ id: "x", history }), false);
+  }
+});
+
+test("untimestamped legacy grants cannot override a timestamped later opt-out", () => {
+  const legacyGrant = { id: "legacy-grant", message: "Please follow up",
+    metadata: { specialistFollowUp: { consented: true, purpose: "specialist_follow_up" } } };
+  const optOut = { id: "opt-out", at: "2026-10-02T10:00:00Z", message: "Stop messaging me" };
+  assert.equal(getConsentState({ user: { id: "x", history: [optOut, legacyGrant] } }), CONSENT_STATES.REVOKED);
+  assert.equal(hasFollowUpPermission({ id: "x", history: [optOut, legacyGrant] }), false);
+
+  const legacyReminderGrant = { ...legacyGrant, metadata: { followUpConsent: {
+    state: "granted", purpose: "automated_reminder", sourceTurnId: "legacy-grant", channel: "whatsapp", language: "en"
+  } } };
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [optOut, legacyReminderGrant] }), false);
+  const malformedGrant = { ...legacyReminderGrant, id: "malformed-grant", at: "not-a-date",
+    metadata: { ...legacyReminderGrant.metadata, followUpConsent: { ...legacyReminderGrant.metadata.followUpConsent, sourceTurnId: "malformed-grant" } } };
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [optOut, malformedGrant] }), false);
+});
+
 test("automated reminder consent requires its own durable, scoped, localized source turn", () => {
   const source = {
     id: "reminder-turn", at: "2026-10-01T00:00:00Z", message: "I agree to automated reminders",
@@ -115,5 +179,22 @@ test("automated reminder consent requires its own durable, scoped, localized sou
   assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "no", metadata: { followUpConsent: { state: "denied", purpose: "automated_reminder" } } }] }), false);
   assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "", metadata: { followUpConsent: { state: "revoked", purpose: "automated_reminder" } } }] }), false);
   const renewed = { ...source, id: "renewed-turn", at: "2026-10-02T00:00:00Z", metadata: { ...source.metadata, followUpConsent: { ...source.metadata.followUpConsent, sourceTurnId: "renewed-turn" } } };
-  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "Stop messaging me" }, renewed] }), true);
+  // With no timestamp on the opt-out its order relative to the renewal cannot
+  // be established, so reminder permission fails closed.
+  assert.equal(hasAutomatedReminderPermission({ id: "x", history: [source, { message: "Stop messaging me" }, renewed] }), false);
+});
+
+test("future-dated automated reminder consent cannot authorize outreach before its source turn", () => {
+  const source = {
+    id: "future-reminder-turn", at: "2026-10-02T00:00:00.000Z", message: "I agree to automated reminders",
+    metadata: { followUpConsent: {
+      state: "granted", purpose: "automated_reminder", sourceTurnId: "future-reminder-turn", channel: "whatsapp", language: "en"
+    } }
+  };
+  const { getAutomatedReminderConsent } = require("./leadQualification");
+  assert.equal(getAutomatedReminderConsent({ id: "x", history: [source] }, new Date("2026-10-01T23:54:59.999Z")), null);
+  assert.deepEqual(getAutomatedReminderConsent({ id: "x", history: [source] }, new Date("2026-10-02T00:00:00.000Z")), {
+    language: "en", channel: "whatsapp", sourceTurnId: "future-reminder-turn"
+  });
+  assert.equal(getAutomatedReminderConsent({ id: "x", history: [source] }, new Date("invalid")), null);
 });

@@ -33,9 +33,9 @@ const HOOKS = Object.freeze({
     topics: ["relocation-checklist", "non-dom-status", "gesy"],
     allTopicsRequired: true,
     hints: {
-      en: "Since moving with family is on your mind, I can also outline international schools, GESY and the Non Dom programme, which may apply for up to 17 years. Which would help most?",
-      ar: "بما إن الانتقال مع العيلة ببالك، فيني كمان أوضح موضوع المدارس الدولية وGESY وبرنامج Non Dom اللي ممكن ينطبق لمدة تصل لـ17 سنة. أي نقطة بتفيدك أكثر؟",
-      el: "Αφού σκέφτεστε τη μετακόμιση με την οικογένεια, μπορώ επίσης να σας ενημερώσω για διεθνή σχολεία, το ΓεΣΥ και το πρόγραμμα Non Dom που μπορεί να ισχύει έως και 17 χρόνια. Τι θα σας βοηθούσε περισσότερο;"
+      en: "Since moving with family is on your mind, I can also outline international schools, GESY and the Non-Dom programme, which may apply for up to 17 years. Which would help most?",
+      ar: "بما إن الانتقال مع العيلة ببالك، فيني كمان أوضح موضوع المدارس الدولية وGESY وبرنامج Non-Dom اللي ممكن ينطبق لمدة تصل لـ17 سنة. أي نقطة بتفيدك أكثر؟",
+      el: "Αφού σκέφτεστε τη μετακόμιση με την οικογένεια, μπορώ επίσης να σας ενημερώσω για διεθνή σχολεία, το GESY και το πρόγραμμα Non-Dom που μπορεί να ισχύει έως και 17 χρόνια. Τι θα σας βοηθούσε περισσότερο;"
     },
     matches: [
       /(?:\b(?:family|children|kids|school|housing|living|relocat\w*|mov(?:e|ing)|3ayle|3eyle|madras|sakan|metakomizo|oikogeneia|spiti|na2el|na2lo)\b|μετακόμ|οικογέν|σχολεί|στέγαση|διαμονή|عائلة|العيلة|أولاد|اولاد|مدارس|سكن|انتقل|ننتقل|نعيش|ننقل)/iu

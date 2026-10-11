@@ -22,6 +22,14 @@ projects, track record, timelines and availability must come from approved
 evidence. An empty knowledge base means no company facts are available, and
 REFAL says so rather than improvising.
 
+The text of an approved, current Knowledge revision from an active source is
+evidence itself. An empty or general Evidence/supporting references field, or a
+separate Fact Register status, is not a reason to hide that approved text. A
+URL or file path without indexed content is not evidence. REFAL must still
+answer only what the retrieved approved text supports and must not guess when
+no relevant approved text is available. An explicit Fact Register block stays
+in force.
+
 *(This replaced the previous "no company identity is preconfigured" posture,
 recorded as defect BLK-3 and removed in P1.1. It was a defect, not a safeguard:
 it left REFAL unable to name its own group.)*
