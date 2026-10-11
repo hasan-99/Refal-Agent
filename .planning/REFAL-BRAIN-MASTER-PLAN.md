@@ -1016,6 +1016,8 @@ AR-L2: business casual. Practical, confident, warm. Clear without excessive lega
 ### P10.4 — Trilingual glossary and transliteration (imported from CX 2C) `[ ]`
 One glossary for company, legal and property terms across all three languages, with **consistent transliteration**, so "Ltd", "IP Box", "Non Dom", "EORI", "GESY", "AIF" are rendered the same way everywhere. Preserve exact legal meaning across translations. A missing reviewed translation is **fallback required**, never a fact to invent.
 
+**Implementation note (2026-10-11):** The shared WhatsApp/dashboard/Edge prompt now preserves approved canonical spellings for legal, tax, regulatory and product terms and forbids unsupported translations or definitions. This is a safety improvement, not completion of the reviewed trilingual glossary or native-speaker review.
+
 ### P10.5 — Parity measurement `[ ]`
 Every golden question in each language retrieves its own language document first. The language lock stays. **Per language and per domain scores with error bars; the aggregate may never hide a Greek or Arabic failure.** Target: within 10% across languages. Persona, humour and hooks reviewed by a native speaker per language before sign off.
 
@@ -1043,6 +1045,8 @@ Multilingual adversarial corpus by category, including obfuscated and mixed scri
 
 ### P12.1 — Knowledge admin `[ ]`
 Add, edit, review, approve, publish, unpublish, archive. Show source, language, status, version, reviewer, effective date and expiry (the P3.9 register). **Preview retrieval results in Arabic, English and Greek before publishing.** Confirmation and undo for destructive operations. Audit who changed which fact. **Knowledge edit → publish → search demonstrated without redeploying the agent.**
+
+**Execution record (2026-10-11):** Local implementation adds reversible source archive/restore with required reason and dashboard audit event, removes permanent source deletion, provides an admin-only side-by-side approved retrieval preview in EN/AR/EL, and displays revision provenance and effective/expiry metadata. Preview deliberately searches only approved active evidence; pending revisions stay unavailable to the agent. Independent local verification: full dashboard suite **116/116** and production build pass. No live knowledge was changed and no production UI demo was run; the phase stays open until the end-to-end publish/search demonstration can run on a configured dashboard host.
 
 ### P12.2 — Dynamic data admin `[ ]`
 Typed forms with effective dates for offers, prices, property, deposits and fees. **Never edited as freeform prompt text.**
@@ -1086,6 +1090,8 @@ N concurrent conversations across all three languages. Measure latency, error ra
 
 ### P14.1 — Golden set scoring `[ ]`
 All ~870 questions. Targets, written before the run: ≥90% factual accuracy · 100% grounding · **0 guardrail failures** · ≥85% Golden Formula compliance · language parity within 10%. Results identify test type: synthetic, sandbox or live. **No scripted fallback counts as a model success without disclosure.**
+
+**Execution record (2026-10-11, diagnostic only):** The new harness ran the live approved-knowledge search for all **879** positive golden questions and **17** negative controls. It returned 742/879 expected-fact hits in the top five (84.4%); language counts were AR 252/293 (86.0%), EN 241/293 (82.3%), EL 249/293 (85.0%). It generated **zero** model answers, so factual accuracy, grounding, Golden Formula and answer-language quality remain unscored. Do not use these retrieval rates as a release verdict yet: MB-F9 package-price questions require the separate dynamic-offer tool, the raw-search negative controls bypass the agent's scope gate, and at least one golden expected-fact mapping needs human review. A corrected three-question ranked live smoke found each supplied expected fact in ranks 2–4. Full methodology review and human answer adjudication remain open.
 
 ### P14.2 — Full workflow tests (CX 14C) `[ ]`
 Inbound message → intent → retrieval or tool → answer → DB persistence → handoff, booking or follow up state → dashboard view. Fake services and isolated Supabase fixtures first, then sandbox accounts for external connectors.

@@ -750,6 +750,8 @@ test("WhatsApp, dashboard, Edge, and canonical rules share the consent and inves
     assert.match(content, /Never claim(?: that)? (?:a )?handover, call, or follow-up is arranged or promise (?:that )?(?:a person|someone) will contact the customer unless the system confirms that action/, file);
     assert.match(content, /When (?:the customer|a customer) corrects a misunderstanding, answer the corrected request/, file);
     assert.match(content, /If the customer explicitly requests a reply language, use (?:that|the requested) language even when the request sentence itself is written in another language/, file);
+    assert.match(content, /keep official company names, legal forms, tax and regulatory labels, and product names in their approved canonical spelling/, file);
+    assert.match(content, /do not invent translations or definitions/, file);
     assert.match(content, /summarize only customer-stated facts/, file);
     // W1.7.7 removed BLK-6. The old clause was an ABSOLUTE ban on introducing a
     // call during information gathering, which left a ready-to-buy customer

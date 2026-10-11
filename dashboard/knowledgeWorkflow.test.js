@@ -47,3 +47,35 @@ test("only an approved decision indexes chunks, and the UI offers all review sta
   assert.match(ui, /Source: \{selected\.display_name\}/);
 });
 
+test("archive and restore are admin-only, reversible source disable actions with actor/reason audit events", () => {
+  const archive = route("patch", "/api/knowledge/:id/archive");
+  assert.match(archive, /requireAdmin/);
+  assert.match(archive, /setKnowledgeSourceArchived/);
+  assert.match(archive, /knowledge_source_archived/);
+  assert.match(archive, /knowledge_source_restored/);
+  assert.match(archive, /actor:\s*result\.actor/);
+  assert.match(archive, /reason:\s*result\.reason/);
+  const helper = readFileSync(new URL("./knowledgeReview.js", import.meta.url), "utf8");
+  assert.match(helper, /enabled:\s*!archived/);
+  assert.match(helper, /Provide a short reason/);
+  assert.match(ui, /Undo/);
+  assert.match(ui, /Archive this source\?/);
+  assert.match(ui, /Restore source/);
+  assert.doesNotMatch(ui, /Delete knowledge/);
+  assert.doesNotMatch(server, /app\.delete\("\/api\/knowledge\/:id"/);
+});
+
+test("side-by-side EN/AR/EL preview uses retrieval RPCs and exposes only the existing approved-search path", () => {
+  const preview = route("post", "/api/knowledge/search/preview");
+  assert.match(preview, /requireAdmin/);
+  assert.match(preview, /previewKnowledgeAcrossLanguages/);
+  assert.match(preview, /rafa_hybrid_search_knowledge/);
+  assert.match(preview, /rafa_search_knowledge/);
+  assert.match(ui, /Preview approved retrieval in all customer languages/);
+  assert.match(ui, /English retrieval preview query/);
+  assert.match(ui, /Arabic retrieval preview query/);
+  assert.match(ui, /Greek retrieval preview query/);
+  assert.match(ui, /Trilingual approved retrieval preview/);
+  const helper = readFileSync(new URL("./knowledgeReview.js", import.meta.url), "utf8");
+  assert.match(helper, /\["en", "ar", "el"\]/);
+});

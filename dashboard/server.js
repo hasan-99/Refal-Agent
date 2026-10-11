@@ -19,7 +19,7 @@ import { countUniqueHandoverContacts } from "./handoverGrouping.js";
 import { dueFacts, factAudit, listFacts, reapproveFact, setFactStatus } from "./factRegisterView.js";
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
-import { reviewKnowledgeDocument } from "./knowledgeReview.js";
+import { previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
 import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
 
@@ -319,7 +319,8 @@ app.patch("/api/knowledge/:id", requireAdmin, async (req, res) => {
     for (const key of ["enabled", "approved"]) {
       if (req.body?.[key] !== undefined) {
         if (typeof req.body[key] !== "boolean") return res.status(400).json({ error: `${key} must be boolean.` });
-        if (req.body[key] === false) return res.status(400).json({ error: "Knowledge sources always remain approved and enabled." });
+        if (key === "enabled") return res.status(400).json({ error: "Use the audited archive or restore action to change source availability." });
+        if (req.body[key] === false) return res.status(400).json({ error: "Knowledge sources remain approved; review each content revision instead." });
         patch[key] = true;
       }
     }
@@ -411,20 +412,6 @@ app.post("/api/knowledge/:id/upload", requireAdmin, upload.single("file"), async
     res.status(201).json({ ...saved, embeddedChunks: 0, embeddingWarning: "", title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     res.status(error.code || 500).json({ error: error.message });
-  }
-});
-
-app.delete("/api/knowledge/:id", requireAdmin, async (req, res) => {
-  try {
-    const id = requireUuid(req.params.id);
-    const deleted = await supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=id,display_name`, {
-      method: "DELETE",
-      headers: { Prefer: "return=representation" }
-    });
-    if (!deleted.length) return res.status(404).json({ error: "Knowledge entry not found." });
-    res.json({ deleted: true, source: deleted[0] });
-  } catch (error) {
-    res.status(error.code || 500).json({ error: error.message || "Could not delete this knowledge entry." });
   }
 });
 
@@ -1175,6 +1162,32 @@ app.get("/api/bookings/readiness", async (_req, res) => {
       calendarAuthorizationStatus: calendarOnboarding.status
     });
   } catch (error) { res.status(502).json({ error: error.message }); }
+});
+
+app.post("/api/knowledge/search/preview", requireAdmin, async (req, res) => {
+  try {
+    const preview = await previewKnowledgeAcrossLanguages(async (query) => {
+      let embedding = null;
+      try { embedding = await embedText(query); } catch { /* Approved lexical retrieval remains available. */ }
+      return embedding
+        ? await supabaseRest("rpc/rafa_hybrid_search_knowledge", { method: "POST", body: JSON.stringify({ p_query: query, p_embedding: `[${embedding.join(",")}]`, p_embedding_model: DEFAULT_EMBEDDING_MODEL, p_match_count: 8 }) })
+        : await supabaseRest("rpc/rafa_search_knowledge", { method: "POST", body: JSON.stringify({ p_query: query, p_match_count: 8 }) });
+    }, req.body?.queries);
+    res.json(preview);
+  } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
+});
+
+app.patch("/api/knowledge/:id/archive", requireAdmin, async (req, res) => {
+  try {
+    const result = await setKnowledgeSourceArchived(supabaseRest, {
+      sourceId: requireUuid(req.params.id), archived: req.body?.archived,
+      actor: req.dashboardUser?.email || req.dashboardUser?.id, reason: req.body?.reason
+    });
+    await logDashboardEvent(result.archived ? "knowledge_source_archived" : "knowledge_source_restored", {
+      sourceId: result.source.id, displayName: result.source.display_name, actor: result.actor, reason: result.reason
+    });
+    res.json(result);
+  } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
 });
 
 app.post("/api/bookings/calendar-oauth/start", requireAdmin, authRateLimit, async (_req, res) => {

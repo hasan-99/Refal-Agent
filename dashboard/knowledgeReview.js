@@ -27,3 +27,30 @@ function httpError(code, message) {
   error.code = code;
   return error;
 }
+
+/** Build a side-by-side retrieval preview from approved, enabled knowledge only. */
+export async function previewKnowledgeAcrossLanguages(search, queries) {
+  if (typeof search !== "function") throw new TypeError("An approved-knowledge search function is required.");
+  const entries = ["en", "ar", "el"].map((language) => [language, String(queries?.[language] || "").trim().slice(0, 1000)]);
+  if (entries.some(([, query]) => !query)) throw httpError(400, "Enter a preview query in English, Arabic, and Greek.");
+  const results = await Promise.all(entries.map(async ([language, query]) => ({ language, query, results: await search(query) })));
+  return { results };
+}
+
+/** Archive is a reversible source disable; it never deletes approved evidence. */
+export async function setKnowledgeSourceArchived(rest, { sourceId, archived, actor, reason = "" } = {}) {
+  const id = String(sourceId || "");
+  if (!UUID.test(id)) throw httpError(400, "Invalid knowledge source ID.");
+  if (typeof archived !== "boolean") throw httpError(400, "Archive state must be true or false.");
+  const reviewer = String(actor || "").trim();
+  if (reviewer.length < 2 || reviewer.length > 200) throw httpError(403, "A verified dashboard reviewer is required.");
+  const note = String(reason || "").trim().slice(0, 500);
+  if (!note) throw httpError(400, "Provide a short reason for archiving or restoring this source.");
+  const rows = await rest(`rafa_knowledge_sources?id=eq.${id}&select=id,display_name,enabled,approved`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ enabled: !archived, updated_at: new Date().toISOString() })
+  });
+  if (!rows?.[0]) throw httpError(404, "Knowledge source not found.");
+  return { source: rows[0], archived, reason: note, actor: reviewer };
+}

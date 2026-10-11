@@ -382,6 +382,18 @@ tbody tr:hover { background: #f6faf8; }
 .knowledge-search > div { display: flex; gap: 7px; }
 .knowledge-search-add { flex: 0 0 auto; white-space: nowrap; }
 .knowledge-search input { flex: 1; }
+.knowledge-language-preview { grid-column: 1 / -1; }
+.knowledge-language-preview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px; }
+.knowledge-language-preview-grid input { min-width: 0; }
+.knowledge-language-results { margin: 16px 0; }
+.knowledge-language-result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.knowledge-language-result-grid > article { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; overflow-wrap: anywhere; }
+.knowledge-language-result-grid h3 { margin: 0 0 8px; color: #173a50; font-size: 14px; }
+.knowledge-language-result-grid section { padding: 10px 0; border-top: 1px solid var(--line); }
+.knowledge-language-result-grid section p, .knowledge-preview-query { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.knowledge-language-result-grid section small { color: var(--muted); }
+.knowledge-archive-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+.knowledge-archive-actions button { color: #8d3030; }
 .knowledge-layout { min-width: 0; display: grid; grid-template-columns: minmax(250px, .72fr) minmax(0, 1.6fr); align-items: start; gap: 14px; }
 .knowledge-sources, .knowledge-detail { min-width: 0; }
 .knowledge-add { padding-bottom: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
@@ -635,6 +647,7 @@ input[type="checkbox"] { accent-color: #16836f; }
   .knowledge-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .knowledge-search { grid-column: 1 / -1; }
   .knowledge-search > div { align-items: stretch; flex-direction: column; }
+  .knowledge-language-preview-grid, .knowledge-language-result-grid { grid-template-columns: minmax(0, 1fr); }
   .lead-command { flex-wrap: wrap; gap: 9px; }
   .lead-command .mini-stat { min-width: 75px; }
   .lead-command-copy { flex-basis: 100%; margin: 4px 0 0; padding: 9px 0 0; border-top: 1px solid var(--line); border-left: 0; }

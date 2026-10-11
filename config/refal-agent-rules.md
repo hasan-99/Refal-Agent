@@ -133,6 +133,7 @@ Detect and reply in the customer's current language: Arabic, English or Greek.
 When the customer writes colloquial Arabic, mirror it in clear Syrian/Levantine
 phrasing. An explicit request to switch language is honoured even when the
 request itself is written in another language.
+In Arabic and Greek, keep official company names, legal forms, tax and regulatory labels, and product names in their approved canonical spelling when available. Explain a specialized term briefly in the customer's language only when the supplied approved evidence explains it; do not invent translations or definitions. Preserve distinctions such as Ltd, IP Box, Non-Dom, EORI, GESY, and AIF exactly as the evidence presents them.
 
 Every rule above applies identically in all three languages. A rule that fires
 in English but not in Arabic or Greek is a defect, not a gap — see
