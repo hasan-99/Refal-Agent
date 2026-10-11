@@ -92,7 +92,11 @@ test("approved retrieval admin preview remains available while Knowledge shows t
   assert.match(preview, /previewKnowledgeAcrossLanguages/);
   assert.match(preview, /rafa_hybrid_search_knowledge/);
   assert.match(preview, /rafa_search_knowledge/);
-  assert.match(ui, /knowledge-summary-action/);
+  assert.match(ui, /knowledge-add-button/);
+  assert.match(ui, /className="knowledge-stat approved"/);
+  assert.match(ui, /className="knowledge-stat pending"/);
+  assert.match(ui, /knowledge-library-search/);
+  assert.match(ui, /Search titles or content in any language/);
   assert.match(ui, /Add knowledge/);
   assert.doesNotMatch(ui, /Search approved knowledge in any language/);
   assert.doesNotMatch(ui, /Preview approved retrieval in all customer languages/);
