@@ -13,7 +13,7 @@ const TRACE_FIELDS = new Set([
   "omittedEvidenceCount", "replacementCount", "budgetLimited", "questionCount", "hasQuestion",
   "clarificationRequested", "expectedLocale", "detectedResponseLocale", "languageMismatch",
   "locale", "primaryIntentCategory", "secondaryGoalCount", "decisionTypesUsed", "inspectionId",
-  "retainedIds", "excludedIds", "replacedIds", "candidateIds", "newCandidateCount",
+  "retainedIds", "excludedIds", "catalogueOmittedIds", "contextOmittedIds", "replacedIds", "candidateIds", "newCandidateCount",
   "selectionDurationMs", "selectionStatus", "providerErrorCode", "promptTokens", "completionTokens",
   "totalTokens", "costUsd", "estimatedCostUsd", "usage", "inputTokens", "outputTokens"
 ]);

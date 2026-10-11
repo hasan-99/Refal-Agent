@@ -519,7 +519,7 @@ function knowledgeSectionIdentity(row, fallbackIndex) {
   return `row:${fallbackIndex}`;
 }
 
-function mergeRankedKnowledgeResults(resultSets) {
+function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
   const sections = new Map();
   for (const rows of resultSets) {
     const seenInQuery = new Set();
@@ -532,7 +532,7 @@ function mergeRankedKnowledgeResults(resultSets) {
       seenInQuery.add(key);
       // The model's contextual query is primary. A raw follow-up is useful for
       // recall but must not outvote its resolved meaning by appearing twice.
-      group.score = Math.max(group.score, (rows === resultSets[0] ? 2 : 1) / (60 + index + 1));
+      group.score = Math.max(group.score, (resultSets.indexOf(rows) < contextualCount ? 2 : 1) / (60 + index + 1));
       group.rows.push(...rows.filter((candidate) => {
         const candidateKey = knowledgeSectionIdentity(candidate, index);
         return candidateKey === key;
@@ -556,8 +556,9 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const requestedCount = Number.isInteger(matchCount) ? Math.min(MAX_RAG_EVIDENCE_ITEMS, Math.max(1, matchCount)) : 6;
   const candidateCount = Math.min(20, requestedCount * 3);
 
-  const queries = [...new Set([query, isPlainString(currentMessage) ? currentMessage.trim().slice(0, 1000) : ""])]
-    .filter(Boolean).slice(0, 2);
+  const related = Array.isArray(args?.relatedQueries) ? args.relatedQueries.filter(isPlainString).map(value => value.trim().slice(0, 1000)).slice(0, 2) : [];
+  const contextualQueries = [...new Set([query, ...related])].filter(Boolean);
+  const queries = [...new Set([...contextualQueries, isPlainString(currentMessage) ? currentMessage.trim().slice(0, 1000) : ""])].filter(Boolean);
   const resultSets = await Promise.all(queries.map(async (searchQuery) => {
     let embedding = null;
     try {
@@ -568,14 +569,14 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       embedding = null;
     }
     return store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
-  }).map((promise) => Promise.resolve(promise).then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }))));
+  }).map((promise, index) => Promise.resolve(promise).then((value) => ({ ok: true, value, contextual: index < contextualQueries.length }), (error) => ({ ok: false, error }))));
   const successfulResults = resultSets.filter((result) => result.ok).map((result) => Array.isArray(result.value) ? result.value : []);
   if (!successfulResults.length) {
     const error = resultSets.find((result) => !result.ok)?.error;
     return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []), trace: { searchQueries: queries } });
   }
   const results = successfulResults.length > 1
-    ? mergeRankedKnowledgeResults(successfulResults)
+    ? mergeRankedKnowledgeResults(successfulResults, { contextualCount: resultSets.filter(result => result.ok && result.contextual).length })
     : successfulResults[0];
 
   // The RPC enforces source/document approval and expiry. Evidence/supporting
@@ -600,12 +601,14 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     sectionRows.get(key).push(row);
   }
   for (const item of catalogue) item.content = sectionRows.get(item.key).map((row) => String(row.content || "")).join("\n\n");
+  const visibleCatalogue = catalogue.slice(0, 40);
+  const catalogueOmittedIds = catalogue.slice(40).map(item => item.sourceRef);
   try {
     const selector = selectKnowledgeEvidence || require("./knowledgeSelection").selectKnowledgeSections;
-    selection = await selector({ candidates: catalogue, currentMessage: currentMessage || query, history: user?.history || [] });
+    selection = await selector({ candidates: visibleCatalogue, currentMessage: currentMessage || query, history: user?.history || [] });
     if (!Array.isArray(selection?.selections)) throw new Error("Invalid selection result.");
     selectedRows = selection.selections.flatMap((selected, index) => {
-      const item = catalogue[Number(selected.id)];
+      const item = visibleCatalogue[Number(selected.id)];
       return item && [1, 2, 3].includes(selected.relevance) ? sectionRows.get(item.key).map((row) => ({ ...row, selectionRelevance: selected.relevance, selectionOrder: index })) : [];
     });
   } catch (error) {
@@ -613,7 +616,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   }
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
-  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), selectedCount: selection.selections.length, excludedIds: catalogue.filter((_, index) => !selection.selections.some((item) => Number(item.id) === index)).map((item) => item.sourceRef), selectionStatus: selection.status, selectionDurationMs: Math.round(performance.now() - selectionStarted) } });
+  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selection.selections.length, excludedIds: visibleCatalogue.filter((_, index) => !selection.selections.some((item) => Number(item.id) === index)).map((item) => item.sourceRef), selectionStatus: selection.status, selectionDurationMs: Math.round(performance.now() - selectionStarted) } });
 }
 
 // --- getCustomerContext ------------------------------------------------------
@@ -829,7 +832,7 @@ const TOOL_REGISTRY = Object.freeze({
     run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
   },
   searchApprovedKnowledge: {
-    description: "Search approved Refalco Group knowledge for current prices, services, or company facts. Use when the customer's current question needs a factual answer, not for greetings or clarifications.",
+    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. Separate evidence needs into independent queries rather than paraphrasing one compound query: broad company capability without procedural/stage restrictions, current topic details, and conditions where needed. A topic description is not proof of a company's service. Use complementary queries in one search rather than repeating searches.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {

@@ -3,6 +3,26 @@ const assert = require("node:assert/strict");
 const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomerFact, proposeHandover, buildApprovedKnowledgeObservation, MAX_RAG_EVIDENCE_ITEMS, MAX_RAG_EVIDENCE_TOTAL_CHARS } = require("./agentTools");
 const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
 const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
+test("complementary model queries retain actor capability evidence alongside procedures and distinguish catalogue omissions", async () => {
+  const queries = [];
+  const makeRows = prefix => Array.from({length:20}, (_, i)=>({chunk_id:`${prefix}-${i}`,content:`${prefix} approved section ${i}`,heading:`${prefix} ${i}`}));
+  const result = await searchApprovedKnowledge({query:"procedures",relatedQueries:["company scope","conditions"]}, {
+    currentMessage:"a contextual follow-up", matchCount:8, embedText:async()=>null,
+    store:{searchKnowledge:async(query)=>{queries.push(query);return makeRows(query);}},
+    selectKnowledgeEvidence:async({candidates})=>{
+      assert.equal(candidates.length,40);
+      const actor = candidates.findIndex(x=>x.content.includes("company scope approved section 0"));
+      const procedure = candidates.findIndex(x=>x.content.includes("procedures approved section 0"));
+      assert.ok(actor>=0 && procedure>=0);
+      return {selections:[{id:String(actor),relevance:3},{id:String(procedure),relevance:2}],status:"contextual_model_selection"};
+    }
+  });
+  assert.deepEqual(queries,["procedures","company scope","conditions","a contextual follow-up"]);
+  assert.equal(result.trace.candidateCount,80);
+  assert.equal(result.trace.catalogueOmittedIds.length,40);
+  assert.ok(result.modelObservation.evidence.some(x=>x.content.includes("company scope")));
+  assert.ok(result.trace.catalogueOmittedIds.every(id=>!result.trace.excludedIds.includes(id)));
+});
 
 test("contextual selection receives conversation and ranks relevant complete sections rather than duplicated generic hits", async () => {
   const source = [

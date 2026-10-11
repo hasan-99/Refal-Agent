@@ -47,6 +47,7 @@ async function main() {
     });
     report.push(safe({ message, priorHistory: history.slice(0, position), result, deliveredDraft, durationMs: Date.now() - start, events, rejections, reviewVerdicts, outboundDisabled: true }));
     fs.writeFileSync(path.resolve(__dirname, fixture ? "../artifacts/whatsapp-contextual-reproduction.json" : "../artifacts/whatsapp-audit-reproduction.json"), JSON.stringify(report, null, 2));
+    fs.writeFileSync(path.resolve(__dirname, `../artifacts/whatsapp-reproduction-attempt-${Date.now()}.json`), JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ message, outcome: result.outcome, rejectionCount: rejections.length,
       reasons: rejections.map((item) => item.reasonCodes), durationMs: Date.now() - start }));
     if (events.find((event) => event.event === "agent_turn_completed")?.fields?.outcome !== "responded") process.exitCode = 1;
