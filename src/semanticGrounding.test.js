@@ -5,6 +5,15 @@ const { assessAgentDraft, validateGroundingVerdict, reviewIdentity } = require("
 const { runAgentTurnForContact } = require("./agentRuntime");
 const { buildDecisionMessages } = require("./agentDecision");
 const { buildGroundingReviewMessages } = require("./semanticGrounding");
+test("comparative review receives the actual prior scope and rejects treating repeated categories as new", () => {
+  const context = { currentMessage: "Anything else beyond those?", recentConversation: [{ role: "assistant", content: "We offer consulting and administration." }] };
+  const text = "Yes, we also offer consulting and administration.";
+  const messages = buildGroundingReviewMessages({ text, context });
+  assert.deepEqual(JSON.parse(messages[1].content).history, context.recentConversation);
+  assert.match(messages[0].content, /previously listed items are presented as additional/);
+  const result = validateGroundingVerdict({ segments: [{ text, status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }], languageValid: true, contextValid: false, answerAddressesQuestion: false }, text, [{ sourceRef: "scope" }]);
+  assert.deepEqual(result.reasons, ["context_mismatch", "question_not_answered"]);
+});
 test("generation and review use the same configured identity across languages, including rejected invented aliases", () => {
   for (const locale of ["ar", "en", "el"]) {
     const draft = "مرحبًا! أنا رافا، مساعد الأعمال الرقمي لمجموعة Refalco.";

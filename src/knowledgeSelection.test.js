@@ -2,6 +2,17 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { selectKnowledgeSections } = require("./knowledgeSelection");
 const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+test("catalogue compression preserves the prior answer needed to compare additional scope", async () => {
+  const response = "Previously covered consulting and administration.";
+  await selectKnowledgeSections({ currentMessage: "Anything beyond those?", history: [{ message: "What is available?", response }],
+    candidates: Array.from({ length: 40 }, (_, i) => ({ title: `Source ${i}`, section: "Scope", content: "م".repeat(800) }))
+  }, { callModel: async (messages) => {
+    const input = JSON.parse(messages[1].content);
+    assert.equal(input.history[0].response, response);
+    assert.ok(input.catalogue[0].excerpt.length < 360);
+    return { selections: [{ id: "0", relevance: 3 }] };
+  } });
+});
 
 test("contextual selector handles multilingual requests and can select complementary sections without keyword mappings", async () => {
   for (const request of ["شو بتضلوا تعملوا معي بعد ما تجهز الشركة؟", "Once registered, what ongoing assistance is available?", "Μετά την ίδρυση, τι υποστήριξη προσφέρετε;"]) {

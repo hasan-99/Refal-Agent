@@ -18,7 +18,7 @@ async function selectKnowledgeSections({ candidates, currentMessage, history = [
   // Preserve every candidate heading when a multilingual catalogue is large.
   while (Buffer.byteLength(JSON.stringify(messages), "utf8") > 27000 && catalogue.some((row) => row.excerpt.length > 80)) {
     for (const row of catalogue) row.excerpt = row.excerpt.slice(0, Math.max(80, Math.floor(row.excerpt.length * 0.7)));
-    messages[1].content = JSON.stringify({ currentMessage: redactPersonalData(currentMessage), history: history.slice(-4).map((turn) => ({ message: redactPersonalData(turn.message || "").slice(0, 300) })), catalogue });
+    messages[1].content = JSON.stringify({ currentMessage: redactPersonalData(currentMessage), history: history.slice(-4).map((turn) => ({ message: redactPersonalData(turn.message || "").slice(0, 300), response: redactPersonalData(turn.response || "").slice(0, 700) })), catalogue });
   }
   let payload;
   if (callModel) payload = await callModel(messages);

@@ -11,8 +11,9 @@ const { runAgentLiveAnswerTurn } = require("../src/agentLiveAnswerTurn");
 const { TOOL_REGISTRY } = require("../src/agentTools");
 const { redactTraceText } = require("../src/agentTracePrivacy");
 const { redactSensitiveData } = require("../src/sensitiveData");
-const history = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../artifacts/whatsapp-audit-history.json"), "utf8"));
-const cases = ["مرحبا، ممكن أعرف شو بتقدّموا خدمات بقبرص؟", "طيب أنا بدي أسّس شركة بس، مو مهتم بالاستثمار أو العقارات. بتساعدوني؟", "وشو بتقدروا تساعدوني فيه بعد ما تتأسس؟"];
+const fixture = process.argv[2] ? JSON.parse(fs.readFileSync(path.resolve(process.argv[2]), "utf8")) : null;
+const history = fixture?.history || JSON.parse(fs.readFileSync(path.resolve(__dirname, "../artifacts/whatsapp-audit-history.json"), "utf8"));
+const cases = fixture?.cases || ["مرحبا، ممكن أعرف شو بتقدّموا خدمات بقبرص؟", "طيب أنا بدي أسّس شركة بس، مو مهتم بالاستثمار أو العقارات. بتساعدوني؟", "وشو بتقدروا تساعدوني فيه بعد ما تتأسس؟"];
 const safe = (value) => typeof value === "string" ? redactTraceText(redactSensitiveData(value))
   : Array.isArray(value) ? value.map(safe)
     : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, safe(item)])) : value;
@@ -39,7 +40,7 @@ async function main() {
       agentOptions: { onPolicyRejection: async (inspection) => rejections.push(inspection) }
     });
     report.push(safe({ message, priorHistory: history.slice(0, position), result, deliveredDraft, durationMs: Date.now() - start, events, rejections, outboundDisabled: true }));
-    fs.writeFileSync(path.resolve(__dirname, "../artifacts/whatsapp-audit-reproduction.json"), JSON.stringify(report, null, 2));
+    fs.writeFileSync(path.resolve(__dirname, fixture ? "../artifacts/whatsapp-contextual-reproduction.json" : "../artifacts/whatsapp-audit-reproduction.json"), JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ message, outcome: result.outcome, rejectionCount: rejections.length,
       reasons: rejections.map((item) => item.reasonCodes), durationMs: Date.now() - start }));
   }
