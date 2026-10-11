@@ -343,18 +343,7 @@ async function runOperationalBookingTurn(socket, chatId, userId, text, requestTr
   throw Object.assign(new Error("Booking request could not be processed."), { code: "BOOKING_NOT_PROCESSED" });
 }
 
-// REFAL-AGENT-030 — the Agent live turn. Only ever invoked when
-// REFAL_AGENT_LIVE_ENABLED is explicitly "true" (default off; not enabled by
-// this ticket — see src/turnRouting.js). Deliberately minimal: it proves the
-// routing/fallback/rollback contract this ticket requires, not full
-// production parity with the legacy turn (richer classification-aware
-// context and response-history persistence parity are REFAL-AGENT-017's
-// job). Everything that can throw here (store/user load, Agent context
-// build) happens BEFORE any customer-visible send, so a thrown error always
-// leaves this turn pre-side-effect-safe for turnRouting.js's legacy
-// fallback — runAgentTurn itself never throws for an ordinary bad
-// decision/tool/policy outcome (see agentLoop.js), it only ever resolves
-// with a safe response text, which is sent exactly once below.
+// One contextual composition owns customer answers and correlated telemetry.
 async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
   return runAgentLiveAnswerTurnComposition(
     { socket, chatId, userId, text, providerMessageId, traceId: requestTrace.traceId },
@@ -363,29 +352,12 @@ async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace
       logEvent,
       setTyping,
       sendStoredTextReply,
-      embedText,
-      agentOptions: {
-        onModelCall: (measurement) => logEvent("agent_model_call", { ...measurement, traceId: requestTrace.traceId }),
-        onModelUsage: (usage) => logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
-          source: "whatsapp-agent",
-          model: usage.model,
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-          costUsd: usage.costUsd,
-          providerReported: usage.providerReported
-        })
-      }
+      embedText
     }
   );
 }
 
-// REFAL-AGENT-030 — the one live decision point: legacy vs. Agent, exactly
-// once per inbound turn. Thin by design — all the actual turn behavior lives
-// in runLegacyAnswerTurn/runAgentLiveAnswerTurn above; this function only
-// ever decides which of them owns this turn and sends for it (never both —
-// see src/turnRouting.js's runRoutedTurn and its dedicated tests, which
-// cover this decision point without needing a live Baileys socket).
+// Booking actions retain their deterministic authorization and confirmation path.
 async function answerMessage(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
   try {
     return await runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace, providerMessageId);

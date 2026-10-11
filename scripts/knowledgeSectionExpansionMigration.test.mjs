@@ -7,7 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migration = fs.readFileSync(path.join(here, "..", "supabase", "migrations", "20261011120422_expand_approved_knowledge_sections_and_relax_lexical_coverage.sql"), "utf8");
-const currentKnowledgeMigration = fs.readFileSync(path.join(here, "..", "supabase", "migrations", "20261011133800_enforce_current_knowledge_and_rank_finding_aids.sql"), "utf8");
+const currentKnowledgeMigration = fs.readFileSync(path.join(here, "..", "supabase", "migrations", "20261011191744_enforce_current_knowledge_and_rank_finding_aids.sql"), "utf8");
 
 test("current knowledge authorization rejects superseded revisions and whole blocked sections while preserving unrelated sections", async () => {
   const db = new PGlite();
