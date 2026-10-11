@@ -75,9 +75,11 @@ test("runShadowAgentTurn is a complete no-op when the flag is unset — no model
 });
 
 test("runShadowAgentTurn, when enabled, reaches the real tool/store through a scripted decision and logs outcome metadata only (no response text)", async () => {
-  let searchArgs = null;
+  // The unified engine may retry with alternative wording, so every query is
+  // captured; the model's own wording is always the first one asked.
+  const searchQueries = [];
   const store = {
-    searchKnowledge: async (query) => { searchArgs = query; return [{ heading: "Pricing", content: "EUR 1500" }]; }
+    searchKnowledge: async (query) => { searchQueries.push(query); return [{ heading: "Pricing", content: "EUR 1500" }]; }
   };
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price" } },
@@ -98,7 +100,11 @@ test("runShadowAgentTurn, when enabled, reaches the real tool/store through a sc
     { env: { REFAL_AGENT_SHADOW_ENABLED: "true" }, decideNextStep: decide, tools: TOOL_REGISTRY }
   );
 
-  assert.equal(searchArgs, "price");
+  // The pricing intent triggers the preflight retrieval first, so the scripted
+  // decision's own query is one of the calls rather than the first one. What
+  // this test asserts is that the scripted tool really reached the store.
+  assert.equal(searchQueries[0], "what is the price?", "preflight retrieval runs first");
+  assert.ok(searchQueries.includes("price"), "the scripted tool call reached the store verbatim");
   assert.equal(result.outcome, "responded");
   assert.equal(result.toolsUsed[0], "searchApprovedKnowledge");
   assert.match(result.response, /EUR 1500/);

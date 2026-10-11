@@ -1,9 +1,15 @@
 const { redactPersonalData } = require("./ai");
 const { detectExplicitLanguageRequest } = require("./language");
-const { filterRetrievableEvidence } = require("./factRegister");
+const { filterRetrievableEvidence, seedRegister } = require("./factRegister");
+const { retrieveKnowledge, anchorQueries, contentTerms } = require("./knowledgeRetrieval");
 
 const CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION = /(?:\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and that|what about it)\b|(?:كم|قديش).{0,24}(?:تكلف|سعر|رسوم)|(?:بدي|بدّي|اعطيني|أعطيني).{0,20}تفاصيل|تفاصيل\s*(?:أكثر|اكتر)|شو\s*(?:بيشمل|بتشمل)|(?:πόσο|τιμή|κόστος|χρέωση|πες μου περισσότερα|περισσότερες πληροφορίες|τι περιλαμβάνει))/iu;
-const NON_CONTEXT_RESPONSES = /(?:ما عندي معلومة معتمدة|لا تتوفر لديّ حالياً|ما عندي سعر معتمد|I don['’]t have approved information|I don['’]t have an approved company formation fee|Δεν έχω εγκεκριμένη)/iu;
+// Replies that must never be mined as "the prior topic": they state that the
+// turn produced no answer, so treating them as context searches for the
+// absence instead of the question. The last three are the technical-failure
+// reply (knowledgeSearchUnavailableReply) -- a turn where the search never ran
+// carries even less topical signal than one that ran and found nothing.
+const NON_CONTEXT_RESPONSES = /(?:ما عندي معلومة معتمدة|لا تتوفر لديّ حالياً|ما عندي سعر معتمد|I don['’]t have approved information|I don['’]t have an approved company formation fee|Δεν έχω εγκεκριμένη|couldn['’]t reach our knowledge base|ما قدرت أوصل لقاعدة المعلومات|Δεν μπόρεσα να συνδεθώ με τη βάση γνώσης)/iu;
 const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services", "corporate_services"]);
 const PACKAGE_DETAIL_QUESTION = /(?:\b(?:package|formation package|setup package|what does .{0,20} include|what(?:'s| is) included)\b|باقة|شو\s*(?:بتشمل|بيشمل)|ماذا\s*تشمل|πακέτο|τι\s*περιλαμβάνει)/iu;
 // The corpus has separate approved topic documents. Retrieve each business
@@ -85,61 +91,125 @@ function buildKnowledgeSearchQueries(currentMessage, user, intents = [], languag
   return PACKAGE_DETAIL_QUESTION.test(base) ? [PACKAGE_TITLE_QUERY[key], base, ...facets] : [...facets];
 }
 
+// Round planning. Round 1 is the intent-aware wording this module already
+// built. Later rounds exist because step 7 forbids reporting knowledge as
+// missing before the question has been asked a DIFFERENT way:
+//
+//   round 2 -- cross-language concept anchors, so an Arabic colloquial question
+//              still has English terms to match a section heading on, plus the
+//              exact wordings of whichever question parts came back unsupported
+//   round 3 -- the bare content terms, the loosest wording we have
+//
+// A round is skipped entirely once coverage is met, so the common case still
+// costs exactly one round of searches.
+// CROSS-REFERENCES, FOLLOWED THROUGH A REAL LINK.
+//
+// A corpus section's metadata carries `supporting`: the governed fact ids this
+// document REFERENCES but does not own (src/corpusIngest.js#sectionFactIds).
+// That is a structured cross-reference, not a guess, and the fact register
+// holds each id's `claimText`. So a section that leans on a fact owned by
+// another topic can pull that topic's own wording into the next search round,
+// instead of the answer stopping at the reference.
+const FACT_REGISTER = seedRegister();
+
+function crossReferenceQueries(sections = []) {
+  const ids = new Set();
+  for (const section of sections) {
+    const supporting = section?.metadata?.supporting;
+    if (Array.isArray(supporting)) for (const id of supporting) ids.add(String(id || "").trim());
+  }
+  const queries = [];
+  for (const id of ids) {
+    const claim = FACT_REGISTER.get(id)?.claimText;
+    if (claim) queries.push(String(claim).slice(0, 300));
+  }
+  return queries.slice(0, 3);
+}
+
+function planRound(round, { question, language, coverage, baseQueries, sections }) {
+  if (round === 1) return baseQueries;
+  if (round === 2) {
+    const gaps = (coverage?.unsupported || []).map((part) => part.part).filter(Boolean);
+    return [
+      ...anchorQueries(question),
+      ...crossReferenceQueries(sections),
+      ...gaps,
+      PACKAGE_TITLE_QUERY[normalizedLanguage(language)]
+    ];
+  }
+  const terms = contentTerms(question);
+  return terms.length ? [terms.join(" ")] : [];
+}
+
+// Retrieval for one conversation turn. The return shape is unchanged for
+// existing callers (`evidence`, `queryCount`, `failures`, `complete`) and adds
+// `status`, `sections` and `trace`.
+//
+// `evidence` now carries EVERY ranked section that survived the fact-register
+// gate, not the single first row per query that the previous implementation
+// kept. See the header of src/knowledgeRetrieval.js for why that one-row
+// `.find(...)` was the main cause of "I have no confirmed information" on
+// questions the corpus answers.
 async function retrieveKnowledgeForTurn(currentMessage, {
-  user, intents = [], language = "english", store, embedText, embedQueryTexts, embeddingModel, matchCount = 6
+  user, intents = [], language = "english", store, embedText, embedQueryTexts, embeddingModel,
+  matchCount = 12, limits = {}
 } = {}) {
-  const queries = buildKnowledgeSearchQueries(currentMessage, user, intents, language);
-  const evidence = [];
-  const seen = new Set();
-  const failures = [];
-  let queryEmbeddings = null;
-  let embeddingFailure = null;
-  const embeddingStartedAt = Date.now();
-  if (typeof embedQueryTexts === "function") {
-    try {
-      queryEmbeddings = await embedQueryTexts(queries);
-      if (!Array.isArray(queryEmbeddings) || queryEmbeddings.length !== queries.length) {
-        throw new Error("Query embedding batch did not match the knowledge query count.");
-      }
-    } catch (error) {
-      embeddingFailure = error;
-    }
-  }
-  const embeddingMs = Date.now() - embeddingStartedAt;
-  const searchStartedAt = Date.now();
-  const results = await Promise.all(queries.map(async (query, index) => {
-    try {
-      if (embeddingFailure) throw embeddingFailure;
-      const embedding = queryEmbeddings
-        ? queryEmbeddings[index]
-        : typeof embedText === "function" ? await embedText(query) : null;
-      const rows = typeof store?.searchKnowledge === "function"
-        ? await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount)
-        : [];
-      const row = (Array.isArray(rows) ? rows : []).find((candidate) => {
-        const kind = candidate?.chunk_kind ?? candidate?.chunkKind ?? candidate?.metadata?.kind;
-        if (kind && String(kind) !== "fact") return false;
-        if (filterRetrievableEvidence([candidate]).kept.length === 0) return false;
-        return true;
-      });
-      return { row, error: null };
-    } catch (error) {
-      return { row: null, error };
-    }
+  const baseQueries = buildKnowledgeSearchQueries(currentMessage, user, intents, language);
+
+  const result = await retrieveKnowledge(currentMessage, {
+    store, embedQueryTexts, embedText, embeddingModel, language,
+    limits: { ...limits, matchCount: Math.max(matchCount, 6) },
+    planQueries: (round, context) => planRound(round, { ...context, baseQueries })
+  });
+
+  // The fact register is a governance gate, not a ranking signal, so it is
+  // applied to the finished evidence set rather than inside the loop. Finding
+  // aids (`aliases`) are navigation, never customer evidence.
+  const governed = result.evidence.filter((section) => {
+    if (String(section.kind || "") === "aliases") return false;
+    // The chunk's OWN metadata must reach the gate: factRegister#chunkFactIds
+    // reads `metadata.facts`, and passing a synthesized `{ kind }` object would
+    // hand it an empty fact list and silently approve a blocked section.
+    const metadata = section.metadata && typeof section.metadata === "object"
+      ? { ...section.metadata, kind: section.kind ?? section.metadata.kind }
+      : { kind: section.kind };
+    return filterRetrievableEvidence([{ ...section, metadata }]).kept.length > 0;
+  });
+  const dropped = result.evidence.length - governed.length;
+  if (dropped > 0) result.trace.factRegisterDropped = dropped;
+
+  // Rows in the shape the existing answer path expects.
+  const evidence = governed.map((section) => ({
+    document_id: section.documentId,
+    chunk_id: section.chunkId,
+    document_title: section.title,
+    source_name: section.sourceName,
+    heading: section.heading,
+    content: section.content,
+    chunk_index: section.chunkIndex,
+    chunk_kind: section.kind,
+    valid_until: section.validUntil,
+    rank: section.rank ?? null
   }));
-  // Promise.all preserves query order. Deduplicate after all independent
-  // searches finish so concurrent workers never race on the shared Set.
-  for (const result of results) {
-    if (result.error) failures.push(result.error);
-    if (!result.row) continue;
-    const row = result.row;
-    const key = String(row?.chunk_id || row?.chunkId || [row?.document_id, row?.heading, row?.content].join("|"));
-    if (seen.has(key)) continue;
-    seen.add(key);
-    evidence.push(row);
-  }
-  return { evidence, queryCount: queries.length, failures, complete: failures.length === 0, embeddingMs, searchMs: Date.now() - searchStartedAt };
+
+  const failures = (result.trace.errors || []).filter((entry) => entry.stage !== "sections");
+  return {
+    evidence,
+    sections: governed,
+    status: governed.length ? result.status : (result.searchFailed ? "search_failed" : "no_evidence"),
+    searchFailed: result.searchFailed,
+    coverage: result.coverage.overall,
+    conflicts: result.conflicts,
+    trace: result.trace,
+    queryCount: (result.trace.rounds || []).reduce((sum, round) => sum + round.queries.length, 0),
+    failures,
+    // `complete` kept for callers that branch on it. A turn is complete when no
+    // search errored; a merely low-coverage turn is still a real answer.
+    complete: failures.length === 0,
+    embeddingMs: null,
+    searchMs: result.trace.totalMs
+  };
 }
 
 
-module.exports = { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn };
+module.exports = { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn, planRound, crossReferenceQueries };

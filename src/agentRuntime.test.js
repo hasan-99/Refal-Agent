@@ -115,10 +115,13 @@ test("broad Arabic service answers get one neutral next question, while focused 
 });
 
 test("an ambiguous follow-up searches using recent conversation context without canned query terms", async () => {
-  let searchedQuery = "";
+  // The engine may follow up with alternative wordings when the first round
+  // leaves the question under-supported, so the FIRST query is the one that
+  // carries the conversation context under test.
+  const searchedQueries = [];
   const store = {
     searchKnowledge: async (query) => {
-      searchedQuery = query;
+      searchedQueries.push(query);
       return [{
         heading: "بداية التأسيس",
         content: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
@@ -147,6 +150,7 @@ test("an ambiguous follow-up searches using recent conversation context without 
     }
   });
 
+  const searchedQuery = searchedQueries[0];
   assert.match(searchedQuery, /انا بدي اسجل شركة بقبرص/u);
   assert.match(searchedQuery, /طيب كيف فينا نبلش/u);
   assert.match(searchedQuery, /حجز الاسم/u);

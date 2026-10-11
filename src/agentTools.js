@@ -13,6 +13,7 @@ const { getConsentState } = require("./leadQualification");
 const { createHandover } = require("./handover");
 const { getConversationState } = require("./conversationState");
 const { ok, fail } = require("./agentToolResult");
+const { retrieveKnowledge, boundSection, anchorQueries, contentTerms } = require("./knowledgeRetrieval");
 const { getBookingAvailability, requestBookingAction } = require("./agentBookingTools");
 const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate } = require("./crmProfile");
 
@@ -382,9 +383,19 @@ function isPlainString(value) {
 // field (`modelObservation`), never a tool's raw `data`. Reused for every
 // outcome (found/no_evidence/error) so the decision formatter has one
 // uniform shape to look for regardless of status.
-const MAX_RAG_EVIDENCE_ITEMS = 4;
-const MAX_RAG_EVIDENCE_CONTENT_CHARS = 500;
-const MAX_RAG_EVIDENCE_TOTAL_CHARS = 1600;
+// These are the ANSWER CONTEXT budget, and they were the second half of the
+// "I have no confirmed information" bug. A chunk is a whole `##` section and
+// runs to 12000 characters; at 500 characters per item the model saw the first
+// paragraph of a section and never its end, which is exactly where a corpus
+// section puts its conditions and exceptions. Four items also could not hold a
+// claim plus its `boundary` section plus a second topic.
+//
+// Raised to a budget that fits several complete sections, and the per-item cut
+// is now head+tail (see boundSection in src/knowledgeRetrieval.js) so a section
+// that still has to be trimmed keeps its caveats instead of only its opening.
+const MAX_RAG_EVIDENCE_ITEMS = 8;
+const MAX_RAG_EVIDENCE_CONTENT_CHARS = 2000;
+const MAX_RAG_EVIDENCE_TOTAL_CHARS = 12000;
 const MAX_RAG_EVIDENCE_TITLE_CHARS = 160;
 const MAX_RAG_EVIDENCE_SECTION_CHARS = 160;
 const MAX_RAG_EVIDENCE_SOURCE_REF_CHARS = 80;
@@ -473,8 +484,12 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
       break;
     }
     const perItemLimit = Math.min(MAX_RAG_EVIDENCE_CONTENT_CHARS, remainingBudget);
-    const content = rawContent.slice(0, perItemLimit);
-    const contentTruncated = rawContent.length > content.length;
+    // Head+tail, never a plain prefix: a corpus section states the claim first
+    // and qualifies it last, so `slice(0, n)` drops precisely the conditions
+    // the answer is required to preserve.
+    const bounded = boundSection(rawContent, perItemLimit);
+    const content = bounded.content;
+    const contentTruncated = bounded.truncated;
     totalContentChars += content.length;
     const trustedPolicy = row?.policyMetadata && typeof row.policyMetadata === "object" ? row.policyMetadata : {};
     // Governance metadata is trusted only after the server-side enrichment
@@ -509,38 +524,75 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
   return { type: "approved_knowledge", status, evidence, truncated, policyEvidence, factRegisterRows: [...factRegisterRows.values()] };
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language } = {}) {
+// The ONE knowledge-search tool. Runs the shared engine
+// (src/knowledgeRetrieval.js), so the Agent path gets the same broad search,
+// the same multi-round retry on a miss, and the same complete parent sections
+// as the WhatsApp worker.
+//
+// It used to issue a single `store.searchKnowledge` call with the model's exact
+// wording and report `no_evidence` the moment that one call came back thin --
+// and reported the same `no_evidence` when the call THREW, which is how a
+// network blip became "we have no information about that".
+async function searchApprovedKnowledge(args, { store, embedText, embedQueryTexts, embeddingModel, matchCount = 12, language, limits = {} } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
-  if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
-
-  let embedding = null;
-  try {
-    if (typeof embedText === "function") embedding = await embedText(query);
-  } catch {
-    // Embedding failure degrades to lexical-only search server-side; do not
-    // fail the tool just because the local embedding pipeline is unavailable.
-    embedding = null;
+  if (typeof store?.searchKnowledge !== "function" && typeof store?.searchKnowledgeDetailed !== "function") {
+    return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
   }
 
-  let results;
-  try {
-    results = await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount);
-  } catch (error) {
-    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
+  const retrieval = await retrieveKnowledge(query, {
+    store, embedText, embedQueryTexts, embeddingModel, language,
+    limits: { ...limits, matchCount: Math.max(matchCount, 6) },
+    planQueries: (round) => {
+      if (round === 1) return [query];
+      if (round === 2) return anchorQueries(query);
+      const terms = contentTerms(query);
+      return terms.length ? [terms.join(" ")] : [];
+    }
+  });
+
+  // A search that never reached the database has NOT established that the
+  // corpus is silent. Report the technical failure so the decision layer can
+  // say "I could not check right now" instead of "we have no information".
+  if (retrieval.searchFailed) {
+    const first = (retrieval.trace.errors || []).find((entry) => entry.stage === "search");
+    return fail("error", "RETRIEVAL_FAILED", {
+      message: String(first?.message || "Knowledge search failed.").slice(0, 200),
+      trace: retrieval.trace,
+      modelObservation: buildApprovedKnowledgeObservation("error", [])
+    });
   }
+
+  // Sections back into the row shape the policy/observation layer reads.
+  const rows = retrieval.evidence.map((section) => ({
+    source_id: section.sourceId || null,
+    document_id: section.documentId,
+    chunk_id: section.chunkId,
+    document_title: section.title,
+    source_name: section.sourceName,
+    heading: section.heading,
+    content: section.content,
+    chunk_index: section.chunkIndex,
+    chunk_kind: section.kind,
+    valid_until: section.validUntil,
+    review_status: "approved",
+    policyMetadata: section.policyMetadata
+  }));
 
   // The RPC enforces source/document approval and expiry. Apply the separate
   // fact-register gate here, before the bounded model observation is built.
   // Finding aids are never customer evidence, even if a legacy RPC returns one.
-  const evidence = (Array.isArray(results) ? results : [])
-    .filter((row) => factLinkedChunkIsCurrent(row, language));
+  const evidence = rows.filter((row) => factLinkedChunkIsCurrent(row, language));
   if (evidence.length === 0) {
-    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
+    return ok("no_evidence", [], {
+      userSafeSummary: "No approved information matched this question.",
+      trace: retrieval.trace,
+      modelObservation: buildApprovedKnowledgeObservation("no_evidence", [])
+    });
   }
 
   const userSafeSummary = evidence.slice(0, matchCount).map((item) => String(item?.heading || item?.source_name || "Approved information").slice(0, 120));
-  return ok("found", evidence, { userSafeSummary, modelObservation: buildApprovedKnowledgeObservation("found", evidence) });
+  return ok("found", evidence, { userSafeSummary, trace: retrieval.trace, modelObservation: buildApprovedKnowledgeObservation("found", evidence) });
 }
 
 // --- getCustomerContext ------------------------------------------------------

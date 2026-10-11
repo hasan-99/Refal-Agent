@@ -182,21 +182,78 @@ Deno.serve(async (req: Request) => {
         ? `[${body.embedding.join(",")}]`
         : null;
       const embeddingModel = typeof body.embeddingModel === "string" ? body.embeddingModel.slice(0, 160) : "";
+      // Recall knobs. Present => the caller wants the v2 RPCs, which take the
+      // lexical admission floor and the semantic distance cutoff as arguments
+      // instead of hard-coding 0.6 coverage / 0.65 cosine. Absent => the exact
+      // v1 behaviour, unchanged, so an older worker is unaffected.
+      const num = (value: unknown, min: number, max: number) =>
+        typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : null;
+      const minCoverage = num(body.minCoverage, 0, 1);
+      const minTerms = num(body.minTerms, 1, 8);
+      const maxDistance = num(body.maxDistance, 0, 2);
+      const wantsV2 = minCoverage !== null || minTerms !== null || maxDistance !== null;
+
       const { data, error } = embedding
-        ? await supabase.rpc("rafa_hybrid_search_knowledge", {
-          p_query: query,
-          p_embedding: embedding,
-          p_embedding_model: embeddingModel,
-          p_match_count: matchCount
-        })
-        : await supabase.rpc("rafa_search_knowledge", {
-          p_query: query,
-          p_match_count: matchCount
-        });
+        ? wantsV2
+          ? await supabase.rpc("rafa_hybrid_search_knowledge_v2", {
+            p_query: query,
+            p_embedding: embedding,
+            p_embedding_model: embeddingModel,
+            p_match_count: matchCount,
+            p_min_coverage: minCoverage ?? 0.2,
+            p_min_terms: minTerms ?? 1,
+            p_max_distance: maxDistance ?? 0.85
+          })
+          : await supabase.rpc("rafa_hybrid_search_knowledge", {
+            p_query: query,
+            p_embedding: embedding,
+            p_embedding_model: embeddingModel,
+            p_match_count: matchCount
+          })
+        : wantsV2
+          ? await supabase.rpc("rafa_search_knowledge_v2", {
+            p_query: query,
+            p_match_count: matchCount,
+            p_min_coverage: minCoverage ?? 0.2,
+            p_min_terms: minTerms ?? 1
+          })
+          : await supabase.rpc("rafa_search_knowledge", {
+            p_query: query,
+            p_match_count: matchCount
+          });
       if (error) throw error;
       // Governance metadata is fetched server-side for deterministic M5 policy
       // checks. It is carried separately from the model-safe evidence block.
       return json({ results: await attachKnowledgePolicyMetadata(supabase, data || []) });
+    }
+
+    // Step 4. Complete parent sections for chunks a search already returned.
+    // The model never supplies a document id, only chunk ids it was given, and
+    // the RPC re-applies every approval/expiry filter, so this cannot reach an
+    // unapproved document.
+    if (parts[0] === "knowledge" && parts[1] === "sections" && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+      const chunkIds = Array.isArray(body.chunkIds)
+        ? body.chunkIds.map((id: unknown) => String(id || "")).filter((id: string) => uuid.test(id)).slice(0, 60)
+        : [];
+      if (!chunkIds.length) return json({ sections: [] });
+      const maxSections = Math.min(120, Math.max(1, Number(body.maxSections) || 24));
+      const { data, error } = await supabase.rpc("rafa_fetch_knowledge_sections", {
+        p_chunk_ids: chunkIds,
+        p_max_sections: maxSections,
+        p_include_siblings: body.includeSiblings !== false
+      });
+      if (error) throw error;
+      return json({ sections: data || [] });
+    }
+
+    // Step 8. Retrieval health, for the admin trace and for smoke tests. Counts
+    // only; no document content and no customer data.
+    if (parts[0] === "knowledge" && parts[1] === "health" && req.method === "GET") {
+      const { data, error } = await supabase.rpc("rafa_knowledge_health");
+      if (error) throw error;
+      return json({ health: Array.isArray(data) ? data[0] || null : data || null });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {

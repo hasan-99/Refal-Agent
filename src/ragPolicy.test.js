@@ -381,7 +381,7 @@ test("broad company questions search each knowledge area before composing an ans
   assert.match(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic")[0], /مجالات وخدمات Refalco Group/u);
 });
 
-test("broad retrieval supplies one distinct content chunk per facet and skips finding aids", async () => {
+test("broad retrieval keeps EVERY ranked candidate per facet, not just the first, and still skips finding aids and discovery prompts", async () => {
   const calls = [];
   let activeSearches = 0;
   let maxActiveSearches = 0;
@@ -392,40 +392,88 @@ test("broad retrieval supplies one distinct content chunk per facet and skips fi
     embeddingModel: "test-model",
     store: {
       searchKnowledge: async (query, embedding, model, count) => {
-      calls.push({ query, embedding, model, count });
-      const index = calls.length;
-      activeSearches += 1;
-      maxActiveSearches = Math.max(maxActiveSearches, activeSearches);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      activeSearches -= 1;
+        calls.push({ query, embedding, model, count });
+        const index = calls.length;
+        activeSearches += 1;
+        maxActiveSearches = Math.max(maxActiveSearches, activeSearches);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activeSearches -= 1;
         return [
           { chunk_kind: "aliases", chunk_id: `aid-${index}`, heading: "Aliases", content: "Question phrases" },
           { chunk_kind: "discovery", chunk_id: `discovery-${index}`, heading: "Discovery prompts", content: "Questions for a specialist" },
-          { chunk_kind: "fact", chunk_id: `content-${index}`, heading: `Facet ${index}`, content: `Approved content ${index}` }
+          // Two real sections per facet. The OLD implementation called
+          // `.find(...)` and kept exactly one of these, dropping the other
+          // after paying to fetch it; `runner-N` is the one it silently lost.
+          { chunk_kind: "fact", chunk_id: `content-${index}`, heading: `Facet ${index}`, content: `Approved services content ${index} we offer` },
+          { chunk_kind: "boundary", chunk_id: `runner-${index}`, heading: `Limits ${index}`, content: `Conditions and exceptions ${index}` }
         ];
       }
     }
   });
-  assert.equal(retrieval.queryCount, 5);
   assert.equal(retrieval.failures.length, 0);
   assert.equal(retrieval.complete, true);
-  assert.equal(calls.length, 5);
-  assert.ok(maxActiveSearches > 1);
-  assert.ok(calls.every((call) => call.model === "test-model" && call.count === 6 && call.embedding === call.query.length));
-  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "content-2", "content-3", "content-4", "content-5"]);
+  assert.equal(retrieval.status, "found");
+  assert.ok(maxActiveSearches > 1, "facet searches still run concurrently");
+  assert.ok(calls.every((call) => call.model === "test-model" && call.count === 12 && call.embedding === call.query.length));
 
+  const ids = retrieval.evidence.map((row) => row.chunk_id);
+  // Both sections of every facet survive, so a second-ranked chunk can still
+  // answer the question.
+  for (let index = 1; index <= 5; index += 1) {
+    assert.ok(ids.includes(`content-${index}`), `kept content-${index}`);
+    assert.ok(ids.includes(`runner-${index}`), `kept runner-${index}`);
+  }
+  // Finding aids and discovery prompts are still never customer evidence.
+  assert.ok(ids.every((id) => !id.startsWith("aid-")), "no finding aids");
+  assert.ok(ids.every((id) => !id.startsWith("discovery-")), "no discovery prompts");
+
+  // A `boundary` section is the conditions/exceptions block every corpus
+  // document must carry. The old `kind === "fact"` filter dropped it outright.
+  assert.ok(retrieval.evidence.some((row) => row.chunk_kind === "boundary"), "conditions survive retrieval");
+});
+
+test("one failed facet search no longer discards the evidence the other facets found", async () => {
   let failedSearch = false;
-  const incomplete = await retrieveKnowledgeForTurn("What services do you offer?", {
+  const partial = await retrieveKnowledgeForTurn("What services do you offer?", {
     intents: ["services"],
     language: "english",
-    store: { searchKnowledge: async (_query, _embedding, _model, _count) => {
-      if (!failedSearch) { failedSearch = true; throw new Error("unreachable"); }
-      return [];
-    } }
+    store: {
+      searchKnowledge: async () => {
+        if (!failedSearch) { failedSearch = true; throw new Error("unreachable"); }
+        return [{ chunk_kind: "fact", chunk_id: "kept-1", heading: "Services we offer", content: "Approved services content we offer" }];
+      }
+    }
   });
-  // Deterministic failure coverage: the first facet fails, the rest have no results.
-  assert.equal(incomplete.complete, false);
-  assert.equal(incomplete.failures.length, 1);
+  // The failure is still reported...
+  assert.equal(partial.complete, false);
+  assert.equal(partial.failures.length, 1);
+  // ...but the sections the surviving searches returned are NOT thrown away.
+  // bot.js used to do `retrieval.complete ? evidence : []`, turning one
+  // transient error into "I have no approved information".
+  assert.ok(partial.evidence.length > 0, "surviving evidence is kept");
+  assert.notEqual(partial.status, "search_failed");
+});
+
+test("a total search failure is reported as a failure, never as an empty knowledge base", async () => {
+  const broken = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"],
+    language: "english",
+    store: { searchKnowledge: async () => { throw new Error("edge function unreachable"); } }
+  });
+  assert.equal(broken.status, "search_failed");
+  assert.equal(broken.searchFailed, true);
+  assert.equal(broken.evidence.length, 0);
+});
+
+test("an empty knowledge base is reported as no_evidence, not as a failure", async () => {
+  const empty = await retrieveKnowledgeForTurn("What services do you offer?", {
+    intents: ["services"],
+    language: "english",
+    store: { searchKnowledge: async () => [] }
+  });
+  assert.equal(empty.status, "no_evidence");
+  assert.equal(empty.searchFailed, false);
+  assert.equal(empty.failures.length, 0);
 });
 
 test("price answers cannot attach nearby company services to the paid package without explicit evidence", () => {

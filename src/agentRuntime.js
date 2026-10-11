@@ -113,12 +113,23 @@ async function initialKnowledgeObservation(currentMessage, intents, recentConver
       `${baseQuery}\n${index === 0 ? COMPANY_OVERVIEW_RETRIEVAL_TERMS : ""}\n${facet}`)
     : [baseQuery];
   const observations = [];
+  // Round budget for the unified engine inside the tool.
+  //
+  // A BROAD turn already fans out across every business-area facet here, so the
+  // breadth the engine would add with extra rounds is breadth this loop has
+  // supplied. Letting both fan out multiplies: 9 facets x 3 rounds x several
+  // anchor wordings is ~59 searches for one message. One round per facet keeps
+  // the broad turn at 9.
+  //
+  // A single focused query gets 2 rounds: the customer's own wording, then one
+  // retry with alternative wording before anything is called unavailable.
+  const retrievalLimits = { maxRounds: broad ? 1 : 2 };
   for (const [index, rawQuery] of queries.entries()) {
     const args = { query: rawQuery.slice(0, 1800) };
     let result;
     try {
       if (typeof tool?.run !== "function") throw new Error("Approved knowledge search is unavailable.");
-      result = await tool.run(args, toolContext);
+      result = await tool.run(args, { ...toolContext, limits: retrievalLimits });
     } catch (error) {
       result = {
         ok: false,

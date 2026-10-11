@@ -132,10 +132,15 @@ test("searchApprovedKnowledge preserves Arabic and Greek evidence content unchan
 });
 
 test("searchApprovedKnowledge only ever forwards the query argument — a model-supplied documentId/includeUnapproved argument cannot select around the server-side approval filter", async () => {
-  let forwardedArgs = null;
+  // The unified engine may issue follow-up searches with ALTERNATIVE WORDINGS
+  // (concept anchors, bare content terms) when the first round comes back
+  // under-supported, so every call is captured rather than just the last one.
+  // The property under test is unchanged and is now asserted across all of
+  // them: a model-supplied id/status never reaches the store, by any route.
+  const forwarded = [];
   const store = {
     searchKnowledge: async (query, embedding, embeddingModel, matchCount) => {
-      forwardedArgs = { query, embedding, embeddingModel, matchCount };
+      forwarded.push({ query, embedding, embeddingModel, matchCount });
       return [{ heading: "X", content: "Y" }];
     }
   };
@@ -143,10 +148,18 @@ test("searchApprovedKnowledge only ever forwards the query argument — a model-
     { query: "price", documentId: "unapproved-doc-id", includeUnapproved: true, reviewStatus: "pending" },
     { store, embedText: async () => null }
   );
-  assert.equal(forwardedArgs.query, "price");
-  // Only four positional arguments ever reach store.searchKnowledge — there is
-  // no code path that could thread a model-supplied id/status into the query.
-  assert.deepEqual(Object.keys(forwardedArgs), ["query", "embedding", "embeddingModel", "matchCount"]);
+  assert.ok(forwarded.length >= 1);
+  // The customer's own wording is always asked first, verbatim.
+  assert.equal(forwarded[0].query, "price");
+  for (const call of forwarded) {
+    // Only four positional arguments ever reach store.searchKnowledge — there
+    // is no code path that could thread a model-supplied id/status into the
+    // query.
+    assert.deepEqual(Object.keys(call), ["query", "embedding", "embeddingModel", "matchCount"]);
+    assert.equal(typeof call.query, "string");
+    assert.ok(!call.query.includes("unapproved-doc-id"));
+    assert.ok(!/includeUnapproved|reviewStatus|pending/u.test(call.query));
+  }
 });
 
 test("getCustomerContext never produces an approved-knowledge model observation — customer context and company knowledge stay separate", () => {

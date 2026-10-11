@@ -23,7 +23,7 @@ const { startReminderSchedule } = require("./reminderScheduler");
 const { startNotificationSchedule } = require("./notificationScheduler");
 const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
 const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
-const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply } = require("./refalcoAnswer");
+const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply, knowledgeSearchUnavailableReply } = require("./refalcoAnswer");
 const { detectMessageLanguage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
 const { isPairingOnly } = require("./runtimePolicy");
@@ -412,17 +412,37 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
       store,
       embedQueryTexts,
       embeddingModel: DEFAULT_EMBEDDING_MODEL,
-      matchCount: 6
+      matchCount: 12
     });
-    // A broad answer must not look complete after one of its targeted searches
-    // failed. Keep the existing localized abstention path for an incomplete
-    // retrieval instead of handing the model a partial view as if it were all.
-    evidence = retrieval.complete ? retrieval.evidence : [];
+    // Discard evidence ONLY when the search never reached the knowledge base.
+    //
+    // This used to read `retrieval.complete ? retrieval.evidence : []`, which
+    // threw away every retrieved section if ANY ONE of the facet searches
+    // errored. A broad question fans out to six searches, so a single transient
+    // failure on one of them turned a fully answerable turn into "I have no
+    // approved information" -- a claim about the corpus that one failed HTTP
+    // call had not earned. Partial coverage is now answered for the parts that
+    // ARE supported (the grounding layer below still gates each claim), and a
+    // genuine total failure is reported as a failure.
+    const technicalFailure = retrieval.status === "search_failed";
+    evidence = technicalFailure ? [] : retrieval.evidence;
     for (const error of retrieval.failures) {
       console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
       logEvent("knowledge_search_error", safeErrorDiagnostics(error));
     }
-    stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length, facetCount: retrieval.queryCount, complete: retrieval.complete });
+    // Administrator retrieval trace (step 9). Queries, rounds, chunk/section
+    // ids, scores, errors and what reached the answer model. Never sent to the
+    // customer and never carrying raw customer text beyond the already
+    // privacy-redacted question.
+    logEvent("knowledge_retrieval_trace", retrieval.trace);
+    stage("knowledge_retrieval", stageAt, {
+      evidenceCount: evidence.length,
+      facetCount: retrieval.queryCount,
+      complete: retrieval.complete,
+      status: retrieval.status,
+      coverage: retrieval.coverage,
+      technicalFailure
+    });
 
     let dynamicResult = { requested: [], live: [], statuses: [] };
     try {
@@ -439,7 +459,14 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     let modelResponseUsed = false;
     const localRecap = buildLocalConversationRecap({ history: routed.user?.history || [], evidence, currentMessage: customerText, language: detectMessageLanguage(customerText), workflowState: { handover: routed.user?.profile?.handover, specialistFollowUp: routed.user?.profile?.specialistFollowUp } });
     const citations = localRecap?.citations || grounded?.citations || [];
-    response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
+    // On a technical retrieval failure the fallback is the "could not reach the
+    // knowledge base" reply, never the "we have no approved information" one:
+    // the second is a statement about the corpus that a failed search has not
+    // earned. See knowledgeSearchUnavailableReply in src/refalcoAnswer.js.
+    const fallbackReply = technicalFailure
+      ? knowledgeSearchUnavailableReply(detectMessageLanguage(customerText))
+      : noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
+    response = localRecap?.response || grounded?.answer || fallbackReply;
 
     const aiRateLimit = !localRecap && evidence.length && process.env.OPENROUTER_API_KEY
       ? await checkAiMessage(userId, { store }) : { allowed: true, source: "not_checked" };

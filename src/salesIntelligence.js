@@ -213,8 +213,16 @@ async function buildObjectionAnswer({ text, language, store, humourLevel = 2, no
       const result = await TOOL_REGISTRY.lookupActiveOffer.run({ code: "formation-package" }, { store, now });
       offers = result?.modelObservation?.records || [];
     }
-    if (objection === "O5" && typeof store?.searchKnowledge === "function") {
-      knowledgeRows = await store.searchKnowledge(text, null, null, 6) || [];
+    if (objection === "O5") {
+      // Same relaxed admission floor as the unified engine, so a colloquial
+      // objection can reach the credibility evidence instead of failing the
+      // 0.6-term-coverage gate the v1 route hard-codes. Row shape is unchanged
+      // for evidenceForPolicy/factRegisterForRows below.
+      if (typeof store?.searchKnowledgeDetailed === "function") {
+        knowledgeRows = await store.searchKnowledgeDetailed(text, { matchCount: 12 }) || [];
+      } else if (typeof store?.searchKnowledge === "function") {
+        knowledgeRows = await store.searchKnowledge(text, null, null, 6) || [];
+      }
     }
   } catch { /* Evidence failure produces a safe, non-evidentiary matrix reply. */ }
   const lang = languageKey(language, text);

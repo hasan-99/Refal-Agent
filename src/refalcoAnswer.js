@@ -189,6 +189,21 @@ function noApprovedEvidenceReply(language = "english", { pricing = false } = {})
   return "I don't have approved information to confirm that yet. I can help with another part of your question.";
 }
 
+// A FAILED SEARCH IS NOT AN EMPTY KNOWLEDGE BASE.
+//
+// `noApprovedEvidenceReply` says "we have no approved information about that",
+// which is a claim about the corpus. When the retrieval layer never reached the
+// knowledge base -- embedding pipeline down, Edge Function unreachable, RPC
+// error -- that claim has not been earned, and saying it teaches the customer
+// something false about what REFAL knows. This reply states the real situation
+// instead and does not invite the customer to rephrase a question that was
+// never the problem.
+function knowledgeSearchUnavailableReply(language = "english") {
+  if (language === "arabic") return "ما قدرت أوصل لقاعدة المعلومات هلق بسبب مشكلة تقنية مؤقتة. جرب تسألني بعد شوي، أو فيني أحولك لحدا من الفريق.";
+  if (language === "greek") return "Δεν μπόρεσα να συνδεθώ με τη βάση γνώσης αυτή τη στιγμή λόγω προσωρινού τεχνικού προβλήματος. Δοκιμάστε ξανά σε λίγο ή μπορώ να σας συνδέσω με κάποιον από την ομάδα.";
+  return "I couldn't reach our knowledge base just now because of a temporary technical problem, so I'd rather not guess. Please try again shortly, or I can pass you to a colleague.";
+}
+
 // P2.2 / W2.2.1-W2.2.4 — the three patterns below were inline locals inside the
 // old single-function gate. They are module-level consts now so that BOTH the
 // legacy blanket path and the evidence-aware path use the SAME source text. A
@@ -395,4 +410,4 @@ function restrictedRefalcoReply(text, options = {}) {
   return safety.restricted ? safeLocalizedFallback(text, language) : null;
 }
 
-module.exports = { answerFromEvidence, knowledgeSourceRecords, knowledgeEvidenceMetadata, containsProhibitedClaim, containsProhibitedClaimLegacy, containsUnconditionalProhibition, containsPromptInjection, noApprovedEvidenceReply, restrictedRefalcoReply, isProgrammeEnquiry, allowsGroundedProgrammeAnswer };
+module.exports = { answerFromEvidence, knowledgeSourceRecords, knowledgeEvidenceMetadata, containsProhibitedClaim, containsProhibitedClaimLegacy, containsUnconditionalProhibition, containsPromptInjection, noApprovedEvidenceReply, knowledgeSearchUnavailableReply, restrictedRefalcoReply, isProgrammeEnquiry, allowsGroundedProgrammeAnswer };

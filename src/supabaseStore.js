@@ -354,6 +354,46 @@ class EdgeApiStore {
     return results || [];
   }
 
+  // The broad-search entry point used by src/knowledgeRetrieval.js. Carries the
+  // recall knobs (lexical admission floor, semantic distance cutoff) that the
+  // v1 route has no way to express. The Edge Function falls back to the v1 RPCs
+  // when these are absent, so an older deployment still answers this call.
+  async searchKnowledgeDetailed(query, { embedding = null, embeddingModel = null, matchCount = 12, minCoverage, minTerms, maxDistance } = {}) {
+    const { results } = await this.request("/knowledge/search", {
+      method: "POST",
+      timeoutMs: 12000,
+      body: JSON.stringify({
+        query: String(query || "").slice(0, 1000),
+        embedding, embeddingModel, matchCount,
+        minCoverage, minTerms, maxDistance
+      })
+    });
+    return results || [];
+  }
+
+  // Step 4: the complete parent sections for already-retrieved chunks, in
+  // original document order, so a condition in a `boundary` section travels
+  // with the claim it qualifies.
+  async fetchKnowledgeSections(chunkIds, { maxSections = 24, includeSiblings = true } = {}) {
+    const ids = (Array.isArray(chunkIds) ? chunkIds : [])
+      .map((id) => String(id || ""))
+      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(id))
+      .slice(0, 60);
+    if (!ids.length) return [];
+    const { sections } = await this.request("/knowledge/sections", {
+      method: "POST",
+      timeoutMs: 12000,
+      body: JSON.stringify({ chunkIds: ids, maxSections, includeSiblings })
+    });
+    return sections || [];
+  }
+
+  // Step 8: is everything we believe is searchable actually searchable?
+  async knowledgeHealth() {
+    const { health } = await this.request("/knowledge/health");
+    return health || null;
+  }
+
   async getBookingPolicy() {
     const { policy } = await this.request("/settings/booking-policy");
     return policy || null;
