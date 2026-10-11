@@ -30,6 +30,27 @@ test("buildAgentContext is defensive against missing/garbage input", () => {
   assert.equal(context.consentState, "unknown");
 });
 
+test("the full twelve-turn window reaches both generation and validation", () => {
+  const { buildDecisionMessages } = require("./agentDecision");
+  const { buildGroundingReviewMessages } = require("./semanticGrounding");
+  const { MAX_PROMPT_TOKEN_CEILING, promptTokenUpperBound } = require("./promptBudget");
+  const exclusion = "I only want company formation; I am not interested in investment or property.";
+  const history = Array.from({ length: 24 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `conversation message ${index}`
+  }));
+  history[2] = { role: "user", content: exclusion };
+  const context = buildAgentContext({ currentMessage: "What support continues after formation?", recentConversation: history });
+
+  assert.equal(context.recentConversation.length, 24);
+  assert.ok(context.recentConversation.some((turn) => turn.content === exclusion));
+  const decision = buildDecisionMessages(context);
+  assert.ok(decision.some((message) => message.content.includes(exclusion)));
+  assert.ok(promptTokenUpperBound(decision) < MAX_PROMPT_TOKEN_CEILING - 3000);
+  const review = buildGroundingReviewMessages({ text: "A supported answer.", context });
+  assert.ok(JSON.parse(review[1].content).history.some((turn) => turn.content === exclusion));
+});
+
 test("buildAgentContext returns a frozen object that cannot be mutated downstream", () => {
   const context = buildAgentContext({ currentMessage: "hi" });
   assert.equal(Object.isFrozen(context), true);

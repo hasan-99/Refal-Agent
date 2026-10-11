@@ -37,7 +37,10 @@ function buildAgentContext({
     }),
     recentConversation: Object.freeze(
       (Array.isArray(recentConversation) ? recentConversation : [])
-        .slice(-12)
+        // buildRecentConversation supplies up to 12 transcript turns as
+        // role-tagged user/assistant messages. Keep both sides of those turns;
+        // truncating to 12 messages here silently cut that context in half.
+        .slice(-24)
         .filter((turn) => turn && ["user", "assistant"].includes(turn.role) && typeof turn.content === "string")
         .map((turn) => Object.freeze({ role: turn.role, content: safeTrim(turn.content, 1200) }))
     ),

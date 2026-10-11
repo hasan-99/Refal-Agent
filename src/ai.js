@@ -531,7 +531,11 @@ function redactPersonalData(value) {
   return redactSensitiveData(String(value || ""))
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
     .replace(/(?:\+?\d[\d\s().-]{7,}\d)/g, "[phone]")
-    .replace(/\b(?:my name is|i am|i'm|my email is|my phone is|call me at)\s+[^,.!?\n]+/gi, "[personal detail]");
+    // Keep explicit names bounded to the name itself. The former catch-all
+    // consumed the rest of any "I am ..." clause, erasing preferences such as
+    // "I am not interested in investment or property" from agent context.
+    .replace(/\b(?:my name is|call me)\s+[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){0,3}(?=\s*(?:[,;.!?؟]|$|\b(?:and|but|because)\b))/giu, "[personal detail]")
+    .replace(/\b(?:[Ii] am|[Ii]'m)\s+\p{Lu}[\p{L}'’.-]*(?:\s+\p{Lu}[\p{L}'’.-]*){0,2}(?=\s*(?:[,;.!?؟]|$|\b(?:and|but|because)\b))/gu, "[personal detail]");
 }
 
 module.exports = { askOpenRouter, embedText, embedTexts, embedQueryTexts, embedWithPipeline, warmEmbeddingPipeline: loadEmbeddingPipeline, normalizeOpenRouterUsage, redactPersonalData, containsPriceClaim, containsUnsupportedPackageInclusion, withoutPriceFacts, suppressMeetingAfterDecline, suppressRepeatedSpecialistOffer, DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS };

@@ -22,3 +22,15 @@ test("model and RAG query sanitizer removes bank and identity secrets while pres
   assert.match(sanitized, /Help me set up a company in Cyprus/);
   assert.doesNotMatch(sanitized, /CY17|0020 0128|839102|P1234567/);
 });
+
+test("personal-data redaction removes self-identified names without erasing business-interest boundaries", () => {
+  const input = "I am not interested in investment or property. I am Hasan Ahmed. I only want company formation.";
+  const sanitized = redactPersonalData(input);
+  assert.match(sanitized, /I am not interested in investment or property/);
+  assert.match(sanitized, /I only want company formation/);
+  assert.doesNotMatch(sanitized, /Hasan/);
+
+  const explicitName = redactPersonalData("My name is Hasan and I do not want property services.");
+  assert.doesNotMatch(explicitName, /Hasan/);
+  assert.match(explicitName, /I do not want property services/);
+});
