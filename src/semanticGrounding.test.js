@@ -8,7 +8,7 @@ const { buildGroundingReviewMessages } = require("./semanticGrounding");
 test("request coverage accepts evidenced partial answers and identifies actual unanswered aspects", () => {
   const request = "What support and timing are confirmed?";
   const text = "Approved support is available; timing is unconfirmed in the supplied evidence.";
-  const base = {segments:[{text,status:"supported",evidenceRefs:["scope"],reasonCode:"supported"}],languageValid:true,contextValid:true};
+  const base = {segments:[{text,status:"supported",evidenceRefs:["scope"],reasonCode:"supported"}],languageValid:true,contextValid:true,contextIssues:[]};
   const partial = validateGroundingVerdict({...base,requestCoverage:{outcome:"supported_partial",unmetAspects:[]}},text,[{sourceRef:"scope"}],request);
   assert.equal(partial.valid,true);
   const missed = validateGroundingVerdict({...base,requestCoverage:{outcome:"not_addressed",unmetAspects:["timing"]}},text,[{sourceRef:"scope"}],request);
@@ -22,11 +22,31 @@ test("request coverage accepts evidenced partial answers and identifies actual u
 });
 test("reviewer output defects have distinct safe diagnostics and never approve omitted claims", () => {
   assert.equal(validateGroundingVerdict(null, "Answer").errorCode, "GROUNDING_VERDICT_SHAPE_INVALID");
-  const missing = { segments:[{text:"Hello.",status:"non_factual",evidenceRefs:[],reasonCode:"non_factual"}],languageValid:true,contextValid:true,requestCoverage:{outcome:"addressed",unmetAspects:[]} };
+  const missing = { segments:[{text:"Hello.",status:"non_factual",evidenceRefs:[],reasonCode:"non_factual"}],languageValid:true,contextValid:true,contextIssues:[],requestCoverage:{outcome:"addressed",unmetAspects:[]} };
   const result = validateGroundingVerdict(missing, "Hello. Approval is guaranteed.");
   assert.equal(result.valid,false);
   assert.equal(result.technicalFailure,true);
   assert.equal(result.errorCode,"GROUNDING_VERDICT_COVERAGE_MISMATCH");
+});
+test("context rejection identifies an exact actionable draft span and rejects opaque booleans", () => {
+  const text = "We can help with accounting. We also offer property services.";
+  const issue = "We also offer property services.";
+  const verdict = { segments:[{text,status:"supported",evidenceRefs:["scope"],reasonCode:"supported"}],languageValid:true,contextValid:false,contextIssues:[issue],requestCoverage:{outcome:"addressed",unmetAspects:[]} };
+  const result = validateGroundingVerdict(verdict,text,[{sourceRef:"scope"}]);
+  assert.equal(result.valid,false);
+  assert.deepEqual(result.blockedClaims,[{sentence:issue,claimClass:"CONTEXT",reasons:["context_mismatch"]}]);
+  assert.equal(validateGroundingVerdict({...verdict,contextIssues:[]},text,[{sourceRef:"scope"}]).technicalFailure,true);
+  assert.match(buildGroundingReviewMessages({text})[0].content,/quote the exact offending draft spans in contextIssues/);
+});
+test("semantic clause segmentation normalizes omitted boundary spaces without losing punctuation coverage", () => {
+  const text = "We continue the file within the tax scope—details depend on activity.";
+  const segments = ["We continue the file", "within the tax scope—", "details depend on activity."];
+  const result = validateGroundingVerdict({ segments:segments.map(text=>({text,status:"non_factual",evidenceRefs:[],reasonCode:"non_factual"})),languageValid:true,contextValid:true,contextIssues:[],requestCoverage:{outcome:"addressed",unmetAspects:[]} },text);
+  assert.equal(result.technicalFailure,undefined);
+  assert.equal(result.valid,true);
+  const omitted = validateGroundingVerdict({segments:[{text:"We continue the file—details depend on activity.",status:"non_factual",evidenceRefs:[],reasonCode:"non_factual"}],languageValid:true,contextValid:true,contextIssues:[],requestCoverage:{outcome:"addressed",unmetAspects:[]} },text);
+  assert.equal(omitted.technicalFailure,true);
+  assert.equal(omitted.errorCode,"GROUNDING_VERDICT_COVERAGE_MISMATCH");
 });
 test("comparative review receives the actual prior scope and rejects treating repeated categories as new", () => {
   const context = { currentMessage: "Anything else beyond those?", recentConversation: [{ role: "assistant", content: "We offer consulting and administration." }] };
@@ -34,7 +54,7 @@ test("comparative review receives the actual prior scope and rejects treating re
   const messages = buildGroundingReviewMessages({ text, context });
   assert.deepEqual(JSON.parse(messages[1].content).history, context.recentConversation);
   assert.match(messages[0].content, /previously listed items are presented as additional/);
-  const result = validateGroundingVerdict({ segments: [{ text, status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }], languageValid: true, contextValid: false, requestCoverage:{outcome:"not_addressed",unmetAspects:["Anything else beyond those?"]} }, text, [{ sourceRef: "scope" }]);
+  const result = validateGroundingVerdict({ segments: [{ text, status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }], languageValid: true, contextValid: false, contextIssues:[text], requestCoverage:{outcome:"not_addressed",unmetAspects:["Anything else beyond those?"]} }, text, [{ sourceRef: "scope" }]);
   assert.deepEqual(result.reasons, ["context_mismatch", "question_not_answered"]);
 });
 test("generation and review use the same configured identity across languages, including rejected invented aliases", () => {
@@ -48,13 +68,13 @@ test("generation and review use the same configured identity across languages, i
     assert.deepEqual(JSON.parse(review[1].content).identity, reviewIdentity());
     assert.equal(JSON.parse(review[1].content).draft, draft);
     assert.match(review[0].content, /invented agent alias is unsupported/);
-    const rejected = validateGroundingVerdict({ segments: [{ text: draft, status: "unsupported", evidenceRefs: [], reasonCode: "no_approved_evidence" }], languageValid: true, contextValid: false, requestCoverage:{outcome:"addressed",unmetAspects:[]} }, draft);
+    const rejected = validateGroundingVerdict({ segments: [{ text: draft, status: "unsupported", evidenceRefs: [], reasonCode: "no_approved_evidence" }], languageValid: true, contextValid: false, contextIssues:[draft], requestCoverage:{outcome:"addressed",unmetAspects:[]} }, draft);
     assert.equal(rejected.valid, false);
     assert.deepEqual(rejected.reasons, ["no_approved_evidence", "context_mismatch"]);
   }
 });
 const verdict = (text, status, evidenceRefs = [], reasonCode = status === "unsupported" ? "unsupported_relation" : status) => ({
-  segments: [{ text, status, evidenceRefs, reasonCode }], languageValid: true, contextValid: true, requestCoverage:{outcome:"addressed",unmetAspects:[]}
+  segments: [{ text, status, evidenceRefs, reasonCode }], languageValid: true, contextValid: true, contextIssues:[], requestCoverage:{outcome:"addressed",unmetAspects:[]}
 });
 const evidence = { sourceRef: "source:section", content: "The group assists with company registration. Bank approval is decided by the bank and is not guaranteed.", review_status: "approved" };
 

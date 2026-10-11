@@ -420,6 +420,14 @@ test("a guarantee is blocked without evidence too", () => {
   assert.equal(verdict.allowed, false);
 });
 
+test("qualified absence of a guaranteed government timeline is not mistaken for a promise", () => {
+  const safe = classifyClaim("المعالجة الحكومية بيد الجهات المختصة وما إلها موعد ثابت مضمون.", { evidence: [] });
+  assert.notEqual(safe.claimClass, CLAIM_CLASSES.GUARANTEE);
+  const mixed = classifyClaim("ما في موعد ثابت مضمون، لكننا نضمن موافقة البنك.", { evidence: [] });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.deepEqual(mixed.reasons, ["guarantee_marker"]);
+});
+
 test("100% approval is caught even though \\b can never match after a percent sign", () => {
   const verdict = classifyClaim("This route has 100% approval for every applicant.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, verdict.reasons.join(", "));
