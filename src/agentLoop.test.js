@@ -153,6 +153,57 @@ test("the loop stops at the step budget instead of looping forever", async () =>
   assert.notEqual(result.response, "");
 });
 
+test("knowledge evidence stays within one cumulative prompt budget across search rounds", async () => {
+  const makeRows = (prefix) => Array.from({ length: 8 }, (_, index) => ({
+    document_id: `${prefix}-doc-${index}`, section_index: "0", chunk_index: 0,
+    chunk_id: `${prefix}-chunk-${index}`, document_title: "Approved section", heading: `Section ${index}`,
+    content: `${prefix} ${"approved source detail ".repeat(95)}`, review_status: "approved"
+  }));
+  let round = 0;
+  let secondEvidenceChars = 0;
+  const tools = { searchApprovedKnowledge: { run: async () => ({
+    ok: true, status: "found", data: [],
+    modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", makeRows(`round-${++round}`))
+  }) } };
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    tools,
+    decideNextStep: async ({ observations, step }) => {
+      const evidence = observations.flatMap((item) => item?.result?.modelObservation?.evidence || []);
+      const chars = evidence.reduce((total, item) => total + item.content.length + item.title.length + (item.section || "").length + 48, 0);
+      assert.ok(chars <= 6000, `decision evidence exceeded budget: ${chars}`);
+      if (step === 3) secondEvidenceChars = chars;
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "service overview" } };
+      if (step === 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "more service information" } };
+      return { type: "respond", text: "The approved information describes the service areas in the retrieved sections." };
+    }
+  });
+  assert.equal(round, 2);
+  assert.ok(secondEvidenceChars <= 6000);
+  assert.equal(result.outcome, "responded");
+});
+
+test("a search that adds no sections removes further knowledge searches and preserves the answer attempt", async () => {
+  let calls = 0;
+  const source = { document_id: "doc-1", section_index: "1", chunk_id: "chunk-1", chunk_index: 1,
+    document_title: "Approved service overview", heading: "Services", content: "Company formation and accounting are supported services.", review_status: "approved" };
+  const tools = { searchApprovedKnowledge: { run: async () => {
+    calls += 1;
+    return { ok: true, status: "found", data: [source], modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source]) };
+  } } };
+  let finalSearchAvailable;
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 4, decideNextStep: async ({ step, tools: available }) => {
+    if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "service overview" } };
+    if (step === 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } };
+    finalSearchAvailable = Object.hasOwn(available, "searchApprovedKnowledge");
+    return { type: "respond", text: "I can help with the details supported by approved information." };
+  } });
+  assert.equal(calls, 2);
+  assert.equal(finalSearchAvailable, false);
+  assert.equal(result.steps[1].result.reasonCode, "NO_NEW_RELEVANT_SECTIONS");
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 3);
+});
+
 test("a decision naming an unknown tool stops safely with a deterministic fallback, not a thrown error", async () => {
   const decide = scriptedDecider([{ type: "tool", tool: "sendWireTransfer", args: {} }]);
   const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools: {} });

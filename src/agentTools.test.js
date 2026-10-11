@@ -72,7 +72,26 @@ test("searchApprovedKnowledge found result exposes approved chunk content throug
   assert.equal(item.sourceRef, "chunk-123");
   // Internal approval-workflow metadata must never leak into the model-safe
   // surface, even though it is present on the raw row.
-  assert.deepEqual(Object.keys(item).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
+  assert.deepEqual(Object.keys(item).sort(), ["content", "contentTruncated", "language", "section", "sourceRef", "sourceRefs", "title"]);
+});
+
+test("searchApprovedKnowledge rank-fuses model interpretation with the original client wording", async () => {
+  const calls = [];
+  const store = { searchKnowledge: async (query) => {
+    calls.push(query);
+    return [{
+      document_id: "doc-1", section_index: query.startsWith("ممكم") ? "ar-services" : "en-services",
+      chunk_id: query.startsWith("ممكم") ? "ar-chunk" : "en-chunk", chunk_index: 1,
+      document_title: "Approved service overview", heading: "Services", content: query.startsWith("ممكم") ? "خدمات تأسيس الشركات" : "Company formation services",
+      review_status: "approved"
+    }];
+  } };
+  const result = await searchApprovedKnowledge({ query: "Refalco Group service overview" }, {
+    store, currentMessage: "ممكم اعرف شو بتقدمو خدمات؟", embedText: async () => [0.1], language: "arabic"
+  });
+  assert.deepEqual(calls, ["Refalco Group service overview", "ممكم اعرف شو بتقدمو خدمات؟"]);
+  assert.equal(result.modelObservation.evidence.length, 2);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.content), ["Company formation services", "خدمات تأسيس الشركات"]);
 });
 
 test("searchApprovedKnowledge no_evidence produces no fabricated evidence payload", async () => {
@@ -95,11 +114,11 @@ test("searchApprovedKnowledge error result is distinguishable from no_evidence i
 });
 
 test("searchApprovedKnowledge bounds the number of evidence items", async () => {
-  const rows = Array.from({ length: 10 }, (_, index) => ({ heading: `Doc ${index}`, content: `Content ${index}` }));
+  const rows = Array.from({ length: 20 }, (_, index) => ({ heading: `Doc ${index}`, content: `Content ${index}` }));
   const store = { searchKnowledge: async () => rows };
   const result = await searchApprovedKnowledge({ query: "many docs" }, { store, embedText: async () => null, matchCount: 10 });
   assert.ok(result.modelObservation.evidence.length <= MAX_RAG_EVIDENCE_ITEMS);
-  assert.equal(result.data.length, result.modelObservation.evidence.length, "raw and model-visible evidence stay aligned");
+  assert.ok(result.data.length <= result.modelObservation.evidence.length, "the model may receive bounded full-section expansion beyond the anchor rows");
   assert.equal(result.modelObservation.truncated, true);
 });
 
@@ -438,7 +457,7 @@ test("M5 governance metadata remains separate from model prompt text and joins o
   }] };
   const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null, language: "english" });
   const [modelEvidence] = result.modelObservation.evidence;
-  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
+  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "language", "section", "sourceRef", "sourceRefs", "title"]);
   assert.doesNotMatch(formatApprovedKnowledgeEvidence(result.modelObservation), /jurisdiction-dubai|MB-J1|BOSS|reviewer/i);
   const observations = [{ result }];
   const [policyEvidence] = collectApprovedKnowledgeEvidence(observations);
@@ -528,7 +547,7 @@ test("knowledge search overfetches within a hard bound so filtered rows do not c
   const result = await searchApprovedKnowledge({ query: "Dubai" }, { store, embedText: async () => null, matchCount: 2, language: "english" });
   assert.equal(requested, 6, "three-times overfetch is applied before filtering");
   assert.deepEqual(result.data.map((row) => row.chunk_id), ["pending-1", "answer-1"]);
-  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["pending-1", "answer-1"]);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["pending-1", "answer-1", "answer-2"]);
 });
 
 test("knowledge search caps retrieval overfetch at the search endpoint maximum", async () => {

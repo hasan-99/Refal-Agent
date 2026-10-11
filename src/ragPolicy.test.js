@@ -888,7 +888,7 @@ test("model prompt treats adversarial evidence as data and limits answers to app
   assert.match(systemPrompt, /If approved sources conflict, state that they differ/);
   assert.match(systemPrompt, /Answer approved service\/package\/fee questions only when asked, using evidence/);
   assert.match(systemPrompt, /For a broad or detailed service request, give a clear, structured, useful overview from all relevant approved evidence/);
-  assert.match(systemPrompt, /In a broad services overview, include the current verified customer-facing offer's price, VAT, main inclusions, and timing/);
+  assert.match(systemPrompt, /Do not force package pricing into a high-level overview/);
   assert.match(systemPrompt, /Never reply with only a generic no-approved-information message when approved related context answers all or part of the request/);
   assert.match(systemPrompt, /investment company, clarify after the approved setup basics whether it will invest its own funds or provide investment services to clients/);
   assert.match(systemPrompt, /A priority label is internal only; create a customer handover or follow-up only after the customer gives clear consent by affirming a tracked offer or directly asking for specialist contact/);
@@ -906,7 +906,7 @@ test("canonical and runtime rules share the broad service-answer contract", () =
   for (const file of ["src/brainPrompt.js", "config/refal-agent-rules.md"]) {
     const content = fs.readFileSync(path.join(root, file), "utf8");
     assert.match(content, /For a broad or detailed service request, give a clear, structured, useful overview from all relevant approved evidence/, file);
-    assert.match(content, /proactively include the verified package price, VAT qualifier, inclusions, timing, and material limitations/, file);
+    assert.match(content, /Do not force package pricing into a high-level overview/, file);
     assert.match(content, /Never reply with only a generic .?no[- ]approved[- ]information.? message when approved related context answers all or part of the request/i, file);
     assert.match(content, /ask at most one natural qualification or next-step question/, file);
   }

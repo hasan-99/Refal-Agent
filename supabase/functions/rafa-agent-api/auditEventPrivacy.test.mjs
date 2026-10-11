@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { redactAuditEventFields } from "./auditEventPrivacy.mjs";
+import { redactAuditEventFields, sanitizeAgentOperationalFields } from "./auditEventPrivacy.mjs";
 
 test("audit event fields redact direct identifiers, free text, nested data, and embedded secrets", () => {
   const result = redactAuditEventFields({
@@ -63,4 +63,22 @@ test("Edge audit sanitizer preserves only nonnegative integer provider usage cou
   for (const value of [-1, 1.5, "120", Number.MAX_SAFE_INTEGER + 1]) {
     assert.equal(redactAuditEventFields({ promptTokens: value }).promptTokens, "[redacted]");
   }
+});
+
+test("agent operational traces preserve safe reason codes and evidence ids while redacting PII from queries", () => {
+  const fields = sanitizeAgentOperationalFields({
+    outcome: "response_rejected", reasonCode: "prohibited_claim", tool: "searchApprovedKnowledge",
+    query: "ممكم اعرف شو بتقدمو خدمات؟ +357 99123456 user@example.test",
+    searchQueries: ["Refalco services", "ممكم اعرف شو بتقدمو خدمات؟ +357 99123456"],
+    evidenceIds: ["088fbb8a-65bc-414a-8684-a3423acf0030"],
+    hiddenPrompt: "must be removed"
+  });
+  assert.equal(fields.outcome, "response_rejected");
+  assert.equal(fields.reasonCode, "prohibited_claim");
+  assert.equal(fields.tool, "searchApprovedKnowledge");
+  assert.match(fields.query, /ممكم اعرف شو بتقدمو خدمات/u);
+  assert.equal(fields.searchQueries.length, 2);
+  assert.match(fields.searchQueries[1], /ممكم اعرف شو بتقدمو خدمات/u);
+  assert.doesNotMatch(JSON.stringify(fields), /99123456|user@example|must be removed/u);
+  assert.equal(Object.hasOwn(fields, "hiddenPrompt"), false);
 });

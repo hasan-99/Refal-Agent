@@ -1,4 +1,5 @@
 const { redactSensitiveData, redactAuditEventFields } = require("./sensitiveData");
+const { sanitizeAgentTraceFields } = require("./operationalTelemetry");
 
 function requireRafaApiConfig() {
   const url = process.env.SUPABASE_URL;
@@ -296,7 +297,8 @@ class EdgeApiStore {
   async logEvent(event, fields = {}) {
     await this.request("/events", {
       method: "POST",
-      body: JSON.stringify({ event, fields: redactAuditEventFields(fields) })
+      body: JSON.stringify({ event, fields: String(event || "").startsWith("agent_")
+        ? sanitizeAgentTraceFields(fields) : redactAuditEventFields(fields) })
     });
   }
 

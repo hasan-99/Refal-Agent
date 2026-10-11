@@ -8,6 +8,7 @@
 // rather than reimplementing them.
 
 const { createHash } = require("node:crypto");
+const { detectMessageLanguage } = require("./language");
 
 const { getConsentState } = require("./leadQualification");
 const { createHandover } = require("./handover");
@@ -382,9 +383,9 @@ function isPlainString(value) {
 // field (`modelObservation`), never a tool's raw `data`. Reused for every
 // outcome (found/no_evidence/error) so the decision formatter has one
 // uniform shape to look for regardless of status.
-const MAX_RAG_EVIDENCE_ITEMS = 8;
-const MAX_RAG_EVIDENCE_CONTENT_CHARS = 2000;
-const MAX_RAG_EVIDENCE_TOTAL_CHARS = 10000;
+const MAX_RAG_EVIDENCE_ITEMS = 16;
+const MAX_RAG_EVIDENCE_CONTENT_CHARS = 12000;
+const MAX_RAG_EVIDENCE_TOTAL_CHARS = 18000;
 const MAX_RAG_EVIDENCE_TITLE_CHARS = 160;
 const MAX_RAG_EVIDENCE_SECTION_CHARS = 160;
 const MAX_RAG_EVIDENCE_SOURCE_REF_CHARS = 80;
@@ -418,7 +419,32 @@ function isCustomerFacingKnowledgeChunk(row) {
 // boundary here is the existing `review_status = 'approved'` filter, not a
 // second text scrub.
 function buildApprovedKnowledgeObservation(status, rows = []) {
-  const safeRows = Array.isArray(rows) ? rows : [];
+  const inputRows = Array.isArray(rows) ? rows : [];
+  // The Edge search route expands each ranked hit to its complete parent
+  // section. Reassemble ordered chunks into that section before applying the
+  // model context budget, so conditions and exceptions travel with the fact.
+  const groupedRows = [];
+  const groupBySection = new Map();
+  for (const row of inputRows) {
+    const sectionIndex = row?.section_index;
+    const groupKey = typeof row?.document_id === "string" && sectionIndex !== null && sectionIndex !== undefined
+      ? `${row.document_id}:${sectionIndex}` : null;
+    if (!groupKey) { groupedRows.push({ ...row, chunkIds: row?.chunk_id ? [row.chunk_id] : [] }); continue; }
+    let group = groupBySection.get(groupKey);
+    if (!group) {
+      group = { ...row, content: "", chunkIds: [], policyMetadata: { ...(row.policyMetadata || {}), facts: [], supporting: [], governedFacts: [], factRegisterRows: [] } };
+      groupBySection.set(groupKey, group);
+      groupedRows.push(group);
+    }
+    if (row?.chunk_id) group.chunkIds.push(row.chunk_id);
+    if (row?.content) group.content = group.content ? `${group.content}\n\n${row.content}` : String(row.content);
+    for (const key of ["facts", "supporting", "governedFacts"]) {
+      group.policyMetadata[key] = [...new Set([...(group.policyMetadata[key] || []), ...(Array.isArray(row?.policyMetadata?.[key]) ? row.policyMetadata[key] : [])])];
+    }
+    group.policyMetadata.factRegisterRows = [...new Map([...(group.policyMetadata.factRegisterRows || []), ...(Array.isArray(row?.policyMetadata?.factRegisterRows) ? row.policyMetadata.factRegisterRows : [])]
+      .filter((fact) => fact?.id).map((fact) => [fact.id, fact])).values()];
+  }
+  const safeRows = groupedRows;
   const evidence = [];
   const policyEvidence = [];
   const factRegisterRows = new Map();
@@ -460,12 +486,14 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
     evidence.push({
       title: safeField(row?.document_title || row?.source_name, MAX_RAG_EVIDENCE_TITLE_CHARS) || "Approved information",
       section: safeField(row?.heading, MAX_RAG_EVIDENCE_SECTION_CHARS),
+      language: detectMessageLanguage(content),
       content,
       contentTruncated,
       // Opaque chunk/document identifiers only (never a reviewer name,
       // approval timestamp, or other workflow metadata) — safe for internal
       // source traceability, never customer/profile data.
-      sourceRef: ref
+      sourceRef: ref,
+      sourceRefs: Array.isArray(row?.chunkIds) ? row.chunkIds.slice(0, 40) : (ref ? [ref] : [])
     });
     policyEvidence.push({
       sourceRef: ref,
@@ -478,7 +506,39 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
   return { type: "approved_knowledge", status, evidence, truncated, policyEvidence, factRegisterRows: [...factRegisterRows.values()] };
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language } = {}) {
+function knowledgeSectionIdentity(row, fallbackIndex) {
+  const document = row?.document_id || row?.source_id;
+  const section = row?.section_index ?? row?.metadata?.sectionIndex;
+  if (document && section !== null && section !== undefined) return `${document}:${section}`;
+  if (row?.chunk_id) return `chunk:${row.chunk_id}`;
+  return `row:${fallbackIndex}`;
+}
+
+function mergeRankedKnowledgeResults(resultSets) {
+  const sections = new Map();
+  for (const rows of resultSets) {
+    const seenInQuery = new Set();
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const key = knowledgeSectionIdentity(row, index);
+      if (!sections.has(key)) sections.set(key, { rows: [], score: 0, firstSeen: sections.size });
+      const group = sections.get(key);
+      if (seenInQuery.has(key)) continue;
+      seenInQuery.add(key);
+      group.score += 1 / (60 + index + 1);
+      group.rows.push(...rows.filter((candidate) => {
+        const candidateKey = knowledgeSectionIdentity(candidate, index);
+        return candidateKey === key;
+      }));
+    }
+  }
+  return [...sections.values()]
+    .sort((a, b) => b.score - a.score || a.firstSeen - b.firstSeen)
+    .flatMap((group) => [...new Map(group.rows.map((row) => [row.chunk_id || `${row.document_id}:${row.chunk_index}`, row])).values()]
+      .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0)));
+}
+
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
@@ -489,21 +549,27 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const requestedCount = Number.isInteger(matchCount) ? Math.min(MAX_RAG_EVIDENCE_ITEMS, Math.max(1, matchCount)) : 6;
   const candidateCount = Math.min(20, requestedCount * 3);
 
-  let embedding = null;
-  try {
-    if (typeof embedText === "function") embedding = await embedText(query);
-  } catch {
-    // Embedding failure degrades to lexical-only search server-side; do not
-    // fail the tool just because the local embedding pipeline is unavailable.
-    embedding = null;
+  const queries = [...new Set([query, isPlainString(currentMessage) ? currentMessage.trim().slice(0, 1000) : ""])]
+    .filter(Boolean).slice(0, 2);
+  const resultSets = await Promise.all(queries.map(async (searchQuery) => {
+    let embedding = null;
+    try {
+      if (typeof embedText === "function") embedding = await embedText(searchQuery);
+    } catch {
+      // Embedding failure degrades to lexical-only search server-side; do not
+      // fail the tool just because the local embedding pipeline is unavailable.
+      embedding = null;
+    }
+    return store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
+  }).map((promise) => Promise.resolve(promise).then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }))));
+  const successfulResults = resultSets.filter((result) => result.ok).map((result) => Array.isArray(result.value) ? result.value : []);
+  if (!successfulResults.length) {
+    const error = resultSets.find((result) => !result.ok)?.error;
+    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []), trace: { searchQueries: queries } });
   }
-
-  let results;
-  try {
-    results = await store.searchKnowledge(query, embedding, embeddingModel || null, candidateCount);
-  } catch (error) {
-    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
-  }
+  const results = successfulResults.length > 1
+    ? mergeRankedKnowledgeResults(successfulResults)
+    : successfulResults[0];
 
   // The RPC enforces source/document approval and expiry. Evidence/supporting
   // reference fields and Fact Register links are not admission requirements;
@@ -512,15 +578,13 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // returns one.
   const eligible = (Array.isArray(results) ? results : [])
     .filter(isCustomerFacingKnowledgeChunk);
-  const evidence = eligible.slice(0, requestedCount);
-  if (evidence.length === 0) {
-    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
+  if (eligible.length === 0) {
+    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []), trace: { searchQueries: queries } });
   }
 
-  const userSafeSummary = evidence.map((item) => String(item?.heading || item?.source_name || "Approved information").slice(0, 120));
-  const modelObservation = buildApprovedKnowledgeObservation("found", evidence);
-  if (eligible.length > evidence.length) modelObservation.truncated = true;
-  return ok("found", evidence, { userSafeSummary, modelObservation });
+  const modelObservation = buildApprovedKnowledgeObservation("found", eligible);
+  const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
+  return ok("found", eligible.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries } });
 }
 
 // --- getCustomerContext ------------------------------------------------------

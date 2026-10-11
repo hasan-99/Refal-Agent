@@ -75,9 +75,9 @@ test("runShadowAgentTurn is a complete no-op when the flag is unset — no model
 });
 
 test("runShadowAgentTurn, when enabled, reaches the real tool/store through a scripted decision and logs outcome metadata only (no response text)", async () => {
-  let searchArgs = null;
+  const searchArgs = [];
   const store = {
-    searchKnowledge: async (query) => { searchArgs = query; return [{ heading: "Pricing", content: "EUR 1500" }]; }
+    searchKnowledge: async (query) => { searchArgs.push(query); return [{ chunk_id: `price-${searchArgs.length}`, heading: "Pricing", content: "EUR 1500", review_status: "approved" }]; }
   };
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price" } },
@@ -98,7 +98,7 @@ test("runShadowAgentTurn, when enabled, reaches the real tool/store through a sc
     { env: { REFAL_AGENT_SHADOW_ENABLED: "true" }, decideNextStep: decide, tools: TOOL_REGISTRY }
   );
 
-  assert.equal(searchArgs, "price");
+  assert.deepEqual(searchArgs, ["price", "what is the price?"]);
   assert.equal(result.outcome, "responded");
   assert.equal(result.toolsUsed[0], "searchApprovedKnowledge");
   assert.match(result.response, /EUR 1500/);
@@ -112,7 +112,6 @@ test("runShadowAgentTurn, when enabled, reaches the real tool/store through a sc
   assert.equal(events[0].fields.responseLength, "The price is EUR 1500.".length);
   assert.equal(events[0].fields.response, undefined, "the logged event must never carry the free-text response");
   assert.deepEqual(events[0].fields.toolCalls, [
-    { tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null },
     { tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null }
   ]);
   assert.equal(events[0].fields.toolCalls[0].args, undefined, "a tool-call observation must never carry raw args");

@@ -210,7 +210,8 @@ test("full synthetic customer-answer path retrieves approved fixture evidence, r
         sourceTurnId,
         embedText: async (query) => [query.length]
       }, {
-        decideNextStep: async ({ observations }) => {
+        decideNextStep: async ({ observations, step }) => {
+          if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: sourceMessage } };
           assert.equal(observations[0].result.modelObservation.evidence[0].content, expectedAnswer);
           assert.equal(observations[0].result.modelObservation.policyEvidence[0].review_status, "approved");
           assert.equal(observations[0].result.modelObservation.policyEvidence[0].valid_until, "2099-01-01T00:00:00.000Z");

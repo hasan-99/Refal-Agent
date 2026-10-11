@@ -96,6 +96,25 @@ test("Agent turn diagnostics retain the outcome enum used by the operations dash
   });
 });
 
+test("Agent trace preserves reason codes, tool/search outcomes, evidence references, and redacts sensitive query values", () => {
+  const event = buildOperationalEvent("agent_tool_call", {
+    step: 2, tool: "searchApprovedKnowledge", status: "found", reasonCode: "RETRIEVAL_OK",
+    query: "ممكم اعرف شو بتقدمو خدمات؟ رقم الحساب: CY12000000000000000000000000 +357 99123456",
+    searchQueries: ["Refalco Group service overview", "ممكم اعرف شو بتقدمو خدمات؟ +357 99123456"],
+    resultCount: 8, evidenceCount: 3,
+    evidenceIds: ["088fbb8a-65bc-414a-8684-a3423acf0030", "9ee12163-73b8-4833-89ce-62583e2a1b64"],
+    privateMessage: "do not persist"
+  });
+  assert.equal(event.fields.reasonCode, "RETRIEVAL_OK");
+  assert.equal(event.fields.tool, "searchApprovedKnowledge");
+  assert.equal(event.fields.resultCount, 8);
+  assert.equal(event.fields.evidenceIds.length, 2);
+  assert.match(event.fields.query, /ممكم اعرف شو بتقدمو خدمات/u);
+  assert.equal(event.fields.searchQueries.length, 2);
+  assert.match(event.fields.searchQueries[1], /ممكم اعرف شو بتقدمو خدمات/u);
+  assert.doesNotMatch(JSON.stringify(event), /99123456|CY12000000000000000000000000|do not persist/u);
+});
+
 test("operational telemetry drops unknown free-text fields even when they contain no detectable PII", () => {
   const event = buildOperationalEvent("agent_turn_completed", {
     stage: "model_generation",

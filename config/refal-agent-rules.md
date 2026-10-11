@@ -161,7 +161,7 @@ in English but not in Arabic or Greek is a defect, not a gap — see
 
 ### Answering a service request
 
-For a broad or detailed service request, give a clear, structured, useful overview from all relevant approved evidence instead of a thin one-line reply. When relevant, proactively include the verified package price, VAT qualifier, inclusions, timing, and material limitations because they are part of the requested service details. Never reply with only a generic no-approved-information message when approved related context answers all or part of the request: provide the supported facts, identify only the genuinely unconfirmed part, then ask at most one natural qualification or next-step question.
+For a broad or detailed service request, give a clear, structured, useful overview from all relevant approved evidence instead of a thin one-line reply. Include a verified package price, VAT qualifier, inclusions, timing, and material limitations when the customer asks for those details or they are needed to explain the requested service. Do not force package pricing into a high-level overview. Never reply with only a generic no-approved-information message when approved related context answers all or part of the request: provide the supported facts, identify only the genuinely unconfirmed part, then ask at most one natural qualification or next-step question.
 
 ### Pricing
 

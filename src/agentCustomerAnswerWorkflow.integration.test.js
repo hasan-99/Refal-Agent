@@ -63,7 +63,7 @@ for (const scenario of scenarios) test(`${scenario.language} inbound company que
   const userId = "synthetic-contact-1";
   const { question, answer } = scenario;
   const events = [];
-  let retrievedQuery = "";
+  const retrievedQueries = [];
   const user = { id: userId, profile: {}, history: (scenario.priorTurns || []).map((turn, index) => ({ id: `prior-turn-${index + 1}`, ...turn })) };
   let nextTurn = 0;
   const store = {
@@ -86,7 +86,7 @@ for (const scenario of scenarios) test(`${scenario.language} inbound company que
     saveQualification: async () => {},
     saveIntents: async () => {},
     searchKnowledge: async (query) => {
-      retrievedQuery = query;
+      retrievedQueries.push(query);
       events.push(["approved-retrieval", query]);
       return [{ chunk_id: "fixture-company-formation", source_name: "Synthetic approved test fixture", heading: "Company formation", content: answer,
         review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z", metadata: { facts: [] } }];
@@ -122,8 +122,9 @@ for (const scenario of scenarios) test(`${scenario.language} inbound company que
         allowedCapabilities,
         embedText: async () => [0.1]
       }, {
-        decideNextStep: async ({ context, observations }) => {
+        decideNextStep: async ({ context, observations, step }) => {
           assert.deepEqual(context.recentConversation, buildRecentConversation(user.history.filter((turn) => turn.id !== sourceTurnId)));
+          if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: scenario.contextualQuestion ? `${scenario.contextualQuestion} ${question}` : question } };
           const evidence = observations[0]?.result?.modelObservation?.evidence || [];
           assert.ok(evidence.some((item) => item.content === answer));
           return { type: "respond", text: answer };
@@ -142,13 +143,15 @@ for (const scenario of scenarios) test(`${scenario.language} inbound company que
   assert.equal(sent[0].text, answer);
   assert.match(answer, /[?؟;;]$/u, "the grounded reply offers one useful next question");
   if (scenario.contextualQuestion) {
-    assert.ok(retrievedQuery.includes(scenario.contextualQuestion), "retrieval query resolves the follow-up against the earlier customer topic");
-    assert.ok(retrievedQuery.includes(question), "retrieval query retains the customer's current question");
+    assert.ok(retrievedQueries.some((query) => query.includes(scenario.contextualQuestion)), "retrieval query resolves the follow-up against the earlier customer topic");
+    assert.ok(retrievedQueries.some((query) => query.includes(question)), "retrieval query retains the customer's current question");
   }
   const persisted = user.history.find((turn) => turn.id === sent[0].turnId);
   assert.equal(persisted.message, question);
   assert.equal(persisted.response, answer);
   // A history-backed dashboard can see the final saved row. This asserts only
   // the local persistence contract; it does not exercise dashboard UI/API.
-  assert.deepEqual(events.map(([name]) => name), ["save", "agent", "approved-retrieval", "update", "send"]);
+  assert.deepEqual(events.map(([name]) => name), scenario.contextualQuestion
+    ? ["save", "agent", "approved-retrieval", "approved-retrieval", "update", "send"]
+    : ["save", "agent", "approved-retrieval", "update", "send"]);
 });

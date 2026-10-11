@@ -62,7 +62,16 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         leadTier: routed.metadata?.leadTier || "", buyingSignals: routed.metadata?.buyingSignals || []
       }, {
         tools: buildCommitTrackingToolRegistry(toolRegistry, commitState),
-        onModelCall: ({ durationMs }) => logEvent("agent_model_call", { durationMs }),
+        onModelCall: (measurement) => logEvent("agent_model_call", measurement),
+        onToolCall: ({ step, tool, args, result, durationMs, evidenceCount, evidenceChars, evidenceIds, skipped }) => logEvent("agent_tool_call", {
+          step, tool, query: args?.query, searchQueries: result?.trace?.searchQueries, status: result?.status || (result?.ok ? "ok" : "error"),
+          reasonCode: result?.reasonCode, durationMs, evidenceCount, evidenceChars, evidenceIds,
+          resultCount: Array.isArray(result?.data) ? result.data.length : evidenceCount,
+          ...(skipped ? { outcome: "skipped" } : {})
+        }),
+        onPolicyRejection: ({ step, type, reasonCodes }) => logEvent("agent_policy_rejected", {
+          step, tool: type, validationReasons: reasonCodes
+        }),
         onModelUsage: (usage) => logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
           source: "whatsapp-agent",
           model: usage.model,

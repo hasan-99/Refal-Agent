@@ -88,7 +88,7 @@ test("evaluation preserves row-level trusted policy metadata beyond the four-ite
   assert.deepEqual(fallback.facts, ["MB-F19"]);
 });
 
-test("model-visible retrieval honors production eight-item and content truncation caps", async () => {
+test("model-visible retrieval honors the widened production section cap and preserves complete bounded sections", async () => {
   const now = new Date("2026-10-11T12:00:00.000Z");
   const entry = { topic: "formation-package", lang: "en", expectedFacts: ["MB-F1"] };
   const hits = Array.from({ length: 9 }, (_, index) => ({
@@ -97,17 +97,17 @@ test("model-visible retrieval honors production eight-item and content truncatio
     policyMetadata: { reviewStatus: "approved", validUntil: "2027-01-01T00:00:00.000Z", facts: index === 8 ? ["MB-F1"] : [] },
   }));
   const observation = modelVisibleKnowledgeObservation(hits);
-  assert.equal(observation.evidence.length, 8);
-  assert.equal(observation.evidence[0].content.length, 2000);
-  assert.equal(observation.evidence[0].contentTruncated, true);
-  assert.equal(observation.truncated, true);
+  assert.equal(observation.evidence.length, 9);
+  assert.equal(observation.evidence[0].content.length, hits[0].content.length);
+  assert.equal(observation.evidence[0].contentTruncated, false);
+  assert.equal(observation.truncated, false);
   assert.equal(expectedFactRanks(hits, entry).allExpectedFactsFound, true, "raw retrieval sees the ninth-row fact");
-  assert.equal(modelVisibleDocumentLinkedFactRanks(observation, entry).allExpectedFactsFound, false, "the model observation does not contain ninth-row metadata");
+  assert.equal(modelVisibleDocumentLinkedFactRanks(observation, entry).allExpectedFactsFound, true, "the widened model observation contains the ninth-row metadata");
   const catalog = buildApprovedEvidenceCatalog(hits, { toolObservations: [], records: [] }, now, observation);
-  assert.equal(catalog.has("rag:chunk-9"), false, "candidate answers cannot cite a raw hit omitted from the model observation");
+  assert.equal(catalog.has("rag:chunk-9"), true, "the candidate catalog includes evidence visible to the model");
   const candidate = await evaluateCandidateAnswer({ ...entry, question: "What is included?", expectedRefusal: "none" },
     { answer: "The approved package includes the stated item.", evidenceIds: ["rag:chunk-9"] }, catalog, now);
-  assert.equal(candidate.candidateAcceptedByRuntime, false, "ranked-but-hidden evidence must not make a candidate appear grounded");
+  assert.equal(candidate.candidateAcceptedByRuntime, false, "visibility alone does not make unrelated content supporting evidence");
 });
 
 test("candidate evidence catalog uses the exact supplied bounded model observation", () => {

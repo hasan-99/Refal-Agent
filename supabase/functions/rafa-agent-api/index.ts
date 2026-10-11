@@ -21,7 +21,7 @@ import { isPromptWithinTokenCeiling } from "./promptBudget.mjs";
 import { CRM_PROFILE_GROUPS, crmRowToAgentFacts, isExplicitCrmCorrection, isSelfIdentifiedCrmName, normalizeCrmStoredValue, validateCrmValueAgainstMessage } from "./crmLeadProfile.mjs";
 import { claimInboundMessage, completeInboundMessage } from "./inboundMessageReceipts.mjs";
 import { isAllowedReminderTransition, reminderPatchForState } from "./reminderDeliveryState.mjs";
-import { redactAuditEventFields } from "./auditEventPrivacy.mjs";
+import { redactAuditEventFields, sanitizeAgentOperationalFields } from "./auditEventPrivacy.mjs";
 import { containsSensitiveOutputValue } from "./sensitiveOutputPolicy.mjs";
 import { fetchJsonWithTimeout, ProviderTimeoutError } from "./providerTransport.mjs";
 import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
@@ -206,9 +206,16 @@ Deno.serve(async (req: Request) => {
           p_match_count: matchCount
         });
       if (error) throw error;
+      const candidateRows = data || [];
+      const candidateIds = candidateRows.map((row: { chunk_id?: string }) => row.chunk_id).filter((id: unknown): id is string => typeof id === "string");
+      const { data: expanded, error: expansionError } = await supabase.rpc("rafa_expand_knowledge_sections", {
+        p_chunk_ids: candidateIds,
+        p_max_chunks: 80
+      });
+      if (expansionError) throw expansionError;
       // Governance metadata is fetched server-side for deterministic M5 policy
       // checks. It is carried separately from the model-safe evidence block.
-      return json({ results: await attachKnowledgePolicyMetadata(supabase, data || []) });
+      return json({ results: await attachKnowledgePolicyMetadata(supabase, expanded || candidateRows) });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {
@@ -2059,7 +2066,7 @@ function validateBookingPolicy(value: Record<string, any>) {
 async function logEvent(event: string, fields: Record<string, unknown>) {
   const { error } = await supabase.from("rafa_events").insert({
     event,
-    fields: redactAuditEventFields(fields),
+    fields: event.startsWith("agent_") ? sanitizeAgentOperationalFields(fields) : redactAuditEventFields(fields),
     at: new Date().toISOString()
   });
   if (error) throw error;
