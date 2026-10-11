@@ -11,6 +11,7 @@ const { runAgentLiveAnswerTurn } = require("../src/agentLiveAnswerTurn");
 const { TOOL_REGISTRY } = require("../src/agentTools");
 const { redactTraceText } = require("../src/agentTracePrivacy");
 const { redactSensitiveData } = require("../src/sensitiveData");
+const { assessAgentDraft, callGroundingReviewer } = require("../src/semanticGrounding");
 const fixture = process.argv[2] ? JSON.parse(fs.readFileSync(path.resolve(process.argv[2]), "utf8")) : null;
 const history = fixture?.history || JSON.parse(fs.readFileSync(path.resolve(__dirname, "../artifacts/whatsapp-audit-history.json"), "utf8"));
 const cases = fixture?.cases || ["مرحبا، ممكن أعرف شو بتقدّموا خدمات بقبرص؟", "طيب أنا بدي أسّس شركة بس، مو مهتم بالاستثمار أو العقارات. بتساعدوني؟", "وشو بتقدروا تساعدوني فيه بعد ما تتأسس؟"];
@@ -30,19 +31,25 @@ async function main() {
     // contact/turn/workflow writes are possible from this store.
     for (const name of ["searchKnowledge", "lookupDynamicData"]) memory[name] = live[name].bind(live);
     memory.updateHistoryTurn = async (_id, id, patch) => Object.assign(user.history.find((turn) => turn.id === id), patch);
-    const events = []; const rejections = []; let deliveredDraft = null;
+    const events = []; const rejections = []; const reviewVerdicts = []; let deliveredDraft = null;
     const start = Date.now();
     const result = await runAgentLiveAnswerTurn({ userId: user.id, chatId: "disabled", text: message }, {
       store: memory, toolRegistry: Object.fromEntries(Object.entries(TOOL_REGISTRY).filter(([name]) =>
         ["searchApprovedKnowledge", "lookupActiveOffer", "lookupRenewalFees", "lookupGovernmentFees"].includes(name))),
       logEvent: async (event, fields) => events.push({ event, fields }),
       sendStoredTextReply: async (_socket, _chat, response) => { deliveredDraft = response; },
-      agentOptions: { onPolicyRejection: async (inspection) => rejections.push(inspection) }
+      agentOptions: { onPolicyRejection: async (inspection) => rejections.push(inspection),
+        assessDraft: (args, options) => assessAgentDraft(args, { ...options, callModel: async (messages, callOptions) => {
+          const verdict = await callGroundingReviewer(messages, callOptions);
+          reviewVerdicts.push({ draft:args.text, verdict });
+          return verdict;
+        } }) }
     });
-    report.push(safe({ message, priorHistory: history.slice(0, position), result, deliveredDraft, durationMs: Date.now() - start, events, rejections, outboundDisabled: true }));
+    report.push(safe({ message, priorHistory: history.slice(0, position), result, deliveredDraft, durationMs: Date.now() - start, events, rejections, reviewVerdicts, outboundDisabled: true }));
     fs.writeFileSync(path.resolve(__dirname, fixture ? "../artifacts/whatsapp-contextual-reproduction.json" : "../artifacts/whatsapp-audit-reproduction.json"), JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ message, outcome: result.outcome, rejectionCount: rejections.length,
       reasons: rejections.map((item) => item.reasonCodes), durationMs: Date.now() - start }));
+    if (events.find((event) => event.event === "agent_turn_completed")?.fields?.outcome !== "responded") process.exitCode = 1;
   }
 }
 main().catch((error) => { console.error(error.name, error.code || "REPRODUCTION_FAILED"); process.exitCode = 1; });

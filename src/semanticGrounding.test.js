@@ -5,6 +5,14 @@ const { assessAgentDraft, validateGroundingVerdict, reviewIdentity } = require("
 const { runAgentTurnForContact } = require("./agentRuntime");
 const { buildDecisionMessages } = require("./agentDecision");
 const { buildGroundingReviewMessages } = require("./semanticGrounding");
+test("reviewer output defects have distinct safe diagnostics and never approve omitted claims", () => {
+  assert.equal(validateGroundingVerdict(null, "Answer").errorCode, "GROUNDING_VERDICT_SHAPE_INVALID");
+  const missing = { segments:[{text:"Hello.",status:"non_factual",evidenceRefs:[],reasonCode:"non_factual"}],languageValid:true,contextValid:true,answerAddressesQuestion:true };
+  const result = validateGroundingVerdict(missing, "Hello. Approval is guaranteed.");
+  assert.equal(result.valid,false);
+  assert.equal(result.technicalFailure,true);
+  assert.equal(result.errorCode,"GROUNDING_VERDICT_COVERAGE_MISMATCH");
+});
 test("comparative review receives the actual prior scope and rejects treating repeated categories as new", () => {
   const context = { currentMessage: "Anything else beyond those?", recentConversation: [{ role: "assistant", content: "We offer consulting and administration." }] };
   const text = "Yes, we also offer consulting and administration.";
