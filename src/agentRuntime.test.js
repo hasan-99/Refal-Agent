@@ -43,6 +43,12 @@ test("RAG is never invoked when the Agent's decision never asks for it (e.g. a s
   assert.equal(searchCalls, 0, "a plain acknowledgement must never trigger a knowledge search");
 });
 
+test("buildToolContext supplies the trusted current message for CRM statement verification", () => {
+  const ctx = buildToolContext({ store: {}, user: {}, userId: "contact-1", currentMessage: "I live in Jordan.", sourceTurnId: "turn-1" });
+  assert.equal(ctx.currentMessage, "I live in Jordan.");
+  assert.equal(ctx.sourceTurnId, "turn-1");
+});
+
 test("broad services intents retrieve overview, scope, and current-conditions evidence before the model decides", async () => {
   let searchCalls = 0;
   let observationsSeenByModel = null;

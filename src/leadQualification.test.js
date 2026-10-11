@@ -33,12 +33,21 @@ test("company mentions do not imply decision authority or preserve stale inferre
 test("opt-out detection covers English, Arabic, and Greek", () => {
   for (const message of [
     "Please stop messaging me",
+    "Do not send me any more messages",
+    "Please stop contacting me",
+    "Remove me from your list",
     "لا تراسلني",
+    "ما بدي رسائل بعد اليوم",
+    "وقفوا التواصل معي",
+    "اوقفوا كل الرسائل",
     "بدي معلومات عامة بس، لا تتواصلوا معي.",
     "خلص، لا تتواصلوا معي ولا تبعتوا متابعة.",
     "لو سمحت لا ترتبوا تواصل عني.",
     "لا تبعتوا متابعة.",
-    "Μη μου στέλνεις άλλα μηνύματα"
+    "Μη μου στέλνεις άλλα μηνύματα",
+    "Μη μου στέλνετε άλλα μηνύματα",
+    "Μην μου στέλνετε ξανά μηνύματα",
+    "Δεν θέλω άλλα μηνύματα"
   ]) {
     assert.equal(consentFromText(message), CONSENT_STATES.REVOKED);
   }
@@ -46,6 +55,12 @@ test("opt-out detection covers English, Arabic, and Greek", () => {
   assert.equal(consentFromText("لما قلت إي، قصدي إي للمعلومة، مو موافقة حدا يتواصل معي."), CONSENT_STATES.DENIED);
   assert.equal(consentFromText("Please do not pressure me to book or send my contact details. I can ask for that later if I want."), CONSENT_STATES.DENIED);
   assert.equal(consentFromText("Den thelo na me piesis na kleiso rantevou i na doso stoicheia epikoinonias. Tha rotiso argotera an xreiastei."), CONSENT_STATES.DENIED);
+});
+
+test("stop requests never become affirmative contact consent", () => {
+  for (const message of ["وقفوا التواصل معي", "ما بدي رسائل بعد اليوم", "Μη μου στέλνετε άλλα μηνύματα", "Do not send me any more messages"]) {
+    assert.equal(consentFromText(message), CONSENT_STATES.REVOKED, message);
+  }
 });
 
 test("follow-up permission requires purpose-bound consent and is revocable", () => {

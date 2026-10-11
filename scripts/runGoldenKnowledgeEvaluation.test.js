@@ -99,8 +99,28 @@ test("full evaluation calls injected retriever for all positive and negative row
   assert.equal(report.summary.negativeControls.agentGuardrailEvaluated, 0);
   assert.equal(report.summary.negativeControls.agentGuardrailFailures, null);
   assert.ok(report.results.slice(0, subset.length).every((row) => row.retrieval.languageRank === 1));
+  assert.ok(report.summary.byLanguage.ar.ownLanguageFirstRate > 0.99);
+  assert.equal(report.summary.byLanguage.ar.ownLanguageFirstEvaluated, subset.filter((row) => row.lang === "ar").length);
+  assert.deepEqual(report.summary.byLanguage.ar.ownLanguageFirstWilson95.confidence, 0.95);
   assert.equal(report.testType, "synthetic-fixture");
   assert.equal(report.summary.answerEvaluated, 0);
+});
+
+test("M10 parity summary counts missing results as failures and reports per-language confidence intervals", () => {
+  const rows = [
+    { lang: "en", retrieval: { rawSearchEvaluated: true, languageRank: 1 } },
+    { lang: "en", retrieval: { rawSearchEvaluated: true, languageRank: 2 } },
+    { lang: "ar", retrieval: { rawSearchEvaluated: true, languageRank: 1 } },
+    { lang: "el", retrieval: { rawSearchEvaluated: true, languageRank: null } },
+  ];
+  const summary = summarize(rows, []);
+  assert.equal(summary.byLanguage.en.ownLanguageFirstRate, 0.5);
+  assert.equal(summary.byLanguage.ar.ownLanguageFirstRate, 1);
+  assert.equal(summary.byLanguage.el.ownLanguageFirstRate, 0);
+  assert.equal(summary.byLanguage.el.ownLanguageFirstEvaluated, 1, "a zero-result retrieval must not disappear from its language denominator");
+  assert.equal(summary.languageParitySpreads.ownLanguageFirstRate, 1);
+  assert.ok(summary.byLanguage.en.ownLanguageFirstWilson95.lower < 0.5);
+  assert.ok(summary.byLanguage.en.ownLanguageFirstWilson95.upper > 0.5);
 });
 
 test("raw negative searches are diagnostics only, never agent guardrail verdicts", async () => {
@@ -117,7 +137,7 @@ test("raw negative searches are diagnostics only, never agent guardrail verdicts
 });
 
 test("thresholds are frozen to P14.1 plan and CLI rejects malformed bounds", () => {
-  assert.deepEqual(TARGETS, { factualAccuracy: 0.9, grounding: 1, guardrailFailures: 0, goldenFormula: 0.85, languageParitySpread: 0.1 });
+  assert.deepEqual(TARGETS, { factualAccuracy: 0.9, grounding: 1, guardrailFailures: 0, goldenFormula: 0.85, languageParitySpread: 0.1, ownLanguageFirstRate: 1 });
   assert.equal(parseArgs(["--top", "7", "--lang", "el"]).top, 7);
   assert.throws(() => parseArgs(["--top", "0"]), /--top/u);
   assert.throws(() => parseArgs(["--wat"]), /Unknown argument/u);

@@ -160,11 +160,15 @@ function buildToolContext({
   sourceTurnId = null,
   consentState = "unknown",
   allowedCapabilities = [],
-  policy = null
+  policy = null,
+  currentMessage = ""
 } = {}) {
   return {
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
     inboundMessageId, sourceTurnId, consentState,
+    // Bound by the trusted caller, never by the model. CRM extraction uses
+    // this exact inbound turn to verify that a proposed value was stated.
+    currentMessage: String(currentMessage || "").slice(0, 4000),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).filter((value) => typeof value === "string"))]),
     policy
   };
@@ -216,7 +220,7 @@ async function runAgentTurnForContact({
   });
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
-    inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy
+    inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy, currentMessage
   });
   const initialObservations = await initialKnowledgeObservation(currentMessage, intents, recentConversation, toolContext, tools);
   const result = await runAgentTurn(context, { decideNextStep, tools, toolContext, maxSteps, initialObservations });

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { CONSENT_STATES, getFollowUpDecision, runFollowUpCheck, shouldSendFollowUp } = require("./followUp");
+const { CONSENT_STATES, getFollowUpDecision, isNaturalConversationEnd, runFollowUpCheck, shouldSendFollowUp } = require("./followUp");
 
 function user(overrides = {}) { return { id: "contact-1", history: [{ id: "consent-turn", at: "2026-09-30T00:00:00.000Z", source: "whatsapp", message: "I agree to automated reminders", response: "Understood.", metadata: { intent: { language: "english" }, followUpConsent: { state: "granted", purpose: "automated_reminder", sourceTurnId: "consent-turn", channel: "whatsapp", language: "en" } } }], ...overrides }; }
 
@@ -14,6 +14,11 @@ test("follow-up decision reports consent and timing reasons", () => {
 test("opted-out and blocked contacts cannot be sent follow-ups", () => {
   const now = new Date("2026-10-02T00:00:00Z");
   assert.equal(getFollowUpDecision(user({ history: [{ at: "2026-09-30T00:00:00Z", message: "Please stop messaging me", response: "Understood" }] }), now).reason, "opted_out");
+  for (const message of ["وقفوا التواصل معي", "ما بدي رسائل بعد اليوم", "Μη μου στέλνετε άλλα μηνύματα", "Do not send me any more messages"]) {
+    const stopped = user({ history: [...user().history, { at: "2026-10-01T00:00:00Z", message, response: "Understood." }] });
+    assert.equal(getFollowUpDecision(stopped, now).reason, "opted_out", message);
+    assert.equal(shouldSendFollowUp(stopped, now), false, message);
+  }
   assert.equal(shouldSendFollowUp(user({ blocked: true }), now), false);
 });
 
@@ -40,6 +45,28 @@ test("runFollowUpCheck remains idempotent for one conversation cycle", async () 
   assert.equal(sent.length, 1);
 });
 
+test("overlapping checks for one store do not send duplicate follow-ups", async () => {
+  const target = user();
+  const store = {
+    async allUsers() { return [target]; },
+    async isContactBlocked() { return false; },
+    async updateUser(_id, update) { update(target); },
+    async addHistory(_id, message, response, metadata) { target.history.push({ message, response, ...metadata }); }
+  };
+  let markSendStarted;
+  const sendStarted = new Promise((resolve) => { markSendStarted = resolve; });
+  let finishSend;
+  const sendGate = new Promise((resolve) => { finishSend = resolve; });
+  let sends = 0;
+  const first = runFollowUpCheck({ store, now: new Date("2026-10-01T01:00:00Z"), sendFollowUp: async () => { sends += 1; markSendStarted(); await sendGate; } });
+  await sendStarted;
+  const overlapping = await runFollowUpCheck({ store, now: new Date("2026-10-01T01:00:00Z"), sendFollowUp: async () => { sends += 1; } });
+  assert.deepEqual(overlapping, { sent: 0, skipped: true, reason: "check_in_progress" });
+  finishSend();
+  assert.deepEqual(await first, { sent: 1 });
+  assert.equal(sends, 1);
+});
+
 test("saved schedules and low delay settings cannot bypass the 24-hour silence floor", () => {
   const previous = process.env.FOLLOW_UP_DELAY_HOURS;
   process.env.FOLLOW_UP_DELAY_HOURS = "1";
@@ -57,6 +84,14 @@ test("saved schedules and low delay settings cannot bypass the 24-hour silence f
     if (previous === undefined) delete process.env.FOLLOW_UP_DELAY_HOURS;
     else process.env.FOLLOW_UP_DELAY_HOURS = previous;
   }
+});
+
+test("final thanks, goodbyes, and incomplete turns are excluded across supported languages", () => {
+  for (const message of ["Thanks, goodbye", "شكراً، مع السلامة", "Ευχαριστώ, καλή συνέχεια"]) {
+    assert.equal(isNaturalConversationEnd(message), true, message);
+    assert.equal(shouldSendFollowUp(user({ history: [{ ...user().history[0], message }] }), new Date("2026-10-02T00:00:00Z")), false, message);
+  }
+  assert.equal(shouldSendFollowUp(user({ history: [{ ...user().history[0], response: "" }] }), new Date("2026-10-02T00:00:00Z")), false);
 });
 
 test("follow-up sends stay disabled when suppression checks are missing or fail", async () => {

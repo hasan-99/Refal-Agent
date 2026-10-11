@@ -303,7 +303,7 @@ SCENARIOS.push({
         { type: "tool", tool: "saveCustomerFact", args: { field: "companyActivity", value: "تجارة إلكترونية", provenance: "customer_message" } },
         { type: "respond", text: "تمام، حدّثت نشاط الشركة ليصير تجارة إلكترونية." }
       ],
-      toolContext: { user, userId: "u1", store }
+      toolContext: { user, userId: "u1", store, currentMessage: "في الحقيقة بدي صحح، النشاط هو تجارة إلكترونية مش استشارات.", sourceTurnId: "turn-b02" }
     }).then((observed) => ({ ...observed, sideEffects: { writes, finalFact: user.profile.agentFacts?.companyactivity?.value || null } }));
   },
   expected: { outcome: "responded", toolsInclude: ["saveCustomerFact"],

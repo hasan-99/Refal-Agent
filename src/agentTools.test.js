@@ -196,7 +196,7 @@ test("saveCustomerFact only accepts customer_message provenance", async () => {
   assert.equal(modelGuess.reasonCode, "INVALID_PROVENANCE");
   assert.equal(updates.length, 0);
 
-  const real = await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1" });
+  const real = await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My company activity is import/export", sourceTurnId: "turn-1" });
   assert.equal(real.ok, true);
   assert.equal(updates[0].profile.agentFacts.companyactivity.value, "import/export");
 });
@@ -205,13 +205,70 @@ test("saveCustomerFact normalizes field-name casing so the same fact can't fragm
   const draft = { profile: {} };
   const store = { updateUser: async (userId, updater) => { await updater(draft); } };
 
-  await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1" });
-  const first = await saveCustomerFact({ field: "COMPANYACTIVITY", value: "real estate", provenance: "customer_message" }, { store, userId: "u1" });
+  await saveCustomerFact({ field: "companyActivity", value: "import/export", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My company activity is import/export", sourceTurnId: "turn-1" });
+  const first = await saveCustomerFact({ field: "COMPANYACTIVITY", value: "real estate", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My company activity is real estate", sourceTurnId: "turn-2" });
 
   assert.equal(first.ok, true);
+  assert.equal(first.status, "correction_needed");
   assert.equal(first.data.field, "companyactivity");
   assert.equal(Object.keys(draft.profile.agentFacts).length, 1);
-  assert.equal(draft.profile.agentFacts.companyactivity.value, "real estate");
+  assert.equal(draft.profile.agentFacts.companyactivity.value, "import/export");
+  assert.equal(draft.profile.agentFacts.companyactivity.correctionNeeded, true);
+});
+
+test("a CRM conflict is only resolved by an explicit correction in a later customer turn", async () => {
+  const draft = { profile: {} };
+  const store = { updateUser: async (_id, updater) => { await updater(draft); } };
+  await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  const conflict = await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Lebanon", sourceTurnId: "turn-2" });
+  assert.equal(conflict.status, "correction_needed");
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Jordan");
+  assert.ok(draft.profile.crmCorrectionNeeded);
+
+  const corrected = await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: I live in Lebanon, not Jordan", sourceTurnId: "turn-3" });
+  assert.equal(corrected.status, "saved");
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Lebanon");
+  assert.equal(draft.profile.crmCorrectionNeeded, undefined);
+});
+
+test("a customer can explicitly confirm the previously saved value to clear a CRM conflict", async () => {
+  const draft = { profile: {} };
+  const store = { updateUser: async (_id, updater) => { await updater(draft); } };
+  await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Lebanon", sourceTurnId: "turn-2" });
+  const confirmed = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: Jordan is still my country of residence", sourceTurnId: "turn-3" });
+  assert.equal(confirmed.status, "saved");
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Jordan");
+  assert.equal(draft.profile.crmCorrectionNeeded, undefined);
+});
+
+test("saveCustomerFact rejects values not stated in the current trusted turn or without a persisted turn id", async () => {
+  const store = { updateUser: async () => { throw new Error("must not write"); } };
+  const invented = await saveCustomerFact({ field: "countryOfResidence", value: "Cyprus", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  const missingSource = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan" });
+  const negated = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I don't live in Jordan", sourceTurnId: "turn-2" });
+  assert.equal(invented.reasonCode, "UNVERIFIED_CUSTOMER_VALUE");
+  assert.equal(missingSource.reasonCode, "UNVERIFIED_CUSTOMER_VALUE");
+  assert.equal(negated.reasonCode, "NON_AFFIRMATIVE_CUSTOMER_VALUE");
+});
+
+test("saveCustomerFact stores a name only when the current turn explicitly identifies it", async () => {
+  const user = { profile: {} };
+  const store = { updateUser: async (_id, update) => { await update(user); } };
+  const greeting = await saveCustomerFact({ field: "name", value: "Maya", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Hello, my friend Maya has a company", sourceTurnId: "turn-1" });
+  const selfIdentified = await saveCustomerFact({ field: "name", value: "Maya", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My name is Maya", sourceTurnId: "turn-2" });
+  assert.equal(greeting.reasonCode, "NAME_NOT_SELF_IDENTIFIED");
+  assert.equal(selfIdentified.ok, true);
+  assert.equal(user.profile.agentFacts.name.normalizedValue, "Maya");
+  assert.equal(user.profile.agentFacts.name.sourceTurnId, "turn-2");
+});
+
+test("CRM identity values and evidence pass the existing PII redaction before profile persistence", async () => {
+  const user = { profile: {} };
+  const store = { updateUser: async (_id, update) => { await update(user); } };
+  const result = await saveCustomerFact({ field: "email", value: "hasan@example.com", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My email is hasan@example.com", sourceTurnId: "turn-1" });
+  assert.equal(result.ok, true);
+  assert.doesNotMatch(JSON.stringify(user.profile.agentFacts), /hasan@example\.com/);
 });
 
 test("saveCustomerFact rejects an invalid field name or an object value", async () => {
@@ -223,6 +280,9 @@ test("saveCustomerFact rejects an invalid field name or an object value", async 
   const badValue = await saveCustomerFact({ field: "companyActivity", value: { nested: true }, provenance: "customer_message" }, { store, userId: "u1" });
   assert.equal(badValue.ok, false);
   assert.equal(badValue.reasonCode, "INVALID_VALUE");
+
+  const unsupported = await saveCustomerFact({ field: "apiKey", value: "secret-value", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My apiKey is secret-value", sourceTurnId: "turn-1" });
+  assert.equal(unsupported.reasonCode, "UNSUPPORTED_CRM_FIELD");
 });
 
 test("proposeHandover refuses without granted consent and never persists", async () => {

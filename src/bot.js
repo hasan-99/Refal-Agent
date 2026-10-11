@@ -22,7 +22,7 @@ const { startFollowUpSchedule } = require("./followUp");
 const { startReminderSchedule } = require("./reminderScheduler");
 const { startNotificationSchedule } = require("./notificationScheduler");
 const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
-const { AI_LIMIT_MESSAGE, allowAiMessage, allowIncomingMessage } = require("./rateLimiter");
+const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
 const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply } = require("./refalcoAnswer");
 const { detectMessageLanguage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
@@ -441,7 +441,10 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     const citations = localRecap?.citations || grounded?.citations || [];
     response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
 
-    if (!localRecap && evidence.length && process.env.OPENROUTER_API_KEY && !allowAiMessage(userId)) {
+    const aiRateLimit = !localRecap && evidence.length && process.env.OPENROUTER_API_KEY
+      ? await checkAiMessage(userId, { store }) : { allowed: true, source: "not_checked" };
+    if (aiRateLimit.source === "local_fallback") logEvent("shared_rate_limit_fallback", { scope: "ai_daily" });
+    if (!aiRateLimit.allowed) {
       stageAt = performance.now();
       const knowledgeEvidence = knowledgeEvidenceMetadata(evidence);
       const turn = (await recordHistory(store, userId, text, AI_LIMIT_MESSAGE, {
@@ -970,7 +973,9 @@ async function handleMessage(socket, message, upsertType) {
       }
     }
 
-    if (!allowIncomingMessage(remoteJid)) {
+    const incomingRateLimit = await checkIncomingMessage(remoteJid, { store });
+    if (incomingRateLimit.source === "local_fallback") logEvent("shared_rate_limit_fallback", { scope: "incoming_minute" });
+    if (!incomingRateLimit.allowed) {
       logEvent("rate_limited_per_minute", {});
       receiptShouldComplete = true;
       return;

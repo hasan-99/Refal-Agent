@@ -11,7 +11,7 @@ test("customer facts saved to a contact profile reach the live Agent pre-send ga
   };
   const saved = await saveCustomerFact(
     { field: "countryOfResidence", value: "Jordan", provenance: "customer_message" },
-    { store, userId: user.id }
+    { store, userId: user.id, currentMessage: "I live in Jordan.", sourceTurnId: "turn-1" }
   );
   assert.equal(saved.ok, true);
 

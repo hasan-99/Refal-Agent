@@ -8,14 +8,14 @@ function detectMessageLanguage(text) {
 
   // Detect common Latin-script Syrian Arabic when the user types Arabizi.
   // Require a distinctive dialect word so ordinary English stays English.
-  if (!arabicMatches.length && !greekMatches.length && /\b(?:baddi|bade|bdi|shu|shoo|kifak|keefak|3andi|3am|wein|leish|mnih|kwayyis|yalla|wallah|hayda|hayde|mafi|shoghl(?:ha)?|barmeje|mish|mesh|t2a(?:k|kk)ed|adde|adey|la\s+t2a(?:k|kk)ed|tasees|ta.?sis|sharike|sherke|dareebe|darayeb|muhasabe|muhasaba|iqame|i.?qame|3aqar|3a.?qar|mashroo3|masareef|bankiye|mowazzaf|mowazafeen)\b/iu.test(value)) {
+  if (!arabicMatches.length && !greekMatches.length && /\b(?:baddi|bade|bdi|shu|shoo|kifak|keefak|3andi|3am|wein|leish|mnih|kwayyis|yalla|wallah|hayda|hayde|mafi|shoghl(?:ha)?|barmeje|mish|mesh|t2a(?:k|kk)ed|adde|adey|la\s+t2a(?:k|kk)ed|tasees|ta.?sis|sharike|sherke|dareebe|darayeb|muhasabe|muhasaba|iqame|i.?qame|3aqar|3a.?qar|mashroo3|masareef|bankiye|mowazzaf|mowazafeen|bta3m(?:el|lo)|bte2dar(?:o)?|min\s+wen|ayya|masari|rasse?\s+mal|mashari3|sharike\s+jadide)\b/iu.test(value)) {
     return "arabic";
   }
 
   // Greeklish is common in WhatsApp. These domain and conversational terms
   // are distinctive enough to identify short messages without misclassifying
   // ordinary English.
-  if (!arabicMatches.length && !greekMatches.length && /\b(?:thelo|anoikso|etaireia|stin|kypro|yperesies|exete|asxoleitai|rantevou|kostizei|sigouro|poso|akoma|den|exo|gia|ora|xreiaso|epikoinonias|stoicheia|piesis|kleiso|argotera|efharisto|periptosi|diki|sigkrinw|apofasisei|elefthero|kata\d?esi|egkrisi|synithismeno|xroniko|diastima|mexri|kathorisei|teliko|desmeftiko|epivevaiose|anthropos|paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|tesseres|mines|grammateia|diefthynsi|ftiaxno|efarmogi|logismiko|foros|forolog(?:ia|ikos|iki)|akinito|enoikio|trapeza|etaireikos|logistiki|adeia|adeia\s+diamoni|monimi\s+diamoni|epixeirisi|epixeirimatiko|systasi|idioktisia|akinita)\b/iu.test(value)) {
+  if (!arabicMatches.length && !greekMatches.length && /\b(?:thelo|anoikso|etaireia|stin|kypro|yperesies|exete|asxoleitai|rantevou|kostizei|sigouro|poso|akoma|den|exo|gia|ora|xreiaso|epikoinonias|stoicheia|piesis|kleiso|argotera|efharisto|periptosi|diki|sigkrinw|apofasisei|elefthero|kata\d?esi|egkrisi|synithismeno|xroniko|diastima|mexri|kathorisei|teliko|desmeftiko|epivevaiose|anthropos|paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|tesseres|mines|grammateia|diefthynsi|ftiaxno|efarmogi|logismiko|foros|forolog(?:ia|ikos|iki|iko)|akinito|enoikio|trapeza|etaireikos|logistiki|adeia|adeia\s+diamoni(?:s)?|adeia\s+paramonis|monimi\s+diamoni|monimos\s+katoikos|metanastefsi|epixeirisi|epixeirimatiko|systasi|idioktisia|akinita|metox(?:os|oi)|diacheirist(?:is|ria)|eforia|merism(?:a|ata)|oikoped(?:o|ou)|diamerisma|katoikia|enoikiasi|polikatoikia|periousia|agora\s+akinitou|polisi\s+akinitou|nai)\b/iu.test(value)) {
     return "greek";
   }
 

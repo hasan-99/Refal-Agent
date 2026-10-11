@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "policy": "canonical-labels-only",
+  "nativeReviewStatus": "pending",
+  "reviewedLanguages": [],
+  "terms": [
+    { "id": "company-ltd", "canonical": "Ltd", "category": "legal-form" },
+    { "id": "ip-box", "canonical": "IP Box", "category": "tax-regime" },
+    { "id": "non-dom", "canonical": "Non-Dom", "category": "tax-status" },
+    { "id": "eori", "canonical": "EORI", "category": "regulatory-identifier" },
+    { "id": "gesy", "canonical": "GESY", "category": "health-system" },
+    { "id": "aif", "canonical": "AIF", "category": "financial-product" }
+  ],
+  "translationPolicy": "No localized expansion or definition is approved here. Explain a term in the customer's language only when the current approved evidence provides that explanation. Otherwise preserve its canonical label."
+}

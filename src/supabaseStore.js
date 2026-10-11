@@ -111,6 +111,14 @@ class EdgeApiStore {
     }
   }
 
+  async consumeRateLimit({ scope, subjectHash, limit }) {
+    return this.request("/rate-limits/consume", {
+      method: "POST",
+      timeoutMs: 5000,
+      body: JSON.stringify({ scope, subjectHash, limit })
+    });
+  }
+
   async hydrate() {
     const { users } = await this.request("/contacts");
     this.data = { users: Object.fromEntries((users || []).map((user) => [user.id, user])) };

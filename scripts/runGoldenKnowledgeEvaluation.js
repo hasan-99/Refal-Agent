@@ -11,7 +11,7 @@ const { classifySafety } = require("../src/safetyPolicy");
 const { validateResponse } = require("../src/responsePolicy");
 const { analyseAnswerShape, violatesGoldenFormula, ORDINARY } = require("../src/goldenFormula");
 
-const TARGETS = Object.freeze({ factualAccuracy: 0.90, grounding: 1, guardrailFailures: 0, goldenFormula: 0.85, languageParitySpread: 0.10 });
+const TARGETS = Object.freeze({ factualAccuracy: 0.90, grounding: 1, guardrailFailures: 0, goldenFormula: 0.85, languageParitySpread: 0.10, ownLanguageFirstRate: 1 });
 const AXES = Object.freeze(["factualAccuracy", "grounding", "languageAndDialect"]);
 // These expected facts are deliberately dynamic and cannot be ranked in RAG.
 // Keep their independent read tool and readiness contract explicit here.
@@ -84,6 +84,16 @@ function validateAnswerJudgment(judgment) {
   return { valid: true };
 }
 
+function wilsonInterval(successes, total, z = 1.959963984540054) {
+  if (!Number.isInteger(successes) || !Number.isInteger(total) || total <= 0 || successes < 0 || successes > total) return null;
+  const p = successes / total;
+  const z2 = z * z;
+  const denominator = 1 + z2 / total;
+  const center = (p + z2 / (2 * total)) / denominator;
+  const margin = z * Math.sqrt((p * (1 - p) / total) + (z2 / (4 * total * total))) / denominator;
+  return { confidence: 0.95, lower: Math.max(0, center - margin), upper: Math.min(1, center + margin) };
+}
+
 function scoreAnswer(entry, answer, evidence = [], judgment = null) {
   if (typeof answer !== "string" || !answer.trim()) return { evaluated: false, reason: "answer_not_supplied" };
   const safety = classifySafety(answer);
@@ -121,6 +131,8 @@ function summarize(rows, negatives = []) {
   const group = (items) => {
     const evaluated = items.filter((r) => r.answer?.scores);
     const answersChecked = items.filter((r) => r.answer?.evaluated);
+    const languageSearches = items.filter((r) => r.retrieval?.rawSearchEvaluated === true);
+    const languageFirst = languageSearches.filter((r) => r.retrieval?.languageRank === 1).length;
     const formulas = answersChecked;
     const factual = evaluated.filter((r) => r.answer.scores.factualAccuracy === 3).length;
     const grounded = evaluated.filter((r) => r.answer.scores.grounding >= 3).length;
@@ -129,6 +141,10 @@ function summarize(rows, negatives = []) {
       questions: items.length,
       retrievalPasses: items.filter((r) => r.retrieval?.ragCoveragePass === true).length,
       retrievalPassRate: items.some((r) => r.retrieval?.evaluated) ? items.filter((r) => r.retrieval?.ragCoveragePass === true).length / items.filter((r) => r.retrieval?.evaluated).length : null,
+      ownLanguageFirst: languageFirst,
+      ownLanguageFirstEvaluated: languageSearches.length,
+      ownLanguageFirstRate: languageSearches.length ? languageFirst / languageSearches.length : null,
+      ownLanguageFirstWilson95: wilsonInterval(languageFirst, languageSearches.length),
       answersEvaluated: answersChecked.length,
       judgedAnswers: evaluated.length,
       factualAccuracyRate: evaluated.length ? factual / evaluated.length : null,
@@ -145,6 +161,7 @@ function summarize(rows, negatives = []) {
     return rates.length > 1 ? Math.max(...rates) - Math.min(...rates) : null;
   };
   summary.languageParitySpreads = {
+    ownLanguageFirstRate: spread("ownLanguageFirstRate"),
     factualAccuracy: spread("factualAccuracyRate"),
     grounding: spread("fullyGroundedRate"),
     languageAndDialect: spread("languageQualityRate"),
@@ -198,7 +215,7 @@ async function evaluate({ entries = ENTRIES, negatives = NEGATIVE_QUERIES, retri
       dynamic,
       retrieval: { evaluated: ragFacts.length > 0, rawSearchEvaluated: true, scope: "forced approved-knowledge search for diagnostic; not Agent orchestration",
         ragExpectedFacts: ragFacts, dynamicExpectedFacts: dynamicFacts,
-        method: "single-original-query-ranked-search", resultCount: hits.length, topicRank, languageRank,
+    method: "single-original-query-ranked-search", resultCount: hits.length, topicRank, languageRank,
         expectedFactRanks: facts.factRanks, expectedFactCoverageRank: facts.allExpectedFactsRank,
         expectedFactCoveragePass: ragFacts.length ? facts.allExpectedFactsFound && facts.allExpectedFactsRank <= topK : null,
         ragCoveragePass: ragFacts.length ? facts.allExpectedFactsFound && facts.allExpectedFactsRank <= topK : null,

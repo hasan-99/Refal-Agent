@@ -14,6 +14,7 @@ const { createHandover } = require("./handover");
 const { getConversationState } = require("./conversationState");
 const { ok, fail } = require("./agentToolResult");
 const { getBookingAvailability, requestBookingAction } = require("./agentBookingTools");
+const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate } = require("./crmProfile");
 
 const DYNAMIC_READS = Object.freeze({
   lookupActiveOffer: { kind: "offers", fields: ["code"] },
@@ -554,6 +555,7 @@ function getCustomerContext(args, { user } = {}) {
   const data = {
     language: user.profile?.language || null,
     knownFacts: state.agentFacts,
+    crmCorrectionNeeded: state.crmCorrectionNeeded,
     consent: state.consent,
     noProactiveBookingOrContact: state.noProactiveBookingOrContact,
     hasOpenHandover: state.handover.required,
@@ -572,7 +574,7 @@ const FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
 const ALLOWED_PROVENANCE = new Set(["customer_message"]);
 const ALLOWED_VALUE_TYPES = new Set(["string", "number", "boolean"]);
 
-async function saveCustomerFact(args, { store, userId } = {}) {
+async function saveCustomerFact(args, { store, userId, currentMessage, sourceTurnId } = {}) {
   const field = args?.field;
   const value = args?.value;
   const provenance = args?.provenance;
@@ -587,18 +589,71 @@ async function saveCustomerFact(args, { store, userId } = {}) {
     return fail("invalid_input", "INVALID_VALUE");
   }
   if (!ALLOWED_PROVENANCE.has(provenance)) return fail("not_authorized", "INVALID_PROVENANCE");
+  // The model can propose a value, but cannot establish that the customer
+  // said it. Verify it against the trusted inbound turn and persist a turn
+  // reference. This keeps a model guess out of memory and the never-reask gate.
+  const evidence = extractLiteralEvidence(currentMessage, value);
+  if (!evidence || !sourceTurnId) return fail("not_authorized", "UNVERIFIED_CUSTOMER_VALUE");
+  if (isNegatedLiteralMention(currentMessage, value)) return fail("not_authorized", "NON_AFFIRMATIVE_CUSTOMER_VALUE");
+  const crmField = Object.keys(CRM_FIELDS).find((candidate) => candidate.toLowerCase() === canonicalField)
+    || (canonicalField === "companyactivity" ? "businessActivity" : null);
+  if (!crmField) return fail("not_authorized", "UNSUPPORTED_CRM_FIELD");
+  const candidate = crmField ? normalizeCrmCandidate({
+    field: crmField,
+    value: String(value),
+    rawValue: String(value),
+    provenance: CUSTOMER_PROVENANCE,
+    confidence: 1,
+    sourceTurnId: String(sourceTurnId),
+    evidence,
+    selfIdentified: crmField === "name" && isSelfIdentifiedName(currentMessage, value)
+  }) : null;
+  if (crmField && !candidate?.ok) return fail("not_authorized", candidate?.reason === "name_not_self_identified" ? "NAME_NOT_SELF_IDENTIFIED" : "INVALID_CRM_CANDIDATE");
+  const storedValue = candidate.record.normalizedValue;
+  const safeEvidence = candidate.record.evidence;
   if (!userId || typeof store?.updateUser !== "function") return fail("error", "STORE_UNAVAILABLE");
 
+  let correctionNeeded = false;
   try {
     await store.updateUser(userId, (draft) => {
       draft.profile = draft.profile || {};
       draft.profile.agentFacts = { ...(draft.profile.agentFacts || {}) };
-      draft.profile.agentFacts[canonicalField] = { value, provenance, savedAt: new Date().toISOString() };
+      const current = draft.profile.agentFacts[canonicalField];
+      const resolvesPendingCorrection = draft.profile.crmCorrectionNeeded?.field === canonicalField
+        && isExplicitCorrectionMessage(currentMessage);
+      if (current && resolvesPendingCorrection) {
+        draft.profile.agentFacts[canonicalField] = {
+          ...candidate.record, value: storedValue, provenance,
+          sourceTurnId: String(sourceTurnId), evidence: safeEvidence, savedAt: new Date().toISOString()
+        };
+        delete draft.profile.crmCorrectionNeeded;
+        return;
+      }
+      if (current && String(current.value ?? current.normalizedValue ?? "").trim().toLocaleLowerCase() !== storedValue.trim().toLocaleLowerCase()) {
+        // Never silently replace a different stated value. Leave the prior
+        // record intact and request a clarification in the conversation.
+        draft.profile.crmCorrectionNeeded = {
+          field: canonicalField,
+          sourceTurnId: String(sourceTurnId),
+        proposedValue: storedValue,
+          recordedAt: new Date().toISOString()
+        };
+        draft.profile.agentFacts[canonicalField] = { ...current, correctionNeeded: true };
+        correctionNeeded = true;
+        return;
+      }
+      draft.profile.agentFacts[canonicalField] = {
+        ...candidate.record,
+        value: storedValue, provenance, sourceTurnId: String(sourceTurnId),
+        evidence: safeEvidence, savedAt: new Date().toISOString()
+      };
     });
   } catch (error) {
     return fail("error", "SAVE_FAILED", { message: String(error?.message || error).slice(0, 200) });
   }
-  return ok("saved", { field: canonicalField, value });
+  return ok(correctionNeeded ? "correction_needed" : "saved", correctionNeeded
+    ? { field: canonicalField, correctionNeeded: true }
+    : { field: canonicalField });
 }
 
 // --- proposeHandover -----------------------------------------------------------

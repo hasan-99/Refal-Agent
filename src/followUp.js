@@ -3,6 +3,7 @@ const { CONSENT_STATES, getConsentState, hasFollowUpPermission, hasAutomatedRemi
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
 
 const FOLLOW_UP_MESSAGE = "لسا مهتم تعرف أكتر؟ أنا هون لو عندك أي سؤال ";
+const activeFollowUpStores = new WeakSet();
 
 function followUpDelayMs() {
   return Number(process.env.FOLLOW_UP_DELAY_HOURS || 24) * 60 * 60 * 1000;
@@ -83,29 +84,36 @@ function getFollowUpDecision(user, now = new Date()) {
 
 async function runFollowUpCheck({ store, sendFollowUp, now = new Date(), logEvent = () => {} }) {
   if (!isFollowUpEnabled()) return { sent: 0 };
-  const users = store.allUsers ? await store.allUsers({ includeHistory: true }) : Object.values(store.data.users || {});
-  const eligible = users.filter((user) => shouldSendFollowUp(user, now));
-  if (eligible.length && typeof store.isContactBlocked !== "function") {
-    logEvent("follow_up_suppression_check_unavailable", { eligibleCount: eligible.length });
-    return { sent: 0, disabled: true, reason: "suppression_check_unavailable" };
-  }
-  // Complete every suppression lookup before any outbound send. If one lookup
-  // fails, the promise rejects and the caller's scheduler error path sends none.
-  const blockedStates = await Promise.all(eligible.map((user) => store.isContactBlocked(user.id)));
-  let sent = 0;
-  for (const [index, user] of eligible.entries()) {
-    if (blockedStates[index]) continue;
-    await sendFollowUp(user.id, FOLLOW_UP_MESSAGE);
-    const sentAt = now.toISOString();
-    await store.updateUser(user.id, (draft) => { draft.lastFollowUpSent = sentAt; });
-    await store.addHistory(user.id, "[auto-follow-up]", FOLLOW_UP_MESSAGE, { at: sentAt, automated: true });
-    if (typeof store.saveFollowUpState === "function") {
-      await store.saveFollowUpState(user.id, { consentState: CONSENT_STATES.GRANTED, status: "sent", lastSentAt: sentAt, nextDueAt: null });
+  if (!store || typeof store !== "object") throw new Error("Follow-up store is unavailable.");
+  if (activeFollowUpStores.has(store)) return { sent: 0, skipped: true, reason: "check_in_progress" };
+  activeFollowUpStores.add(store);
+  try {
+    const users = store.allUsers ? await store.allUsers({ includeHistory: true }) : Object.values(store.data.users || {});
+    const eligible = users.filter((user) => shouldSendFollowUp(user, now));
+    if (eligible.length && typeof store.isContactBlocked !== "function") {
+      logEvent("follow_up_suppression_check_unavailable", { eligibleCount: eligible.length });
+      return { sent: 0, disabled: true, reason: "suppression_check_unavailable" };
     }
-    sent += 1;
-    logEvent("follow_up_sent", { userId: user.id, sentAt });
+    // Complete every suppression lookup before any outbound send. If one lookup
+    // fails, the promise rejects and the caller's scheduler error path sends none.
+    const blockedStates = await Promise.all(eligible.map((user) => store.isContactBlocked(user.id)));
+    let sent = 0;
+    for (const [index, user] of eligible.entries()) {
+      if (blockedStates[index]) continue;
+      await sendFollowUp(user.id, FOLLOW_UP_MESSAGE);
+      const sentAt = now.toISOString();
+      await store.updateUser(user.id, (draft) => { draft.lastFollowUpSent = sentAt; });
+      await store.addHistory(user.id, "[auto-follow-up]", FOLLOW_UP_MESSAGE, { at: sentAt, automated: true });
+      if (typeof store.saveFollowUpState === "function") {
+        await store.saveFollowUpState(user.id, { consentState: CONSENT_STATES.GRANTED, status: "sent", lastSentAt: sentAt, nextDueAt: null });
+      }
+      sent += 1;
+      logEvent("follow_up_sent", { userId: user.id, sentAt });
+    }
+    return { sent };
+  } finally {
+    activeFollowUpStores.delete(store);
   }
-  return { sent };
 }
 
 function startFollowUpSchedule({ store, sendFollowUp, logEvent }) {

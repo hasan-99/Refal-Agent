@@ -18,12 +18,24 @@ test("detects script Arabic, Syrian Arabizi, and Greek reliably", () => {
   assert.equal(detectMessageLanguage("baddi a3ref 3an tasees sharike w darayeb"), "arabic");
   assert.equal(detectMessageLanguage("Meta tin kata8esi, poio einai to synithismeno xroniko diastima mexri tin egkrisi?"), "greek");
   assert.equal(detectMessageLanguage("Thelo na anoikso etaireia kai na miliso gia forologika kai akinito."), "greek");
+  // M10 domain coverage: unfamiliar corporate, tax, residency and property
+  // queries must be classified as Greeklish before intent-specific routing.
+  assert.equal(detectMessageLanguage("Metoxos se etaireia, ti xreiazetai gia systasi?"), "greek");
+  assert.equal(detectMessageLanguage("Poso einai o forologikos syntelestis kai ta merismata?"), "greek");
+  assert.equal(detectMessageLanguage("Ti xreiazetai gia adeia paramonis kai monimi diamoni?"), "greek");
+  assert.equal(detectMessageLanguage("Thelo na agoraso oikopedo i diamerisma stin Kypro."), "greek");
+  assert.equal(detectMessageLanguage("Nai, thelo na miliso me kapoion."), "greek");
+  // Common Syrian Arabizi client formulations for activity, readiness, and
+  // company capital, while plain English remains English.
+  assert.equal(detectMessageLanguage("shu bta3mlo iza baddi eftah sharike jadide?"), "arabic");
+  assert.equal(detectMessageLanguage("bte2daro tsa3douni b rasse mal?"), "arabic");
   assert.equal(detectMessageLanguage("Ποιες υπηρεσίες προσφέρει η Refalco Group;"), "greek");
   assert.equal(detectMessageLanguage("What services does Refalco Group provide?"), "english");
   assert.equal(detectMessageLanguage("The shop is open today; I can compare the options later."), "english");
   assert.equal(detectMessageLanguage("IP Box?"), "english");
   assert.equal(detectMessageLanguage("EORI and GESY"), "english");
   assert.equal(detectMessageLanguage("bank services"), "english");
+  assert.equal(detectMessageLanguage("The company has a new business model and a bank account."), "english");
 });
 
 test("recognizes explicit requests to switch the reply language", () => {

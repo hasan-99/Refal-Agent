@@ -1,3 +1,4 @@
+const { createHmac } = require("node:crypto");
 const ONE_MINUTE_MS = 60 * 1000;
 
 const minuteBuckets = new Map();
@@ -75,9 +76,52 @@ function resetRateLimiters() {
   callsSincePrune = 0;
 }
 
+function rateLimitSubjectHash(userId) {
+  const secret = process.env.RAFA_API_SECRET;
+  if (typeof secret !== "string" || !secret) return null;
+  return createHmac("sha256", secret).update(String(userId || ""), "utf8").digest("hex");
+}
+
+async function checkSharedLimit({ userId, store, scope, limit, localFallback }) {
+  const subjectHash = rateLimitSubjectHash(userId);
+  if (!subjectHash || typeof store?.consumeRateLimit !== "function") {
+    return { allowed: localFallback(), source: "local" };
+  }
+  try {
+    const result = await store.consumeRateLimit({ scope, subjectHash, limit });
+    if (typeof result?.allowed !== "boolean") throw new Error("Invalid shared rate limit response.");
+    return { allowed: result.allowed, source: "shared" };
+  } catch {
+    // Keep a conservative process-local backstop during a temporary database
+    // or API outage. Successful production requests use the atomic shared
+    // counter, so limits hold across worker instances and restarts.
+    return { allowed: localFallback(), source: "local_fallback" };
+  }
+}
+
+function effectiveLimit(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? Math.min(parsed, 1000) : fallback;
+}
+
+async function checkIncomingMessage(userId, { store, now = new Date() } = {}) {
+  const limit = effectiveLimit(process.env.RATE_LIMIT_PER_MINUTE, 10);
+  if (limit === 0) return { allowed: true, source: "disabled" };
+  return checkSharedLimit({ userId, store, scope: "incoming_minute", limit, localFallback: () => allowIncomingMessage(userId, now) });
+}
+
+async function checkAiMessage(userId, { store, now = new Date() } = {}) {
+  const limit = effectiveLimit(process.env.RATE_LIMIT_PER_DAY, 100);
+  if (limit === 0) return { allowed: true, source: "disabled" };
+  return checkSharedLimit({ userId, store, scope: "ai_daily", limit, localFallback: () => allowAiMessage(userId, now) });
+}
+
 module.exports = {
   AI_LIMIT_MESSAGE,
   allowAiMessage,
   allowIncomingMessage,
+  checkAiMessage,
+  checkIncomingMessage,
   resetRateLimiters
 };

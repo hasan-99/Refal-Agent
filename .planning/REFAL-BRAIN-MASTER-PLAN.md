@@ -959,6 +959,8 @@ Timezone and **DST** conversion · date language parsing in AR/EN/EL · boundary
 ### P8.1 — CRM schema `[ ]`
 Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII under the existing redaction rules.
 
+**Progress (2026-10-11):** No durable `refal_lead_profile` schema or sync exists yet. The extraction work below is in-process only and does not close this schema phase.
+
 | Group | Fields (MB 5.1) |
 | --- | --- |
 | **Identity** | Name, Phone/WhatsApp, Email, Preferred Language, Nationality, Country of Residence |
@@ -966,15 +968,19 @@ Migration `refal_lead_profile`, one row per contact, RLS, service role only, PII
 | **Property & Residency** | Residency Interest, Investment Budget, Preferred City, Purpose, Family Members, SoF Status, SoW Overview |
 | **Qualification** | Timeline, Main Motivation, Main Fear/Objection, Decision Authority, Lead Score, Lead Tier, Next Action, Appointment Status |
 
-### P8.2 — Extraction and normalisation (CX 7A) `[ ]`
+### P8.2 — Extraction and normalisation (CX 7A) `[~]`
 - Extract only supported fields explicitly stated or safely derived, **with provenance and confidence**.
 - **Mark inferred facts separately from customer stated facts.**
 - **Store a name only after clear self identification** (repairs FIX-2). Preserve the raw customer spelling and the normalized form separately. A greeting is never a name.
 - Record a conflict as a **correction need**, never a silent overwrite.
 - **WhatsApp platform metadata is for this conversation and this declared purpose only.** It is not consent for unrelated follow up (repairs FIX-12).
 
-### P8.3 — The never re-ask rule `[ ]`
+**Progress (2026-10-11):** Added trusted inbound-turn binding, allowlisted CRM fields, literal evidence and source-turn checks, explicit self-identification for names, negation checks, redaction, and conflict handling. Focused tests pass. Durable CRM persistence and human correction workflow remain open.
+
+### P8.3 — The never re-ask rule `[~]`
 MB-CRM5, strict. Implemented as a **pre send gate**: if the drafted question targets a field already present with sufficient confidence, reject the draft and regenerate. Covers country, budget, family, activity, target market, timeline. `src/neverReAsk.test.js` with multi turn fixtures per language.
+
+**Progress (2026-10-11):** Existing CRM facts and unresolved correction markers now feed the never-reask and decision prompt paths; a correction marker triggers one concise clarification without exposing stored conflicting values. Multi-turn behavior and durable sync still need broader workflow verification.
 
 ### P8.4 — Summaries, CRM sync, memory boundary `[ ]`
 Concise summaries tied to contact and conversation IDs, excluding secrets and irrelevant sensitive detail. Sync state recorded and retried safely without creating duplicate records. **Memory stays untrusted**: continuity only, never evidence for a company fact, never an instruction. Tests so M8 cannot erode this.
@@ -991,45 +997,53 @@ Concise summaries tied to contact and conversation IDs, excluding secrets and ir
 ### P9.1 — Consent model `[ ]`
 Persist **what** was consented to, **when**, in which **language and channel**, for what **purpose**, and its **scope** (specialist contact vs automated reminder). A bare "yes" is read **only in its immediate conversational context**; unrelated consent is never inferred. Link consent to its source turn and recheck it before any outbound action.
 
-### P9.2 — Opt out `[ ]`
+### P9.2 — Opt out `[~]`
 Simple stop and opt out handling in Arabic, English and Greek (the existing `OPT_OUT_RE` is a strong start). Opt out suppresses all future outreach until renewed consent. Resubscribe path tested.
+
+**Progress (2026-10-11):** Added Arabic stop-request coverage, including `وقفوا التواصل معي`, and ensured opt-out phrases cannot match as consent. Focused multilingual tests pass; durable outbound suppression smoke remains open.
 
 ### P9.3 — Scheduler `[ ]`
 Validate the prior policy before reusing it: hourly checks, minimum 24 hour silence window. **Skip** self tests, incomplete turns, final thanks and goodbyes, unresolved failures, and opted out contacts. **Never promise "we will message you at X" unless a durable job is scheduled and confirmed.**
 
-### P9.4 — Follow up test suite `[ ]`
+### P9.4 — Follow up test suite `[~]`
 Consent · denial · opt out · resubscribe · duplicate scheduling · stale job · delivery failure · timezone. **Follow up cannot run for test conversations or without eligible consent.** If suppression checks fail, the sender is disabled.
+
+**Progress (2026-10-11):** Added an in-process overlapping-check guard and regression coverage; it prevents duplicate sends within one process. Cross-worker atomic claiming is still required under P13.1, so duplicate protection is not complete.
 
 ---
 
 # M10 — Multilingual Parity
 
-### P10.1 — Arabic `[ ]`
+### P10.1 — Arabic `[~]`
 AR-L1: simplified warm white dialect or accessible near MSA. **Avoid dry lawyer language and complex government text.** Extend `src/language.js` Arabizi detection with the new commercial vocabulary.
 
-### P10.2 — Greek `[ ]`
+### P10.2 — Greek `[~]`
 AR-L3: professional business Greek. Extend the Greeklish detector with corporate, tax, residency and property vocabulary.
 
 ### P10.3 — English `[ ]`
 AR-L2: business casual. Practical, confident, warm. Clear without excessive legal complexity.
 
-### P10.4 — Trilingual glossary and transliteration (imported from CX 2C) `[ ]`
+### P10.4 — Trilingual glossary and transliteration (imported from CX 2C) `[~]`
 One glossary for company, legal and property terms across all three languages, with **consistent transliteration**, so "Ltd", "IP Box", "Non Dom", "EORI", "GESY", "AIF" are rendered the same way everywhere. Preserve exact legal meaning across translations. A missing reviewed translation is **fallback required**, never a fact to invent.
 
 **Implementation note (2026-10-11):** The shared WhatsApp/dashboard/Edge prompt now preserves approved canonical spellings for legal, tax, regulatory and product terms and forbids unsupported translations or definitions. This is a safety improvement, not completion of the reviewed trilingual glossary or native-speaker review.
 
-### P10.5 — Parity measurement `[ ]`
+### P10.5 — Parity measurement `[~]`
 Every golden question in each language retrieves its own language document first. The language lock stays. **Per language and per domain scores with error bars; the aggregate may never hide a Greek or Arabic failure.** Target: within 10% across languages. Persona, humour and hooks reviewed by a native speaker per language before sign off.
+
+**Progress (2026-10-11):** Expanded Arabizi/Greeklish detection and added per-language rank, spread, and confidence-interval reporting. Existing live retrieval data is diagnostic and predates the corrected scope method; rerun the scoped evaluation and obtain native-speaker review before sign-off.
 
 ---
 
 # M11 — Security, Privacy and Compliance
 
-### P11.1 — Input and retrieval controls (CX 12A) `[ ]`
+### P11.1 — Input and retrieval controls (CX 12A) `[~]`
 Customer documents and retrieved content are untrusted input, never system instructions. Resist injection in Arabic, English, Greek, **mixed script text, and quoted documents**. **Access scoped retrieval: one customer's data or internal handoff can never be retrieved for another.**
 
-### P11.2 — Output and tool controls (CX 12B) `[ ]`
+### P11.2 — Output and tool controls (CX 12B) `[~]`
 Detect prompt leakage, credentials, API keys, access tokens, private lead data, and internal score or reasoning. **Validate every tool call against an allowlisted schema, required authorization, and the user's actual intent.** Never ask for passwords, card details or bank statements in public chat. Refuse help concealing beneficial ownership or evading sanctions, and escalate to Compliance **without debating it**. Keep legal and tax replies general. **Do not remove a meaningful caveat just to make a sales reply sound confident.**
+
+**Progress (2026-10-11):** Tool arguments and summaries are now explicitly framed as untrusted data in the decision prompt, with regression tests. Broader tool-action and cross-contact adversarial auditing remains open.
 
 ### P11.3 — Privacy, retention and routing (CX 12C) `[ ]`
 Least privilege access · redacted observability · retention, deletion, correction and export policy · PII handling in exports · staff roles. **Preserve the OpenRouter privacy settings and ZDR routing** confirmed in P0.1. Do not change the model or the data routing policy without BOSS.
@@ -1064,8 +1078,10 @@ Staff can correct names, intent, score evidence, routing and knowledge facts. Co
 ### P13.1 — Concurrency `[ ]`
 Per contact serialisation (two messages from one customer must not race) · bounded global concurrency · a work queue with retry · idempotency on inbound receipts (`rafa_inbound_message_receipts` exists) · **webhook deduplication**.
 
-### P13.2 — Shared rate limiting (removes BLK-11) `[ ]`
+### P13.2 — Shared rate limiting (removes BLK-11) `[~]`
 Move `src/rateLimiter.js` counters from process memory to Supabase so limits survive restarts and hold across processes.
+
+**Progress (2026-10-11):** Added an atomic, service-role-only Supabase RPC migration, authenticated Edge route, HMAC pseudonymous contact keys, shared per-minute and daily counters, and a bounded local outage fallback. Local migration and application tests pass. The migration is intentionally unapplied; cross-worker behavior and restart survival require the owner migration gate and live verification.
 
 ### P13.3 — Measured latency and cost (CX 15A) `[ ]`
 **Recalculate against current provider prices and actual token usage.** Historical assumptions of 100 conversations a day at 2,000 in / 200 out are planning estimates, not current usage. Measure **p50 and p95** across WhatsApp, API, RAG, Supabase writes, tools and model calls. Compare sequential vs parallel non dependent writes while preserving transaction and idempotency correctness. Set a hard prompt token ceiling. Track cost through `src/aiUsage.js`.

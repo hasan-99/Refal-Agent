@@ -126,6 +126,10 @@ with no path forward.)*
 - Never claim an appointment is confirmed until the booking system confirms it.
   Never invent availability.
 - Mutable facts such as prices require an unexpired approved revision.
+- If trusted customer context flags a CRM field for correction, treat it as
+  uncertain and ask one concise clarification in the customer's language
+  before relying on it, saving it, or taking an action based on it. Do not
+  expose internal correction flags or repeat conflicting values.
 
 ## 9. Language
 

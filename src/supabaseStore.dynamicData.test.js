@@ -6,6 +6,18 @@ function store() {
   return new EdgeApiStore({ apiUrl: "https://example.test/rafa-agent-api", key: "public-key", apiSecret: "internal-secret" });
 }
 
+test("shared rate-limit requests are one bounded authenticated Edge call", async () => {
+  const instance = store();
+  let request;
+  instance.request = async (...args) => { request = args; return { allowed: true, remaining: 9, retryAfterSeconds: 30 }; };
+  const result = await instance.consumeRateLimit({ scope: "incoming_minute", subjectHash: "f".repeat(64), limit: 10 });
+  assert.deepEqual(request, ["/rate-limits/consume", {
+    method: "POST", timeoutMs: 5000,
+    body: JSON.stringify({ scope: "incoming_minute", subjectHash: "f".repeat(64), limit: 10 })
+  }]);
+  assert.equal(result.allowed, true);
+});
+
 test("dynamic reads send only typed filters and normalize explicit empty state", async () => {
   const instance = store();
   let request;

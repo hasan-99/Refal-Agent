@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { normalizeCrmCandidate, mergeCrmCandidate } = require("./crmProfile");
+const { normalizeCrmCandidate, mergeCrmCandidate, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName } = require("./crmProfile");
 
 const candidate = (overrides = {}) => ({
   field: "businessActivity", value: "Online retail", rawValue: "online retail",
@@ -51,4 +51,24 @@ test("sensitive details are redacted from raw value and evidence", () => {
   const result = normalizeCrmCandidate(candidate({ value: "Email hasan@example.com", rawValue: "Email hasan@example.com", evidence: "Call me at +357 99123456" }));
   assert.equal(result.ok, true);
   assert.doesNotMatch(JSON.stringify(result.record), /hasan@example\.com|99123456/);
+});
+
+test("CRM evidence must match a whole literal value in the trusted turn", () => {
+  assert.equal(extractLiteralEvidence("I live in Jordan.", "Jordan"), "I live in Jordan.");
+  assert.equal(extractLiteralEvidence("I live in Jordan.", "Jor"), "");
+  assert.equal(extractLiteralEvidence("ميزانيتي ٢٥٠ ألف يورو", "٢٥٠ ألف يورو"), "ميزانيتي ٢٥٠ ألف يورو");
+});
+
+test("negated CRM mentions are not affirmative profile facts", () => {
+  assert.equal(isNegatedLiteralMention("I don't live in Jordan", "Jordan"), true);
+  assert.equal(isNegatedLiteralMention("لا أعيش في الأردن", "الأردن"), true);
+  assert.equal(isNegatedLiteralMention("Δεν κατοικώ στην Κύπρο", "Κύπρο"), true);
+  assert.equal(isNegatedLiteralMention("I live in Jordan", "Jordan"), false);
+});
+
+test("name identification is explicit and trilingual", () => {
+  assert.equal(isSelfIdentifiedName("My name is Maya", "Maya"), true);
+  assert.equal(isSelfIdentifiedName("My friend Maya owns a company", "Maya"), false);
+  assert.equal(isSelfIdentifiedName("اسمي مايا", "مايا"), true);
+  assert.equal(isSelfIdentifiedName("Με λένε Μαρία", "Μαρία"), true);
 });

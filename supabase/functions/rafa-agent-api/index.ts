@@ -15,6 +15,7 @@ import { attachKnowledgePolicyMetadata } from "./knowledgePolicyMetadata.mjs";
 import { validateSalesOfferMetadata, validateSpecialistOfferMetadata } from "./salesOfferMetadata.mjs";
 import { canRetryHandoverReview, closeHandoverDeliverySafely, ledgerPatchForClosedHandover, ledgerPatchForExistingNotification, ledgerPatchForNotificationResult, ledgerPatchForRetryMismatch } from "./handoverDeliveryState.mjs";
 import { canClaimP65TestNotification, canCreateP65TestNotification, controlledP65Recipient, isSyntheticP65Handover } from "./p65TestRouting.mjs";
+import { consumeSharedRateLimit } from "./rateLimit.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -113,6 +114,12 @@ Deno.serve(async (req: Request) => {
         }
       }
       return json({ ...result, userSafeSummary: result.status === "confirmed" ? result.result?.userSafeSummary || "Confirmed." : result.status === "pending" ? "The request is still being checked." : "The request could not be confirmed." }, result.status === "confirmed" ? 200 : 202);
+    }
+
+    if (parts[0] === "rate-limits" && parts[1] === "consume" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const result = await consumeSharedRateLimit(supabase, body);
+      return json(result);
     }
 
     if (parts[0] === "settings" && parts[1] === "booking-policy" && parts.length === 2) {
