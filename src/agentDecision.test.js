@@ -135,6 +135,12 @@ test("the tool list sent to the model is generated from the real TOOL_REGISTRY, 
   }
 });
 
+test("multi-part knowledge requests are searched as focused parts instead of one mixed query", () => {
+  const systemMessage = buildDecisionMessages(CONTEXT, [], TOOL_REGISTRY)[0].content;
+  assert.match(systemMessage, /Keep each knowledge search focused on one part of a multi-part request/);
+  assert.match(systemMessage, /current customer message is also searched automatically/);
+});
+
 test("buildDecisionMessages carries forward recent conversation and prior tool observations", () => {
   const observations = [
     { step: 1, tool: "searchApprovedKnowledge", args: { query: "price" }, result: { ok: true, status: "found", userSafeSummary: ["Company formation price"] } }
