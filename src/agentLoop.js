@@ -38,7 +38,10 @@ const { findRepeatedQuestion } = require("./neverReAsk");
 const { evaluateAnswerClaims } = require("./claimPolicy");
 const { containsUnconditionalProhibition } = require("./refalcoAnswer");
 
-const DEFAULT_MAX_STEPS = 4;
+// A turn may need two retrieval passes and two rejected drafts. Keep one final
+// tool-free decision slot so the agent can apply the exact latest validation
+// feedback instead of falling straight to the generic fallback.
+const DEFAULT_MAX_STEPS = 5;
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
 
 function isPlainObject(value) {
@@ -290,7 +293,7 @@ async function checkDraftPolicy(text, thresholds, observations, locale, context 
 //   decideNextStep({ context, observations, step }) -> a raw, untrusted decision object (model-driven)
 //   tools: { [name]: { run(args, toolContext) } }       -- the deterministic tool registry
 //   toolContext: extra data (store, user, etc.) passed through to every tool.run call
-//   maxSteps: bounded step budget, default 4 (never unlimited)
+//   maxSteps: bounded step budget, default 5 (never unlimited)
 async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [], onToolCall = async () => {}, onPolicyRejection = async () => {} } = {}) {
   if (typeof decideNextStep !== "function") throw new Error("runAgentTurn requires a decideNextStep function.");
   const observations = Array.isArray(initialObservations) ? [...initialObservations] : [];

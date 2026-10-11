@@ -30,7 +30,53 @@ function scriptedDecider(decisions) {
 }
 
 test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
-  assert.equal(DEFAULT_MAX_STEPS, 4);
+  assert.equal(DEFAULT_MAX_STEPS, 5);
+});
+
+test("a two-search turn keeps one tool-free correction step after the second rejected draft", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const sources = [
+    { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+      document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation and accounting.", review_status: "approved" },
+    { document_id: "continuity-doc", section_index: "1", chunk_id: "continuity", chunk_index: 0,
+      document_title: "Approved continuity", heading: "After formation", content: "Refalco Group keeps the same company file open after formation.", review_status: "approved" }
+  ];
+  let searchCount = 0;
+  let rejectionCount = 0;
+  let finalStepTools = null;
+  const draft1 = "Refalco Group offers company formation and accounting.";
+  const draft2 = "Refalco Group keeps the same company file open after formation.";
+  const finalDraft = "Refalco Group offers company formation and accounting, and keeps the same company file open after formation.";
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What support continues after formation?", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => {
+      const source = sources[searchCount++];
+      return { ok: true, status: "found", data: [source], modelObservation: buildApprovedKnowledgeObservation("found", [source]) };
+    } } },
+    decideNextStep: async ({ step, tools, observations }) => {
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company scope" } };
+      if (step === 2) return { type: "respond", text: draft1 };
+      if (step === 3) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "ongoing support" } };
+      if (step === 4) return { type: "respond", text: draft2 };
+      finalStepTools = Object.keys(tools);
+      assert.equal(step, 5);
+      assert.equal(tools.searchApprovedKnowledge, undefined, "the recovery slot must not repeat retrieval");
+      const feedback = observations.filter((item) => item?.tool === "responsePolicyCheck");
+      assert.equal(feedback.length, 2, "the final decision must see both rejected drafts");
+      assert.match(feedback.at(-1).result.reasonCode, /service_not_established/);
+      return { type: "respond", text: finalDraft };
+    },
+    assessDraft: async ({ text }) => {
+      if (text === finalDraft) return { valid: true };
+      rejectionCount += 1;
+      return { valid: false, reasons: ["service_not_established"], blockedClaims: [{ sentence: text, reasons: ["service_not_established"] }] };
+    }
+  });
+  assert.equal(searchCount, 2);
+  assert.equal(rejectionCount, 2);
+  assert.deepEqual(finalStepTools, []);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 5);
+  assert.equal(result.response, finalDraft);
 });
 
 test("validateDecision rejects an invented tool name", () => {
