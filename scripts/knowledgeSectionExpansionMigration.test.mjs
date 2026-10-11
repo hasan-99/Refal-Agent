@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const migration = fs.readFileSync(path.join(here, "..", "supabase", "migrations", "20261011130000_expand_approved_knowledge_sections_and_relax_lexical_coverage.sql"), "utf8");
+const migration = fs.readFileSync(path.join(here, "..", "supabase", "migrations", "20261011120422_expand_approved_knowledge_sections_and_relax_lexical_coverage.sql"), "utf8");
 
 test("the retrieval migration relaxes Arabic lexical coverage without removing the query-term match requirement", () => {
   assert.ok(migration.includes("updated := replace(definition, ')>=0.6 and', ')>=0.15 and');"));
