@@ -3,6 +3,24 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { assessAgentDraft, validateGroundingVerdict, reviewIdentity } = require("./semanticGrounding");
 const { runAgentTurnForContact } = require("./agentRuntime");
+const { buildDecisionMessages } = require("./agentDecision");
+const { buildGroundingReviewMessages } = require("./semanticGrounding");
+test("generation and review use the same configured identity across languages, including rejected invented aliases", () => {
+  for (const locale of ["ar", "en", "el"]) {
+    const draft = "مرحبًا! أنا رافا، مساعد الأعمال الرقمي لمجموعة Refalco.";
+    const context = { currentMessage: "Hello", locale, recentConversation: [] };
+    const generated = buildDecisionMessages(context);
+    const review = buildGroundingReviewMessages({ text: draft, context });
+    assert.ok(generated[0].content.includes(reviewIdentity().brand));
+    assert.match(generated[0].content, /Preserve configured brand and group names exactly/);
+    assert.deepEqual(JSON.parse(review[1].content).identity, reviewIdentity());
+    assert.equal(JSON.parse(review[1].content).draft, draft);
+    assert.match(review[0].content, /invented agent alias is unsupported/);
+    const rejected = validateGroundingVerdict({ segments: [{ text: draft, status: "unsupported", evidenceRefs: [], reasonCode: "no_approved_evidence" }], languageValid: true, contextValid: false, answerAddressesQuestion: true }, draft);
+    assert.equal(rejected.valid, false);
+    assert.deepEqual(rejected.reasons, ["no_approved_evidence", "context_mismatch"]);
+  }
+});
 const verdict = (text, status, evidenceRefs = [], reasonCode = status === "unsupported" ? "unsupported_relation" : status) => ({
   segments: [{ text, status, evidenceRefs, reasonCode }], languageValid: true, contextValid: true, answerAddressesQuestion: true
 });
