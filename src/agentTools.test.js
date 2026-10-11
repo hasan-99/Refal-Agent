@@ -47,7 +47,7 @@ test("evidence selection validates opaque references and never exposes forged mo
   const { selectKnowledgeSections } = require("./knowledgeSelection");
   for (const currentMessage of ["بدنا نغيّر الملكية بعد فترة، كيف؟", "Could our ownership change down the road?", "Μπορούμε να αλλάξουμε τους μετόχους αργότερα;"]) {
     const result = await selectKnowledgeSections({ currentMessage, candidates: [{ title: "Ownership", section: "Changes", content: "Changes require documents and review." }] }, {
-      callModel: async (messages) => { assert.match(messages[1].content, /Ownership/); return { selections: [{ id: "0", relevance: 3 }, { id: "999", relevance: 3 }, { id: "0", relevance: 2 }] }; }
+      callModel: async (messages) => { assert.match(messages[1].content, /Ownership/); assert.match(messages[1].content, /"retrievalRank":1/); assert.match(messages[0].content, /preserve a highly ranked section when its content supports the current need/); return { selections: [{ id: "0", relevance: 3 }, { id: "999", relevance: 3 }, { id: "0", relevance: 2 }] }; }
     });
     assert.deepEqual(result.selections, [{ id: "0", relevance: 3 }]);
   }
