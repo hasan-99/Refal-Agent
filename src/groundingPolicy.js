@@ -336,7 +336,7 @@ const GENERIC_LIST_STOPWORDS = new Set(["in", "a", "an", "the", "to", "of", "for
 function extractOfferedServiceItems(sentenceFragment) {
   const withoutPrice = String(sentenceFragment || "").replace(PRICE_CLAUSE_RE, " ");
   return withoutPrice.split(LIST_SPLIT_RE)
-    .map((item) => item.trim())
+    .map((item) => item.replace(/^\s*[-*•]\s*/u, "").trim())
     .filter((item) => item.length >= 3);
 }
 
@@ -352,7 +352,7 @@ function extractLocalizedOfferedServiceItems(fragment, language) {
     ? /\s+(?:σε|στη|στην|στο|στον|για)\s+.+$/iu
     : /\s+في\s+.+$/u;
   return text.split(separators)
-    .map((item) => item.replace(locationOrPurpose, "").trim())
+    .map((item) => item.replace(/^\s*[-*•]\s*/u, "").replace(locationOrPurpose, "").trim())
     .filter((item) => item.length >= 3);
 }
 

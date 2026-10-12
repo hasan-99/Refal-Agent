@@ -36,7 +36,7 @@ test("context rejection identifies an exact actionable draft span and rejects op
   assert.equal(result.valid,false);
   assert.deepEqual(result.blockedClaims,[{sentence:issue,claimClass:"CONTEXT",reasons:["context_mismatch"]}]);
   assert.equal(validateGroundingVerdict({...verdict,contextIssues:[]},text,[{sourceRef:"scope"}]).technicalFailure,true);
-  assert.match(buildGroundingReviewMessages({text})[0].content,/quote the exact offending draft spans in contextIssues/);
+  assert.match(buildGroundingReviewMessages({text})[0].content,/quote only the exact offending draft spans in contextIssues/);
 });
 test("semantic clause segmentation normalizes omitted boundary spaces without losing punctuation coverage", () => {
   const text = "We continue the file within the tax scope—details depend on activity.";
@@ -48,14 +48,26 @@ test("semantic clause segmentation normalizes omitted boundary spaces without lo
   assert.equal(omitted.technicalFailure,true);
   assert.equal(omitted.errorCode,"GROUNDING_VERDICT_COVERAGE_MISMATCH");
 });
-test("comparative review receives the actual prior scope and rejects treating repeated categories as new", () => {
+test("grounding coverage accepts presentation bullets while preserving every word and claim", () => {
+  const text = "The package covers formation.\n• Name reservation\n• Document preparation.";
+  const segments = ["The package covers formation.", "Name reservation", "Document preparation."];
+  const result = validateGroundingVerdict({ segments:segments.map(text=>({text,status:"supported",evidenceRefs:["scope"],reasonCode:"supported"})),languageValid:true,contextValid:true,contextIssues:[],requestCoverage:{outcome:"addressed",unmetAspects:[]} },text,[{sourceRef:"scope"}]);
+  assert.equal(result.valid,true);
+});
+test("comparative review receives prior scope, rejects false additions, and permits evidenced additions beside context", () => {
   const context = { currentMessage: "Anything else beyond those?", recentConversation: [{ role: "assistant", content: "We offer consulting and administration." }] };
   const text = "Yes, we also offer consulting and administration.";
   const messages = buildGroundingReviewMessages({ text, context });
   assert.deepEqual(JSON.parse(messages[1].content).history, context.recentConversation);
-  assert.match(messages[0].content, /previously listed items are presented as additional/);
+  assert.match(messages[0].content, /repeated items must not be labeled new/);
+  assert.match(messages[0].content, /may briefly restate earlier items for context while separately identifying a genuinely new, supported area/);
+  assert.match(messages[0].content, /customer-facing drafts must not narrate what the assistant knows, has evidence, approval, records or confirmation for/);
   const result = validateGroundingVerdict({ segments: [{ text, status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }], languageValid: true, contextValid: false, contextIssues:[text], requestCoverage:{outcome:"not_addressed",unmetAspects:["Anything else beyond those?"]} }, text, [{ sourceRef: "scope" }]);
   assert.deepEqual(result.reasons, ["context_mismatch", "question_not_answered"]);
+
+  const evidencedAddition = "You mentioned consulting and administration before; company formation is another supported area.";
+  const accepted = validateGroundingVerdict({ segments: [{ text: evidencedAddition, status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }], languageValid: true, contextValid: true, contextIssues:[], requestCoverage:{outcome:"addressed",unmetAspects:[]} }, evidencedAddition, [{ sourceRef: "scope" }], context.currentMessage);
+  assert.equal(accepted.valid, true);
 });
 test("generation and review use the same configured identity across languages, including rejected invented aliases", () => {
   for (const locale of ["ar", "en", "el"]) {

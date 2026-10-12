@@ -46,6 +46,18 @@ test("parseDecisionJson accepts a respond object and strips a markdown fence if 
   assert.deepEqual(parsed, { type: "respond", text: "The published price is EUR 1500." });
 });
 
+test("long comma-separated lists are formatted as bullets without changing their words", () => {
+  const raw = "{\"type\":\"respond\",\"text\":\"The package includes company formation, name reservation, document preparation, and registration certificates. Timing depends on complete documents. Shall I explain the next step?\"}";
+  const parsed = parseDecisionJson(raw);
+  assert.equal((parsed.text.match(/^•/gm) || []).length, 4);
+  assert.match(parsed.text, /Timing depends on complete documents\./);
+  assert.match(parsed.text, /Shall I explain the next step\?$/);
+  const words = (value) => value.toLowerCase().match(/[a-z]+/gu).join(" ");
+  assert.equal(words(parsed.text), words(JSON.parse(raw).text));
+  assert.equal(parseDecisionJson('{"type":"respond","text":"I can help with your question."}').text,
+    "I can help with your question.");
+});
+
 test("parseDecisionJson maps only a well-formed response alias to the guarded respond decision", () => {
   assert.deepEqual(parseDecisionJson('{"type":"response","text":"The current offer is confirmed."}'), {
     type: "respond", text: "The current offer is confirmed."

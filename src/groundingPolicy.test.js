@@ -109,6 +109,16 @@ test("service list grounding rejects added Arabic and Greek services in the cust
   assert.equal(containsUnsupportedServiceListClaim("Προσφέρουμε σύσταση εταιρείας στην Κύπρο.", ev), false);
 });
 
+test("approved service lists remain grounded after presentation bullets are inserted", () => {
+  const ev = evidence("Refalco Group provides Company Formation, Accounting, VAT Registration and Payroll services.");
+  const formatted = "• Refalco Group provides Company Formation,\n• Accounting,\n• VAT Registration and Payroll services.";
+  assert.equal(containsUnsupportedServiceListClaim(formatted, ev), false);
+  assert.equal(validateFactualGrounding(formatted, { evidenceItems: ev }).valid, true);
+  const unsupported = "• Refalco Group provides Company Formation,\n• Legal Representation services.";
+  assert.equal(containsUnsupportedServiceListClaim(unsupported, ev), true);
+  assert.equal(validateFactualGrounding(unsupported, { evidenceItems: ev }).valid, false);
+});
+
 test("[028-7] similar package names do not leak inclusions across packages", () => {
   // The Standard package's evidence never connects it to document
   // preparation; a different (Premium) package's evidence does. Claiming the

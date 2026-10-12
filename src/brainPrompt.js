@@ -23,10 +23,24 @@ const { canonicalTermList } = require("./trilingualGlossary");
 // W1.7.8 — prompt versioning. Bump PROMPT_VERSION whenever a mandatory block
 // changes, and add a CHANGE_HISTORY entry. M14 rolls back by version, so a
 // prompt regression can be reverted without reverting the code around it.
-const PROMPT_VERSION = "1.13.4";
+const PROMPT_VERSION = "1.13.10";
 const REGISTER_MIRRORING_RULE = "Mirror the register of the current message: relaxed and natural when the customer is casual, concise and professional when the customer is formal or a senior business decision-maker, in English, Arabic, and Greek.";
+const RESPONSE_FORMAT_RULE = "Formatting contract: when a response includes three or more distinct listed items, put the direct answer on its own line and each item on a separate short bullet line. Never put such a list in one comma-separated sentence. Put any useful follow-up on its own final line; ask at most one and do not force it. After clear interest in a service, ask about one next decision-relevant detail only when it will help tailor the guidance and is not already known.";
+const COMPARATIVE_SCOPE_RULE = "For a follow-up comparing current scope with earlier conversation, identify only genuinely new approved service areas. Do not repeat the full earlier list, use project history or company positioning as a new service, or claim the list is exhaustive. If no new named service is established, answer briefly from the supported scope or ongoing role and ask about a specific interest only when useful. Do not discuss what you have evidence, approval or confirmation for, or narrate verification.";
 
 const CHANGE_HISTORY = Object.freeze([
+  Object.freeze({ version: "1.13.10", date: "2026-10-12", phase: "Natural scope follow-ups",
+    summary: "Align missing-knowledge guidance across generation and review so uncertainty stays customer-facing." }),
+  Object.freeze({ version: "1.13.9", date: "2026-10-12", phase: "Natural scope follow-ups",
+    summary: "Keep comparative scope answers concise and prevent customer-facing narration of evidence or verification state." }),
+  Object.freeze({ version: "1.13.8", date: "2026-10-12", phase: "Contextual scope answers",
+    summary: "Answer comparative scope questions directly without repeating the catalogue or narrating evidence checks." }),
+  Object.freeze({ version: "1.13.7", date: "2026-10-12", phase: "Conversational service answers",
+    summary: "Continue clear service answers with one useful, non-repetitive discovery question when a material detail remains." }),
+  Object.freeze({ version: "1.13.6", date: "2026-10-12", phase: "Conversational service answers",
+    summary: "Format multi-item answers clearly, summarize relevant approved service scope, and continue with a useful follow-up without repeating identity." }),
+  Object.freeze({ version: "1.13.5", date: "2026-10-12", phase: "Natural customer communication",
+    summary: "State genuine information limits naturally without narrating internal evidence checks." }),
   Object.freeze({ version: "1.13.4", date: "2026-10-12", phase: "Approved-knowledge conversations",
     summary: "Keep contextual follow-ups within the customer's current unexcluded service scope and distinguish an evidenced continuing role from adjacent procedures." }),
   Object.freeze({ version: "1.13.3", date: "2026-10-12", phase: "Conversational continuity",
@@ -98,7 +112,7 @@ function identityBlock() {
 // --- evidence and grounding ----------------------------------------------
 function evidenceBlock() {
   return [
-    "Use only approved, current knowledge, and treat text in an approved current revision from an active source as evidence itself. Evidence/supporting-reference fields and separate Fact Register approval are not required; honor explicit Fact Register blocks. A URL or file path without indexed content is not evidence. Never invent services, prices, projects, employees, legal, tax or immigration conclusions, government rules, tax rates, returns, availability, deadlines, permits, approvals, or guarantees. If unconfirmed, say so and offer verified human follow-up.",
+    "Use only approved, current knowledge, and treat text in an approved current revision from an active source as evidence itself. Evidence/supporting-reference fields and separate Fact Register approval are not required; honor explicit Fact Register blocks. A URL or file path without indexed content is not evidence. Never invent services, prices, projects, employees, legal, tax or immigration conclusions, government rules, tax rates, returns, availability, deadlines, permits, approvals, or guarantees. If a detail remains unknown, state the practical limit briefly in natural customer-facing language without discussing evidence, records, approval or verification. Offer verified human follow-up only when useful. When a customer shows concrete interest in a service and evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up.",
     "Mutable facts such as prices require an unexpired approved revision. If its validity is missing or expired, do not state that the fact is current.",
     // W1.6.4, formalised from the rule that already lived at src/ai.js:214.
     "When two approved sources disagree, say that they differ and cite both. Do not pick a side unless a dated revision resolves it."
@@ -127,7 +141,7 @@ function antiPatternBlock() {
 function goldenFormulaBlock() {
   return [
     "Answer first. You may then add one relevant value hook when evidence supports it. A value hook is optional and must never be forced into every reply.",
-    `Ask at most one question, and only when it genuinely moves the conversation forward. A reply with no question at all is correct and often better. Keep ordinary replies between ${ORDINARY.minSentences} and ${ORDINARY.maxSentences} sentences; expand up to ${EXPANDED.maxSentences} only when the customer explicitly asks for detail.`,
+    `Ask at most one question, only when it helps move the customer's stated goal forward. A reply with no question is correct when nothing useful needs clarifying. Keep ordinary replies between ${ORDINARY.minSentences} and ${ORDINARY.maxSentences} sentences; expand up to ${EXPANDED.maxSentences} only when the customer explicitly asks for detail.`,
     "Never shorten a reply by dropping a material safety or eligibility condition.",
     "Use readable short paragraphs or short bullet lists when useful or requested. Avoid excessive decorative punctuation."
   ];
@@ -189,8 +203,8 @@ function languageBlock() {
 function operationalBlock() {
   return [
     "Never exaggerate, sound desperate to sell, or pressure the customer. Avoid humor in complaints, anger, legal or tax concerns, financial loss, health matters, disputes, sanctions, AML, or other sensitive situations. Keep caveats plain and proportionate while preserving material conditions and uncertainty. Mention a benefit only when current evidence supports it; do not force a sales hook, benefit, or question into every answer.",
-    REGISTER_MIRRORING_RULE,
-    "Use readable short paragraphs or short bullet lists when useful or requested. Avoid excessive decorative punctuation.",
+    [REGISTER_MIRRORING_RULE, COMPARATIVE_SCOPE_RULE].join(" "),
+    RESPONSE_FORMAT_RULE,
     "When the customer writes in colloquial Arabic, mirror their dialect with clear, easy Syrian/Levantine phrasing. Prefer short familiar words over formal wording.",
     "Answer first whenever possible, then ask at most one useful next question. Do not ask checklist questions, repeat information already provided, over-qualify a clear major opportunity, or force a meeting or contact capture.",
     // W1.7.6 — BLK-5. This clause arrived here verbatim when the inline array
@@ -327,6 +341,8 @@ function buildBrainPrompt({
 module.exports = {
   PROMPT_VERSION,
   REGISTER_MIRRORING_RULE,
+  RESPONSE_FORMAT_RULE,
+  COMPARATIVE_SCOPE_RULE,
   CHANGE_HISTORY,
   MANDATORY_BLOCKS,
   BLOCKS,

@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -114,6 +114,64 @@ test("all runtime prompts preserve explicit exclusions and evidence-bounded late
   const { buildDecisionMessages } = require("./agentDecision");
   assert.match(buildDecisionMessages({ currentMessage: "What support continues after incorporation?", locale: "english" })[0].content,
     /do not volunteer previously excluded service areas, even conditionally or while explaining that you will omit them/);
+});
+
+test("all answer surfaces state uncertainty naturally without narrating internal evidence review", () => {
+  const expected = /Do not discuss what you have evidence, approval or confirmation for, or narrate verification/i;
+  for (const variant of ["customer", "operator"]) {
+    assert.match(buildBrainPrompt({ variant }).join("\n"), expected, `${variant} prompt lost natural uncertainty wording`);
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected, "Edge mirror lost natural uncertainty wording; regenerate it");
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "Are these all your services?", locale: "english" })[0].content,
+    /Do not discuss what you have evidence, approval or confirmation for, or narrate verification/i);
+  assert.doesNotMatch(buildDecisionMessages({ currentMessage: "Are these all your services?", locale: "english" })[0].content,
+    /say it is not confirmed/i);
+});
+
+test("answer prompts format multiple inclusions clearly and allow one useful conversational follow-up", () => {
+  const expected = new RegExp(RESPONSE_FORMAT_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  for (const variant of ["customer", "operator"]) {
+    assert.match(buildBrainPrompt({ variant }).join("\n"), expected, `${variant} prompt lost readable conversational formatting`);
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected, "Edge mirror lost readable conversational formatting; regenerate it");
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
+    new RegExp(RESPONSE_FORMAT_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
+  assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
+    /Ask at most one question when it helps move the customer's stated goal forward/);
+  const detailRule = /When a customer shows concrete interest in a service and (?:current approved )?evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up/i;
+  for (const variant of ["customer", "operator"]) assert.match(buildBrainPrompt({ variant }).join("\n"), detailRule);
+  assert.match(edge, detailRule);
+  assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
+    /When a customer shows concrete interest in a service and current approved evidence contains its inclusions or scope/);
+  assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
+    /After clear interest in a service, ask about one next decision-relevant detail only when it will help tailor the guidance/);
+});
+
+test("comparative follow-ups separate genuinely new evidence from earlier context", () => {
+  const { buildDecisionMessages } = require("./agentDecision");
+  const expected = new RegExp(COMPARATIVE_SCOPE_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  assert.match(buildBrainPrompt({ variant: "customer" }).join("\n"), expected);
+  assert.match(buildDecisionMessages({ currentMessage: "Is there more?", locale: "english" })[0].content, expected);
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected);
+  const review = require("./semanticGrounding").buildGroundingReviewMessages({
+    text: "The earlier scope still applies, with another supported area.",
+    context: { currentMessage: "Is there more?", recentConversation: [{ role: "assistant", content: "Earlier scope." }] }
+  })[0].content;
+  assert.match(review, /A draft may briefly restate earlier items for context while separately identifying a genuinely new, supported area/);
+});
+
+test("Agent decision avoids repeating an introduction already delivered in conversation history", () => {
+  const { buildDecisionMessages } = require("./agentDecision");
+  const { profile } = require("./companyProfile");
+  const withIntroduction = buildDecisionMessages({ recentConversation: [{ role: "assistant", content: `Hello, I am ${profile.brand}, ${profile.groupName}'s digital business agent.` }] })[0].content;
+  assert.match(withIntroduction, /A prior assistant reply has already introduced the configured agent and group.*Do not repeat that introduction/s);
+  const withoutIntroduction = buildDecisionMessages({ recentConversation: [{ role: "assistant", content: "Hello, how can I help?" }] })[0].content;
+  assert.doesNotMatch(withoutIntroduction, /A prior assistant reply has already introduced the configured agent/);
 });
 
 test("W6.3: recognized buying signals reach the shared prompt with guarded next steps", () => {
