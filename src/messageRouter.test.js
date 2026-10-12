@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
-const { extractCustomerName, extractCustomerNeed, prepareInboundMessage, recordHistory, routeMessageResult } = require("./messageRouter.js");
+const { extractCustomerName, extractCustomerNeed, latestCustomerStatedName, prepareInboundMessage, recordHistory, routeMessageResult } = require("./messageRouter.js");
 const { getConsentState, hasFollowUpPermission } = require("./leadQualification.js");
 const { CUSTOMER_MESSAGES: COMPLIANCE_CUSTOMER_MESSAGES } = require("./complianceEscalation.js");
 const { resolveHumourLevel } = require("./humourEngine.js");
@@ -44,6 +44,19 @@ test("customer names are extracted from common English and Arabic introductions"
   assert.equal(extractCustomerName("I am still upset"), null);
   assert.equal(extractCustomerName("أنا لسا متضايق"), null);
   assert.equal(extractCustomerName("Είμαι ακόμα αναστατωμένος"), null);
+});
+
+test("latest customer-stated name follows corrections in transcript without using assistant text", () => {
+  assert.equal(latestCustomerStatedName([
+    { message: "اسمي كريم", response: "أهلًا كريم" },
+    { message: "مرحبا، أنا حسن.", response: "أهلًا حسن" },
+    { message: "شو عندكم خدمات؟", response: "أهلًا كريم" }
+  ]), "حسن");
+  assert.equal(latestCustomerStatedName([
+    { message: "My name is Rami" },
+    { message: "Call me Sami" }
+  ]), "Sami");
+  assert.equal(latestCustomerStatedName([{ message: "شو عندكم خدمات؟", response: "أهلًا كريم" }]), null);
 });
 
 test("clear name introductions are available for the current reply without profile persistence", async () => {

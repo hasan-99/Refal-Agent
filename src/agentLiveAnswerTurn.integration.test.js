@@ -146,6 +146,38 @@ test("a volunteered name reaches the current reply without being saved to the co
   assert.match(sent[0], /أستاذ كريم/u);
 });
 
+test("later turns keep the latest customer-stated name instead of a stale saved name", async () => {
+  const { user, store } = makeStore();
+  const sessionStart = "2026-10-12T22:37:14.775Z";
+  user.profile = {
+    name: "كريم", nameSource: "customer_stated",
+    qaControlledDiagnostics: true, followUpBlocked: true, qaSessionStartedAt: sessionStart
+  };
+  user.history.push(
+    { id: "older-name", at: "2026-10-12T22:20:00.000Z", message: "اسمي كريم", response: "مرحبًا كريم" },
+    { id: "session-name", at: "2026-10-12T22:37:31.000Z", message: "مرحبا، أنا حسن.",
+      response: "أهلًا أستاذ حسن، أنا REFAL، مساعد الأعمال الرقمي في Refalco Group. كيف أقدر أساعدك؟" }
+  );
+  let seenName = null;
+  const result = await runAgentLiveAnswerTurn({
+    socket: {}, chatId: "synthetic-chat", userId: user.id, text: "شو عندكم خدمات؟"
+  }, {
+    store,
+    setTyping: async () => {},
+    sendStoredTextReply: async () => {},
+    agentOptions: {
+      decideNextStep: async ({ context }) => {
+        seenName = context.contact.name;
+        return { type: "respond", text: "I can help explain our services." };
+      }
+    }
+  });
+
+  assert.equal(result.outcome, "agent");
+  assert.equal(seenName, "حسن");
+  assert.equal(user.profile.name, "كريم", "the continuity fix does not overwrite saved contact data");
+});
+
 test("live composition applies jurisdiction guard before persistence and reports ambiguous send failure without retry", async () => {
   const { user, store, events } = makeStore();
   let sendAttempts = 0;

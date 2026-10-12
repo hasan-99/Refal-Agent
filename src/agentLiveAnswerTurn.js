@@ -3,7 +3,7 @@
 // Import-safe composition for the live Agent answer turn. Transport, storage,
 // telemetry, and typing are injected so the same post-response path can be
 // exercised without starting the WhatsApp worker.
-const { routeMessageResult, prepareInboundMessage, recordHistory } = require("./messageRouter");
+const { routeMessageResult, prepareInboundMessage, recordHistory, latestCustomerStatedName } = require("./messageRouter");
 const { runAgentTurnForContact } = require("./agentRuntime");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
@@ -84,6 +84,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
       const sessionStart = controlled ? Date.parse(currentUser?.profile?.qaSessionStartedAt || "") : NaN;
       const priorHistory = history.filter((turn) => turn.id !== sourceTurnId && (!Number.isFinite(sessionStart) || Date.parse(turn.at) >= sessionStart));
+      const priorCustomerName = latestCustomerStatedName(priorHistory);
       const brand = profile.brand.toLocaleLowerCase();
       const group = profile.groupName.toLocaleLowerCase();
       const priorConfiguredIntroduction = priorHistory.some((turn) => {
@@ -97,11 +98,13 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         currentMessage: String(agentMessage || ""), locale: language,
         contact: {
           id: userId,
-          // Prefer an explicit name in the current message for this reply only.
-          // It is not persisted as profile memory; the transcript remains the
-          // durable record and can provide continuity on later turns.
-          name: prepared?.currentTurnCustomerName || currentUser?.profile?.name || null,
-          nameSource: prepared?.currentTurnCustomerName ? "customer_stated" : currentUser?.profile?.nameSource || null
+          // Keep customer-stated names transient: the latest explicit name in
+          // this conversation transcript is the durable source for continuity.
+          // A saved profile name is only a fallback when the transcript has no
+          // explicit name (for example, older contacts with imported memory).
+          name: prepared?.currentTurnCustomerName || priorCustomerName || currentUser?.profile?.name || null,
+          nameSource: prepared?.currentTurnCustomerName || priorCustomerName
+            ? "customer_stated" : currentUser?.profile?.nameSource || null
         },
         recentConversation: buildRecentConversation(priorHistory),
         priorConfiguredIntroduction,

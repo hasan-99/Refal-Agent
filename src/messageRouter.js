@@ -680,6 +680,18 @@ function extractExplicitCustomerName(text) {
   return extractCustomerName(value);
 }
 
+function latestCustomerStatedName(history = []) {
+  if (!Array.isArray(history)) return null;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const turn = history[index];
+    const message = typeof turn?.message === "string" ? turn.message
+      : typeof turn?.text === "string" ? turn.text : "";
+    const name = extractExplicitCustomerName(message);
+    if (name) return name;
+  }
+  return null;
+}
+
 // A self-introduction can follow a greeting or another clause in the same
 // customer message. Split only at sentence/clause boundaries, then keep the
 // existing explicit self-introduction grammar and name plausibility checks.
@@ -1148,4 +1160,4 @@ async function routeMessage({ userId, text, store }) {
   return result.response;
 }
 
-module.exports = { routeMessage, routeMessageResult, prepareInboundMessage, recordHistory, profileText, extractCustomerName, extractCustomerNeed, namePrompt, normalizeSmallTalk, isValidWhatsAppReplyKey, buildReplyEditPayload, persistWhatsAppSentMessage, isPlausibleCustomerName, wasNameRequested };
+module.exports = { routeMessage, routeMessageResult, prepareInboundMessage, recordHistory, profileText, extractCustomerName, extractExplicitCustomerName, latestCustomerStatedName, extractCustomerNeed, namePrompt, normalizeSmallTalk, isValidWhatsAppReplyKey, buildReplyEditPayload, persistWhatsAppSentMessage, isPlausibleCustomerName, wasNameRequested };
