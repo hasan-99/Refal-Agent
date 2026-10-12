@@ -11,6 +11,27 @@ import { fetchConversationLists, watchForConversationListChanges } from "./conve
 import { LeadTemperatureSummary } from "./leadTemperatureSummary.js";
 
 const EMPTY = [];
+const DIAGNOSTIC_REASON_COPY = {
+  no_approved_evidence: "The approved information available for this reply did not support this statement.",
+  entities_not_in_evidence: "A name, place, number, or other specific detail was missing from the approved information.",
+  prohibited_claim: "A reply rule blocks this kind of claim. Check the flagged part and the evidence before changing anything.",
+  unconditional_prohibition: "The wording made a broad statement where the rule requires a limit or condition.",
+  personalized_marker: "The draft made a conclusion about this customer’s personal eligibility or situation without enough support.",
+  context_mismatch: "The draft did not fit something the customer said earlier, such as a preference or limit.",
+  service_not_established: "The available approved information did not establish that Refalco provides this as a service.",
+  unsupported_relation: "The information did not support the connection or conclusion made in the draft.",
+  question_not_answered: "The draft did not clearly answer every part of the customer’s question."
+};
+
+function diagnosticReasonText(code) {
+  return DIAGNOSTIC_REASON_COPY[code] || "A reply check flagged this draft. Review the exact span and evidence below.";
+}
+
+function diagnosticReasons(record) {
+  const explicit = record.inspection?.reasonCodes || record.inspection?.reasons || [];
+  const fromClaims = (record.inspection?.claims || []).flatMap((claim) => claim.reasons || []);
+  return [...new Set([...explicit, ...fromClaims].filter((reason) => typeof reason === "string"))];
+}
 
 export default function Conversations({ isAdmin, onNavigate, view: initialView = "inbox", onViewChange, selectedConversationId = "", onSelectedConversationChange }) {
   const [rows, setRows] = useState(EMPTY);
@@ -437,22 +458,68 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
     </form>}
     {contactNotice && <p className="conversation-contact-notice" role="status">{contactNotice}</p>}
     {detail && <WorkflowSummary workflow={detail.user?.workflow} isAdmin={isAdmin} />}
-    {isAdmin && detail && <details className="conversation-diagnostics">
-      <summary>Controlled test diagnostics</summary>
-      <button type="button" onClick={loadInspections}>Load rejected drafts and evidence</button>
-      {inspectionError && <p role="alert">{inspectionError}</p>}
-      {inspections && inspections.length === 0 && <p>No rejected drafts recorded.</p>}
-      {inspections?.map((record) => <details key={record.id}>
-        <summary>{record.at} · step {record.inspection?.step} · {record.inspection?.reasonCodes?.join(", ")}</summary>
-        <p dir="auto">{record.inspection?.draft}</p>
-        <p>Trace: {record.inspection?.traceId}</p>
-        {record.inspection?.claims?.map((claim, index) => <p key={index} dir="auto">{claim.sentence} ({claim.reasons.join(", ")})</p>)}
-        {record.inspection?.evidence?.map((item, index) => <details key={index}>
-          <summary>{item.title} · {item.section} · {item.sourceRef}</summary>
-          <pre style={{ whiteSpace: "pre-wrap" }} dir="auto">{item.content}</pre>
-        </details>)}
-      </details>)}
-    </details>}
+    {isAdmin && detail && <section className="conversation-diagnostics" aria-labelledby="conversation-diagnostics-title">
+      <div className="conversation-diagnostics-heading">
+        <div>
+          <span className="conversation-diagnostics-kicker">TEST REPLY REVIEW</span>
+          <h2 id="conversation-diagnostics-title">Understand and improve a flagged reply</h2>
+          <p>See what REFAL drafted, which check flagged it, and what information REFAL had available.</p>
+        </div>
+        <button type="button" className="conversation-diagnostics-load" onClick={loadInspections}>
+          {inspections === null ? "Show flagged drafts" : "Refresh flagged drafts"}
+        </button>
+      </div>
+      <div className="conversation-diagnostics-guide">
+        <strong>How this helps</strong>
+        <ol>
+          <li>Read the flagged part and why the check stopped it.</li>
+          <li>Open the evidence and compare it with that statement.</li>
+          <li>If the information is missing, improve approved knowledge. If the evidence supports the draft, use the trace details to review the rule.</li>
+        </ol>
+      </div>
+      <p className="conversation-diagnostics-note">This is an internal review; nothing here is sent to the customer. A flagged draft may differ from the delivered reply, which appears in the transcript above.</p>
+      {inspectionError && <p className="conversation-diagnostics-error" role="alert">Could not load the review details: {inspectionError}</p>}
+      {inspections && inspections.length === 0 && <p className="conversation-diagnostics-empty">No rejected drafts were saved for this controlled test conversation.</p>}
+      {inspections && [...inspections].reverse().map((record, index) => {
+        const reasons = diagnosticReasons(record);
+        const claims = record.inspection?.claims || [];
+        const evidence = record.inspection?.evidence || [];
+        return <details className="conversation-diagnostic-record" key={record.id}>
+          <summary>
+            <span><strong>Flagged draft {inspections.length - index}</strong><small>{formatDate(record.at)} · reply step {record.inspection?.step ?? "unknown"}</small></span>
+            <span className="conversation-diagnostic-count">{reasons.length} {reasons.length === 1 ? "check" : "checks"}</span>
+          </summary>
+          <div className="conversation-diagnostic-body">
+            <h3>Why it was flagged</h3>
+            {reasons.length ? <ul className="conversation-diagnostic-reasons">{reasons.map((reason) => <li key={reason}>
+              <span>{diagnosticReasonText(reason)}</span><code>{reason}</code>
+            </li>)}</ul> : <p>The reason was not included in this saved record.</p>}
+            {claims.length > 0 && <div className="conversation-diagnostic-claims">
+              <h3>Part that needs review</h3>
+              {claims.map((claim, claimIndex) => <blockquote key={claimIndex} dir="auto">{claim.sentence || claim.claim}</blockquote>)}
+            </div>}
+            <div className="conversation-diagnostic-draft">
+              <h3>What REFAL drafted</h3>
+              <p dir="auto">{record.inspection?.draft || "Draft text was not saved."}</p>
+            </div>
+            <div className="conversation-diagnostic-evidence">
+              <h3>Information available to REFAL <span>{evidence.length} {evidence.length === 1 ? "passage" : "passages"}</span></h3>
+              {evidence.length ? evidence.map((item, evidenceIndex) => <details key={`${item.sourceRef || item.title || "source"}-${evidenceIndex}`}>
+                <summary><span>{item.title || "Approved knowledge"}</span><small>{item.section || "Section not named"}</small></summary>
+                <pre dir="auto">{item.content || "No passage text was saved."}</pre>
+                {item.sourceRef && <code className="conversation-diagnostic-source">Source reference: {item.sourceRef}</code>}
+              </details>) : <p>No evidence passages were saved with this draft.</p>}
+            </div>
+            <details className="conversation-diagnostic-technical">
+              <summary>Technical details for a developer</summary>
+              <dl><dt>Trace ID</dt><dd><code>{record.inspection?.traceId || "Not recorded"}</code></dd>
+                <dt>Step</dt><dd>{record.inspection?.step ?? "Not recorded"}</dd>
+                <dt>Rule codes</dt><dd><code>{reasons.join(", ") || "Not recorded"}</code></dd></dl>
+            </details>
+          </div>
+        </details>;
+      })}
+    </section>}
     {loading && <div className="conversation-detail-state"><span className="conversation-spinner" />Loading conversation</div>}
     {error && <div className="conversation-alert" role="alert"><span>{error}</span><button type="button" onClick={onBack}>Back to inbox</button></div>}
     {detail && !loading && <div className="conversation-thread-wrap">
