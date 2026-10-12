@@ -334,24 +334,30 @@ test("knowledge evidence stays within one cumulative prompt budget across search
   assert.equal(result.outcome, "responded");
 });
 
-test("a search that adds no sections removes further knowledge searches and preserves the answer attempt", async () => {
+test("unselected new candidates without retained evidence stop repeated searches and preserve the answer attempt", async () => {
   let calls = 0;
   const source = { document_id: "doc-1", section_index: "1", chunk_id: "chunk-1", chunk_index: 1,
     document_title: "Approved service overview", heading: "Services", content: "Company formation and accounting are supported services.", review_status: "approved" };
   const tools = { searchApprovedKnowledge: { run: async () => {
     calls += 1;
-    return { ok: true, status: "found", data: [source], modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source]) };
+    const observation = require("./agentTools").buildApprovedKnowledgeObservation("found", [source]);
+    if (calls === 2) observation.candidateEvidence.push({ sourceRef: "unselected-new-candidate", title: "Unrelated section",
+      section: "Not selected", content: "unrelated ".repeat(1200), relevance: 1 });
+    return { ok: true, status: "found", data: [source], modelObservation: observation };
   } } };
+  let secondSearchProgress;
   let finalSearchAvailable;
-  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 4, decideNextStep: async ({ step, tools: available }) => {
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 4, decideNextStep: async ({ step, tools: available, observations }) => {
     if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "service overview" } };
     if (step === 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } };
+    secondSearchProgress = observations[1]?.result?.reasonCode;
     finalSearchAvailable = Object.hasOwn(available, "searchApprovedKnowledge");
     return { type: "respond", text: "I can help with the details supported by approved information." };
   } });
   assert.equal(calls, 2);
   assert.equal(finalSearchAvailable, false);
-  assert.equal(result.steps[1].result.reasonCode, "NO_NEW_RELEVANT_SECTIONS");
+  assert.equal(secondSearchProgress, "NO_NEW_RELEVANT_SECTIONS");
+  assert.equal(result.steps[1].result.status, "no_new_evidence");
   assert.equal(result.outcome, "responded");
   assert.equal(result.stepCount, 3);
 });

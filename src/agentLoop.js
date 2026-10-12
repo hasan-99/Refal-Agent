@@ -402,7 +402,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       observations.push(observation);
       const evidenceBudget = validated.tool === "searchApprovedKnowledge" ? budgetCurrentEvidence(context, observations, tools) : null;
       if (validated.tool === "searchApprovedKnowledge" && result?.ok === true
-        && result.status === "found" && evidenceBudget?.newCandidateCount === 0 && evidenceBudget?.newEvidenceCount === 0 && !evidenceBudget?.replacedIds?.length) {
+        && result.status === "found" && evidenceBudget?.newEvidenceCount === 0 && !evidenceBudget?.replacedIds?.length) {
         knowledgeSearchExhausted = true;
         if (result.status === "found") {
           observation.result.status = "no_new_evidence";
@@ -414,6 +414,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       try { await onToolCall({ step, tool: validated.tool, args: validated.args, result, durationMs: Math.max(0, Math.round(performance.now() - toolStartedAt)),
         evidenceCount: evidenceBudget?.evidenceCount ?? evidence.length, evidenceChars: evidenceBudget?.evidenceChars,
         candidateCount: result.trace?.candidateCount ?? evidenceBudget?.candidateCount, newCandidateCount: evidenceBudget?.newCandidateCount,
+        newEvidenceCount: evidenceBudget?.newEvidenceCount,
         retainedIds: evidenceBudget?.retainedIds, excludedIds: [...(result.trace?.excludedIds || []), ...(evidenceBudget?.excludedIds || [])], contextOmittedIds: evidenceBudget?.excludedIds, replacedIds: evidenceBudget?.replacedIds,
         candidateIds: result.trace?.candidateIds, evidenceAssemblyDurationMs: result.trace?.evidenceAssemblyDurationMs, selectionStatus: result.trace?.selectionStatus,
         evidenceIds: observations.flatMap((item) => item?.result?.modelObservation?.evidence || []).map((item) => item.sourceRef).filter(Boolean) }); } catch {}

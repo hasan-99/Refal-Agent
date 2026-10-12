@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -163,6 +163,15 @@ test("comparative follow-ups separate genuinely new evidence from earlier contex
     context: { currentMessage: "Is there more?", recentConversation: [{ role: "assistant", content: "Earlier scope." }] }
   })[0].content;
   assert.match(review, /A draft may briefly restate earlier items for context while separately identifying a genuinely new, supported area/);
+});
+
+test("service-detail answers state supported scope, separate general guidance, and avoid redundant clarification", () => {
+  const expected = new RegExp(SERVICE_SCOPE_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  for (const variant of ["customer", "operator"]) assert.match(buildBrainPrompt({ variant }).join("\n"), expected);
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected, "Edge mirror lost partial-answer behavior; regenerate it");
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "What do relocation services include?", locale: "english" })[0].content, expected);
 });
 
 test("Agent decision avoids repeating an introduction already delivered in conversation history", () => {

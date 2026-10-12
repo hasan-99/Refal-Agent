@@ -5,6 +5,12 @@ const { assessAgentDraft, validateGroundingVerdict, reviewIdentity } = require("
 const { runAgentTurnForContact } = require("./agentRuntime");
 const { buildDecisionMessages } = require("./agentDecision");
 const { buildGroundingReviewMessages } = require("./semanticGrounding");
+test("grounding review accepts an explicitly listed service category without inventing its inclusions", () => {
+  const reviewPrompt = buildGroundingReviewMessages({ text: "Residency and relocation are service areas." })[0].content;
+  assert.match(reviewPrompt, /current approved company overview that explicitly lists a service category is direct evidence that the group offers that category at the same general level/);
+  assert.match(reviewPrompt, /does not establish specific deliverables, eligibility, outcomes/);
+  assert.match(reviewPrompt, /Do not ask the customer to repeat, choose among, or restate aspects already explicit in the current request/);
+});
 test("request coverage accepts evidenced partial answers and identifies actual unanswered aspects", () => {
   const request = "What support and timing are confirmed?";
   const text = "Approved support is available; timing is unconfirmed in the supplied evidence.";

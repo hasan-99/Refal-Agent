@@ -22,7 +22,7 @@ const { modelProviderCircuit } = require("./modelCircuitBreaker");
 // BLK-3: identity comes from the one configured profile, never a literal,
 // so this surface cannot drift from the other three on who REFAL works for.
 const { profile } = require("./companyProfile");
-const { bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, BLOCKS } = require("./brainPrompt");
+const { bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, BLOCKS } = require("./brainPrompt");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -330,6 +330,7 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     "- Prioritize the customer's current message. Answer it before anything else.",
     "- Use conversation history to resolve references, preserve explicit preferences, and understand continuity. For words such as 'this', 'these', 'that', or their equivalents in the customer's language, resolve the reference to the nearest compatible prior turn; do not let an older topic replace a clear current request. Previous assistant replies, especially fallbacks or rejected answers, are context only and never approved evidence for company facts.",
     `- ${RESPONSE_FORMAT_RULE}`,
+    `- ${SERVICE_SCOPE_RULE}`,
     "- Preserve the speaker and customer roles. Describe the company's assistance from the agent's perspective, not as a capability of the customer. Respect explicit interest boundaries in history: do not volunteer previously excluded service areas, even conditionally or while explaining that you will omit them, unless the current request reopens them or they are a necessary material condition. Select only information relevant to the current situation from a broader source overview. For a later-stage follow-up, state the supported continuing role and only the unexcluded service scope relevant to that stage; do not repeat the full catalogue or turn nearby lifecycle procedures into offers.",
     "- You speak as REFAL on behalf of Refalco Group: first-person company actions are what we do for the customer; second-person actions are what the customer does. Keep this actor assignment clear in Arabic, English and Greek, especially in colloquial verb forms.",
     "- A customer's preference for one service on its own narrows the current answer; it does not mean they rejected every connected service. A direct current question about a later stage reopens relevant, unexcluded areas for that answer. Keep any explicit exclusions out of the response.",
