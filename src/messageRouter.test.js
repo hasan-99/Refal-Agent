@@ -11,6 +11,7 @@ test("customer names are extracted from common English and Arabic introductions"
   assert.equal(extractCustomerName("I'm Rami"), "Rami");
   assert.equal(extractCustomerName("اسمي حسن"), "حسن");
   assert.equal(extractCustomerName("أنا اسمي ليلى"), "ليلى");
+  assert.equal(extractCustomerName("مرحبا، أنا سامي."), "سامي");
   assert.equal(extractCustomerName("كيفك"), null);
   assert.equal(extractCustomerName("مرحبا، شو خدماتكم؟"), null);
   assert.equal(extractCustomerName("مرحبا، مين أنت وشو بتعمل؟"), null);
@@ -51,6 +52,19 @@ test("a contextual explicit name correction updates trusted contact memory witho
     assert.equal(user.profile.nameSource, "customer_stated", text);
     assert.equal(Boolean(prepared.metadata.customerNameCaptured), text === "My name is Sami", text);
   }
+});
+
+test("contextual name capture recognizes a clear self-introduction after a greeting without guessing", async () => {
+  const user = { id: "contextual-name-after-greeting", profile: {}, history: [] };
+  const prepared = await prepareInboundMessage({ userId: user.id, incoming: "مرحبا، أنا سامي.", user, store: integrationStore(user), contextual: true,
+    classifyMessage: async () => ({ primary: "small_talk", intents: ["small_talk"], isMultiIntent: false, language: "arabic", source: "contextual_model", operation: "none" }) });
+  assert.equal(user.profile.name, "سامي");
+  assert.equal(user.profile.nameSource, "customer_stated");
+  assert.equal(prepared.metadata.customerNameCaptured, true);
+  const ambiguous = { id: "contextual-ambiguous-name", profile: {}, history: [] };
+  await prepareInboundMessage({ userId: ambiguous.id, incoming: "أنا عم قارن الخيارات.", user: ambiguous, store: integrationStore(ambiguous), contextual: true,
+    classifyMessage: async () => ({ primary: "small_talk", intents: ["small_talk"], isMultiIntent: false, language: "arabic", source: "contextual_model", operation: "none" }) });
+  assert.equal(ambiguous.profile.name, undefined);
 });
 
 test("a language switch into Greek captures an explicit name and persists it to the contact", async () => {

@@ -178,6 +178,9 @@ test("multi-part knowledge requests are searched as focused parts instead of one
   const systemMessage = buildDecisionMessages(CONTEXT, [], TOOL_REGISTRY)[0].content;
   assert.match(systemMessage, /Keep each knowledge search focused on one part of a multi-part request/);
   assert.match(systemMessage, /current customer message is also searched automatically/);
+  assert.match(systemMessage, /For Arabic or Greek messages, ensure one query is a concise English semantic equivalent/);
+  assert.match(systemMessage, /answer in the requested language/);
+  assert.match(systemMessage, /do not prefix the answer with a social opener, generic greeting, or standalone greeting to the customer by name/);
 });
 
 test("buildDecisionMessages carries forward recent conversation and prior tool observations", () => {
@@ -515,6 +518,13 @@ test("Agent prompt receives the computed tier and guarded buying-signal directiv
   assert.match(system, /Stop all selling, cross-sell hooks, and benefit hints/);
   assert.match(system, /recognized buying signal.*guarded booking or specialist next step/i);
   assert.match(system, /A signal is not consent to create an appointment or handover/);
+});
+
+test("agent separates approved lifecycle guidance from REFAL service commitments and avoids stale discovery questions", () => {
+  const system = buildDecisionMessages(CONTEXT, [], TOOL_REGISTRY)[0].content;
+  assert.match(system, /general business lifecycle.*neutral process information, preserving sequence, conditions and the named actor/u);
+  assert.match(system, /Do not attribute every stage to REFAL unless service evidence establishes that role/u);
+  assert.match(system, /do not repeat that discovery question unless it is necessary for the next action the customer requested/u);
 });
 
 test("generation resolves follow-up references to the nearest compatible turn and treats fallbacks as context", () => {

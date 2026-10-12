@@ -149,6 +149,9 @@ async function attemptEvidenceBoundPartialCorrection(text, policy, thresholds, c
 function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons, observations = []) {
   const hasUnsupportedRelation = policy.reasons?.includes("unsupported_relation");
   const hasContextMismatch = policy.reasons?.includes("context_mismatch");
+  const hasUnansweredRequest = policy.reasons?.includes("question_not_answered");
+  const hasUnestablishedService = (policy.reasons || []).includes("service_not_established")
+    || (policy.blockedClaims || []).some((claim) => (claim.reasons || []).includes("service_not_established"));
   const hasMissingEvidence = (policy.blockedClaims || []).some((claim) => (claim.reasons || []).some((reason) =>
     ["no_approved_evidence", "entities_not_in_evidence"].includes(reason)));
   const correction = policy.reasons?.includes("no_approved_evidence")
@@ -157,6 +160,8 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
       : "No approved-knowledge search has run this turn. Use searchApprovedKnowledge for the requested company or package facts before answering; a live-offer lookup does not establish general service scope. If approved search returns no relevant evidence, say the detail is unconfirmed and do not invent a price or condition."
       : hasMissingEvidence
         ? "This factual span lacks current approved evidence. If it is needed to answer the customer's current request, run one focused search for that missing fact using the resolved conversation context. If no distinct approved evidence supports it, remove that span and preserve the other supported answer. Do not rephrase or repeat the unsupported claim."
+      : hasUnestablishedService
+        ? "The approved content describes a process but does not establish that REFAL performs or offers that process as a service. Remove only the unsupported attribution to REFAL. Keep useful process facts that the current-turn evidence states, such as what the institution reviews and who decides; say naturally that REFAL's specific role is not described. Preserve any supported answer about outcomes or guarantees. Do not turn an unknown service role into a claim that REFAL does or does not offer it."
       : hasUnsupportedRelation && hasContextMismatch
       ? "The comparison is not supported as drafted, and the quoted context span repeats or misuses earlier conversation. Use the immediately preceding relevant answer as the comparison set, not a narrower category. Remove the unsupported comparison and remove the full rejected repeat; do not restate it in new words, bullets or translation. Keep only supported information that adds value now. If no additional named service is established, acknowledge the prior scope briefly and ask for a specific area only when useful. Do not replace the removed text with a generic evidence or confirmation disclaimer, and do not search again unless a distinct missing fact is answerable from another source."
     : hasUnsupportedRelation
@@ -164,12 +169,21 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
     : hasContextMismatch
       ? "Correct the exact quoted context span. If it repeats or misuses earlier conversation, remove the full span rather than restating it in different words. Preserve other supported details, answer the current request directly, and do not narrate evidence or confirmation state."
     : "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. For a CONTEXT span, correct only the quoted passage to respect the customer's role, preference, or prior scope; preserve other supported facts. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support.";
+  const actionableCorrection = [
+    correction,
+    hasUnestablishedService && !correction.includes("The approved content describes a process")
+      ? "Separately, keep neutral process facts only when current-turn evidence states them, preserve the actor named by that evidence, and do not attribute the process to REFAL without explicit service evidence. State the specific REFAL role as unconfirmed when the evidence does not establish it."
+      : null,
+    hasUnansweredRequest
+      ? "Answer every unanswered part of the customer's current request explicitly. A follow-up question does not replace that answer; when approved content cannot support a part, state the narrowest accurate limit without claiming broader completeness or asking the customer to supply the missing company fact."
+      : null
+  ].filter(Boolean).join(" ");
   return {
     step,
     tool: "responsePolicyCheck",
     args: { attemptedType: decisionType },
     result: { ok: false, status: "policy_rejected", reasonCode: diagnosticCodes.join(","),
-      draft: policy.text, blockedClaims: policy.blockedClaims || [], correction }
+      draft: policy.text, blockedClaims: policy.blockedClaims || [], correction: actionableCorrection }
   };
 }
 
@@ -606,4 +620,4 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
   };
 }
 
-module.exports = { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS, boundAccumulatedKnowledgeEvidence };
+module.exports = { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS, boundAccumulatedKnowledgeEvidence, policyRejectionObservation };

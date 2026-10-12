@@ -25,6 +25,11 @@ test("request coverage accepts evidenced partial answers and identifies actual u
     assert.equal(invalid.technicalFailure,true);
     assert.equal(invalid.errorCode,"GROUNDING_VERDICT_SHAPE_INVALID");
   }
+  const inconsistent = validateGroundingVerdict({...base,requestCoverage:{outcome:"addressed",unmetAspects:["timing"]}},text,[{sourceRef:"scope"}],request);
+  assert.equal(inconsistent.technicalFailure, undefined);
+  assert.equal(inconsistent.valid, false);
+  assert.deepEqual(inconsistent.reasons, ["question_not_answered"]);
+  assert.deepEqual(inconsistent.blockedClaims,[{sentence:"timing",claimClass:"UNMET_REQUEST",reasons:["question_not_answered"]}]);
 });
 test("reviewer output defects have distinct safe diagnostics and never approve omitted claims", () => {
   assert.equal(validateGroundingVerdict(null, "Answer").errorCode, "GROUNDING_VERDICT_SHAPE_INVALID");
@@ -34,6 +39,18 @@ test("reviewer output defects have distinct safe diagnostics and never approve o
   assert.equal(result.technicalFailure,true);
   assert.equal(result.errorCode,"GROUNDING_VERDICT_COVERAGE_MISMATCH");
 });
+
+test("reviewer structural failure telemetry reports safe shape codes without draft text", () => {
+  const text = "The bank decides.";
+  const verdict = { segments: [{ text, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }],
+    languageValid: true, contextValid: false, contextIssues: [],
+    requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+  const result = validateGroundingVerdict(verdict, text, [], "How does the bank decide?");
+  assert.equal(result.errorCode, "GROUNDING_VERDICT_SHAPE_INVALID");
+  assert.deepEqual(result.diagnosticCodes, ["context_flag_mismatch"]);
+  assert.equal(JSON.stringify(result).includes(text), false);
+});
+
 test("context rejection identifies an exact actionable draft span and rejects opaque booleans", () => {
   const text = "We can help with accounting. We also offer property services.";
   const issue = "We also offer property services.";
@@ -43,6 +60,19 @@ test("context rejection identifies an exact actionable draft span and rejects op
   assert.deepEqual(result.blockedClaims,[{sentence:issue,claimClass:"CONTEXT",reasons:["context_mismatch"]}]);
   assert.equal(validateGroundingVerdict({...verdict,contextIssues:[]},text,[{sourceRef:"scope"}]).technicalFailure,true);
   assert.match(buildGroundingReviewMessages({text})[0].content,/quote only the exact offending draft spans in contextIssues/);
+});
+
+test("a non-matching reviewer context quote rejects the full draft as policy, not a technical failure", () => {
+  const text = "The company has tax and accounting services.";
+  const verdict = { segments: [{ text, status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }],
+    languageValid: true, contextValid: false, contextIssues: ["tax services for all clients"],
+    requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+  const result = validateGroundingVerdict(verdict, text, [{ sourceRef: "scope" }]);
+  assert.equal(result.valid, false);
+  assert.equal(result.technicalFailure, undefined);
+  assert.deepEqual(result.reasons, ["context_mismatch"]);
+  assert.deepEqual(result.blockedClaims, [{ sentence: text, claimClass: "CONTEXT", reasons: ["context_mismatch"] }]);
+  assert.deepEqual(result.diagnosticCodes, ["context_issue_span"]);
 });
 test("semantic clause segmentation normalizes omitted boundary spaces without losing punctuation coverage", () => {
   const text = "We continue the file within the tax scope—details depend on activity.";
@@ -168,6 +198,29 @@ test("ongoing conversation review sees the prior introduction and rejects a redu
       return { segments: [
         { text: opener, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
         { text: supportedText, status: "supported", evidenceRefs: [evidence.sourceRef], reasonCode: "supported" }
+      ], languageValid: true, contextValid: false, contextIssues: [opener], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.blockedClaims, [{ sentence: opener, claimClass: "CONTEXT", reasons: ["context_mismatch"] }]);
+});
+
+test("a trusted customer name does not make a redundant greeting appropriate on a substantive follow-up", async () => {
+  const opener = "• مرحبًا سامي،";
+  const answer = "خدماتنا تشمل تأسيس الشركات والضرائب والمحاسبة.";
+  const draft = `${opener}\n${answer}`;
+  const context = {
+    currentMessage: "مرحبا، ممكن أعرف شو بتقدّموا خدمات بقبرص؟", locale: "arabic",
+    contact: { name: "سامي", nameSource: "customer_stated" },
+    recentConversation: [{ role: "assistant", content: "أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group." }]
+  };
+  const result = await assessAgentDraft({ text: draft, evidenceItems: [evidence], context }, {
+    callModel: async messages => {
+      assert.match(messages[0].content, /A standalone greeting to the customer by name is still a greeting/u);
+      assert.equal(JSON.parse(messages[1].content).customerName, "سامي");
+      return { segments: [
+        { text: opener, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
+        { text: answer, status: "supported", evidenceRefs: [evidence.sourceRef], reasonCode: "supported" }
       ], languageValid: true, contextValid: false, contextIssues: [opener], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
     }
   });

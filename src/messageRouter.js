@@ -641,7 +641,7 @@ function profileText(user) {
 }
 
 function extractCustomerName(text) {
-  const value = String(text || "").trim();
+  const value = selfIntroductionClause(text);
   const selfIntroduction = /^(?:my name is|i am|i'm|call me|(?:أنا|انا) اسمي|اسمي|أنا|انا|με λένε|με λενε|λέγομαι|λεγομαι|ονομάζομαι|ονομαζομαι|είμαι\s+(?:ο|η|το)|ειμαι\s+(?:ο|η|το))\s+(.+)$/iu;
   const match = value.match(selfIntroduction);
   if (!match) return null;
@@ -660,8 +660,23 @@ function extractCustomerName(text) {
 // only unambiguous name-introduction forms here: the broader "I am ..." form
 // can also describe a need or role, so it remains disabled in this path.
 function extractExplicitCustomerName(text) {
-  if (!/^(?:my name is|call me|(?:أنا|انا) اسمي|اسمي|με λένε|με λενε|λέγομαι|λεγομαι|ονομάζομαι|ονομαζομαι)\s+/iu.test(String(text || "").trim())) return null;
-  return extractCustomerName(text);
+  const value = selfIntroductionClause(text);
+  const explicitIntro = /^(?:my name is|call me|(?:أنا|انا) اسمي|اسمي|με λένε|με λενε|λέγομαι|λεγομαι|ονομάζομαι|ονομαζομαι)\s+/iu;
+  const singleNameIntro = /^(?:أنا|انا)\s+[\p{L}\p{M}][\p{L}\p{M}'-]*[.!،؟?]*$/iu;
+  if (!explicitIntro.test(value) && !singleNameIntro.test(value)) return null;
+  return extractCustomerName(value);
+}
+
+// A self-introduction can follow a greeting or another clause in the same
+// customer message. Split only at sentence/clause boundaries, then keep the
+// existing explicit self-introduction grammar and name plausibility checks.
+// This does not treat an arbitrary phrase such as "I'm comparing options" as
+// a customer name.
+function selfIntroductionClause(text) {
+  const value = String(text || "").trim();
+  const clauses = value.split(/(?<=[,;:.!?؟،؛\n])\s+/u);
+  const marker = /^(?:my name is|i am|i'm|call me|(?:أنا|انا) اسمي|اسمي|أنا|انا|με λένε|με λενε|λέγομαι|λεγομαι|ονομάζομαι|ονομαζομαι|είμαι\s+(?:ο|η|το)|ειμαι\s+(?:ο|η|το))\s+/iu;
+  return clauses.find((clause) => marker.test(clause.trim()))?.trim() || value;
 }
 
 function isPlausibleCustomerName(value) {

@@ -41,7 +41,7 @@ function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} }
     "Evaluate the answer language against the customer's current request, including an explicit request for another language, with history for continuity. Evaluate contextual references and explicit preferences, including refusal to book or be contacted. For a comparative follow-up, compare each item in the draft with the actual prior answer and current evidence: repeated items must not be labeled new, and unsupported additions must be rejected. A draft may briefly restate earlier items for context while separately identifying a genuinely new, supported area; do not mark that new area context-invalid merely because earlier items are also mentioned. Project history or positioning is not by itself an additional service. A repeated list without a supported distinction does not answer a request for additional scope. In a scope comparison, repeating the full list already given plus a generic uncertainty disclaimer is redundant; flag the repeated span as a context issue and prefer a concise answer at the supported level. Do not demand a qualification question when the customer can be answered directly. If context is invalid, quote only the exact offending draft spans in contextIssues; do not return a bare boolean without actionable spans.",
     "Check the speaker/customer roles and interest boundaries from history. Do not attribute the company's assistance to the customer. Only a customer's explicit disinterest excludes a service area; a stated goal or preference for one service is not a ban on related areas. The current request sets the active answer scope and can reopen a later stage; honor earlier exclusions only for the named areas. Do not mark a directly responsive, unexcluded service fact context-invalid. Set contextValid false only for a wrong speaker, a contradicted reference, an ignored explicit preference, or irrelevant content that changes the answer's scope. Keep explicit exclusions out of the response. A broad source overview does not override a narrower current need. Quote each offending span exactly in contextIssues so correction targets only that passage.",
     "A follow-up question is useful only if it advances the customer's stated goal. Do not ask the customer to repeat, choose among, or restate aspects already explicit in the current request; when a company-specific detail is not documented, state that limit and stop. If the draft asks redundantly, mark only that exact question as a context issue.",
-    "The first assistant response in a conversation must naturally identify the configured agent, its role and group. If there is no prior assistant response in history and this introduction is missing, set contextValid false. In an ongoing conversation, assess opening text by its conversational function across Arabic, English and Greek, not by matching particular words. A self-introduction repeated from history or a social opener that merely restarts the conversation is a context issue when the current customer message calls for a substantive answer; later replies should start with that answer. Do not excuse redundant opening text as harmless style. If context is invalid, quote the exact redundant span in contextIssues so it can be removed without changing the supported answer. A customer-stated saved name may be used for natural address, but never invent a name, title, or honorific; a current explicit correction overrides the saved name.",
+    "The first assistant response in a conversation must naturally identify the configured agent, its role and group. If there is no prior assistant response in history and this introduction is missing, set contextValid false. In an ongoing conversation, assess opening text by its conversational function across Arabic, English and Greek, not by matching particular words. A self-introduction repeated from history or a social opener that merely restarts the conversation is a context issue when the current customer message calls for a substantive answer; later replies should start with that answer. A standalone greeting to the customer by name is still a greeting, even when the name is trusted. For a substantive request, set contextValid false for any such redundant greeting and quote only that opening span in contextIssues so it can be removed without changing the supported answer. Do not excuse redundant opening text as harmless style. A customer-stated saved name may be used naturally inside the answer, but never invent a name, title, or honorific; a current explicit correction overrides the saved name.",
     "Assess requestCoverage separately from factual support. Set outcome addressed when the draft directly answers the current request, or supported_partial when it answers the supported parts and accurately identifies evidence limits. Do not demand unavailable contract details, an exhaustive list, or a qualification answer before accepting a useful grounded overview. Set not_addressed only for an actual ignored request aspect; unmetAspects must then quote those exact spans from the current customer request, never a rationale or a newly invented requirement. For addressed/supported_partial, unmetAspects must be empty. Requested short bullet lists are allowed. Return only reason codes, exact claim text and quoted request spans; no rationale or hidden reasoning."
   ].join("\n") }, { role: "user", content: JSON.stringify({
     identity: reviewIdentity(),
@@ -101,20 +101,40 @@ async function callGroundingReviewer(messages, { onUsage } = {}) {
 function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequest = null) {
   const normalize = (value) => String(value || "").replace(/\s+/gu, " ").trim();
   const normalizeCoverage = (value) => normalize(value).replace(/(^|\s)[-*•]\s+/gu, "$1").replace(/\s*([,.;:!?؟،؛—–()[\]])\s*/gu, "$1");
+  const diagnosticCodes = [];
+  if (!verdict || !Array.isArray(verdict.segments) || !verdict.segments.length || verdict.segments.length > 24) diagnosticCodes.push("segments_shape");
+  if (!verdict || !["languageValid", "contextValid"].every((key) => typeof verdict[key] === "boolean")) diagnosticCodes.push("validity_flags_shape");
+  if (!verdict || !Array.isArray(verdict.contextIssues) || verdict.contextIssues.length > 5) diagnosticCodes.push("context_issues_shape");
+  const invalidContextIssueShape = verdict?.contextIssues?.some(issue => typeof issue !== "string" || !issue.trim() || issue.length > 500);
+  const invalidContextIssueSpan = verdict?.contextIssues?.some(issue => typeof issue === "string" && issue.trim() && issue.length <= 500
+    && !normalize(text).includes(normalize(issue)));
+  if (invalidContextIssueShape) diagnosticCodes.push("context_issue_shape");
+  if (invalidContextIssueSpan) diagnosticCodes.push("context_issue_span");
+  if (typeof verdict?.contextValid === "boolean" && Array.isArray(verdict?.contextIssues)
+    && verdict.contextValid !== (verdict.contextIssues.length === 0)) diagnosticCodes.push("context_flag_mismatch");
+  if (!["addressed", "supported_partial", "not_addressed"].includes(verdict?.requestCoverage?.outcome)) diagnosticCodes.push("request_coverage_outcome");
+  if (!Array.isArray(verdict?.requestCoverage?.unmetAspects) || verdict.requestCoverage.unmetAspects.length > 5) diagnosticCodes.push("unmet_aspects_shape");
+  if (verdict?.requestCoverage?.unmetAspects?.some(aspect => typeof aspect !== "string" || !aspect.trim() || aspect.length > 300 || (currentRequest !== null && !normalize(currentRequest).includes(normalize(aspect))))) diagnosticCodes.push("unmet_aspect_span");
+  if (verdict?.requestCoverage?.outcome === "not_addressed" && !verdict.requestCoverage.unmetAspects?.length) diagnosticCodes.push("unmet_aspects_missing");
+  if (Array.isArray(verdict?.segments) && verdict.segments.some((item) => !item || typeof item.text !== "string"
+    || !["supported", "unsupported", "identity", "non_factual"].includes(item.status)
+    || !Array.isArray(item.evidenceRefs) || !REVIEW_CODES.includes(item.reasonCode))) diagnosticCodes.push("segment_fields");
   const badShape = !verdict || !Array.isArray(verdict.segments) || !verdict.segments.length || verdict.segments.length > 24
     || !["languageValid", "contextValid"].every((key) => typeof verdict[key] === "boolean")
     || !Array.isArray(verdict.contextIssues) || verdict.contextIssues.length > 5
-    || verdict.contextIssues.some(issue => typeof issue !== "string" || !issue.trim() || issue.length > 500 || !normalize(text).includes(normalize(issue)))
+    || invalidContextIssueShape
     || verdict.contextValid !== (verdict.contextIssues.length === 0)
     || !["addressed","supported_partial","not_addressed"].includes(verdict.requestCoverage?.outcome)
     || !Array.isArray(verdict.requestCoverage?.unmetAspects) || verdict.requestCoverage.unmetAspects.length > 5
     || verdict.requestCoverage.unmetAspects.some(aspect => typeof aspect!=="string" || !aspect.trim() || aspect.length>300 || (currentRequest!==null && !normalize(currentRequest).includes(normalize(aspect))))
-    || (verdict.requestCoverage.outcome==="not_addressed" ? !verdict.requestCoverage.unmetAspects.length : verdict.requestCoverage.unmetAspects.length!==0);
+    || (verdict.requestCoverage.outcome === "not_addressed" && !verdict.requestCoverage.unmetAspects.length);
   const invalidSegments = badShape || verdict.segments.some((item) => !item || typeof item.text !== "string"
     || !["supported", "unsupported", "identity", "non_factual"].includes(item.status)
     || !Array.isArray(item.evidenceRefs) || !REVIEW_CODES.includes(item.reasonCode));
   if (invalidSegments || normalizeCoverage(verdict.segments.map((item) => item.text).join(" ")) !== normalizeCoverage(text)) {
-    return { valid: false, technicalFailure: true, errorCode: invalidSegments ? "GROUNDING_VERDICT_SHAPE_INVALID" : "GROUNDING_VERDICT_COVERAGE_MISMATCH", reasons: ["grounding_verdict_invalid"], blockedClaims: [] };
+    const coverageMismatch = !invalidSegments;
+    return { valid: false, technicalFailure: true, errorCode: coverageMismatch ? "GROUNDING_VERDICT_COVERAGE_MISMATCH" : "GROUNDING_VERDICT_SHAPE_INVALID",
+      diagnosticCodes: coverageMismatch ? ["segment_coverage_mismatch"] : [...new Set(diagnosticCodes)], reasons: ["grounding_verdict_invalid"], blockedClaims: [] };
   }
   const refs = new Set(evidenceItems.map((item) => item.sourceRef).filter(Boolean));
   const blockedClaims = [];
@@ -129,12 +149,20 @@ function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequ
   const reasons = [...new Set(blockedClaims.flatMap((item) => item.reasons))];
   if (!verdict.languageValid) reasons.push("language_mismatch");
   if (!verdict.contextValid) reasons.push("context_mismatch");
-  if (!verdict.contextValid) blockedClaims.push(...verdict.contextIssues.map(sentence => ({ sentence, claimClass: "CONTEXT", reasons: ["context_mismatch"] })));
-  if (verdict.requestCoverage.outcome === "not_addressed") {
+  if (invalidContextIssueSpan) {
+    reasons.push("context_mismatch");
+    blockedClaims.push({ sentence: text, claimClass: "CONTEXT", reasons: ["context_mismatch"] });
+  } else if (!verdict.contextValid) blockedClaims.push(...verdict.contextIssues.map(sentence => ({ sentence, claimClass: "CONTEXT", reasons: ["context_mismatch"] })));
+  if (verdict.requestCoverage.outcome === "not_addressed" || verdict.requestCoverage.unmetAspects.length > 0) {
     reasons.push("question_not_answered");
     blockedClaims.push(...verdict.requestCoverage.unmetAspects.map(sentence => ({sentence,claimClass:"UNMET_REQUEST",reasons:["question_not_answered"]})));
   }
-  return { valid: reasons.length === 0, reasons, blockedClaims, segments: verdict.segments, requestCoverage:verdict.requestCoverage };
+  const requestCoverage = verdict.requestCoverage.unmetAspects.length
+    ? { ...verdict.requestCoverage, outcome: "not_addressed" }
+    : verdict.requestCoverage;
+  const uniqueReasons = [...new Set(reasons)];
+  return { valid: uniqueReasons.length === 0, reasons: uniqueReasons, blockedClaims, segments: verdict.segments, requestCoverage,
+    ...(invalidContextIssueSpan ? { diagnosticCodes: ["context_issue_span"] } : {}) };
 }
 
 async function assessAgentDraft({ text, evidenceItems = [], dynamicEvidenceItems = [], context = {}, step = 0 } = {}, {
@@ -155,7 +183,8 @@ async function assessAgentDraft({ text, evidenceItems = [], dynamicEvidenceItems
     result = { valid: false, technicalFailure: true, reasons: ["grounding_review_failed"], errorCode: code, blockedClaims: [] };
   }
   try { await onModelCall?.({ stage: "validation", step, outcome, durationMs: Math.round(performance.now() - started), evidenceCount: evidence.length,
-    evidenceIds: evidence.map((item) => item.sourceRef).filter(Boolean), ...(result.errorCode ? { errorCode: result.errorCode } : {}) }); } catch { /* Telemetry must not change validation. */ }
+    evidenceIds: evidence.map((item) => item.sourceRef).filter(Boolean), ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+    ...(result.diagnosticCodes ? { diagnosticCodes: result.diagnosticCodes } : {}) }); } catch { /* Telemetry must not change validation. */ }
   return result;
 }
 

@@ -104,6 +104,69 @@ test("combined comparison and context rejection directs the agent to remove the 
   assert.equal(result.response, response);
 });
 
+test("rejection feedback keeps an unanswered request actionable when the draft also has an unsupported relation", async () => {
+  const draft = "Those are the areas related to our services.";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "Are those all your services, or are there other areas too?", locale: "english"
+  }), {
+    maxSteps: 2,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: draft };
+      const feedback = observations.find(item => item.tool === "responsePolicyCheck");
+      assert.equal(feedback.result.reasonCode, "unsupported_relation,question_not_answered");
+      assert.match(feedback.result.correction, /Answer every unanswered part of the customer's current request explicitly/);
+      assert.match(feedback.result.correction, /A follow-up question does not replace that answer/);
+      return { type: "respond", text: "The overview names the connected areas discussed and does not describe another separate service area." };
+    },
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["unsupported_relation", "question_not_answered"], blockedClaims: [
+        { sentence: draft, reasons: ["unsupported_relation"] },
+        { sentence: "Are those all your services, or are there other areas too?", claimClass: "UNMET_REQUEST", reasons: ["question_not_answered"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+});
+
+test("service attribution rejection preserves supported process facts as a partial answer", async () => {
+  const rejected = "We prepare and submit the bank application for you.";
+  const recovered = "The institution reviews the company, owners and fund flow and makes the decision. I can't confirm which preparation or submission steps REFAL handles, and approval is not guaranteed.";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "How can you help with a company bank account, and is approval guaranteed?", locale: "english"
+  }), {
+    maxSteps: 2,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: rejected };
+      const feedback = observations.find(item => item.tool === "responsePolicyCheck");
+      assert.equal(feedback.result.reasonCode, "service_not_established");
+      assert.match(feedback.result.correction, /describes a process but does not establish that REFAL performs/u);
+      assert.match(feedback.result.correction, /Keep useful process facts that the current-turn evidence states/u);
+      assert.match(feedback.result.correction, /Preserve any supported answer about outcomes or guarantees/u);
+      return { type: "respond", text: recovered };
+    },
+    assessDraft: async ({ text }) => text === rejected
+      ? { valid: false, reasons: ["service_not_established"], blockedClaims: [{ sentence: rejected, reasons: ["service_not_established"] }] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, recovered);
+});
+
+test("mixed unsupported-service and unsupported-detail feedback preserves neutral process facts", async () => {
+  const { policyRejectionObservation } = require("./agentLoop");
+  const observation = policyRejectionObservation(2, "respond", {
+    reasons: ["no_approved_evidence", "service_not_established"],
+    blockedClaims: [{ sentence: "We submit the bank application", reasons: ["service_not_established"] }]
+  }, ["no_approved_evidence", "service_not_established"], [{ tool: "searchApprovedKnowledge" }]);
+  const correction = observation.result.correction;
+  assert.match(correction, /neutral process facts only when current-turn evidence states them/u);
+  assert.match(correction, /do not attribute the process to REFAL without explicit service evidence/u);
+});
+
 test("a no-evidence rejection routes general company facts to one knowledge search before fallback", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const source = { document_id: "formation-doc", section_index: "1", chunk_id: "package", chunk_index: 0,
