@@ -50,6 +50,24 @@ test("an equally ranked direct result from the latest primary search replaces st
   assert.deepEqual(budget.retainedIds, ["current-primary-overview"]);
   assert.deepEqual(budget.replacedIds, ["earlier-topic"]);
 });
+
+test("a strong earlier same-turn match survives query drift, but clearly stronger evidence replaces it", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const round = (id, relevance, primarySearchMatch) => ({ result: { modelObservation: {
+    type: "approved_knowledge", primarySearchRefs: primarySearchMatch ? [id] : [], evidence: [
+      { sourceRef: id, title: id, content: "x".repeat(350), relevance, selectionOrder: 0 }
+    ]
+  } } });
+  const observations = [round("residence-scope", 1, true)];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(round("formation-noise", 1, true));
+  assert.deepEqual(boundAccumulatedKnowledgeEvidence(observations, 500).retainedIds, ["residence-scope"]);
+
+  observations.push(round("specific-residence-conditions", 3, true));
+  const stronger = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(stronger.retainedIds, ["specific-residence-conditions"]);
+  assert.deepEqual(stronger.replacedIds, ["residence-scope"]);
+});
 const { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 

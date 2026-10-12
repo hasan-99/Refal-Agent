@@ -242,7 +242,11 @@ function boundAccumulatedKnowledgeEvidence(observations, maxChars = 10000, maxBy
   }
   const latestRoundIndex = Math.max(0, rounds.length - 1);
   const isLatestPrimaryMatch = (candidate) => candidate.roundIndex === latestRoundIndex && candidate.primarySearchMatch;
-  const selectionScore = (candidate) => Number(candidate.item.relevance || 1) + (isLatestPrimaryMatch(candidate) ? 0.5 : 0);
+  const selectionScore = (candidate) => Number(candidate.item.relevance || 1)
+    // Same-turn searches answer different parts of one request. Keep a strong
+    // earlier primary match when a later contextual query drifts, while a
+    // genuinely higher-ranked new result can still replace it.
+    + (candidate.primarySearchMatch ? (isLatestPrimaryMatch(candidate) ? 0.5 : 1.5) : 0);
   const ranked = [...pool.values()].sort((a, b) => selectionScore(b) - selectionScore(a)
     // A focused current search gets a modest, bounded preference over stale
     // non-history context. Explicitly relevant history retains its existing

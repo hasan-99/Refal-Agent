@@ -248,6 +248,32 @@ test("a directly relevant customer-wording section survives the model and valida
   assert.ok(validatorEvidence.some((item) => item.sourceRef === "residence-conditions"));
 });
 
+test("a second-ranked section from the primary contextual search survives when it contains needed conditions", async () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const currentMessage = "Does opening a company automatically grant residence, and what conditions apply?";
+  const section = (id, heading, content) => ({ document_id: id, section_index: 0, chunk_id: id,
+    document_title: heading, heading, content, review_status: "approved" });
+  const store = { searchKnowledge: async (query) => query === "company and residence requirements"
+    ? [section("broad-context", "Company and residence overview", "Company formation and residence are separate matters. " + "b".repeat(500)),
+      section("rank-two-conditions", "Residence eligibility conditions", "This route requires qualifying investment, actual operations, employees, and physical presence. " + "c".repeat(240)),
+      section("rank-three-detail", "Other residence detail", "d".repeat(1000))]
+    : query === "company residence context"
+      ? [section("complementary-context", "Company context", "e".repeat(500))]
+      : [section("exact-wording", "General information", "g".repeat(1000))] };
+  const result = await searchApprovedKnowledge({ query: "company and residence requirements", relatedQueries: ["company residence context"] }, {
+    store, currentMessage, embedText: async () => null, matchCount: 6
+  });
+  const budget = boundAccumulatedKnowledgeEvidence([{ result: { modelObservation: result.modelObservation } }], 3000);
+  assert.ok(result.modelObservation.primarySearchRefs.includes("rank-two-conditions"));
+  assert.ok(budget.retainedIds.includes("rank-two-conditions"), JSON.stringify({
+    primary: result.modelObservation.primarySearchRefs,
+    candidates: result.modelObservation.candidateEvidence.map(({ sourceRef, relevance, selectionOrder }) => ({ sourceRef, relevance, selectionOrder })),
+    retained: budget.retainedIds
+  }));
+  assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "rank-two-conditions"));
+  assert.ok(result.modelObservation.policyEvidence.some((item) => item.sourceRef === "rank-two-conditions"));
+});
+
 test("searchApprovedKnowledge also retrieves the immediately prior customer wording after a language switch, with personal data redacted", async () => {
   const calls = [];
   const priorArabic = "هل تأسيس الشركة وحده يعطيني إقامة؟ تواصلوا معي على test@example.com أو +357 99123456";

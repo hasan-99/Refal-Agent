@@ -561,10 +561,13 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
       const queryWeight = queryIndex === 0 ? 4
         : queryIndex === historicalQueryIndex ? 8
           : queryIndex < contextualCount ? 4 : 1;
-      // Preserve one best section from each bounded query in the later prompt
-      // budget. Repeated hits from broad variants can otherwise push the best
-      // result of a complementary search out before generation and validation.
-      if ((queryIndex < contextualCount && index === 0) || (queryIndex === currentQueryIndex && index === 0)) group.primaryMatch = true;
+      // Preserve both leading results from the model's primary contextual
+      // query: the first may establish the broad topic while the second holds
+      // a needed condition. Complementary queries still contribute only their
+      // top result so broad variants cannot crowd out current evidence.
+      if ((queryIndex === 0 && index < 2)
+        || (queryIndex > 0 && queryIndex < contextualCount && index === 0)
+        || (queryIndex === currentQueryIndex && index === 0)) group.primaryMatch = true;
       if (queryIndex === historicalQueryIndex) group.historicalMatch = true;
       if (queryIndex === currentQueryIndex && (group.currentQueryRank === null || index < group.currentQueryRank)) group.currentQueryRank = index;
       group.contributions.push(queryWeight / (60 + index + 1));
@@ -704,7 +707,10 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // a condition or the other half of a multi-part answer. Keep the ranked
   // candidate window, then let the existing complete-section and prompt
   // budgets retain as many as fit for BOTH generation and validation.
-  const selectedRows = visibleCatalogue.flatMap((item, index) => sectionRows.get(item.key)
+  const prioritizedCatalogue = visibleCatalogue.map((item, index) => ({ item, index,
+    primarySearchMatch: sectionRows.get(item.key).some((row) => row.primarySearchMatch === true) }))
+    .sort((a, b) => Number(b.primarySearchMatch) - Number(a.primarySearchMatch) || a.index - b.index);
+  const selectedRows = prioritizedCatalogue.flatMap(({ item }, selectionRank) => sectionRows.get(item.key)
     // Fusion scores depend on how many related searches were issued, so their
     // raw values are not comparable across separate tool calls. Rank within
     // this search round instead; accumulated-evidence budgeting can then
@@ -713,12 +719,12 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       // Keep a relevant original-language history match distinguishable from
       // the current query; the history search is already gated by semantic
       // alignment when embeddings are available.
-      selectionRelevance: 1 / (index + 1) + (row.historicalSearchMatch ? 1 : 0)
+      selectionRelevance: 1 / (selectionRank + 1) + (row.historicalSearchMatch ? 1 : 0)
         // Preserve only the strongest few exact-wording matches so low-value
         // tail results cannot crowd out an already strong resolved overview.
         + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
       primarySearchMatch: row.primarySearchMatch === true,
-      selectionOrder: index })));
+      selectionOrder: selectionRank })));
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
   modelObservation.primarySearchRefs = [...new Set(selectedRows.filter((row) => row.primarySearchMatch)
     .map((row) => row.chunk_id).filter((id) => typeof id === "string"))];
