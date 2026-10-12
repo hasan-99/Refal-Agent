@@ -117,9 +117,18 @@ let activeShadowTurns = 0;
 
 function buildRecentConversation(history = []) {
   const turns = [];
-  for (const entry of Array.isArray(history) ? history.slice(-12) : []) {
+  const entries = Array.isArray(history) ? history.slice(-12) : [];
+  for (const [index, entry] of entries.entries()) {
     if (typeof entry?.message === "string" && entry.message.trim()) turns.push({ role: "user", content: entry.message });
-    if (typeof entry?.response === "string" && entry.response.trim()) turns.push({ role: "assistant", content: entry.response });
+    // Customer wording carries the preferences and references needed to
+    // understand the thread. Older assistant replies are not factual evidence
+    // and can consume the prompt space needed for approved knowledge, so keep
+    // the opening reply (for introduction continuity) and the three latest
+    // replies in full.
+    const keepAssistantReply = index === 0 || index >= entries.length - 3;
+    if (keepAssistantReply && typeof entry?.response === "string" && entry.response.trim()) {
+      turns.push({ role: "assistant", content: entry.response });
+    }
   }
   return turns;
 }

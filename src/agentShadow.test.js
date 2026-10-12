@@ -5,6 +5,7 @@ const {
   recordShadowComparison,
   isShadowEnabled,
   buildShadowToolRegistry,
+  buildRecentConversation,
   maxConcurrency,
   __resetShadowConcurrency
 } = require("./agentShadow");
@@ -16,6 +17,21 @@ function scriptedDecider(decisions) {
 }
 
 test.beforeEach(() => __resetShadowConcurrency());
+
+test("buildRecentConversation preserves customer context and introduction while trimming older assistant prose", () => {
+  const history = Array.from({ length: 8 }, (_, index) => ({
+    message: `customer turn ${index + 1}${index === 2 ? " — no investment or property services" : ""}`,
+    response: index === 0 ? "Hello, I am REFAL, Refalco Group's digital business agent." : `assistant reply ${index + 1} ${"detail ".repeat(30)}`
+  }));
+  const conversation = buildRecentConversation(history);
+
+  assert.equal(conversation.filter((turn) => turn.role === "user").length, 8);
+  assert.ok(conversation.some((turn) => turn.content.includes("no investment or property services")));
+  assert.ok(conversation.some((turn) => turn.content.includes("I am REFAL")));
+  assert.ok(conversation.some((turn) => turn.content.startsWith("assistant reply 8")));
+  assert.equal(conversation.some((turn) => turn.content.startsWith("assistant reply 2")), false);
+  assert.equal(conversation.filter((turn) => turn.role === "assistant").length, 4);
+});
 
 test("isShadowEnabled defaults to false and only true for the literal 'true' string", () => {
   assert.equal(isShadowEnabled({}), false);
