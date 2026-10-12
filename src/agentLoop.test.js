@@ -212,6 +212,57 @@ test("an individualized eligibility clause is removed while the grounded summary
   assert.equal(result.response, "Refalco Group offers company formation.");
 });
 
+test("a claim that a topic is an established service is removed while supported answer content is preserved", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group provides company formation and corporate support.", review_status: "approved" };
+  const unsupported = "We also provide partner-change support.";
+  const supported = "Refalco Group provides company formation and corporate support.";
+  const draft = `${supported} ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Can you summarize the relevant services?", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["service_not_established"], blockedClaims: [{ sentence: unsupported, reasons: ["service_not_established"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, supported);
+});
+
+test("unsupported service claims and evidence narration are removed without discarding a grounded partial answer", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "formation-doc", section_index: "1", chunk_id: "formation", chunk_index: 0,
+    document_title: "Approved formation details", heading: "Formation steps",
+    content: "The team prepares and submits company formation documents and follows up with the Companies Registry.", review_status: "approved" };
+  const supported = "The team prepares and submits company formation documents and follows up with the Companies Registry.";
+  const unsupportedService = "We provide ongoing accounting support.";
+  const evidenceNarration = "The approved information confirms that.";
+  const draft = `${supported} ${unsupportedService} ${evidenceNarration}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize the relevant services.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["service_not_established", "context_mismatch"], blockedClaims: [
+        { sentence: unsupportedService, reasons: ["service_not_established"] },
+        { sentence: evidenceNarration, reasons: ["context_mismatch"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, supported);
+});
+
 test("a two-search turn keeps one tool-free correction step after the second rejected draft", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const sources = [

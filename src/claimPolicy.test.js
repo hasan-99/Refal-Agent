@@ -430,6 +430,22 @@ test("qualified absence of a guaranteed government timeline is not mistaken for 
   assert.deepEqual(mixed.reasons, ["guarantee_marker"]);
 });
 
+test("a contracted statement that approval is not guaranteed remains a permitted safeguard", () => {
+  for (const sentence of [
+    "A bank account isn't guaranteed.",
+    "A bank account is not guaranteed.",
+    "Bank approval wasn't guaranteed by the application."
+  ]) {
+    const verdict = classifyClaim(sentence, { evidence: [] });
+    assert.notEqual(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, sentence);
+    assert.equal(verdict.allowed, true, sentence);
+    assert.equal(containsGuaranteeMarker(sentence), false, sentence);
+  }
+  const mixed = classifyClaim("An account isn't guaranteed, but we guarantee approval.", { evidence: [] });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(mixed.allowed, false);
+});
+
 test("100% approval is caught even though \\b can never match after a percent sign", () => {
   const verdict = classifyClaim("This route has 100% approval for every applicant.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, verdict.reasons.join(", "));

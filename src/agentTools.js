@@ -543,19 +543,13 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
       const group = sections.get(key);
       if (seenInQuery.has(key)) continue;
       seenInQuery.add(key);
-      // Reciprocal-rank fusion rewards a section that consistently answers
-      // several complementary searches, while weighting model-resolved
-      // queries twice as strongly as the raw current message. Taking only the
-      // best rank let a single unrelated first result tie a relevant section
-      // found again by later queries, then win solely by arrival order.
-      // The customer's own prior-language wording is direct context for this
-      // follow-up and can retrieve a translated section that model paraphrases
-      // miss. Preserve its signal through both fusion and the later prompt cap.
-      // A prior-language customer question is the strongest direct context
-      // for a cross-language follow-up. Keep its ranked results visible when
-      // a broad English summary query and two complementary searches compete
-      // for the bounded evidence list.
-      const queryWeight = queryIndex === historicalQueryIndex ? 12 : queryIndex < contextualCount ? 2 : 1;
+      // The primary query expresses the current need and must anchor the fused
+      // ranking. Related queries can add distinct coverage, and prior-language
+      // wording preserves follow-up context, but repeated lower-priority hits
+      // must not push the primary overview out of the bounded answer context.
+      const queryWeight = queryIndex === 0 ? 4
+        : queryIndex === historicalQueryIndex ? 8
+          : queryIndex < contextualCount ? 4 : 1;
       group.score += queryWeight / (60 + index + 1);
       group.rows.push(...rows.filter((candidate) => {
         const candidateKey = knowledgeSectionIdentity(candidate, index);

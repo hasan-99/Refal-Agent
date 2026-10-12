@@ -273,7 +273,7 @@ function splitClaims(text) {
 // `[^.!?;,]{0,90}` wildcard the verb forms carry: they strip only the negated
 // phrase itself, so "النتيجة غير مضمونة ولكن نضمن الموافقة" still blocks on its
 // second clause.
-const rawNegatedGuarantee = /(?:\b(?:i|we|refal|refalco|business)\s+)?\b(?:can(?:not|['’]t)|cannot|could\s+not|couldn['’]t|do(?:es)?\s+not|don['’]t|will\s+not|won['’]t|never)\s+(?:guarantee|guarantees|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:لا\s+(?:أستطيع|نستطيع|يمكنني|يمكننا)|ما\s+(?:فيني|فينا|بقدر|منقدر|بنقدر))\s+(?:أضمن|ضمان|تأكيد|أؤكد|نضمن|أعد)[^.!?;,؟؛،]{0,90}|δεν\s+μπορ\p{L}+\s+να\s+(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}|\b(?:is|are|was|were|it['’]s)?\s*(?:not|no)\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b|\bcannot\s+be\s+guaranteed\b|\bwithout\s+(?:any\s+)?guarantee(?:s)?\b|(?:ليست|ليس|غير|مو|مش)(?:\s+\S+){0,3}\s*مضمون\p{L}*|ما\s+(?:في|فيه|فيها|إلها|إله|لها|له)\s+(?:موعد|تاريخ|وقت|مدة)(?:\s+\S+){0,2}\s+مضمون\p{L}*|δεν\s+είναι\s+εγγυημέν\p{L}*|χωρίς\s+(?:καμία\s+)?εγγύηση|\b(?:nobody|no\s*-?\s*one|none\s+of\s+us|no\s+adviser|no\s+agent)\s+(?:can|could|will|may|is\s+able\s+to)\s+(?:guarantee|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:ما\s+(?:حد|في\s+حدا)|محدا|لا\s+أحد|ولا\s+حد)(?:\s+\S+){0,2}\s*(?:يضمن|بيضمن|يقدر\s+يضمن|بيقدر\s+يضمن|يوعد|بيوعد|يؤكد)[^.!?;,؟؛،]{0,90}|κανείς\s+δεν\s+(?:μπορεί\s+να\s+)?(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}/giu;
+const rawNegatedGuarantee = /(?:\b(?:i|we|refal|refalco|business)\s+)?\b(?:can(?:not|['’]t)|cannot|could\s+not|couldn['’]t|do(?:es)?\s+not|don['’]t|will\s+not|won['’]t|never)\s+(?:guarantee|guarantees|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:لا\s+(?:أستطيع|نستطيع|يمكنني|يمكننا)|ما\s+(?:فيني|فينا|بقدر|منقدر|بنقدر))\s+(?:أضمن|ضمان|تأكيد|أؤكد|نضمن|أعد)[^.!?;,؟؛،]{0,90}|δεν\s+μπορ\p{L}+\s+να\s+(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}|\b(?:(?:is|are|was|were|it['’]s)?\s*(?:not|no)|(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t))\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b|\bcannot\s+be\s+guaranteed\b|\bwithout\s+(?:any\s+)?guarantee(?:s)?\b|(?:ليست|ليس|غير|مو|مش)(?:\s+\S+){0,3}\s*مضمون\p{L}*|ما\s+(?:في|فيه|فيها|إلها|إله|لها|له)\s+(?:موعد|تاريخ|وقت|مدة)(?:\s+\S+){0,2}\s+مضمون\p{L}*|δεν\s+είναι\s+εγγυημέν\p{L}*|χωρίς\s+(?:καμία\s+)?εγγύηση|\b(?:nobody|no\s*-?\s*one|none\s+of\s+us|no\s+adviser|no\s+agent)\s+(?:can|could|will|may|is\s+able\s+to)\s+(?:guarantee|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:ما\s+(?:حد|في\s+حدا)|محدا|لا\s+أحد|ولا\s+حد)(?:\s+\S+){0,2}\s*(?:يضمن|بيضمن|يقدر\s+يضمن|بيقدر\s+يضمن|يوعد|بيوعد|يؤكد)[^.!?;,؟؛،]{0,90}|κανείς\s+δεν\s+(?:μπορεί\s+να\s+)?(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}/giu;
 const [, NEGATED_GUARANTEE] = foldRulePatterns([["negated_guarantee", rawNegatedGuarantee]])[0];
 
 // P2.6 defect CLAIM-4 (High). `NEGATED_GUARANTEE` above only covers a refusal to
@@ -448,6 +448,15 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
     .replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (guaranteeRules.some(([, pattern]) => pattern.test(assertedGuaranteeText))) {
     return { claimClass: CLAIM_CLASSES.GUARANTEE, allowed: false, reasons: ["guarantee_marker"], language: resolvedLanguage, unsupportedNumbers: [] };
+  }
+  // A sentence such as "A bank account isn't guaranteed" leaves its subject
+  // behind when the negated guarantee predicate is stripped above. That
+  // subject alone is not an affirmative company fact; retain this ordinary
+  // customer-facing safeguard as neutral. The positive-guarantee scan above
+  // still runs first, so a mixed or contradictory promise remains blocked.
+  const standaloneNegatedGuarantee = /^[\p{L}\p{N}][^.!?؟;،]{0,120}?\b(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t|is\s+not|are\s+not|was\s+not|were\s+not)\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b[^.!?؟;،]{0,90}[.!?؟]*$/iu;
+  if (standaloneNegatedGuarantee.test(normalized)) {
+    return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
 
   // P2.2 defect CLAIM-2 (High). A QUESTION asserts no fact, so it can be

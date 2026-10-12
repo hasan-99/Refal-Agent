@@ -107,7 +107,7 @@ function removeRejectedEvidenceSpans(text, blockedClaims) {
   const claims = blockedClaims.filter((claim) => {
     const reasons = claim?.reasons || [];
     return reasons.length > 0 && reasons.every((reason) =>
-      ["no_approved_evidence", "entities_not_in_evidence", "unsupported_relation", "personalized_marker"].includes(reason));
+      ["no_approved_evidence", "entities_not_in_evidence", "service_not_established", "unsupported_relation", "personalized_marker", "context_mismatch"].includes(reason));
   });
   if (!claims.length || claims.length !== blockedClaims.length) return null;
   let corrected = String(text || "");
@@ -123,7 +123,7 @@ function removeRejectedEvidenceSpans(text, blockedClaims) {
 
 async function attemptEvidenceBoundPartialCorrection(text, policy, thresholds, context, assessDraft, step) {
   if (!policy.reasons.every((reason) =>
-    ["no_approved_evidence", "prohibited_claim", "unconditional_prohibition", "unsupported_relation", "personalized_marker"].includes(reason))) return null;
+    ["no_approved_evidence", "prohibited_claim", "service_not_established", "unconditional_prohibition", "unsupported_relation", "personalized_marker", "context_mismatch"].includes(reason))) return null;
   const evidenceItems = currentDraftEvidence(context.observations || [], context);
   const blockedClaims = Array.isArray(policy.blockedClaims) && policy.blockedClaims.length
     ? policy.blockedClaims
