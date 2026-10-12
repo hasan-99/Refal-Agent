@@ -72,6 +72,16 @@ function normalizeClaimText(text) {
   );
 }
 
+// Arabic's explicitly pointed form-II verb "أضمّن" means "I include". The
+// general normalizer removes shadda, making it indistinguishable from "أضمن"
+// ("I guarantee") and causing a stated service exclusion to be misclassified.
+// Preserve this distinction only in guarantee scans; unpointed guarantees stay
+// guarded by the existing rule set.
+function maskPointedArabicInclusion(text) {
+  return String(text === null || text === undefined ? "" : text)
+    .replace(/(?<![\p{L}\p{N}])أضمّن(?![\p{L}\p{N}])/gu, " ");
+}
+
 // -------------------------------------------------------------------- numbers
 
 // Arabic-Indic (U+0660-0669) and Extended Arabic-Indic (U+06F0-06F9) digits are
@@ -428,7 +438,9 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
   if (!hasContent(assertedText)) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
-  if (guaranteeRules.some(([, pattern]) => pattern.test(assertedText))) {
+  const assertedGuaranteeText = normalizeClaimText(maskPointedArabicInclusion(original))
+    .replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  if (guaranteeRules.some(([, pattern]) => pattern.test(assertedGuaranteeText))) {
     return { claimClass: CLAIM_CLASSES.GUARANTEE, allowed: false, reasons: ["guarantee_marker"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
 
@@ -497,7 +509,7 @@ function evaluateAnswerClaims(text, { evidence = [], language } = {}) {
 // register as a guarantee. That carve-out is why this is a function and not an
 // exported regex.
 function containsGuaranteeMarker(text) {
-  return assertedClaimText(text, guaranteeRules);
+  return assertedClaimText(maskPointedArabicInclusion(text), guaranteeRules);
 }
 
 // P2.6 finding G-01, second half. The two forbidden outputs that survived the

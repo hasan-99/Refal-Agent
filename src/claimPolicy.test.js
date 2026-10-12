@@ -6,7 +6,8 @@ const {
   classifyClaim,
   evaluateAnswerClaims,
   approvedEvidenceText,
-  isApprovedEvidence
+  isApprovedEvidence,
+  containsGuaranteeMarker
 } = require("./claimPolicy");
 const { MB_CANDIDATES, LANGUAGES, LANGUAGE_NAMES } = require("./brainMbCandidates");
 
@@ -579,6 +580,16 @@ test("bare-alef اضمن is caught exactly like أضمن", () => {
 test("Arabic diacritics and tatweel do not hide a guarantee", () => {
   const verdict = classifyClaim("العائد مَضْمُون على هذا الاستثمار.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, verdict.reasons.join(", "));
+});
+
+test("explicit Arabic shadda distinguishes including an excluded service from guaranteeing an outcome", () => {
+  const preference = "ما رح أضمّن الاستثمار أو العقارات.";
+  assert.equal(containsGuaranteeMarker(preference), false);
+  assert.notEqual(classifyClaim(preference, { evidence: [], language: "arabic" }).claimClass, CLAIM_CLASSES.GUARANTEE);
+  for (const guarantee of ["أنا أضمن لك الموافقة.", "العائد مضمون على هذا الاستثمار.", "نضمن موافقة البنك."]) {
+    assert.equal(containsGuaranteeMarker(guarantee), true, guarantee);
+    assert.equal(classifyClaim(guarantee, { evidence: [], language: "arabic" }).claimClass, CLAIM_CLASSES.GUARANTEE, guarantee);
+  }
 });
 
 test("an Arabic marker adjacent to other letters still matches without \\b", () => {
