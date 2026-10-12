@@ -355,6 +355,35 @@ test("a brief name acknowledgment is valid when the customer greets and names th
   assert.equal(result.valid, true);
 });
 
+test("a respectful form for an explicitly stated customer name is courtesy, not a factual relationship claim", () => {
+  const text = "أهلًا أستاذ حسن، أنا REFAL، مساعد الأعمال الرقمي لدى Refalco Group. كيف أقدر أساعدك؟";
+  const context = { currentMessage: "مرحبا، أنا حسن.", locale: "arabic", socialOnlyTurn: true,
+    contact: { name: "حسن", nameSource: "customer_stated" }, recentConversation: [] };
+  const messages = buildGroundingReviewMessages({ text, context });
+  assert.match(messages[0].content, /conventional respectful form attached to that exact customer-stated name is courtesy-only personalization.*classify it as non_factual.*do not require company evidence/u);
+  const input = JSON.parse(messages[1].content);
+  assert.equal(input.customerName, "حسن");
+
+  const greeting = "أهلًا أستاذ حسن،";
+  const identity = "أنا REFAL، مساعد الأعمال الرقمي لدى Refalco Group.";
+  const question = "كيف أقدر أساعدك؟";
+  const accepted = validateGroundingVerdict({ segments: [
+    { text: greeting, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
+    { text: identity, status: "identity", evidenceRefs: [], reasonCode: "identity" },
+    { text: question, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }
+  ], languageValid: true, contextValid: true, contextIssues: [],
+  requestCoverage: { outcome: "addressed", unmetAspects: [] } }, text, [], context.currentMessage, context);
+  assert.equal(accepted.valid, true);
+
+  const unsupportedRole = "أهلًا حسن، أنت مستشار قانوني.";
+  const blocked = validateGroundingVerdict({ segments: [
+    { text: "أهلًا حسن،", status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
+    { text: "أنت مستشار قانوني.", status: "unsupported", evidenceRefs: [], reasonCode: "unsupported_relation" }
+  ], languageValid: true, contextValid: true, contextIssues: [],
+  requestCoverage: { outcome: "addressed", unmetAspects: [] } }, unsupportedRole, [], "مرحبا، أنا حسن.", context);
+  assert.equal(blocked.valid, false, "actual occupational claims still require evidence");
+});
+
 test("a distinct useful follow-up is allowed after the customer has already been asked a different detail", async () => {
   const question = "هل تفضّل أن أوضح لك الخطوات التالية؟";
   const text = `حزمة التأسيس تشمل حجز الاسم وإعداد المستندات وإصدار شهادة التأسيس. ${question}`;
