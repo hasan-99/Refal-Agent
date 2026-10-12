@@ -229,7 +229,7 @@ test("a trusted customer name does not make a redundant greeting appropriate on 
   };
   const result = await assessAgentDraft({ text: draft, evidenceItems: [evidence], context }, {
     callModel: async messages => {
-      assert.match(messages[0].content, /A standalone greeting to the customer by name is still a greeting/u);
+      assert.match(messages[0].content, /For other substantive requests, set contextValid false for a redundant standalone greeting/u);
       assert.equal(JSON.parse(messages[1].content).customerName, "سامي");
       return { segments: [
         { text: opener, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
@@ -239,6 +239,49 @@ test("a trusted customer name does not make a redundant greeting appropriate on 
   });
   assert.equal(result.valid, false);
   assert.deepEqual(result.blockedClaims, [{ sentence: opener, claimClass: "CONTEXT", reasons: ["context_mismatch"] }]);
+});
+
+test("a brief name acknowledgment is valid when the customer greets and names themself in the current message", async () => {
+  const text = "أهلاً كريم، أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group. حزمة التأسيس تشمل حجز الاسم وإعداد المستندات وإصدار شهادة التأسيس.";
+  const formationEvidence = { sourceRef: "formation:approved", content: "The Cyprus formation package includes reserving the company name, preparing and filing incorporation documents, and issuing the certificate of incorporation.", review_status: "approved" };
+  const context = { currentMessage: "مرحبا، اسمي كريم. بفكر أسس شركة بقبرص.", locale: "arabic",
+    contact: { name: "كريم", nameSource: "customer_stated" }, recentConversation: [] };
+  const result = await assessAgentDraft({ text, evidenceItems: [formationEvidence], context }, {
+    callModel: async (messages) => {
+      assert.match(messages[0].content, /When the customer greets the agent and explicitly states their name in the same message/u);
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.customerName, "كريم");
+      return { segments: [
+        { text: "أهلاً كريم،", status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
+        { text: "أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group.", status: "identity", evidenceRefs: [], reasonCode: "identity" },
+        { text: "حزمة التأسيس تشمل حجز الاسم وإعداد المستندات وإصدار شهادة التأسيس.", status: "supported", evidenceRefs: [formationEvidence.sourceRef], reasonCode: "supported" }
+      ], languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, true);
+});
+
+test("a distinct useful follow-up is allowed after the customer has already been asked a different detail", async () => {
+  const question = "هل تفضّل أن أوضح لك الخطوات التالية؟";
+  const text = `حزمة التأسيس تشمل حجز الاسم وإعداد المستندات وإصدار شهادة التأسيس. ${question}`;
+  const formationEvidence = { sourceRef: "formation:approved", content: "The Cyprus formation package includes reserving the company name, preparing and filing incorporation documents, and issuing the certificate of incorporation.", review_status: "approved" };
+  const context = { currentMessage: "لسه بفكر بتأسيس شركة بقبرص.", locale: "arabic", recentConversation: [
+    { role: "assistant", content: "شو النشاط اللي ناوي تمارسه الشركة؟" },
+    { role: "user", content: "مرحبا" },
+    { role: "assistant", content: "أنا معك." }
+  ] };
+  const result = await assessAgentDraft({ text, evidenceItems: [formationEvidence], context }, {
+    callModel: async (messages) => {
+      assert.match(messages[0].content, /a different, unasked question about a decision-relevant detail is context-valid/u);
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.history.at(-1).content, "أنا معك.");
+      return { segments: [
+        { text: "حزمة التأسيس تشمل حجز الاسم وإعداد المستندات وإصدار شهادة التأسيس.", status: "supported", evidenceRefs: [formationEvidence.sourceRef], reasonCode: "supported" },
+        { text: question, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }
+      ], languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, true);
 });
 
 test("comparative review rejects a repeated catalogue padded with generic uncertainty", async () => {

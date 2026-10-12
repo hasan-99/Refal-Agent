@@ -130,7 +130,7 @@ test("later turns carry the introduction in history and continue without another
 
   assert.equal(result.outcome, "responded");
   assert.equal(result.response, draft);
-  assert.match(prompt[0].content, /later turns, start with the answer itself.*Apply this by conversational function/s);
+  assert.match(prompt[0].content, /In later turns, start with the answer itself.*Use greetings according to the current message's conversational function/s);
   assert.match(prompt[1].content, new RegExp(firstReply));
   assert.match(review[0].content, /ongoing conversation.*assess opening text by its conversational function.*Do not excuse redundant opening text as harmless style/s);
   assert.equal(reviewerInput.history[1].content, firstReply);

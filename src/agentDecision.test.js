@@ -170,8 +170,8 @@ test("the tool list sent to the model is generated from the real TOOL_REGISTRY, 
   assert.match(TOOL_REGISTRY.lookupActiveOffer.description, /Do not use this instead of searchApprovedKnowledge for general company service scope/);
   assert.match(systemMessage, /Use searchApprovedKnowledge for company service scope, package inclusions, and process guidance/);
   assert.match(systemMessage, /lookupActiveOffer is only for a current offer-specific price/);
-  assert.match(systemMessage, /If the customer's intended business activity is unknown, ask what the company will do as the next useful detail/);
-  assert.match(systemMessage, /Ask for a proposed company name only when the customer chooses to start name reservation/);
+  assert.match(systemMessage, /Do not start a registration or name-reservation action unless the customer explicitly chooses it/);
+  assert.doesNotMatch(systemMessage, /ask what the company will do as the next useful detail/u);
 });
 
 test("multi-part knowledge requests are searched as focused parts instead of one mixed query", () => {
@@ -180,7 +180,9 @@ test("multi-part knowledge requests are searched as focused parts instead of one
   assert.match(systemMessage, /current customer message is also searched automatically/);
   assert.match(systemMessage, /For Arabic or Greek messages, ensure one query is a concise English semantic equivalent/);
   assert.match(systemMessage, /answer in the requested language/);
-  assert.match(systemMessage, /do not prefix the answer with a social opener, generic greeting, or standalone greeting to the customer by name/);
+  assert.match(systemMessage, /when the customer greets you and explicitly gives their name in that message, a brief natural acknowledgment/u);
+  assert.match(systemMessage, /never invent a name, title or honorific/iu);
+  assert.match(systemMessage, /different, decision-relevant detail only when it helps move that goal forward/u);
 });
 
 test("buildDecisionMessages carries forward recent conversation and prior tool observations", () => {
