@@ -33,6 +33,38 @@ test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
   assert.equal(DEFAULT_MAX_STEPS, 5);
 });
 
+test("a no-evidence rejection routes general company facts to one knowledge search before fallback", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "formation-doc", section_index: "1", chunk_id: "package", chunk_index: 0,
+    document_title: "Approved formation package", heading: "Company formation", content: "Refalco Group's Cyprus Ltd formation package includes name reservation, preparation and filing of formation documents, the certificate of incorporation, and company secretary and registered address for four months.", review_status: "approved" };
+  const reply = "The Cyprus Ltd formation package includes name reservation, preparation and filing of formation documents, the certificate of incorporation, and company secretary and registered address for four months.";
+  const calls = [];
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What does the company formation package include?", locale: "english" }), {
+    maxSteps: 4,
+    tools: {
+      lookupActiveOffer: { run: async () => ({ ok: true, status: "found", modelObservation: { type: "dynamic_data", evidence: [] } }) },
+      searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source], modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) }
+    },
+    decideNextStep: async ({ step, observations }) => {
+      calls.push(step);
+      if (step === 1) return { type: "tool", tool: "lookupActiveOffer", args: {} };
+      if (step === 2) return { type: "respond", text: "I need to check the approved details before I can confirm the package." };
+      if (step === 3) {
+        const rejection = observations.find((item) => item.tool === "responsePolicyCheck");
+        assert.match(rejection.result.correction, /Use searchApprovedKnowledge/);
+        assert.match(rejection.result.correction, /live-offer lookup does not establish general service scope/);
+        return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation package inclusions" } };
+      }
+      return { type: "respond", text: reply };
+    },
+    assessDraft: async ({ text }) => text === reply ? { valid: true } : { valid: false, reasons: ["no_approved_evidence"] }
+  });
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, reply);
+  assert.deepEqual(result.toolsUsed, ["lookupActiveOffer", "searchApprovedKnowledge"]);
+});
+
 test("a two-search turn keeps one tool-free correction step after the second rejected draft", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const sources = [

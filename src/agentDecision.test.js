@@ -155,6 +155,11 @@ test("the tool list sent to the model is generated from the real TOOL_REGISTRY, 
     assert.ok(systemMessage.includes(name), `expected tool name "${name}" in the prompt`);
     assert.ok(systemMessage.includes(tool.description), `expected description for "${name}" in the prompt`);
   }
+  assert.match(TOOL_REGISTRY.lookupActiveOffer.description, /Do not use this instead of searchApprovedKnowledge for general company service scope/);
+  assert.match(systemMessage, /Use searchApprovedKnowledge for company service scope, package inclusions, and process guidance/);
+  assert.match(systemMessage, /lookupActiveOffer is only for a current offer-specific price/);
+  assert.match(systemMessage, /If the customer's intended business activity is unknown, ask what the company will do as the next useful detail/);
+  assert.match(systemMessage, /Ask for a proposed company name only when the customer chooses to start name reservation/);
 });
 
 test("multi-part knowledge requests are searched as focused parts instead of one mixed query", () => {

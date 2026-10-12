@@ -105,14 +105,18 @@ function attemptDeterministicCorrection(text, policy, thresholds, context = {}) 
 // Fed back to decideNextStep as an observation so a retried decision can see
 // *why* its last draft was rejected, reusing agentDecision.js's existing
 // observation formatting (it only expects {step, tool, args, result}).
-function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons) {
+function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons, observations = []) {
+  const correction = policy.reasons?.includes("no_approved_evidence")
+    ? observations.some((item) => item?.tool === "searchApprovedKnowledge")
+      ? "No approved knowledge supports the rejected claim. Preserve other supported facts, state only the unsupported detail as unconfirmed, and do not invent it. Do not repeat the same search unless a distinct missing fact can be retrieved."
+      : "No approved-knowledge search has run this turn. Use searchApprovedKnowledge for the requested company or package facts before answering; a live-offer lookup does not establish general service scope. If approved search returns no relevant evidence, say the detail is unconfirmed and do not invent a price or condition."
+    : "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. For a CONTEXT span, correct only the quoted passage to respect the customer's role, preference, or prior scope; preserve other supported facts. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support.";
   return {
     step,
     tool: "responsePolicyCheck",
     args: { attemptedType: decisionType },
     result: { ok: false, status: "policy_rejected", reasonCode: diagnosticCodes.join(","),
-      draft: policy.text, blockedClaims: policy.blockedClaims || [],
-      correction: "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. For a CONTEXT span, correct only the quoted passage to respect the customer's role, preference, or prior scope; preserve other supported facts. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support." }
+      draft: policy.text, blockedClaims: policy.blockedClaims || [], correction }
   };
 }
 
@@ -428,7 +432,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
           return { finished: true, outcome: "responded", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
         if (step < maxSteps) {
-          observations.push(policyRejectionObservation(step, "respond", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale)));
+        observations.push(policyRejectionObservation(step, "respond", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations));
           continue;
         }
         return {
@@ -464,7 +468,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         return { finished: true, outcome: "clarified", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
       }
       if (step < maxSteps) {
-        observations.push(policyRejectionObservation(step, "clarify", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale)));
+        observations.push(policyRejectionObservation(step, "clarify", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations));
         continue;
       }
       return {

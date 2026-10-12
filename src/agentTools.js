@@ -788,7 +788,7 @@ async function proposeHandover(args, { user, intents = [], language } = {}) {
 
 const TOOL_REGISTRY = Object.freeze({
   lookupActiveOffer: {
-    description: "Read currently approved, effective offers. Pass the exact database code when known. If no exact code is present in the conversation or approved knowledge, call with empty args to discover up to four current offers. Never send a display title as a code. Use only returned data for price or inclusions.",
+    description: "Read current approved live offer records for offer-specific price, validity, availability, and terms. Do not use this instead of searchApprovedKnowledge for general company service scope, package descriptions, or process details. If the customer asks for both service facts and a live offer price or term, search approved knowledge for the service facts and use this tool only for the live offer detail. Pass the exact database code when known; otherwise use empty args to discover up to four current offers. Never send a display title as a code.",
     run: (args, context) => dynamicReadTool("lookupActiveOffer", args, context)
   },
   lookupRenewalFees: {
