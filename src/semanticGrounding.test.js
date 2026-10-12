@@ -9,7 +9,36 @@ test("grounding review accepts an explicitly listed service category without inv
   const reviewPrompt = buildGroundingReviewMessages({ text: "Residency and relocation are service areas." })[0].content;
   assert.match(reviewPrompt, /current approved company overview that explicitly lists a service category is direct evidence that the group offers that category at the same general level/);
   assert.match(reviewPrompt, /does not establish specific deliverables, eligibility, outcomes/);
+  assert.match(reviewPrompt, /When approved evidence establishes a service but not whether it is available at the stage the customer asks about or included in continuing support/);
+  assert.match(reviewPrompt, /Do not reject the service scope for lacking that relationship/);
   assert.match(reviewPrompt, /Do not ask the customer to repeat, choose among, or restate aspects already explicit in the current request/);
+  const socialReview = buildGroundingReviewMessages({ text: "مرحبًا.", context: { socialOnlyTurn: true } });
+  assert.equal(JSON.parse(socialReview[1].content).socialOnlyTurn, true);
+  assert.match(socialReview[0].content, /For that turn, a draft whose every clause is non_factual is an addressed social response/);
+});
+
+test("supported service scope survives an unconfirmed stage relationship while stage claims stay blocked", () => {
+  const text = "تذكر المعلومات المعتمدة خدمات قانونية للشركات. لكنها لا تحدد إن كانت ضمن دعم مستمر بعد التأسيس.";
+  const scope = "service-scope";
+  const verdict = {
+    segments: [
+      { text: "تذكر المعلومات المعتمدة خدمات قانونية للشركات.", status: "supported", evidenceRefs: [scope], reasonCode: "supported" },
+      { text: "لكنها لا تحدد إن كانت ضمن دعم مستمر بعد التأسيس.", status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }
+    ],
+    languageValid: true, contextValid: true, contextIssues: [],
+    requestCoverage: { outcome: "supported_partial", unmetAspects: [] }
+  };
+  const accepted = validateGroundingVerdict(verdict, text, [{ sourceRef: scope }], "What support is available after formation?");
+  assert.equal(accepted.valid, true);
+
+  const unsupportedStageClaim = { ...verdict, segments: [
+    { text: "تذكر المعلومات المعتمدة خدمات قانونية للشركات.", status: "supported", evidenceRefs: [scope], reasonCode: "supported" },
+    { text: "وهي متاحة ضمن دعم مستمر بعد التأسيس.", status: "unsupported", evidenceRefs: [], reasonCode: "service_not_established" }
+  ] };
+  const blocked = validateGroundingVerdict(unsupportedStageClaim, "تذكر المعلومات المعتمدة خدمات قانونية للشركات. وهي متاحة ضمن دعم مستمر بعد التأسيس.",
+    [{ sourceRef: scope }], "What support is available after formation?");
+  assert.equal(blocked.valid, false);
+  assert.ok(blocked.reasons.includes("service_not_established"));
 });
 test("request coverage accepts evidenced partial answers and identifies actual unanswered aspects", () => {
   const request = "What support and timing are confirmed?";
@@ -30,6 +59,22 @@ test("request coverage accepts evidenced partial answers and identifies actual u
   assert.equal(inconsistent.valid, false);
   assert.deepEqual(inconsistent.reasons, ["question_not_answered"]);
   assert.deepEqual(inconsistent.blockedClaims,[{sentence:"timing",claimClass:"UNMET_REQUEST",reasons:["question_not_answered"]}]);
+});
+
+test("a social-only greeting is not rejected for failing to answer older questions, while factual claims remain gated", () => {
+  const text = "مرحبًا، كيف بقدر أساعدك؟";
+  const base = { segments: [{ text, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }],
+    languageValid: true, contextValid: false, contextIssues: [text],
+    requestCoverage: { outcome: "not_addressed", unmetAspects: ["مرحبا"] } };
+  const accepted = validateGroundingVerdict(base, text, [], "مرحبا", { socialOnlyTurn: true });
+  assert.equal(accepted.valid, true);
+  assert.equal(validateGroundingVerdict(base, text, [], "مرحبا").valid, false);
+
+  const factual = { ...base, segments: [{ text: "Η ίδρυση εγγυάται άδεια διαμονής.", status: "unsupported",
+    evidenceRefs: [], reasonCode: "unsupported_guarantee" }] };
+  const blocked = validateGroundingVerdict(factual, factual.segments[0].text, [], "مرحبا", { socialOnlyTurn: true });
+  assert.equal(blocked.valid, false);
+  assert.ok(blocked.reasons.includes("unsupported_guarantee"));
 });
 test("reviewer output defects have distinct safe diagnostics and never approve omitted claims", () => {
   assert.equal(validateGroundingVerdict(null, "Answer").errorCode, "GROUNDING_VERDICT_SHAPE_INVALID");

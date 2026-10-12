@@ -31,8 +31,10 @@ function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} }
     "For supported factual segments, cite the IDs of the supplied approved evidence that actually entails the entire claim. Shared keywords, topic mentions or a document title do not establish support. Preserve negation, actors, scope, conditions and exceptions. Never infer that explaining a topic means the company offers it as a service. A general package mention does not establish an inclusion. Do not combine unrelated numbers or prices.",
     "A current approved company overview that explicitly lists a service category is direct evidence that the group offers that category at the same general level. It does not establish specific deliverables, eligibility, outcomes, or that the company performs every related process; assess any narrower task separately.",
     "For any claim that REFAL or Refalco Group offers or provides assistance, require evidence of the company's capability or offer; a section that only describes lifecycle stages, legal obligations or process mechanics cannot establish that the company performs that work. Assess every factual clause separately: different approved sections may support the service scope and its stated relationship to a later stage, while process examples or specific tasks in the same sentence may not be established as company services. Cite the evidence for each clause. Never reject the entire compound sentence because one clause overstates; mark only the exact unsupported clause unsupported and preserve separately supported service scope and conditions.",
+    "When approved evidence establishes a service but not whether it is available at the stage the customer asks about or included in continuing support, a partial answer may name that supported service and qualify only the unresolved timing or inclusion. Do not reject the service scope for lacking that relationship, and do not allow a claim that it applies at that stage without evidence.",
     "Resolve references in the customer's current request against the nearest compatible antecedent in the ordered conversation history. Use older turns for continuity and explicit preferences, but do not substitute an older, broader list for the set the customer most recently referred to. When the customer refers to a list in the immediately preceding assistant answer, compare against that whole list; do not pivot to a narrower service mentioned within it, such as formation alone. Prior assistant claims and fallback replies are context, not approved factual evidence. Judge comparative or completeness claims against the resolved reference and the supplied approved evidence; if that evidence explicitly enumerates broader company service areas, those named areas support a statement that the narrower referenced set is not the whole scope.",
     "An unanswered question from an earlier assistant turn is context, not part of the customer's current request. Assess request coverage against the current message; do not reject an appropriate social response or a different topic because it does not answer that older question.",
+    "Contextual preflight separately labels a social-only current turn. For that turn, a draft whose every clause is non_factual is an addressed social response; do not reject it for context mismatch or for not answering an older business question. This does not exempt identity repetition, factual claims, privacy rules, language checks, or any clause classified as supported or unsupported.",
     "An approved company-positioning passage that explicitly describes the group's continuing role across a client file or beyond incorporation is evidence for general ongoing support when read with its stated service scope. Do not reject that general relationship merely because adjacent lifecycle sections describe procedures rather than services. This positioning does not, by itself, establish that the company performs every adjacent procedure; assess each named task separately and preserve that limit.",
     "REFAL speaks as Refalco Group's representative: company actions belong to the company ('we'), and second-person actions belong to the customer. Apply this actor assignment by meaning in colloquial Arabic, English and Greek. Explicitly available registration or another item on its own means it can be requested without buying a distinct service line; do not call that relation unsupported solely because the source does not repeat 'not required'.",
     "Meaning-preserving translation, synonyms, spelling variations and colloquial wording are allowed across Arabic, English and Greek. Evidence need not be in the answer's language. Assess meaning rather than literal token overlap. Company facts need current-turn evidence even when a prior assistant asserted them.",
@@ -48,6 +50,7 @@ function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} }
     identity: reviewIdentity(),
     request: redactPersonalData(context.currentMessage || ""),
     locale: context.locale || "unknown",
+    socialOnlyTurn: context.socialOnlyTurn === true,
     preferences: context.conversationPreferences || {},
     customerName: context.contact?.nameSource && typeof context.contact.name === "string"
       ? redactPersonalData(context.contact.name).slice(0, 80) : null,
@@ -99,7 +102,14 @@ async function callGroundingReviewer(messages, { onUsage } = {}) {
   try { return JSON.parse(content); } catch { const error = new Error("Grounding reviewer returned invalid JSON."); error.code = "GROUNDING_VERDICT_JSON_INVALID"; throw error; }
 }
 
-function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequest = null) {
+function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequest = null, context = {}) {
+  const nonFactualSocialReply = context.socialOnlyTurn === true
+    && Array.isArray(verdict?.segments) && verdict.segments.length > 0
+    && verdict.segments.every((segment) => segment?.status === "non_factual");
+  if (nonFactualSocialReply) {
+    verdict = { ...verdict, contextValid: true, contextIssues: [],
+      requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+  }
   const normalize = (value) => String(value || "").replace(/\s+/gu, " ").trim();
   const normalizeCoverage = (value) => String(value || "").normalize("NFKC")
     // Coverage protects every lexical claim span. Sentence punctuation and
@@ -179,7 +189,7 @@ async function assessAgentDraft({ text, evidenceItems = [], dynamicEvidenceItems
   let result;
   try {
     const verdict = await callModel(buildGroundingReviewMessages({ text, evidenceItems: evidence, context }), { onUsage: onModelUsage });
-    result = validateGroundingVerdict(verdict, text, evidence, redactPersonalData(context.currentMessage || ""));
+    result = validateGroundingVerdict(verdict, text, evidence, redactPersonalData(context.currentMessage || ""), context);
     if (!result.valid) outcome = result.technicalFailure ? "validation_error" : "validation_rejected";
   } catch (error) {
     const code = /^[A-Z][A-Z0-9_.-]{0,49}$/u.test(String(error?.code || "")) ? error.code : Number.isInteger(error?.status) ? `HTTP_${error.status}` : "GROUNDING_REVIEW_FAILED";

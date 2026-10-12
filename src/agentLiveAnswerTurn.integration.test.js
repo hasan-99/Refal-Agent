@@ -224,3 +224,49 @@ test("live composition passes a genuine unanswered prior assistant question into
 
   assert.equal(seenQuestion, "What business activity will the company have?");
 });
+
+test("a returning social greeting does not inherit an older unanswered business question", async () => {
+  const { user, store } = makeStore();
+  user.history.push({ id: "prior-turn", message: "I want to register a company.", response: "What business activity will the company have?" });
+  let seenContext;
+  await realRun({ socket: {}, chatId: "synthetic-chat", userId: user.id, text: "مرحبا" }, {
+    store,
+    setTyping: async () => {},
+    sendStoredTextReply: async () => {},
+    preflightOptions: { classifyMessage: async () => ({ source: "contextual_model", intents: ["greeting"], language: "arabic",
+      operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false }) },
+    agentOptions: {
+      assessDraft: async () => ({ valid: true, reasons: [], blockedClaims: [] }),
+      decideNextStep: async ({ context }) => {
+        seenContext = context;
+        return { type: "respond", text: "مرحبًا، أنا معك." };
+      }
+    }
+  });
+
+  assert.equal(seenContext.socialOnlyTurn, true);
+  assert.equal(seenContext.currentOpenQuestion, null);
+});
+
+test("a greeting followed by a business request is not treated as a social-only turn", async () => {
+  const { user, store } = makeStore();
+  user.history.push({ id: "prior-turn", message: "I want to register a company.", response: "What business activity will the company have?" });
+  let seenContext;
+  await realRun({ socket: {}, chatId: "synthetic-chat", userId: user.id, text: "مرحبا، بدي أسس شركة بقبرص" }, {
+    store,
+    setTyping: async () => {},
+    sendStoredTextReply: async () => {},
+    preflightOptions: { classifyMessage: async () => ({ source: "contextual_model", intents: ["greeting", "company_formation"], language: "arabic",
+      operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false }) },
+    agentOptions: {
+      assessDraft: async () => ({ valid: true, reasons: [], blockedClaims: [] }),
+      decideNextStep: async ({ context }) => {
+        seenContext = context;
+        return { type: "respond", text: "سأبحث عن معلومات تأسيس الشركة المعتمدة." };
+      }
+    }
+  });
+
+  assert.equal(seenContext.socialOnlyTurn, false);
+  assert.equal(seenContext.currentOpenQuestion, "What business activity will the company have?");
+});

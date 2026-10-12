@@ -24,7 +24,7 @@ function buildToolContext({
 
 async function runAgentTurnForContact({
   currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, conversationState,
-  knownCustomerFacts, currentOpenQuestion, consentState, allowedCapabilities,
+  knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, consentState, allowedCapabilities,
   leadTier, buyingSignals, conversationPreferences, contextualWorkflow, store, user, userId, intents, language, embedText,
   embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy
 } = {}, {
@@ -33,7 +33,7 @@ async function runAgentTurnForContact({
 } = {}) {
   const context = buildAgentContext({
     currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, conversationState,
-    knownCustomerFacts, currentOpenQuestion, consentState, allowedCapabilities,
+    knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, consentState, allowedCapabilities,
     leadTier, buyingSignals, conversationPreferences, contextualWorkflow
   });
   const toolContext = buildToolContext({

@@ -179,13 +179,31 @@ test("the tool list sent to the model is generated from the real TOOL_REGISTRY, 
 
 test("multi-part knowledge requests are searched as focused parts instead of one mixed query", () => {
   const systemMessage = buildDecisionMessages(CONTEXT, [], TOOL_REGISTRY)[0].content;
+  assert.match(TOOL_REGISTRY.searchApprovedKnowledge.description, /For a summary across earlier turns, keep query a concise service overview/);
+  assert.match(TOOL_REGISTRY.searchApprovedKnowledge.description, /never repeat the full conversation in a query/);
   assert.match(systemMessage, /Keep each knowledge search focused on one part of a multi-part request/);
+  assert.match(systemMessage, /For a summary across multiple prior turns, keep the primary search query a concise search for the requested overview/);
+  assert.match(systemMessage, /Use relatedQueries for only the two most relevant, distinct unresolved details/);
+  assert.match(systemMessage, /never concatenate the full conversation or repeat the overview query/);
   assert.match(systemMessage, /current customer message is also searched automatically/);
   assert.match(systemMessage, /For Arabic or Greek messages, ensure one query is a concise English semantic equivalent/);
   assert.match(systemMessage, /answer in the requested language/);
   assert.match(systemMessage, /when the customer greets you and explicitly gives their name in that message, a brief natural acknowledgment/u);
   assert.match(systemMessage, /never invent a name, title or honorific/iu);
   assert.match(systemMessage, /different, decision-relevant detail only when it helps move that goal forward/u);
+});
+
+test("social-only preflight prevents older questions from steering the current reply", () => {
+  const context = { ...CONTEXT, socialOnlyTurn: true, currentOpenQuestion: null };
+  const systemMessage = buildDecisionMessages(context, [], TOOL_REGISTRY)[0].content;
+  assert.match(systemMessage, /Contextual preflight classified this turn as social-only/);
+  assert.match(systemMessage, /do not answer an older business question unless the customer reopens it/);
+});
+
+test("service scope remains useful when stage timing or ongoing inclusion is not established", () => {
+  const systemMessage = buildDecisionMessages(CONTEXT, [], TOOL_REGISTRY)[0].content;
+  assert.match(systemMessage, /If approved evidence establishes a service but not whether it is available at the stage the customer asks about or included in continuing support/);
+  assert.match(systemMessage, /Do not claim the service applies at that stage, and do not say no service information is available/);
 });
 
 test("buildDecisionMessages carries forward recent conversation and prior tool observations", () => {

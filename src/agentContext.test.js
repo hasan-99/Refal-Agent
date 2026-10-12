@@ -44,6 +44,11 @@ test("buildAgentContext excludes contact labels without customer-stated provenan
   assert.equal(context.contact.nameSource, null);
 });
 
+test("social-only context is explicit and cannot be injected through unrelated fields", () => {
+  assert.equal(buildAgentContext({ socialOnlyTurn: true }).socialOnlyTurn, true);
+  assert.equal(buildAgentContext({ socialOnlyTurn: "true" }).socialOnlyTurn, false);
+});
+
 test("buildAgentContext is defensive against missing/garbage input", () => {
   const context = buildAgentContext();
   assert.equal(context.currentMessage, "");

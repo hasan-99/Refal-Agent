@@ -551,29 +551,38 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const key = knowledgeSectionIdentity(row, index);
-      if (!sections.has(key)) sections.set(key, { rows: [], score: 0, firstSeen: sections.size });
+      if (!sections.has(key)) sections.set(key, { rows: [], contributions: [], firstSeen: sections.size, primaryMatch: false, historicalMatch: false });
       const group = sections.get(key);
       if (seenInQuery.has(key)) continue;
       seenInQuery.add(key);
-      // The primary query expresses the current need and must anchor the fused
-      // ranking. Related queries can add distinct coverage, and prior-language
-      // wording preserves follow-up context, but repeated lower-priority hits
-      // must not push the primary overview out of the bounded answer context.
+      // The primary query expresses the current need. Related and original-
+      // wording searches add coverage, but their repeated low-value hits must
+      // not crowd a strong one-query result out of the bounded answer context.
       const queryWeight = queryIndex === 0 ? 4
         : queryIndex === historicalQueryIndex ? 8
           : queryIndex < contextualCount ? 4 : 1;
-      group.score += queryWeight / (60 + index + 1);
+      if (queryIndex === 0) group.primaryMatch = true;
+      if (queryIndex === historicalQueryIndex) group.historicalMatch = true;
+      group.contributions.push(queryWeight / (60 + index + 1));
       group.rows.push(...rows.filter((candidate) => {
         const candidateKey = knowledgeSectionIdentity(candidate, index);
         return candidateKey === key;
       }));
     }
   }
-  return [...sections.values()]
+  return [...sections.values()].map((group) => {
+    const strongest = Math.max(...group.contributions);
+    const supporting = group.contributions.reduce((sum, value) => sum + value, 0) - strongest;
+    // A second relevant query is useful corroboration. Cap its influence so
+    // repeated generic matches cannot outrank a section that directly answers
+    // the customer's question in the primary search.
+    group.score = strongest + Math.min(strongest * 0.5, supporting * 0.2);
+    return group;
+  })
     .sort((a, b) => b.score - a.score || a.firstSeen - b.firstSeen)
     .flatMap((group) => [...new Map(group.rows.map((row) => [row.chunk_id || `${row.document_id}:${row.chunk_index}`, row])).values()]
       .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
-      .map((row) => ({ ...row, selectionRelevance: group.score * 60 })));
+      .map((row) => ({ ...row, primarySearchMatch: group.primaryMatch, historicalSearchMatch: group.historicalMatch, selectionRelevance: group.score * 60 })));
 }
 
 async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user } = {}) {
@@ -644,7 +653,14 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const successfulResults = resultSets.filter((result) => result.ok);
   if (!successfulResults.length) {
     const error = resultSets.find((result) => !result.ok)?.error;
-    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []), trace: { searchQueries: queries } });
+    const providerErrorCode = /^[A-Z0-9_.-]{1,48}$/u.test(String(error?.code || "")) ? String(error.code) : null;
+    const providerStatus = Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599 ? error.status : null;
+    const errorName = /^[A-Z][A-Za-z0-9]{0,39}$/u.test(String(error?.name || "")) ? String(error.name) : null;
+    return fail("error", "RETRIEVAL_FAILED", {
+      message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200),
+      modelObservation: buildApprovedKnowledgeObservation("error", []),
+      trace: { searchQueries: queries, providerErrorCode, providerStatus, errorName }
+    });
   }
   const results = successfulResults.length > 1
     ? mergeRankedKnowledgeResults(resultSets.map((result) => result.ok && Array.isArray(result.value) ? result.value : []), {
@@ -683,8 +699,20 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // candidate window, then let the existing complete-section and prompt
   // budgets retain as many as fit for BOTH generation and validation.
   const selectedRows = visibleCatalogue.flatMap((item, index) => sectionRows.get(item.key)
-    .map((row) => ({ ...row, selectionRelevance: Number(row.selectionRelevance) || 1 + 1 / (index + 1), selectionOrder: index })));
+    // Fusion scores depend on how many related searches were issued, so their
+    // raw values are not comparable across separate tool calls. Rank within
+    // this search round instead; accumulated-evidence budgeting can then
+    // reliably let a better-ranked new section replace a weaker older one.
+    .map((row) => ({ ...row,
+      // Keep a relevant original-language history match distinguishable from
+      // the current query; the history search is already gated by semantic
+      // alignment when embeddings are available.
+      selectionRelevance: 1 / (index + 1) + (row.historicalSearchMatch ? 1 : 0),
+      primarySearchMatch: row.primarySearchMatch === true,
+      selectionOrder: index })));
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
+  modelObservation.primarySearchRefs = [...new Set(selectedRows.filter((row) => row.primarySearchMatch)
+    .map((row) => row.chunk_id).filter((id) => typeof id === "string"))];
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
   return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });
 }
@@ -902,7 +930,7 @@ const TOOL_REGISTRY = Object.freeze({
     run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
   },
   searchApprovedKnowledge: {
-    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a direct factual question about a relationship or outcome, search that relationship and its conditions; add a company-capability query only if the customer also asks about REFAL's role. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
+    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a direct factual question about a relationship or outcome, search that relationship and its conditions; add a company-capability query only if the customer also asks about REFAL's role. For a summary across earlier turns, keep query a concise service overview; use relatedQueries only for distinct unresolved specifics from customer history, never repeat the full conversation in a query. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {

@@ -21,6 +21,34 @@ test("multi-query ranking promotes sections repeatedly relevant across complemen
   assert.equal(result.modelObservation.evidence[0].title, "supported-residency-route");
 });
 
+test("a strong overview result survives repeated low-value matches from secondary searches", async () => {
+  const row = (id, title = id) => ({ source_id: "approved-source", document_id: id, section_index: "0",
+    chunk_id: `${id}-chunk`, chunk_index: 0, document_title: title, heading: title,
+    content: `Approved information about ${title}.`, review_status: "approved" });
+  const pad = (prefix, length, entries) => Array.from({ length }, (_, index) => entries[index] || row(`${prefix}-${index}`));
+  const overview = row("company-overview", "Company services overview");
+  const dormant = row("dormant-company", "Dormant company obligations");
+  const repeated = Array.from({ length: 6 }, (_, index) => row(`secondary-topic-${index}`, `Secondary topic ${index}`));
+  const primary = pad("primary-noise", 20, { 0: dormant, 1: overview });
+  const translated = pad("translated-noise", 20, Object.fromEntries(repeated.map((item, index) => [index, item])));
+  const originalWording = pad("wording-noise", 20, Object.fromEntries(repeated.map((item, index) => [7 + index, item])));
+
+  const result = await searchApprovedKnowledge({ query: "Refalco Group services overview",
+    relatedQueries: ["Refalco Group services in Arabic"] }, {
+    currentMessage: "شو بتقدّموا خدمات بقبرص؟", matchCount: 6, embedText: async () => null,
+    store: { searchKnowledge: async (query) => query === "Refalco Group services overview" ? primary
+      : query === "Refalco Group services in Arabic" ? translated : originalWording }
+  });
+
+  assert.ok(result.data.some((item) => item.chunk_id === overview.chunk_id),
+    "repeated low-value hits must not crowd the approved overview out of the bounded evidence");
+  assert.ok(result.data.length <= 6);
+  const rankedEvidence = result.modelObservation.candidateEvidence;
+  assert.equal(rankedEvidence[0].relevance, 1);
+  assert.equal(rankedEvidence[1].relevance, 0.5,
+    "scores passed between rounds should represent rank, not the number of queries fused in that round");
+});
+
 test("current overview and original-language follow-up both survive noisy complementary retrieval", async () => {
   const makeRows = (prefix, count) => Array.from({ length: count }, (_, index) => ({
     document_id: `${prefix}-doc-${index}`, section_index: 0, chunk_index: 0, chunk_id: `${prefix}-${index}`,
@@ -299,6 +327,20 @@ test("searchApprovedKnowledge no_evidence produces no fabricated evidence payloa
   assert.equal(result.modelObservation.type, "approved_knowledge");
   assert.equal(result.modelObservation.status, "no_evidence");
   assert.deepEqual(result.modelObservation.evidence, []);
+});
+
+test("retrieval errors preserve safe provider status without exposing error text", async () => {
+  const failure = new Error("private upstream response body");
+  failure.status = 503;
+  failure.code = "UPSTREAM_UNAVAILABLE";
+  const result = await searchApprovedKnowledge({ query: "company formation" }, {
+    currentMessage: "company formation", embedText: async () => null,
+    store: { searchKnowledge: async () => { throw failure; } }
+  });
+  assert.equal(result.reasonCode, "RETRIEVAL_FAILED");
+  assert.equal(result.trace.providerStatus, 503);
+  assert.equal(result.trace.providerErrorCode, "UPSTREAM_UNAVAILABLE");
+  assert.equal(JSON.stringify(result.trace).includes("private upstream"), false);
 });
 
 test("searchApprovedKnowledge error result is distinguishable from no_evidence in the model-safe observation", async () => {

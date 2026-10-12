@@ -83,6 +83,12 @@ function safeFallback(context, category = "uncertainty") {
   return safeFallbackData({ language: languageKeyFromLocale(context?.locale), category }).text;
 }
 
+function hasCurrentApprovedEvidence(observations) {
+  return observations.some((item) => item?.result?.modelObservation?.status === "found"
+    && Array.isArray(item.result.modelObservation.evidence)
+    && item.result.modelObservation.evidence.length > 0);
+}
+
 // A mechanical, safe correction for exactly one rejection reason: too many
 // questions. Truncating to the first question mark is safe precisely
 // because it only ever removes text, never invents or alters a claim — for
@@ -226,14 +232,21 @@ function boundAccumulatedKnowledgeEvidence(observations, maxChars = 10000, maxBy
     const model = round.result.modelObservation;
     model.candidateEvidence ||= (model.evidence || []).map((item) => ({ ...item }));
     model.candidatePolicyEvidence ||= (model.policyEvidence || []).map((item) => ({ ...item }));
+    const primarySearchRefs = new Set(Array.isArray(model.primarySearchRefs) ? model.primarySearchRefs : []);
     for (const item of model.candidateEvidence) {
       const key = item.sourceRef || JSON.stringify([item.title, item.section, item.content]);
-      const candidate = { item, round, roundIndex };
+      const candidate = { item, round, roundIndex, primarySearchMatch: primarySearchRefs.has(key) };
       const existing = pool.get(key);
       if (!existing || Number(item.relevance || 1) >= Number(existing.item.relevance || 1)) pool.set(key, candidate);
     }
   }
-  const ranked = [...pool.values()].sort((a, b) => Number(b.item.relevance || 1) - Number(a.item.relevance || 1)
+  const latestRoundIndex = Math.max(0, rounds.length - 1);
+  const isLatestPrimaryMatch = (candidate) => candidate.roundIndex === latestRoundIndex && candidate.primarySearchMatch;
+  const selectionScore = (candidate) => Number(candidate.item.relevance || 1) + (isLatestPrimaryMatch(candidate) ? 0.5 : 0);
+  const ranked = [...pool.values()].sort((a, b) => selectionScore(b) - selectionScore(a)
+    // A focused current search gets a modest, bounded preference over stale
+    // non-history context. Explicitly relevant history retains its existing
+    // relevance boost, and generic equal-ranked results stay stable.
     // Equal-ranked later search results have not shown that they are better.
     // Keep earlier usable evidence ahead of them so unrelated query drift or
     // a long new section cannot evict the answer's existing support.
@@ -270,7 +283,7 @@ function budgetCurrentEvidence(context, observations, tools) {
   // Complete sections are retained or omitted, and both reviewers share them.
   const availableBytes = Math.max(0, MAX_PROMPT_TOKEN_CEILING - 3000
     - promptTokenUpperBound(buildDecisionMessages(context, emptyEvidence, tools)));
-  return boundAccumulatedKnowledgeEvidence(observations, 10000, availableBytes);
+  return { ...boundAccumulatedKnowledgeEvidence(observations, 10000, availableBytes), availableBytes };
 }
 
 // REFAL-AGENT-026 — mirrors legacy ai.js's own short-text exemption
@@ -437,10 +450,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         observations.push({ step, tool: "searchApprovedKnowledge", args: {},
           result: { ok: false, status: knowledgeSearchFailed ? "search_unavailable" : "search_exhausted",
             reasonCode: knowledgeSearchFailed ? knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED" : "NO_NEW_RELEVANT_SECTIONS" } });
-        const hasApprovedEvidence = observations.some((item) =>
-          item?.result?.modelObservation?.status === "found"
-          && Array.isArray(item.result.modelObservation.evidence)
-          && item.result.modelObservation.evidence.length > 0);
+        const hasApprovedEvidence = hasCurrentApprovedEvidence(observations);
         if (knowledgeSearchFailed && !hasApprovedEvidence) {
           return { finished: true, outcome: "knowledge_unavailable", response: safeFallback(context), steps: observations,
             toolsUsed, stepCount: step, reason: knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED" };
@@ -532,8 +542,10 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         evidenceCount: evidenceBudget?.evidenceCount ?? evidence.length, evidenceChars: evidenceBudget?.evidenceChars,
         candidateCount: result.trace?.candidateCount ?? evidenceBudget?.candidateCount, newCandidateCount: evidenceBudget?.newCandidateCount,
         newEvidenceCount: evidenceBudget?.newEvidenceCount,
-        retainedIds: evidenceBudget?.retainedIds, excludedIds: [...(result.trace?.excludedIds || []), ...(evidenceBudget?.excludedIds || [])], contextOmittedIds: evidenceBudget?.excludedIds, replacedIds: evidenceBudget?.replacedIds,
+        retainedIds: evidenceBudget?.retainedIds, evidenceBudgetAvailableBytes: evidenceBudget?.availableBytes,
+        excludedIds: [...(result.trace?.excludedIds || []), ...(evidenceBudget?.excludedIds || [])], contextOmittedIds: evidenceBudget?.excludedIds, replacedIds: evidenceBudget?.replacedIds,
         candidateIds: result.trace?.candidateIds, evidenceAssemblyDurationMs: result.trace?.evidenceAssemblyDurationMs, selectionStatus: result.trace?.selectionStatus,
+        providerErrorCode: result.trace?.providerErrorCode, providerStatus: result.trace?.providerStatus, errorName: result.trace?.errorName,
         evidenceIds: observations.flatMap((item) => item?.result?.modelObservation?.evidence || []).map((item) => item.sourceRef).filter(Boolean) }); } catch {}
       if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
       continue;
@@ -549,6 +561,11 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         rejectedDrafts.set(progressKey, policy);
         const evidenceItems = currentDraftEvidence(observations, context);
         try { await onPolicyRejection({ step, type: "respond", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
+        if (knowledgeSearchFailed && !hasCurrentApprovedEvidence(observations)) return {
+          finished: true, outcome: "knowledge_unavailable", response: safeFallback(context),
+          steps: observations, toolsUsed, stepCount: step,
+          reason: knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED"
+        };
         const evidenceIds = currentSearchEvidenceIds(observations);
         const blockedClaims = policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked;
         const repeatedBlockedClaimWithoutEvidenceProgress = policy.reasons.some((reason) => ["prohibited_claim", "no_approved_evidence"].includes(reason)) && blockedClaims.some((claim) => {
@@ -601,6 +618,11 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       rejectedDrafts.set(progressKey, policy);
       const evidenceItems = currentDraftEvidence(observations, context);
       try { await onPolicyRejection({ step, type: "clarify", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
+      if (knowledgeSearchFailed && !hasCurrentApprovedEvidence(observations)) return {
+        finished: true, outcome: "knowledge_unavailable", response: safeFallback(context),
+        steps: observations, toolsUsed, stepCount: step,
+        reason: knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED"
+      };
       if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft")) return {
         finished: true, outcome: policy.technicalFailure ? "validation_failed" : "clarify_rejected", response: safeFallback(context),
         steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || policy.reasons.join(",")

@@ -35,6 +35,21 @@ test("equal-ranked later search results do not evict earlier usable evidence", (
   assert.deepEqual(budget.excludedIds, ["later-unrelated-result"]);
   assert.equal(budget.newEvidenceCount, 0);
 });
+
+test("an equally ranked direct result from the latest primary search replaces stale context", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const round = (id, primarySearchMatch = false) => ({ result: { modelObservation: {
+    type: "approved_knowledge", primarySearchRefs: primarySearchMatch ? [id] : [], evidence: [
+      { sourceRef: id, title: id, content: "x".repeat(350), relevance: 1, selectionOrder: 0 }
+    ]
+  } } });
+  const observations = [round("earlier-topic")];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(round("current-primary-overview", true));
+  const budget = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(budget.retainedIds, ["current-primary-overview"]);
+  assert.deepEqual(budget.replacedIds, ["earlier-topic"]);
+});
 const { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 
@@ -52,6 +67,7 @@ test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
 test("a failed knowledge search is reported as technical and is not repeated", async () => {
   let decisions = 0;
   let searches = 0;
+  const toolEvents = [];
   const result = await runAgentTurn(BASE_CONTEXT, {
     maxSteps: 4,
     decideNextStep: async ({ tools }) => {
@@ -61,8 +77,9 @@ test("a failed knowledge search is reported as technical and is not repeated", a
     },
     tools: { searchApprovedKnowledge: { run: async () => {
       searches += 1;
-      return { ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" };
-    } } }
+      return { ok: false, status: "error", reasonCode: "EDGE_TIMEOUT", trace: { providerStatus: 503, providerErrorCode: "UPSTREAM_UNAVAILABLE" } };
+    } } },
+    onToolCall: async (event) => toolEvents.push(event)
   });
 
   assert.equal(searches, 1);
@@ -70,6 +87,26 @@ test("a failed knowledge search is reported as technical and is not repeated", a
   assert.equal(result.outcome, "knowledge_unavailable");
   assert.equal(result.reason, "EDGE_TIMEOUT");
   assert.equal(result.steps.at(-1).result.status, "search_unavailable");
+  assert.equal(toolEvents[0].providerStatus, 503);
+  assert.equal(toolEvents[0].providerErrorCode, "UPSTREAM_UNAVAILABLE");
+});
+
+test("a rejected draft after a failed search stops without repeating model validation", async () => {
+  let decisions = 0;
+  let reviews = 0;
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    maxSteps: 5,
+    decideNextStep: async () => decisions++ === 0
+      ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } }
+      : { type: "respond", text: "I cannot summarize the services while the information source is unavailable." },
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" }) } },
+    assessDraft: async () => { reviews += 1; return { valid: false, reasons: ["context_mismatch", "question_not_answered"] }; }
+  });
+
+  assert.equal(decisions, 2);
+  assert.equal(reviews, 1, "a technical retrieval failure without evidence cannot make repeated reviews productive");
+  assert.equal(result.outcome, "knowledge_unavailable");
+  assert.equal(result.reason, "EDGE_TIMEOUT");
 });
 
 test("a failed follow-up search preserves previously retrieved approved evidence", async () => {

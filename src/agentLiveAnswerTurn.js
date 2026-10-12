@@ -17,6 +17,15 @@ const { deriveOpenQuestion } = require("./openQuestion");
 const { randomUUID } = require("node:crypto");
 const { sanitizeControlledInspection } = require("./controlledDiagnostics");
 const { profile } = require("./companyProfile");
+const { INTENTS } = require("./intent");
+
+function isSocialOnlyClassification(classification = {}) {
+  const intents = Array.isArray(classification.intents) ? classification.intents : [];
+  const socialIntents = new Set([INTENTS.GREETING, INTENTS.SMALL_TALK, INTENTS.AGENT_IDENTITY, INTENTS.UNKNOWN]);
+  return classification.operation === "none"
+    && intents.some((intent) => [INTENTS.GREETING, INTENTS.SMALL_TALK, INTENTS.AGENT_IDENTITY].includes(intent))
+    && intents.every((intent) => socialIntents.has(intent));
+}
 
 async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMessageId = null, traceId = randomUUID() } = {}, {
   store,
@@ -40,6 +49,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   const bookingState = user?.booking?.status;
   const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user: preflightUser, store, contextual: true,
     ...preflightOptions, onModelCall: (measurement) => logEvent("agent_model_call", { ...measurement, traceId }) });
+  const socialOnlyTurn = isSocialOnlyClassification(prepared.classification);
   prepared.metadata.traceId = traceId;
   if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || prepared.classification?.operation === "booking_request") {
     const error = new Error("Appointment turn remains owned by the deterministic booking workflow.");
@@ -81,7 +91,8 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         },
         recentConversation: buildRecentConversation(priorHistory),
         priorConfiguredIntroduction,
-        conversationState, knownCustomerFacts: conversationState.agentFacts, currentOpenQuestion: deriveOpenQuestion(priorHistory.at(-1)),
+        conversationState, knownCustomerFacts: conversationState.agentFacts,
+        currentOpenQuestion: socialOnlyTurn ? null : deriveOpenQuestion(priorHistory.at(-1)), socialOnlyTurn,
         consentState, allowedCapabilities, sourceTurnId, store, user: currentUser, userId,
         intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
         language, inboundMessageId: providerMessageId || null,
