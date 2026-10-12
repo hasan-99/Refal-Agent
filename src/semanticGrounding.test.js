@@ -107,6 +107,22 @@ test("reviewer receives exact approved evidence, translation and negation contra
   assert.equal(result.valid, true);
 });
 
+test("reviewer distinguishes explicit ongoing scope from adjacent lifecycle procedures", async () => {
+  const scope = { sourceRef: "profile:continuity", review_status: "approved", content: "The group keeps the same client file open beyond incorporation. Its connected services include company formation, tax and accounting, investment and property, and residency and relocation." };
+  const text = "We continue supporting the client beyond incorporation across the stated service areas; specific registrations and filings depend on the company's circumstances.";
+  const result = await assessAgentDraft({ text, evidenceItems: [scope], context: { currentMessage: "What can you help with after the company is formed?", locale: "english" } }, {
+    callModel: async (messages) => {
+      assert.match(messages[0].content, /explicitly describes the group's continuing role across a client file or beyond incorporation/);
+      assert.match(messages[0].content, /does not, by itself, establish that the company performs every adjacent procedure/);
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.evidence[0].ref, scope.sourceRef);
+      assert.equal(input.evidence[0].content, scope.content);
+      return { segments: [{ text, status: "supported", evidenceRefs: [scope.sourceRef], reasonCode: "supported" }], languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, true);
+});
+
 test("omitted claim text, fabricated references, unsupported relations and dropped conditions fail closed", () => {
   assert.equal(validateGroundingVerdict(verdict("A supported sentence.", "supported", [evidence.sourceRef]), "A supported sentence. An invented service.", [evidence]).technicalFailure, true);
   assert.equal(validateGroundingVerdict(verdict("A claim.", "supported", ["absent"]), "A claim.", [evidence]).valid, false);

@@ -104,6 +104,18 @@ test("all prompt surfaces require fresh approved evidence when a customer refers
   assert.match(edge, expected, "Edge prompt mirror lost fresh-evidence rule; regenerate it");
 });
 
+test("all runtime prompts preserve explicit exclusions and evidence-bounded later-stage scope", () => {
+  const expected = /Respect explicit customer interest boundaries in recent history: do not repeat a previously excluded service area, including to say it is being omitted, unless the current request reopens it or it is a necessary material condition\. For a later-stage follow-up, state the supported continuing company role and only the unexcluded service scope relevant to that stage; do not repeat the full catalogue or turn nearby lifecycle procedures into offers\./;
+  for (const variant of ["customer", "operator"]) {
+    assert.match(buildBrainPrompt({ variant }).join("\n"), expected, `${variant} prompt lost contextual scope handling`);
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected, "Edge mirror lost contextual scope handling; regenerate it");
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "What support continues after incorporation?", locale: "english" })[0].content,
+    /do not volunteer previously excluded service areas, even conditionally or while explaining that you will omit them/);
+});
+
 test("W6.3: recognized buying signals reach the shared prompt with guarded next steps", () => {
   assert.deepEqual(buyingSignalBlock([]), []);
   const prompt = buildBrainPrompt({ variant: "customer", leadTier: "hot", buyingSignals: [{ id: "MB-B4" }] }).join("\n");

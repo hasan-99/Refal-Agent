@@ -377,34 +377,19 @@ test("deterministic evidence fallback truncates only at complete sentence bounda
   assert.match(numbered.answer, /\.$/);
 });
 
-test("broad company questions search each knowledge area before composing an answer", () => {
+test("broad company questions start from approved company scope without hard-coded service facets", () => {
   const broad = buildKnowledgeSearchQueries("ما هي خدمات الشركة؟", { history: [] }, ["services"], "arabic");
-  assert.equal(broad.length, 8);
-  assert.equal(broad[0], "ما هي خدمات الشركة؟", "the customer's precise question is retained as the lead retrieval query");
-  assert.equal(broad[1], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
-  assert.match(broad[2], /ضريبة الشركات في قبرص/u);
-  assert.match(broad[3], /المصرفية وبوابات الدفع لشركة قبرصية/u);
-  assert.match(broad[4], /الإقامة الدائمة في قبرص/u);
-  assert.equal(broad[5], "شراء العقار في قبرص");
+  assert.deepEqual(broad, ["مو مكتب تسجيل شركات ضيق", "ما هي خدمات الشركة؟"]);
   const businessAreas = buildKnowledgeSearchQueries("What business areas does Refalco Group work in?", {}, ["business_areas"], "english");
-  assert.equal(businessAreas[0], "What business areas does Refalco Group work in?");
-  assert.deepEqual(businessAreas, ["What business areas does Refalco Group work in?", "Not a narrow company registration office"]);
+  assert.deepEqual(businessAreas, ["Not a narrow company registration office", "What business areas does Refalco Group work in?"]);
   const profile = buildKnowledgeSearchQueries("Who are you?", {}, ["company_info"]);
-  assert.deepEqual(profile, ["Who are you?", "Not a narrow company registration office"]);
+  assert.deepEqual(profile, ["Not a narrow company registration office", "Who are you?"]);
   const arabicDomains = buildKnowledgeSearchQueries("شو مجالات خدماتكم؟", {}, ["services"], "arabic");
   const greekDomains = buildKnowledgeSearchQueries("Ποιες υπηρεσίες προσφέρετε;", {}, ["services"], "greek");
-  assert.equal(arabicDomains[1], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
-  assert.equal(greekDomains[1], "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας");
-  assert.equal(arabicDomains[6], "شراكات ملاك الأراضي ومناقصات الإنشاءات");
-  assert.equal(arabicDomains[7], "العلامات التجارية واتفاقيات الشركاء والعقود");
-  assert.equal(greekDomains[6], "συνεργασίες ιδιοκτητών γης και κατασκευαστικοί διαγωνισμοί");
-  assert.equal(greekDomains[7], "εμπορικά σήματα συμφωνίες μετόχων συμβάσεις Κύπρος");
-  assert.deepEqual(buildKnowledgeSearchQueries("شو مجالات عمل مجموعة الشركة؟", {}, ["company_info"], "arabic"), [
-    "شو مجالات عمل مجموعة الشركة؟", "مو مكتب تسجيل شركات ضيق"
-  ]);
-  assert.deepEqual(buildKnowledgeSearchQueries("Ποιοι είναι οι βασικοί τομείς της Refalco Group;", {}, ["business_areas"], "greek"), [
-    "Ποιοι είναι οι βασικοί τομείς της Refalco Group;", "Όχι ένα στενό γραφείο εγγραφής εταιρειών"
-  ]);
+  assert.deepEqual(arabicDomains, ["مو مكتب تسجيل شركات ضيق", "شو مجالات خدماتكم؟"]);
+  assert.deepEqual(greekDomains, ["Όχι ένα στενό γραφείο εγγραφής εταιρειών", "Ποιες υπηρεσίες προσφέρετε;"]);
+  assert.deepEqual(buildKnowledgeSearchQueries("شو مجالات عمل مجموعة الشركة؟", {}, ["company_info"], "arabic"), ["مو مكتب تسجيل شركات ضيق", "شو مجالات عمل مجموعة الشركة؟"]);
+  assert.deepEqual(buildKnowledgeSearchQueries("Ποιοι είναι οι βασικοί τομείς της Refalco Group;", {}, ["business_areas"], "greek"), ["Όχι ένα στενό γραφείο εγγραφής εταιρειών", "Ποιοι είναι οι βασικοί τομείς της Refalco Group;"]);
   const packageDetails = buildKnowledgeSearchQueries("شو بتشمل باقة تأسيس الشركة القبرصية؟", {}, ["company_info"], "arabic");
   assert.equal(packageDetails[0], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
   assert.match(packageDetails[1], /شو بتشمل باقة تأسيس الشركة القبرصية/u);
@@ -422,13 +407,13 @@ test("broad company questions search each knowledge area before composing an ans
   assert.deepEqual(buildKnowledgeSearchQueries("How much is setup?", {}, ["pricing"]), ["How much is setup?"]);
   const arabic = buildKnowledgeSearchQueries("شو خدماتكم؟", {}, ["services"], "arabic");
   const greek = buildKnowledgeSearchQueries("Τι υπηρεσίες προσφέρετε;", {}, ["services"], "greek");
-  assert.equal(arabic[0], "شو خدماتكم؟");
-  assert.equal(arabic[1], "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط");
-  assert.equal(greek[0], "Τι υπηρεσίες προσφέρετε;");
-  assert.equal(greek[1], "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας");
-  assert.doesNotMatch(arabic.join(" "), /jurisdiction comparison|corporate tax 15%/iu);
-  assert.doesNotMatch(greek.join(" "), /jurisdiction comparison|corporate tax 15%/iu);
-  assert.equal(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic")[0], "مين أنتم؟");
+  assert.deepEqual(arabic, ["مو مكتب تسجيل شركات ضيق", "شو خدماتكم؟"]);
+  assert.deepEqual(greek, ["Όχι ένα στενό γραφείο εγγραφής εταιρειών", "Τι υπηρεσίες προσφέρετε;"]);
+  const focusedBanking = buildKnowledgeSearchQueries("Can you help me open a business bank account in Cyprus?", {}, ["corporate_services"], "english");
+  assert.equal(focusedBanking.length, 1, "a focused service question must not fan out over unrelated service areas");
+  assert.match(focusedBanking[0], /business bank account/u);
+  assert.doesNotMatch([...focusedBanking, ...arabic, ...greek].join(" "), /landowner partnerships|مناقصات الإنشاءات|κατασκευαστικοί διαγωνισμοί/iu);
+  assert.deepEqual(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic"), ["مو مكتب تسجيل شركات ضيق", "مين أنتم؟"]);
 });
 
 test("targeted company-profile query retains approved profile evidence", async () => {
@@ -439,16 +424,19 @@ test("targeted company-profile query retains approved profile evidence", async (
     intents: ["business_areas"], language: "english", embedQueryTexts: async (queries) => queries,
     store: { searchKnowledge: async (query) => {
       calls.push(query);
-      return query === "Not a narrow company registration office" ? [{ chunk_kind: "fact", source_name: "Refalco Group",
+      return query === "Not a narrow company registration office" ? [{ rank: 0.05, chunk_kind: "fact", source_name: "Refalco Group",
         document_title: "Who Refalco Group is", chunk_id: "company-profile-areas", heading: "Not a narrow company registration office",
         content: "The approved profile describes company formation, tax and accounting, and development services.",
-        metadata: { facts: ["MB-F1"] }, policyMetadata }] : [];
+        metadata: { facts: ["MB-F1"] }, policyMetadata }]
+        : [{ rank: 0.01, chunk_kind: "fact", source_name: "Unrelated lifecycle document", chunk_id: "weak-lifecycle-hit",
+          heading: "Company lifecycle", content: "A lifecycle section contains weaker matching language.", metadata: { facts: ["MB-F1"] }, policyMetadata }];
     } }
   });
   assert.equal(result.complete, true);
   assert.equal(result.queryCount, 2);
-  assert.deepEqual(calls, ["What business areas does Refalco Group work in?", "Not a narrow company registration office"]);
+  assert.deepEqual(calls, ["Not a narrow company registration office", "What business areas does Refalco Group work in?"]);
   assert.ok(result.evidence.some((row) => row.chunk_id === "company-profile-areas"));
+  assert.equal(result.evidence[0].chunk_id, "company-profile-areas", "stronger overview evidence replaces a weaker first-query hit");
 });
 
 test("broad retrieval keeps a balanced bounded set of eligible chunks and skips finding aids", async () => {
@@ -481,15 +469,15 @@ test("broad retrieval keeps a balanced bounded set of eligible chunks and skips 
       }
     }
   });
-  assert.equal(retrieval.queryCount, 8);
+  assert.equal(retrieval.queryCount, 2);
   assert.equal(retrieval.failures.length, 0);
   assert.equal(retrieval.complete, true);
-  assert.equal(calls.length, 8);
-  assert.equal(calls[0].query, "What services do you offer?");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].query, "Not a narrow company registration office");
   assert.deepEqual(calls.map((call) => call.query), buildKnowledgeSearchQueries("What services do you offer?", {}, ["services"], "english"));
   assert.ok(maxActiveSearches > 1);
   assert.ok(calls.every((call) => call.model === "test-model" && call.count === 6 && call.embedding === call.query.length));
-  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "content-2", "content-3", "content-4", "content-5", "content-6", "content-7", "content-8"]);
+  assert.deepEqual(retrieval.evidence.map((row) => row.chunk_id), ["content-1", "discovery-1", "detail-1", "content-2", "discovery-2", "detail-2"]);
   assert.ok(retrieval.evidence.length <= 8);
   assert.ok(retrieval.evidenceChars <= 10000);
 
@@ -502,7 +490,7 @@ test("broad retrieval keeps a balanced bounded set of eligible chunks and skips 
       return [];
     } }
   });
-  // Deterministic failure coverage: the first facet fails, the rest have no results.
+  // Deterministic failure coverage: an incomplete result set cannot be treated as grounded.
   assert.equal(incomplete.complete, false);
   assert.equal(incomplete.failures.length, 1);
 });
@@ -526,7 +514,7 @@ test("all approved indexed Knowledge section kinds reach retrieval without refer
   assert.equal(result.evidence.some((row) => row.chunk_id === "finding-aid"), false);
 });
 
-test("a specific service question is searched verbatim and its approved match survives the broad facets", async () => {
+test("a specific service question is searched verbatim without unrelated scope queries", async () => {
   const question = "Does Refalco help with shareholder changes?";
   const calls = [];
   const facts = ["MB-F14"];
@@ -541,7 +529,7 @@ test("a specific service question is searched verbatim and its approved match su
     } }
   });
   assert.equal(calls[0], question);
-  assert.equal(result.queryCount, 8);
+  assert.equal(result.queryCount, 1);
   assert.ok(result.evidence.some((row) => row.chunk_id === "shareholder-change"));
   assert.equal(result.complete, true);
 });

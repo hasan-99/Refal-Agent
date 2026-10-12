@@ -158,6 +158,15 @@ test("buildDecisionMessages carries forward recent conversation and prior tool o
   assert.match(userMessage, /Company formation price/);
 });
 
+test("decision prompt keeps follow-ups within the customer's current unexcluded scope", () => {
+  const messages = buildDecisionMessages({ currentMessage: "What support continues after incorporation?", locale: "english", recentConversation: [
+    { role: "user", content: "I only want company formation; I am not interested in investment or property." }
+  ] });
+  assert.match(messages[0].content, /do not volunteer previously excluded service areas, even conditionally or while explaining that you will omit them/);
+  assert.match(messages[0].content, /state the supported continuing role and only the unexcluded service scope relevant to that stage/);
+  assert.match(messages[0].content, /do not repeat the full catalogue or turn nearby lifecycle procedures into offers/);
+});
+
 // REFAL-AGENT-027 -----------------------------------------------------------
 
 test("buildDecisionMessages includes the model-safe RAG evidence content from a tool's modelObservation", () => {

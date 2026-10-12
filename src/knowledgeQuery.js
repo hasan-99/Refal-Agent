@@ -3,40 +3,8 @@ const { detectExplicitLanguageRequest } = require("./language");
 
 const CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION = /(?:\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and that|what about it)\b|(?:كم|قديش).{0,24}(?:تكلف|سعر|رسوم)|(?:بدي|بدّي|اعطيني|أعطيني).{0,20}تفاصيل|تفاصيل\s*(?:أكثر|اكتر)|شو\s*(?:بيشمل|بتشمل)|(?:πόσο|τιμή|κόστος|χρέωση|πες μου περισσότερα|περισσότερες πληροφορίες|τι περιλαμβάνει))/iu;
 const NON_CONTEXT_RESPONSES = /(?:ما عندي معلومة معتمدة|لا تتوفر لديّ حالياً|ما عندي سعر معتمد|I don['’]t have approved information|I don['’]t have an approved company formation fee|Δεν έχω εγκεκριμένη)/iu;
-const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services", "corporate_services"]);
+const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services"]);
 const PACKAGE_DETAIL_QUESTION = /(?:\b(?:package|formation package|setup package|what does .{0,20} include|what(?:'s| is) included|what do i get(?:\s+with|\s+if)?|what will i get(?:\s+with|\s+if)?|what is part of)\b|باقة|شو\s*(?:بتشمل|بيشمل|باخد|باخد\s*اذا)|ماذا\s*تشمل|ماذا\s*احصل\s*(?:عليه|عليها)|πακέτο|τι\s*περιλαμβάνει|τι\s*παίρνω(?:\s+αν)?|τι\s+περιλαμβάνει\s+η\s+υπηρεσία)/iu;
-// The corpus has separate approved topic documents. Retrieve each business
-// area before composing a broad answer so one high-ranking document cannot
-// crowd out every other area.
-const BROAD_SERVICE_FACETS = Object.freeze({
-  english: [
-    "Cyprus company formation",
-    "Cyprus corporate tax",
-    "Cyprus banking and payment gateways",
-    "Cyprus permanent residency",
-    "Buying property in Cyprus",
-    "Landowner partnerships and construction tenders Cyprus",
-    "Trademarks shareholder agreements contracts Cyprus"
-  ],
-  arabic: [
-    "تسجيل شركة قبرص",
-    "ضريبة الشركات في قبرص",
-    "المصرفية وبوابات الدفع لشركة قبرصية",
-    "الإقامة الدائمة في قبرص",
-    "شراء العقار في قبرص",
-    "شراكات ملاك الأراضي ومناقصات الإنشاءات",
-    "العلامات التجارية واتفاقيات الشركاء والعقود"
-  ],
-  greek: [
-    "εγγραφή εταιρείας Κύπρος",
-    "εταιρικός φόρος στην Κύπρο",
-    "τραπεζικοί λογαριασμοί και πύλες πληρωμών για κυπριακή εταιρεία",
-    "μόνιμη διαμονή στην Κύπρο",
-    "αγορά ακινήτου στην Κύπρο",
-    "συνεργασίες ιδιοκτητών γης και κατασκευαστικοί διαγωνισμοί",
-    "εμπορικά σήματα συμφωνίες μετόχων συμβάσεις Κύπρος"
-  ]
-});
 const PACKAGE_TITLE_QUERY = Object.freeze({
   english: "What the Cyprus company formation package includes",
   arabic: "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط",
@@ -80,31 +48,15 @@ function buildKnowledgeSearchQuery(currentMessage, user, intents = []) {
 function buildKnowledgeSearchQueries(currentMessage, user, intents = [], language = "english") {
   const base = buildKnowledgeSearchQuery(currentMessage, user, intents);
   if (!Array.isArray(intents) || !intents.some((intent) => BROAD_KNOWLEDGE_INTENTS.has(intent))) return [base];
-  // Keep each query short and focused. The lexical RPC requires several query
-  // terms to match; a long mixed-domain facet can therefore return no results
-  // even when its individual topics are well covered by the corpus.
   const key = normalizedLanguage(language);
-  const companyProfileOnly = intents.some((intent) => intent === "company_info" || intent === "business_areas")
-    && !intents.some((intent) => intent === "services" || intent === "corporate_services");
-  if (companyProfileOnly && !PACKAGE_DETAIL_QUESTION.test(base)) {
-    // This approved profile heading retrieves the current business-area claim
-    // consistently in EN/AR/EL. Keep customer wording first and cap the
-    // targeted fan-out at two queries; approval filtering remains unchanged.
-    return [base, COMPANY_PROFILE_QUERY[key]];
-  }
-  const serviceFacets = BROAD_SERVICE_FACETS[key];
-  // The actual customer wording remains the lead query; each facet targets one
-  // service area in the requested language rather than combining unrelated
-  // topics whose shared terms dilute lexical recall.
-  // The canonical package-title query is an empirically reliable anchor in all
-  // three corpora. Keep it in the bounded broad fan-out so natural, general
-  // company wording does not miss the formation-package document in AR/EL.
-  const facets = [PACKAGE_TITLE_QUERY[key], ...serviceFacets.slice(1)];
-  // Preserve the customer's exact question in the search fan-out. Replacing it
-  // with generic service facets can lose specific intent such as shareholder
-  // changes or construction projects. Keep it first so matching evidence is
-  // considered before the balanced broad-service results.
-  return PACKAGE_DETAIL_QUESTION.test(base) ? [PACKAGE_TITLE_QUERY[key], base] : [base, ...facets];
+  // A focused question must not fan out over unrelated service domains merely
+  // because its classifier used a broad corporate-services label. This keeps
+  // banking, tax, property and other specifics tied to the customer's query.
+  if (PACKAGE_DETAIL_QUESTION.test(base)) return [PACKAGE_TITLE_QUERY[key], base];
+  // Overview answers need the approved company scope. The source itself defines
+  // the categories to summarize; do not enumerate service topics in code or
+  // imply that every knowledge document is an offered service.
+  return [COMPANY_PROFILE_QUERY[key], base];
 }
 
 async function retrieveKnowledgeForTurn(currentMessage, {
@@ -152,26 +104,31 @@ async function retrieveKnowledgeForTurn(currentMessage, {
       return { rows: [], error };
     }
   }));
-  // Promise.all preserves query order. Select in rounds: one best result per
-  // facet first, then additional results in rank order. Deduplicate after all
-  // searches finish so concurrent workers never race on the shared Set.
+  // Merge candidates by the search service's relevance score across queries.
+  // Query order is not a relevance signal: a focused approved overview result
+  // must be able to outrank weak hits from the customer's broad wording.
+  // Stable query/rank tie-breaking keeps offline stores deterministic.
   for (const result of results) {
     if (result.error) failures.push(result.error);
   }
   let evidenceChars = 0;
-  const maxRowsPerQuery = Math.max(0, ...results.map((result) => result.rows.length));
-  for (let rank = 0; rank < maxRowsPerQuery && evidence.length < MAX_TURN_EVIDENCE_CHUNKS; rank += 1) {
-    for (const result of results) {
-      const row = result.rows[rank];
-      if (!row || evidence.length >= MAX_TURN_EVIDENCE_CHUNKS) continue;
-      const key = String(row?.chunk_id || row?.chunkId || [row?.document_id, row?.heading, row?.content].join("|"));
-      if (seen.has(key)) continue;
-      const chars = String(row?.heading || "").length + String(row?.content || "").length;
-      if (evidenceChars + chars > MAX_TURN_EVIDENCE_CHARS) continue;
-      seen.add(key);
-      evidence.push(row);
-      evidenceChars += chars;
-    }
+  const candidates = results.flatMap((result, queryIndex) => result.rows.map((row, rankIndex) => ({ row, queryIndex, rankIndex,
+    score: Number(row?.rank ?? row?.score) }))).sort((left, right) => {
+    const leftScored = Number.isFinite(left.score);
+    const rightScored = Number.isFinite(right.score);
+    if (leftScored && rightScored && left.score !== right.score) return right.score - left.score;
+    if (leftScored !== rightScored) return leftScored ? -1 : 1;
+    return left.queryIndex - right.queryIndex || left.rankIndex - right.rankIndex;
+  });
+  for (const { row } of candidates) {
+    if (!row || evidence.length >= MAX_TURN_EVIDENCE_CHUNKS) break;
+    const key = String(row?.chunk_id || row?.chunkId || [row?.document_id, row?.heading, row?.content].join("|"));
+    if (seen.has(key)) continue;
+    const chars = String(row?.heading || "").length + String(row?.content || "").length;
+    if (evidenceChars + chars > MAX_TURN_EVIDENCE_CHARS) continue;
+    seen.add(key);
+    evidence.push(row);
+    evidenceChars += chars;
   }
   return { evidence, evidenceChars, queryCount: queries.length, failures, complete: failures.length === 0, embeddingMs, searchMs: Date.now() - searchStartedAt };
 }
