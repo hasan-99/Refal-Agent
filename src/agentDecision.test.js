@@ -58,6 +58,16 @@ test("long comma-separated lists are formatted as bullets without changing their
     "I can help with your question.");
 });
 
+test("a list is formatted even when the reply already has separate follow-up paragraphs", () => {
+  const raw = "The company package includes formation, name reservation, document filing, and the registration certificate.\n\nThe usual timing is about two weeks after documents are complete.\n\nWhat activity will the company carry out?";
+  const parsed = parseDecisionJson(JSON.stringify({ type: "respond", text: raw }));
+  assert.equal((parsed.text.match(/^•/gm) || []).length, 4);
+  assert.match(parsed.text, /\n\nThe usual timing is about two weeks after documents are complete\./);
+  assert.match(parsed.text, /\n\nWhat activity will the company carry out\?$/);
+  const words = (value) => value.toLowerCase().match(/[a-z]+/gu).join(" ");
+  assert.equal(words(parsed.text), words(raw));
+});
+
 test("parseDecisionJson maps only a well-formed response alias to the guarded respond decision", () => {
   assert.deepEqual(parseDecisionJson('{"type":"response","text":"The current offer is confirmed."}'), {
     type: "respond", text: "The current offer is confirmed."

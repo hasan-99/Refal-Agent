@@ -125,16 +125,20 @@ function hasPriorConfiguredIntroduction(recentConversation = []) {
 
 function formatCommaSeparatedLists(text) {
   const source = String(text || "");
-  if (!source || source.includes("\n") || /^\s*[-*•]\s/mu.test(source)) return source;
-  const sentences = source.split(/(?<=[.!?؟])\s+/u);
+  if (!source) return source;
   let changed = false;
-  const formatted = sentences.map((sentence) => {
-    const items = sentence.split(/(?<=[,،;؛])/u).map((item) => item.trim()).filter(Boolean);
-    if (items.length < 4 || items.some((item) => item.length > 240)) return sentence;
-    changed = true;
-    return items.map((item) => `• ${item}`).join("\n");
+  const paragraphs = source.split(/\n{2,}/u).map((paragraph) => {
+    if (/^\s*[-*•]\s/mu.test(paragraph)) return paragraph;
+    const sentences = paragraph.split(/(?<=[.!?؟])\s+/u);
+    const formatted = sentences.map((sentence) => {
+      const items = sentence.split(/(?<=[,،;؛])/u).map((item) => item.trim()).filter(Boolean);
+      if (items.length < 4 || items.some((item) => item.length > 240)) return sentence;
+      changed = true;
+      return items.map((item) => `• ${item}`).join("\n");
+    });
+    return formatted.join("\n");
   });
-  return changed ? formatted.join("\n") : source;
+  return changed ? paragraphs.join("\n\n") : source;
 }
 
 function evidenceAnchor(kind, record) {
