@@ -446,6 +446,21 @@ test("a contracted statement that approval is not guaranteed remains a permitted
   assert.equal(mixed.allowed, false);
 });
 
+test("a passive refusal that approval cannot be guaranteed remains safe without masking a later promise", () => {
+  for (const sentence of [
+    "An account can't be guaranteed.",
+    "An account cannot be guaranteed.",
+    "An account couldn’t be guaranteed."
+  ]) {
+    const verdict = classifyClaim(sentence, { evidence: [] });
+    assert.notEqual(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, sentence);
+    assert.equal(verdict.allowed, true, sentence);
+  }
+  const mixed = classifyClaim("An account can't be guaranteed, but we guarantee approval.", { evidence: [] });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(mixed.allowed, false);
+});
+
 test("100% approval is caught even though \\b can never match after a percent sign", () => {
   const verdict = classifyClaim("This route has 100% approval for every applicant.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, verdict.reasons.join(", "));

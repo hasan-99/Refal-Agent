@@ -82,6 +82,7 @@ const OUTPUT_GUARD_CLAIMS = [ROI_CLAIM, CROSS_CUSTOMER_LEAK, BANK_APPROVAL_PROMI
 // implementations — a mirror that dropped the stripper would reintroduce OG-1
 // on the customer-reachable path only.
 const REFAL_OWN_REFUSALS = [
+  "The bank decides; an account can't be guaranteed.",
   safetyFallbacks.english.investment,
   safetyFallbacks.arabic.investment,
   safetyFallbacks.greek.investment,
@@ -102,6 +103,7 @@ const CLAIM_CORPUS = [
   // Safe disclaimers: these must stay ALLOWED. The edge copy blocked the first.
   "I cannot provide tax advice.",
   "I cannot guarantee that bank approval will be granted.",
+  "The bank decides; an account can't be guaranteed.",
   "لا أستطيع تقديم استشارة ضريبية.",
   // Ordinary prohibited claims, all three languages.
   "You can expect an investment return of 8% per year.",
