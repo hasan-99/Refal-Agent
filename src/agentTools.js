@@ -544,14 +544,14 @@ function cosineSimilarity(left, right) {
   return dot / Math.sqrt(leftNorm * rightNorm);
 }
 
-function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historicalQueryIndex = -1 } = {}) {
+function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historicalQueryIndex = -1, currentQueryIndex = -1 } = {}) {
   const sections = new Map();
   for (const [queryIndex, rows] of resultSets.entries()) {
     const seenInQuery = new Set();
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const key = knowledgeSectionIdentity(row, index);
-      if (!sections.has(key)) sections.set(key, { rows: [], contributions: [], firstSeen: sections.size, primaryMatch: false, historicalMatch: false });
+      if (!sections.has(key)) sections.set(key, { rows: [], contributions: [], firstSeen: sections.size, primaryMatch: false, historicalMatch: false, currentQueryRank: null });
       const group = sections.get(key);
       if (seenInQuery.has(key)) continue;
       seenInQuery.add(key);
@@ -561,8 +561,12 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
       const queryWeight = queryIndex === 0 ? 4
         : queryIndex === historicalQueryIndex ? 8
           : queryIndex < contextualCount ? 4 : 1;
-      if (queryIndex === 0) group.primaryMatch = true;
+      // Preserve one best section from each bounded query in the later prompt
+      // budget. Repeated hits from broad variants can otherwise push the best
+      // result of a complementary search out before generation and validation.
+      if ((queryIndex < contextualCount && index === 0) || (queryIndex === currentQueryIndex && index === 0)) group.primaryMatch = true;
       if (queryIndex === historicalQueryIndex) group.historicalMatch = true;
+      if (queryIndex === currentQueryIndex && (group.currentQueryRank === null || index < group.currentQueryRank)) group.currentQueryRank = index;
       group.contributions.push(queryWeight / (60 + index + 1));
       group.rows.push(...rows.filter((candidate) => {
         const candidateKey = knowledgeSectionIdentity(candidate, index);
@@ -582,7 +586,8 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
     .sort((a, b) => b.score - a.score || a.firstSeen - b.firstSeen)
     .flatMap((group) => [...new Map(group.rows.map((row) => [row.chunk_id || `${row.document_id}:${row.chunk_index}`, row])).values()]
       .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
-      .map((row) => ({ ...row, primarySearchMatch: group.primaryMatch, historicalSearchMatch: group.historicalMatch, selectionRelevance: group.score * 60 })));
+      .map((row) => ({ ...row, primarySearchMatch: group.primaryMatch, historicalSearchMatch: group.historicalMatch,
+        currentQueryMatch: group.currentQueryRank !== null, currentQueryRank: group.currentQueryRank, selectionRelevance: group.score * 60 })));
 }
 
 async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user } = {}) {
@@ -665,7 +670,8 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const results = successfulResults.length > 1
     ? mergeRankedKnowledgeResults(resultSets.map((result) => result.ok && Array.isArray(result.value) ? result.value : []), {
       contextualCount: resultSets.filter(result => result.contextual).length,
-      historicalQueryIndex
+      historicalQueryIndex,
+      currentQueryIndex: queries.indexOf(currentQuery)
     })
     : (Array.isArray(successfulResults[0].value) ? successfulResults[0].value : [])
       .map((row, index) => ({ ...row, selectionRelevance: 60 / (61 + index) }));
@@ -707,7 +713,10 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       // Keep a relevant original-language history match distinguishable from
       // the current query; the history search is already gated by semantic
       // alignment when embeddings are available.
-      selectionRelevance: 1 / (index + 1) + (row.historicalSearchMatch ? 1 : 0),
+      selectionRelevance: 1 / (index + 1) + (row.historicalSearchMatch ? 1 : 0)
+        // Preserve only the strongest few exact-wording matches so low-value
+        // tail results cannot crowd out an already strong resolved overview.
+        + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
       primarySearchMatch: row.primarySearchMatch === true,
       selectionOrder: index })));
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);

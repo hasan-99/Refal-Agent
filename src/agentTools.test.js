@@ -219,6 +219,33 @@ test("searchApprovedKnowledge rank-fuses model interpretation with the original 
   assert.deepEqual(calls, ["Refalco Group service overview", "ممكم اعرف شو بتقدمو خدمات؟"]);
   assert.equal(result.modelObservation.evidence.length, 2);
   assert.deepEqual(result.modelObservation.evidence.map((item) => item.content), ["Company formation services", "خدمات تأسيس الشركات"]);
+  assert.ok(result.modelObservation.primarySearchRefs.includes("ar-chunk"),
+    "the customer's exact wording must receive primary evidence priority alongside the model-resolved query");
+});
+
+test("a directly relevant customer-wording section survives the model and validator context budget", async () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const currentMessage = "هل تأسيس الشركة وحده بيعطيني إقامة، ولا للإقامة شروط منفصلة؟";
+  const section = (id, heading, content) => ({ document_id: id, section_index: 0, chunk_id: id,
+    document_title: heading, heading, content, review_status: "approved" });
+  const store = { searchKnowledge: async (query) => query === "resolved company context"
+    ? [section("overview", "Company overview", "o".repeat(1000)), section("broad", "General company notes", "b".repeat(1000))]
+    : query === "company investment and residence conditions"
+      ? [section("residence-conditions", "Permanent residence conditions", "The company-investment category requires a qualifying investment and actual operations. " + "r".repeat(240)),
+        section("residence-adjacent", "Company and residence", "a".repeat(1000))]
+      : [section("generic-wording-hit", "General information", "g".repeat(1000))] };
+  const result = await searchApprovedKnowledge({ query: "resolved company context", relatedQueries: ["company investment and residence conditions"] }, {
+    store, currentMessage, embedText: async () => null, matchCount: 6
+  });
+  const observations = [{ result: { modelObservation: result.modelObservation } }];
+  const budget = boundAccumulatedKnowledgeEvidence(observations, 2800);
+  const modelEvidence = result.modelObservation.evidence;
+  const validatorEvidence = result.modelObservation.policyEvidence;
+  assert.ok(result.modelObservation.primarySearchRefs.includes("residence-conditions"),
+    "the best section from a complementary search must survive fusion as a priority candidate");
+  assert.ok(budget.retainedIds.includes("residence-conditions"));
+  assert.ok(modelEvidence.some((item) => item.sourceRef === "residence-conditions"));
+  assert.ok(validatorEvidence.some((item) => item.sourceRef === "residence-conditions"));
 });
 
 test("searchApprovedKnowledge also retrieves the immediately prior customer wording after a language switch, with personal data redacted", async () => {

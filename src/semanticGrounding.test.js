@@ -163,6 +163,19 @@ test("semantic clause segmentation normalizes omitted boundary spaces without lo
   assert.equal(omitted.technicalFailure,true);
   assert.equal(omitted.errorCode,"GROUNDING_VERDICT_COVERAGE_MISMATCH");
 });
+test("grounding coverage tolerates Arabic diacritic placement without tolerating changed words", () => {
+  const text = "وبيضلّ دورنا معك بالمراحل اللي بتجي بعد التأسيس.";
+  const harmlessReviewerSpelling = "وبيضّل دورنا معك بالمراحل اللي بتجي بعد التأسيس.";
+  const review = (value) => ({ segments: [{ text: value, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }],
+    languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } });
+  const accepted = validateGroundingVerdict(review(harmlessReviewerSpelling), text);
+  assert.equal(accepted.technicalFailure, undefined);
+  assert.equal(accepted.valid, true);
+
+  const omitted = validateGroundingVerdict(review("وبيضلّ دورنا معك بالمراحل بعد التأسيس."), text);
+  assert.equal(omitted.technicalFailure, true);
+  assert.equal(omitted.errorCode, "GROUNDING_VERDICT_COVERAGE_MISMATCH");
+});
 test("grounding coverage accepts presentation bullets while preserving every word and claim", () => {
   const text = "The package covers formation.\n• Name reservation\n• Document preparation.";
   const segments = ["The package covers formation.", "Name reservation", "Document preparation."];
