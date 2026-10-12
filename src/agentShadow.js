@@ -216,8 +216,7 @@ async function runShadowAgentTurn({
       {
         currentMessage: text,
         locale,
-        contact: { id: userId, name: user?.profile?.name || null, nameSource: user?.profile?.nameSource || null,
-          honorific: user?.profile?.honorific || null, honorificSource: user?.profile?.honorificSource || null },
+        contact: { id: userId, name: user?.profile?.name || null, nameSource: user?.profile?.nameSource || null },
         recentConversation: buildRecentConversation(history),
         conversationState,
         knownCustomerFacts: conversationState.agentFacts,

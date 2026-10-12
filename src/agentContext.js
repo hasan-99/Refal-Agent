@@ -33,14 +33,10 @@ function buildAgentContext({
     locale: safeTrim(locale, 20) || "unknown",
     contact: Object.freeze({
       id: safeTrim(contact.id, 120),
-      // Only customer-stated names and owner-configured trusted test names are
-      // eligible for personalization. Transport labels and inferred names stay out.
-      name: ["customer_stated", "owner_configured"].includes(contact.nameSource) ? safeTrim(contact.name, 80) || null : null,
-      nameSource: ["customer_stated", "owner_configured"].includes(contact.nameSource) ? contact.nameSource : null,
-      honorific: ["customer_stated", "owner_configured"].includes(contact.honorificSource)
-        ? safeTrim(contact.honorific, 30) || null : null,
-      honorificSource: ["customer_stated", "owner_configured"].includes(contact.honorificSource)
-        ? contact.honorificSource : null
+      // Only names explicitly captured from customer wording are eligible for
+      // personalization. Transport/contact labels and inferred names stay out.
+      name: contact.nameSource === "customer_stated" ? safeTrim(contact.name, 80) || null : null,
+      nameSource: contact.nameSource === "customer_stated" ? "customer_stated" : null
     }),
     recentConversation: Object.freeze(
       (Array.isArray(recentConversation) ? recentConversation : [])
