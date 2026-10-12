@@ -261,6 +261,12 @@ function summarizeObservation(observation) {
 
 function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REGISTRY, { conflictResolver = resolveConflict } = {}) {
   const toolList = buildToolListText(tools);
+  const knowledgeSearchUnavailableDirective = Object.hasOwn(tools || {}, "searchApprovedKnowledge")
+    ? ""
+    : "Approved-knowledge retrieval is unavailable or exhausted for this turn. Do not request searchApprovedKnowledge again. Use any remaining authorized tool only when it can add the specific missing fact; otherwise answer from the evidence already returned, preserving supported parts and naming only what remains unconfirmed.";
+  const noToolsDirective = Object.keys(tools || {}).length === 0
+    ? "No tools are available for this decision. Do not request or name a tool; answer the customer's current request now from the current-turn approved evidence, state only the specific detail that remains unconfirmed, and preserve any useful supported partial answer."
+    : "";
   const recentConversation = Array.isArray(context.recentConversation) ? context.recentConversation : [];
   const recentText = recentConversation.length
     ? recentConversation.map((turn) => {
@@ -313,6 +319,8 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     'Valid shapes: {"type":"tool","tool":"<tool name>","args":"<JSON-encoded object>","text":null} or {"type":"respond","tool":null,"args":null,"text":"..."} or {"type":"clarify","tool":null,"args":null,"text":"..."}. The type value must be exactly "tool", "respond", or "clarify"; use "respond", never "response".',
     "Available tools:",
     toolList,
+    knowledgeSearchUnavailableDirective,
+    noToolsDirective,
     "Decision rules:",
     ...BLOCKS.evidence(),
     ...BLOCKS.precedence(),

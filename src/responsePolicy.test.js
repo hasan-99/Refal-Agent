@@ -367,3 +367,13 @@ test("request-recording claims require verified handover state", () => {
     assert.equal(validateResponse(response, { minSentences: 0, allowVerifiedHandoverClaim: true }).unverifiedHandoverAction, false, response);
   }
 });
+
+test("a negated Arabic booking suggestion is allowed while actual booking commitments remain blocked", () => {
+  for (const response of [
+    "وما رح أقترح حجز موعد حالياً.",
+    "مش رح أقترح ترتيب موعد الآن."
+  ]) assert.equal(validateResponse(response, { minSentences: 0 }).unverifiedBookingAction, false, response);
+
+  assert.equal(validateResponse("رح أحجز الموعد يوم الثلاثاء.", { minSentences: 0 }).unverifiedBookingAction, true);
+  assert.equal(validateResponse("ما رح أقترح حجز موعد، لكن رح أحجز الموعد يوم الثلاثاء.", { minSentences: 0 }).unverifiedBookingAction, true);
+});

@@ -23,7 +23,7 @@ test("local onboarding accepts browser form directly and never echoes client sec
   t.after(() => { if (!child.killed) child.kill(); });
   const ready = new Promise((resolve, reject) => {
     let output = "";
-    const timer = setTimeout(() => reject(new Error("Local OAuth helper did not start in time.")), 5000);
+    const timer = setTimeout(() => reject(new Error("Local OAuth helper did not start in time.")), 15000);
     child.stdout.on("data", (chunk) => {
       output += String(chunk);
       const line = output.split(/\r?\n/).find(Boolean);

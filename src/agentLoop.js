@@ -390,7 +390,6 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
   let knowledgeSearchCalls = 0;
   let knowledgeSearchFailed = false;
   let knowledgeSearchFailureReason = null;
-  let exhaustedSearchRetries = 0;
   const rejectedDrafts = new Map();
   const rejectedClaims = new Map();
 
@@ -450,15 +449,10 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         // no new sections, let the model compose from what is already in the
         // current turn. Never repeat a failed search or discard usable evidence.
         // Do not let repeated search requests consume the reserved recovery step.
-        if (exhaustedSearchRetries < 2) {
-          exhaustedSearchRetries += 1;
-          step -= 1;
-        } else {
-          // After two bounded re-prompts, skip the remaining wasted retrieval
-          // attempts and preserve one composition step plus one validation
-          // correction step.
-          step = Math.max(step, maxSteps - 2);
-        }
+        // Search is already unavailable and the evidence set has not changed.
+        // Skip repeated model decisions and move to the reserved composition
+        // step, preserving the final validation-correction step.
+        step = Math.max(step, maxSteps - 2);
         continue;
       }
       if (step < maxSteps && validated.reason !== "unknown_tool_requested") {

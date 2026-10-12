@@ -110,6 +110,13 @@ const HANDOVER_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)ll\s+(?:pass|forward|log|r
 // contractions ("it's confirmed") — the Ticket 008 lesson that a
 // first-person-only pattern is not enough.
 const BOOKING_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)(?:ll|ve)\s+(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arrange|arranged|set\s+up)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking|time)\b|\b(?:i|we)\s+(?:will|have|had)?\s*(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arranged)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking)\b|\b(?:your|the|this|that)\s+(?:appointment|meeting|booking|slot|call|session)\b[^.?!؟]{0,40}?\b(?:is|are|was|has\s+been|have\s+been)\s+(?:now\s+)?(?:booked|confirmed|scheduled|reserved|arranged|set|locked\s+in)\b|\byou(?:'|’|’)re\s+(?:all\s+set|confirmed|booked|scheduled)\b|\byou\s+are\s+(?:all\s+set|confirmed|booked|scheduled)\b|\b(?:it|that|this)(?:'|’|’)s\s+(?:now\s+)?(?:confirmed|booked|scheduled|reserved)\b|\b(?:booked|confirmed|scheduled)\s+you\s+(?:in|for)\b|(?:تم|تمّ)\s*(?:تأكيد|حجز|تثبيت|ترتيب)\s*(?:ال)?(?:موعد|موعدك|اجتماع|اجتماعك|الموعد|الاجتماع)|(?:موعدك|الموعد|اجتماعك|الاجتماع)\s*(?:مؤكد|محجوز|مثبّت|مثبت|تأكد|انحجز)|(?:حجزت|حجزنا|أكدت|اكدت|ثبتت|ثبّت)\s*(?:لك|لكم)?\s*(?:ال)?(?:موعد|اجتماع)|(?:رح|سوف|سأ|سن)\s*(?:أحجز|احجز|نحجز|حجز|أؤكد|اؤكد|نؤكد|ؤكد|أثبت|اثبت)|(?:το\s+)?ραντεβού\s*(?:σας)?\s*(?:έχει\s+)?(?:επιβεβαιώθηκε|επιβεβαιωθεί|επιβεβαιωμένο|κλείστηκε|κλειστεί|κλεισμένο|προγραμματίστηκε|προγραμματιστεί|οριστικοποιήθηκε|οριστικοποιηθεί)|(?:έκλεισα|κλείσαμε|επιβεβαίωσα|επιβεβαιώσαμε|έχω κλείσει)\s+(?:το\s+)?ραντεβού|θα\s+(?:κλείσω|κλείσουμε|επιβεβαιώσω|επιβεβαιώσουμε)\s+(?:το\s+)?ραντεβού/iu;
+const NEGATED_ARABIC_BOOKING_SUGGESTION = /(?:ما|مش|مو)\s*(?:رح|سوف|سأ|سن)\s*(?:أقترح|اقترح|نقترح)\s+(?:ال)?(?:قيام\s+ب)?(?:حجز|ترتيب)\s+(?:ال)?(?:موعد|اجتماع)(?:\s+(?:حالياً|حاليًا|هلأ|الآن))?/giu;
+
+function containsUnverifiedBookingAction(text) {
+  const withoutNegatedSuggestion = String(text || "").replace(NEGATED_ARABIC_BOOKING_SUGGESTION, "");
+  return BOOKING_ACTION_CLAIM.test(withoutNegatedSuggestion);
+}
+
 const CONTACT_CAPABILITY_OFFER = /\b(?:i|we)\s+can\s+(?:pass|forward|send|share|arrange)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b/iu;
 const EXPLICIT_PERMISSION_QUESTION = /(?:\b(?:would you like|do you want|shall i|should i)\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|that|this)\b|\bif you(?:'d| would) like\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|arrange)\b|(?:تحب|إذا بتحب|إذا بدك|هل ترغب|هل تود).{0,80}(?:تواصل|اتصال|موعد|المختص|فريق|رتب|رتّب)|(?:θα θέλατε|αν θέλετε|θέλετε).{0,80}(?:επικοινων|κλήση|ειδικό|ραντεβού|κανονίσ))/iu;
 
@@ -206,7 +213,7 @@ function validateResponse(response, options = {}) {
   const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language, semanticGrounding: options.semanticGrounding }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
   const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
-  const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);
+  const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && containsUnverifiedBookingAction(text);
   const sensitiveValueEcho = containsRawSecretValue(text) || containsLabeledSensitiveValue(text);
   const forbiddenCredentialRequest = containsForbiddenCredentialRequest(text);
   const constructionPriceEstimate = options.customerMessage

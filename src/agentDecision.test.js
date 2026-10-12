@@ -200,6 +200,20 @@ test("buildDecisionMessages carries forward recent conversation and prior tool o
   assert.match(userMessage, /Company formation price/);
 });
 
+test("a tool-free final decision is explicitly directed to answer from current evidence", () => {
+  const messages = buildDecisionMessages(CONTEXT, [], {});
+  assert.match(messages[0].content, /No tools are available for this decision\. Do not request or name a tool/u);
+  assert.match(messages[0].content, /answer the customer's current request now from the current-turn approved evidence/u);
+  assert.match(messages[0].content, /state only the specific detail that remains unconfirmed/u);
+});
+
+test("when knowledge search is unavailable, the model is told not to repeat it and to preserve partial answers", () => {
+  const messages = buildDecisionMessages(CONTEXT, [], { lookupActiveOffer: TOOL_REGISTRY.lookupActiveOffer });
+  assert.match(messages[0].content, /Approved-knowledge retrieval is unavailable or exhausted for this turn/u);
+  assert.match(messages[0].content, /Do not request searchApprovedKnowledge again/u);
+  assert.match(messages[0].content, /answer from the evidence already returned/u);
+});
+
 test("summary requests require current evidence for facts repeated from conversation history", () => {
   const messages = buildDecisionMessages(buildAgentContext({
     currentMessage: "Can you summarize the services relevant to my situation in English?",

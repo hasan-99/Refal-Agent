@@ -699,6 +699,7 @@ test("two focused knowledge searches exhaust retrieval and reserve the remaining
 test("one exhausted-search correction does not consume the reserved answer-review step", async () => {
   let calls = 0;
   let stepThreeCalls = 0;
+  let answerStep = null;
   const tools = { searchApprovedKnowledge: { run: async () => {
     calls += 1;
     const source = { document_id: `doc-${calls}`, section_index: 0, chunk_id: `chunk-${calls}`, chunk_index: 0,
@@ -709,13 +710,14 @@ test("one exhausted-search correction does not consume the reserved answer-revie
   const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 5, decideNextStep: async ({ step }) => {
     if (step <= 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `distinct approved detail ${step}` } };
     if (step === 3 && stepThreeCalls++ === 0) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "one more search after exhaustion" } };
-    if (step === 3) return { type: "respond", text: "The approved information describes the supported service details." };
+    answerStep = step;
     return { type: "respond", text: "The approved information describes the supported service details." };
   } });
   assert.equal(calls, 2);
-  assert.equal(stepThreeCalls, 2);
+  assert.equal(stepThreeCalls, 1);
+  assert.equal(answerStep, 4);
   assert.equal(result.outcome, "responded");
-  assert.equal(result.stepCount, 3);
+  assert.equal(result.stepCount, 4);
 });
 
 test("a decision naming an unknown tool stops safely with a deterministic fallback, not a thrown error", async () => {
