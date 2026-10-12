@@ -14,7 +14,7 @@ const TRACE_FIELDS = new Set([
   "clarificationRequested", "expectedLocale", "detectedResponseLocale", "languageMismatch",
   "locale", "primaryIntentCategory", "secondaryGoalCount", "decisionTypesUsed", "inspectionId",
   "retainedIds", "excludedIds", "catalogueOmittedIds", "contextOmittedIds", "replacedIds", "candidateIds", "newCandidateCount",
-  "selectionDurationMs", "selectionStatus", "providerErrorCode", "promptTokens", "completionTokens",
+  "evidenceAssemblyDurationMs", "selectionStatus", "providerErrorCode", "promptTokens", "completionTokens",
   "totalTokens", "costUsd", "estimatedCostUsd", "usage", "inputTokens", "outputTokens"
 ]);
 const TRACE_CODES = new Set(["validationReasons", "rejectionReasonCodes", "toolsUsed", "decisionTypesUsed"]);

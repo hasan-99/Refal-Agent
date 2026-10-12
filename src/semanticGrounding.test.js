@@ -119,6 +119,31 @@ test("reviewer receives exact approved evidence, translation and negation contra
   assert.equal(result.valid, true);
 });
 
+test("reviewer resolves a follow-up to the nearest compatible turn without treating an earlier reply as evidence", async () => {
+  const source = { sourceRef: "scope:overview", review_status: "approved", title: "Company service scope",
+    content: "The group provides company formation and structuring, tax and accounting, investment, property and development, and residency and relocation services. Company formation is also available on its own." };
+  const currentMessage = "Are these all your services, or are there other areas too?";
+  const recentConversation = [
+    { role: "assistant", content: "Our confirmed areas include formation, tax, property, and residency." },
+    { role: "user", content: "I only want company formation, not property or investment." },
+    { role: "assistant", content: "The package includes name reservation and document preparation." }
+  ];
+  const text = "The formation package is not the full scope: approved areas also include tax and accounting, investment, property and development, and residency and relocation.";
+  const result = await assessAgentDraft({ text, evidenceItems: [source], context: { currentMessage, recentConversation, locale: "english" } }, {
+    callModel: async (messages) => {
+      assert.match(messages[0].content, /nearest compatible antecedent/u);
+      assert.match(messages[0].content, /Prior assistant claims and fallback replies are context, not approved factual evidence/u);
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.history.at(-1).content, recentConversation.at(-1).content);
+      assert.equal(input.request, currentMessage);
+      assert.equal(input.evidence[0].content, source.content);
+      return { segments: [{ text, status: "supported", evidenceRefs: [source.sourceRef], reasonCode: "supported" }],
+        languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, true);
+});
+
 test("reviewer distinguishes explicit ongoing scope from adjacent lifecycle procedures", async () => {
   const scope = { sourceRef: "profile:continuity", review_status: "approved", content: "The group keeps the same client file open beyond incorporation. Its connected services include company formation, tax and accounting, investment and property, and residency and relocation." };
   const text = "We continue supporting the client beyond incorporation across the stated service areas; specific registrations and filings depend on the company's circumstances.";

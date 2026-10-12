@@ -407,7 +407,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         evidenceCount: evidenceBudget?.evidenceCount ?? evidence.length, evidenceChars: evidenceBudget?.evidenceChars,
         candidateCount: result.trace?.candidateCount ?? evidenceBudget?.candidateCount, newCandidateCount: evidenceBudget?.newCandidateCount,
         retainedIds: evidenceBudget?.retainedIds, excludedIds: [...(result.trace?.excludedIds || []), ...(evidenceBudget?.excludedIds || [])], contextOmittedIds: evidenceBudget?.excludedIds, replacedIds: evidenceBudget?.replacedIds,
-        candidateIds: result.trace?.candidateIds, selectionDurationMs: result.trace?.selectionDurationMs, selectionStatus: result.trace?.selectionStatus,
+        candidateIds: result.trace?.candidateIds, evidenceAssemblyDurationMs: result.trace?.evidenceAssemblyDurationMs, selectionStatus: result.trace?.selectionStatus,
         evidenceIds: observations.flatMap((item) => item?.result?.modelObservation?.evidence || []).map((item) => item.sourceRef).filter(Boolean) }); } catch {}
       if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
       continue;

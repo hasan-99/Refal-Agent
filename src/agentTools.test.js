@@ -3,44 +3,39 @@ const assert = require("node:assert/strict");
 const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomerFact, proposeHandover, buildApprovedKnowledgeObservation, MAX_RAG_EVIDENCE_ITEMS, MAX_RAG_EVIDENCE_TOTAL_CHARS } = require("./agentTools");
 const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
 const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
-test("complementary model queries retain actor capability evidence alongside procedures and distinguish catalogue omissions", async () => {
+test("complementary model queries retain ranked capability and procedure sections without a second model call", async () => {
   const queries = [];
   const makeRows = prefix => Array.from({length:20}, (_, i)=>({chunk_id:`${prefix}-${i}`,content:`${prefix} approved section ${i}`,heading:`${prefix} ${i}`}));
   const result = await searchApprovedKnowledge({query:"procedures",relatedQueries:["company scope","conditions"]}, {
     currentMessage:"a contextual follow-up", matchCount:8, embedText:async()=>null,
     store:{searchKnowledge:async(query)=>{queries.push(query);return makeRows(query);}},
-    selectKnowledgeEvidence:async({candidates})=>{
-      assert.equal(candidates.length,40);
-      const actor = candidates.findIndex(x=>x.content.includes("company scope approved section 0"));
-      const procedure = candidates.findIndex(x=>x.content.includes("procedures approved section 0"));
-      assert.ok(actor>=0 && procedure>=0);
-      return {selections:[{id:String(actor),relevance:3},{id:String(procedure),relevance:2}],status:"contextual_model_selection"};
-    }
   });
   assert.deepEqual(queries,["procedures","company scope","conditions","a contextual follow-up"]);
   assert.equal(result.trace.candidateCount,80);
   assert.equal(result.trace.catalogueOmittedIds.length,40);
+  assert.ok(Number.isFinite(result.trace.evidenceAssemblyDurationMs));
   assert.ok(result.modelObservation.evidence.some(x=>x.content.includes("company scope")));
+  assert.ok(result.modelObservation.evidence.some(x=>x.content.includes("procedures")));
+  assert.equal(result.trace.selectionStatus, "retrieval_ranked_bounded");
   assert.ok(result.trace.catalogueOmittedIds.every(id=>!result.trace.excludedIds.includes(id)));
 });
 
-test("contextual selection receives conversation and ranks relevant complete sections rather than duplicated generic hits", async () => {
+test("ranked lower results remain available with complete conditions and no selector-provider round trip", async () => {
   const source = [
     { chunk_id: "weak", content: "Dividend tax outcomes depend on residence.", heading: "Dividend tax", rank: 0.03 },
     { chunk_id: "useful", content: "The team assists with ongoing accounts and statutory filings. Additional regulated work requires specialist review.", heading: "Operating support", rank: 0.02 }
   ];
   const history = [{ message: "I have already incorporated my software studio.", response: "A previous request failed technically." }];
-  let selectionInput;
+  let selectorCalled = false;
   const result = await searchApprovedKnowledge({ query: "support after incorporation" }, {
     currentMessage: "Και μετά; Πώς συνεχίζετε να μας υποστηρίζετε;", user: { history },
     store: { searchKnowledge: async () => source }, embedText: async () => null,
-    selectKnowledgeEvidence: async (input) => { selectionInput = input; return { selections: [{ id: "1", relevance: 3 }], status: "contextual_model_selection" }; }
+    selectKnowledgeEvidence: async () => { selectorCalled = true; throw new Error("should not call a selector model"); }
   });
-  assert.deepEqual(selectionInput.history, history);
-  assert.match(selectionInput.currentMessage, /Πώς/);
-  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["useful"]);
-  assert.match(result.modelObservation.evidence[0].content, /requires specialist review/);
-  assert.deepEqual(result.trace.excludedIds, ["weak"]);
+  assert.equal(selectorCalled, false);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["weak", "useful"]);
+  assert.match(result.modelObservation.evidence[1].content, /requires specialist review/);
+  assert.deepEqual(result.trace.excludedIds, []);
 });
 
 test("evidence selection validates opaque references and never exposes forged model evidence", async () => {
@@ -53,15 +48,14 @@ test("evidence selection validates opaque references and never exposes forged mo
   }
 });
 
-test("selection provider failure remains a technical error with candidate diagnostics", async () => {
+test("approved search remains usable without an additional selector provider", async () => {
   const result = await searchApprovedKnowledge({ query: "current assistance" }, {
     store: { searchKnowledge: async () => [{ chunk_id: "supported", content: "Approved information." }] }, embedText: async () => null,
     selectKnowledgeEvidence: async () => { throw Object.assign(new Error("provider unavailable"), { code: "PROVIDER_TIMEOUT" }); }
   });
-  assert.equal(result.status, "error");
-  assert.equal(result.reasonCode, "EVIDENCE_SELECTION_FAILED");
-  assert.equal(result.trace.providerErrorCode, "PROVIDER_TIMEOUT");
-  assert.deepEqual(result.trace.candidateIds, ["supported"]);
+  assert.equal(result.status, "found");
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["supported"]);
+  assert.equal(result.trace.selectionStatus, "retrieval_ranked_bounded");
 });
 
 test("searchApprovedKnowledge rejects an empty query without calling the store", async () => {
@@ -590,6 +584,24 @@ test("knowledge search filters finding aids while keeping approved unlinked evid
   ] };
   const result = await searchApprovedKnowledge({ query: "services" }, { store, embedText: async () => null, language: "english" });
   assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["free-1"]);
+});
+
+test("search excludes explicitly inactive, pending, expired, blocked, unrelated finding-aid rows while accepting approved content without register metadata", async () => {
+  const past = new Date(Date.now() - 86400000).toISOString();
+  const result = await searchApprovedKnowledge({ query: "company setup" }, {
+    store: { searchKnowledge: async () => [
+      { chunk_id: "approved", heading: "Setup", content: "Approved setup information.", review_status: "approved" },
+      { chunk_id: "pending", heading: "Pending", content: "Pending information.", review_status: "pending" },
+      { chunk_id: "expired", heading: "Expired", content: "Expired information.", review_status: "approved", valid_until: past },
+      { chunk_id: "inactive", heading: "Inactive", content: "Inactive information.", review_status: "approved", enabled: false },
+      { chunk_id: "blocked", heading: "Blocked", content: "Blocked information.", review_status: "approved", policyMetadata: { factRegisterRows: [{ id: "MB-J1", status: "blocked" }] } },
+      { chunk_id: "finding-aid", heading: "Alias", content: "Unrelated aliases.", review_status: "approved", chunk_kind: "aliases" }
+    ] },
+    embedText: async () => null
+  });
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["approved"]);
+  assert.equal(result.modelObservation.evidence[0].content, "Approved setup information.");
+  assert.deepEqual(result.modelObservation.policyEvidence[0].metadata.facts, []);
 });
 
 test("knowledge search overfetches within a hard bound so filtered rows do not crowd out eligible evidence", async () => {

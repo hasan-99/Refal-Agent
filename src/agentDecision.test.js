@@ -476,6 +476,27 @@ test("Agent prompt receives the computed tier and guarded buying-signal directiv
   assert.match(system, /A signal is not consent to create an appointment or handover/);
 });
 
+test("generation resolves follow-up references to the nearest compatible turn and treats fallbacks as context", () => {
+  const recentConversation = [
+    { role: "assistant", content: "The confirmed service areas include company formation and structuring, tax and accounting, investment and property, and residency and relocation." },
+    { role: "user", content: "I only want company formation, not investment or property." },
+    { role: "assistant", content: "The formation package includes name reservation and document preparation." }
+  ];
+  const paraphrases = [
+    ["Are these all your services, or are there other areas too?", "english"],
+    ["هدول كل خدماتكن، ولا في مجالات تانية كمان؟", "arabic"],
+    ["Είναι όλοι αυτοί οι τομείς υπηρεσίες σας ή υπάρχουν κι άλλοι;", "greek"]
+  ];
+  for (const [currentMessage, locale] of paraphrases) {
+    const messages = buildDecisionMessages({ currentMessage, recentConversation, locale });
+    assert.match(messages[0].content, /nearest compatible prior turn/u);
+    assert.match(messages[0].content, /fallbacks or rejected answers.*never approved evidence/u);
+    const userContent = messages[1].content;
+    assert.ok(userContent.indexOf(recentConversation[0].content) < userContent.indexOf(recentConversation[2].content));
+    assert.ok(userContent.includes(currentMessage));
+  }
+});
+
 test("defaultCallModel throws when no API key is configured, which decideNextStep then turns into a safe fallback", async () => {
   const originalApiKey = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_API_KEY;

@@ -401,6 +401,18 @@ function safeField(value, max) {
 function isCustomerFacingKnowledgeChunk(row) {
   const kind = row?.chunk_kind ?? row?.chunkKind ?? row?.metadata?.kind;
   if (String(kind || "") === "aliases") return false;
+  // The Edge search RPC already enforces these gates. Keep the Node boundary
+  // defensive for alternate stores and offline callers: an explicit rejected
+  // state must never be promoted to approved evidence. Missing workflow fields
+  // remain acceptable because the trusted RPC may omit optional metadata.
+  const reviewStatus = row?.review_status ?? row?.reviewStatus;
+  if (reviewStatus != null && reviewStatus !== "approved") return false;
+  if (row?.enabled === false || row?.active === false || row?.is_current === false || row?.isCurrent === false) return false;
+  const validUntil = row?.valid_until ?? row?.validUntil;
+  if (validUntil != null && String(validUntil).trim()) {
+    const expiry = Date.parse(validUntil);
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
+  }
   // Preserve an explicit owner block. Missing, pending, expired, or
   // language-limited register rows are not a second approval requirement for
   // an already approved Knowledge revision.
@@ -545,7 +557,7 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
       .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0)));
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user, selectKnowledgeEvidence } = {}) {
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
@@ -590,9 +602,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []), trace: { searchQueries: queries } });
   }
 
-  const selectionStarted = performance.now();
-  let selection;
-  let selectedRows;
+  const assemblyStarted = performance.now();
   const catalogue = [];
   const sectionRows = new Map();
   for (const [index, row] of eligible.entries()) {
@@ -603,20 +613,17 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   for (const item of catalogue) item.content = sectionRows.get(item.key).map((row) => String(row.content || "")).join("\n\n");
   const visibleCatalogue = catalogue.slice(0, 40);
   const catalogueOmittedIds = catalogue.slice(40).map(item => item.sourceRef);
-  try {
-    const selector = selectKnowledgeEvidence || require("./knowledgeSelection").selectKnowledgeSections;
-    selection = await selector({ candidates: visibleCatalogue, currentMessage: currentMessage || query, history: user?.history || [] });
-    if (!Array.isArray(selection?.selections)) throw new Error("Invalid selection result.");
-    selectedRows = selection.selections.flatMap((selected, index) => {
-      const item = visibleCatalogue[Number(selected.id)];
-      return item && [1, 2, 3].includes(selected.relevance) ? sectionRows.get(item.key).map((row) => ({ ...row, selectionRelevance: selected.relevance, selectionOrder: index })) : [];
-    });
-  } catch (error) {
-    return fail("error", "EVIDENCE_SELECTION_FAILED", { modelObservation: buildApprovedKnowledgeObservation("error", []), trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), selectionDurationMs: Math.round(performance.now() - selectionStarted), providerErrorCode: String(error?.code || "EVIDENCE_SELECTION_FAILED") } });
-  }
+  // Search has already ranked these rows using semantic + lexical relevance.
+  // Do not spend another model round trip re-selecting them: that call both
+  // adds response latency and can discard a lower-ranked section that supplies
+  // a condition or the other half of a multi-part answer. Keep the ranked
+  // candidate window, then let the existing complete-section and prompt
+  // budgets retain as many as fit for BOTH generation and validation.
+  const selectedRows = visibleCatalogue.flatMap((item, index) => sectionRows.get(item.key)
+    .map((row) => ({ ...row, selectionRelevance: index === 0 ? 3 : 2, selectionOrder: index })));
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
-  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selection.selections.length, excludedIds: visibleCatalogue.filter((_, index) => !selection.selections.some((item) => Number(item.id) === index)).map((item) => item.sourceRef), selectionStatus: selection.status, selectionDurationMs: Math.round(performance.now() - selectionStarted) } });
+  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });
 }
 
 // --- getCustomerContext ------------------------------------------------------

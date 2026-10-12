@@ -44,6 +44,15 @@ test("buildAgentContext excludes contact labels without customer-stated provenan
   assert.equal(context.contact.nameSource, null);
 });
 
+test("buildAgentContext permits only explicitly trusted honorifics and drops guessed titles", () => {
+  const trusted = buildAgentContext({ contact: { name: "Sami", nameSource: "customer_stated", honorific: "أستاذ", honorificSource: "owner_configured" } });
+  const guessed = buildAgentContext({ contact: { name: "Sami", nameSource: "customer_stated", honorific: "أستاذ", honorificSource: "contact_label" } });
+  assert.equal(trusted.contact.honorific, "أستاذ");
+  assert.equal(trusted.contact.honorificSource, "owner_configured");
+  assert.equal(guessed.contact.honorific, null);
+  assert.equal(guessed.contact.honorificSource, null);
+});
+
 test("buildAgentContext is defensive against missing/garbage input", () => {
   const context = buildAgentContext();
   assert.equal(context.currentMessage, "");
@@ -106,7 +115,7 @@ test("a returning customer's first assistant reply can greet them and introduce 
   assert.equal(result.outcome, "responded");
   assert.equal(result.response, draft);
   assert.match(prompt[0].content, /first assistant response.*introduce your configured name, role and group/s);
-  assert.match(prompt[1].content, /Customer-stated name for natural address only.*حسن/u);
+  assert.match(prompt[1].content, /Explicit trusted customer name for natural address only.*حسن/u);
   assert.match(draft, new RegExp(profile.brand));
   assert.match(draft, new RegExp(profile.groupName));
 });
@@ -152,12 +161,31 @@ test("an explicit name correction in conversation context overrides the saved ad
   const review = buildGroundingReviewMessages({ text: draft, context });
   const reviewerInput = JSON.parse(review[1].content);
 
-  assert.match(prompt[1].content, /Customer-stated name for natural address only.*Sami/u);
+  assert.match(prompt[1].content, /Explicit trusted customer name for natural address only.*Sami/u);
   assert.match(prompt[1].content, /customer: \[personal detail\]/u);
   assert.equal(reviewerInput.customerName, "Sami");
   assert.equal(reviewerInput.history[1].content, "[personal detail]");
   assert.match(prompt[0].content, /explicit correction override a saved name/);
   assert.match(prompt[0].content, /never guess a name, title or honorific/iu);
+});
+
+test("an explicitly configured Arabic honorific reaches generation and validation without being inferred", async () => {
+  const context = buildAgentContext({
+    currentMessage: "مرحبا",
+    locale: "arabic",
+    contact: { id: "offline-contact", name: "Sami", nameSource: "customer_stated", honorific: "أستاذ", honorificSource: "owner_configured" },
+    recentConversation: [{ role: "user", content: "مرحبا" }]
+  });
+  const draft = "أكيد أستاذ سامي، كيف بقدر أساعدك؟";
+  let prompt;
+  const result = await composeOffline(context, draft, (messages) => { prompt = messages; });
+  const review = buildGroundingReviewMessages({ text: draft, context });
+  const reviewerInput = JSON.parse(review[1].content);
+  assert.equal(result.response, draft);
+  assert.match(prompt[1].content, /Explicit trusted customer honorific.*أستاذ/u);
+  assert.match(prompt[0].content, /Use a title or honorific only when provided in the explicit trusted customer honorific field/u);
+  assert.equal(reviewerInput.customerHonorific, "أستاذ");
+  assert.match(review[0].content, /Use a title or honorific only when it is supplied in the explicit trusted honorific field/u);
 });
 
 test("needs discovery reflects the customer's problem, answers first, and asks one relevant question", async () => {

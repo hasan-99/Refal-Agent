@@ -63,6 +63,41 @@ test("IMPORTANT: after a RAG tool call, the real decision model's next prompt co
   assert.ok(secondDecisionUserMessage.length > 0);
 });
 
+test("a complete answer can combine a lower-ranked approved section and the validator sees the same evidence", async () => {
+  const first = {
+    document_title: "Approved support guide", heading: "Company setup",
+    content: "The company setup service includes registration support.", chunk_id: "setup-overview",
+    review_status: "approved"
+  };
+  const second = {
+    document_title: "Approved support guide", heading: "After setup",
+    content: "After setup, the team can assist with ongoing accounting and statutory filings.", chunk_id: "after-setup",
+    review_status: "approved"
+  };
+  const modelCalls = [];
+  let validatorEvidence;
+  const callModel = async (messages) => {
+    modelCalls.push(messages);
+    if (modelCalls.length === 1) return JSON.stringify({ type: "tool", tool: "searchApprovedKnowledge", args: { query: "company setup and ongoing support" } });
+    return JSON.stringify({ type: "respond", text: "Setup includes registration support. After setup, the team can assist with ongoing accounting and statutory filings." });
+  };
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What do you help with before and after setup?", locale: "english" }), {
+    decideNextStep: (args) => decideNextStep(args, { callModel, tools: TOOL_REGISTRY }),
+    tools: TOOL_REGISTRY,
+    toolContext: { store: { searchKnowledge: async () => [first, second] }, embedText: async () => null, language: "english" },
+    assessDraft: async ({ evidenceItems }) => {
+      validatorEvidence = evidenceItems;
+      return { valid: true, reasons: [] };
+    }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(modelCalls.length, 2, "search should not add a separate model-selection round trip");
+  assert.match(modelCalls[1][1].content, /registration support/);
+  assert.match(modelCalls[1][1].content, /ongoing accounting and statutory filings/);
+  assert.deepEqual(validatorEvidence.map((item) => item.sourceRef), ["setup-overview", "after-setup"]);
+  assert.equal(evaluateAnswerClaims(result.response, { evidence: validatorEvidence, language: "english" }).allowed, true);
+});
+
 test("empty or general Evidence references do not block approved content from retrieval or grounded answers", async () => {
   const referenceCases = [
     { label: "empty references", references: [] },
