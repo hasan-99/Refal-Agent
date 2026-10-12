@@ -29,37 +29,38 @@ test("customer names are extracted from common English and Arabic introductions"
   assert.equal(extractCustomerName("Είμαι ακόμα αναστατωμένος"), null);
 });
 
-test("clear name introductions are saved even when the message also gives contact context", async () => {
+test("clear name introductions are available for the current reply without profile persistence", async () => {
   for (const [text, expected] of [
     ["My name is Rami, same WhatsApp number", "Rami"],
     ["اسمي حسن ورقمي نفس الواتساب", "حسن"]
   ]) {
     const user = { id: `name-${Math.random()}`, profile: {}, history: [] };
     const result = await routeMessageResult({ userId: user.id, text, store: integrationStore(user) });
-    assert.equal(user.profile.name, expected, text);
+    assert.equal(user.profile.name, undefined, text);
     assert.equal(result.metadata.customerNameCaptured, true, text);
     assert.equal(result.shouldUseAi, true, "name capture must not override the contextual answer");
   }
 });
 
-test("a contextual explicit name correction updates trusted contact memory without treating a need as a name", async () => {
+test("a contextual name correction is transient and does not turn a need into a name", async () => {
   for (const [text, expected] of [["My name is Sami", "Sami"], ["I am comparing options", "Hasan"]]) {
     const user = { id: `contextual-name-${Math.random()}`, profile: { name: "Hasan", nameSource: "customer_stated" }, history: [] };
     const store = integrationStore(user);
     const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store, contextual: true,
       classifyMessage: async () => ({ primary: "small_talk", intents: ["small_talk"], isMultiIntent: false, language: "english", source: "contextual_model", operation: "none" }) });
-    assert.equal(user.profile.name, expected, text);
+    assert.equal(user.profile.name, "Hasan", text);
     assert.equal(user.profile.nameSource, "customer_stated", text);
     assert.equal(Boolean(prepared.metadata.customerNameCaptured), text === "My name is Sami", text);
+    assert.equal(prepared.currentTurnCustomerName, text === "My name is Sami" ? "Sami" : null, text);
   }
 });
 
-test("contextual name capture recognizes a clear self-introduction after a greeting without guessing", async () => {
+test("contextual name capture supplies a clear same-turn name without saving it or guessing", async () => {
   const user = { id: "contextual-name-after-greeting", profile: {}, history: [] };
   const prepared = await prepareInboundMessage({ userId: user.id, incoming: "مرحبا، أنا سامي.", user, store: integrationStore(user), contextual: true,
     classifyMessage: async () => ({ primary: "small_talk", intents: ["small_talk"], isMultiIntent: false, language: "arabic", source: "contextual_model", operation: "none" }) });
-  assert.equal(user.profile.name, "سامي");
-  assert.equal(user.profile.nameSource, "customer_stated");
+  assert.equal(user.profile.name, undefined);
+  assert.equal(prepared.currentTurnCustomerName, "سامي");
   assert.equal(prepared.metadata.customerNameCaptured, true);
   const ambiguous = { id: "contextual-ambiguous-name", profile: {}, history: [] };
   await prepareInboundMessage({ userId: ambiguous.id, incoming: "أنا عم قارن الخيارات.", user: ambiguous, store: integrationStore(ambiguous), contextual: true,
@@ -67,7 +68,7 @@ test("contextual name capture recognizes a clear self-introduction after a greet
   assert.equal(ambiguous.profile.name, undefined);
 });
 
-test("a language switch into Greek captures an explicit name and persists it to the contact", async () => {
+test("a language switch into Greek keeps an explicit name transient", async () => {
   const user = {
     id: "greek-name@s.whatsapp.net",
     profile: {},
@@ -84,9 +85,8 @@ test("a language switch into Greek captures an explicit name and persists it to 
   const result = await routeMessageResult({ userId: user.id, text: "Με λένε Νίκο", store });
 
   assert.equal(result.metadata.intent.language, "greek");
-  assert.equal(user.profile.name, "Νίκο");
-  assert.equal(user.profile.nameSource, "customer_stated");
-  assert.equal(persistedProfiles.at(-1).name, "Νίκο");
+  assert.equal(user.profile.name, undefined);
+  assert.ok(persistedProfiles.every((profile) => profile.name === undefined));
   assert.equal(result.shouldUseAi, true, "Greek name capture must not select a canned greeting");
   assert.equal(result.metadata.customerNameCaptured, true);
 });
@@ -362,8 +362,7 @@ test("specialist consent clears a legacy greeting-name and makes name sharing op
   assert.equal(emailAlerts[0][1].kind, "handover_review");
 
   const captured = await routeMessageResult({ userId: user.id, text: "Hasan", store, existingUser: user });
-  assert.equal(user.profile.name, "Hasan");
-  assert.equal(user.profile.nameSource, "customer_stated");
+  assert.equal(user.profile.name, undefined);
   assert.equal(captured.metadata.customerNameCaptured, true);
   assert.equal(captured.shouldUseAi, true, "the model generates the name acknowledgment");
   assert.equal(user.workflowCalls.filter(([kind]) => kind === "handover").length, 1, "name capture must not create a duplicate handover");

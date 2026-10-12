@@ -95,6 +95,39 @@ test("live composition retains introduction continuity after it leaves the bound
     "the introduction is older than the bounded prompt history");
 });
 
+test("a volunteered name reaches the current reply without being saved to the contact profile", async () => {
+  const { user, store } = makeStore();
+  let seenName = null;
+  const sent = [];
+  const result = await realRun({
+    socket: {}, chatId: "synthetic-chat", userId: user.id,
+    text: "مرحبا، اسمي كريم. بفكر أسس شركة بقبرص."
+  }, {
+    store,
+    setTyping: async () => {},
+    sendStoredTextReply: async (_socket, _chat, response) => sent.push(response),
+    preflightOptions: {
+      classifyMessage: async () => ({ source: "contextual_model", primary: "company_formation",
+        intents: ["company_formation"], language: "arabic", operation: "none",
+        offerSourceTurnId: null, noProactiveBookingOrContact: false })
+    },
+    agentOptions: {
+      assessDraft: require("../scripts/helpers/scriptedGrounding").scriptedGrounding,
+      decideNextStep: async ({ context }) => {
+        seenName = context.contact.name;
+        return { type: "respond", text: "أهلاً أستاذ كريم، أنا REFAL، مساعد الأعمال الرقمي لدى Refalco Group. ما النشاط الذي تفكر أن تمارسه الشركة؟" };
+      }
+    }
+  });
+
+  assert.equal(result.outcome, "agent");
+  assert.equal(result.delivered, true);
+  assert.equal(seenName, "كريم");
+  assert.equal(user.profile.name, undefined, "a volunteered name is not saved as contact-profile memory");
+  assert.match(user.history[0].message, /اسمي كريم/u, "the conversation transcript remains the durable context");
+  assert.match(sent[0], /أستاذ كريم/u);
+});
+
 test("live composition applies jurisdiction guard before persistence and reports ambiguous send failure without retry", async () => {
   const { user, store, events } = makeStore();
   let sendAttempts = 0;

@@ -397,7 +397,7 @@ function hasLimitedHandoverScope(text) {
   return /\b(?:share|send|forward|include)\b.{0,80}\b(?:only|just)\b.{0,45}\b(?:project|inquiry|conversation|chat|summary)\b|\b(?:only|just)\s+(?:the\s+)?(?:project|inquiry)\s+summary\b|\bnot\s+(?:the\s+)?rest\s+of\s+(?:the\s+)?(?:conversation|chat)\b|شاركوا?.{0,70}(?:ملخص|الملخص).{0,20}(?:بس|فقط)|(?:ملخص|الملخص).{0,30}(?:بس|فقط).{0,80}(?:مو|مش|ليس).{0,30}(?:باقي|بقية).{0,30}(?:المحادثة|الحكي)|(?:μοιραστείτε|στείλτε|κοινοποιήστε).{0,70}(?:μόνο|σύνοψη).{0,60}(?:έργου|ερωτήματος|συνομιλίας)|μόνο\s+(?:τη\s+)?σύνοψη\s+(?:του\s+)?(?:έργου|ερωτήματος)|όχι\s+(?:το\s+)?υπόλοιπο\s+της\s+συνομιλίας/iu.test(String(text || ""));
 }
 
-function handoverFor({ user, userId, incoming, inquiry, inquiryMetadata = {}, classification, language, response }) {
+function handoverFor({ user, userId, incoming, inquiry, inquiryMetadata = {}, classification, language, response, currentTurnCustomerName = null }) {
   const sensitiveSource = ["privacy", "prompt_injection"].some((risk) => inquiryMetadata.safety?.risks?.includes(risk));
   const inquirySummary = sensitiveSource ? "[current inquiry omitted for privacy]" : String(inquiry || incoming || "").trim().slice(0, 500);
   // Consent authorizes a narrowly scoped follow-up for this inquiry. Include
@@ -407,7 +407,8 @@ function handoverFor({ user, userId, incoming, inquiry, inquiryMetadata = {}, cl
   const intents = normalizedIntent ? [normalizedIntent === INTENTS.LAND_DEVELOPMENT ? "development" : normalizedIntent] : [];
   return createHandover({
     input: inquirySummary,
-    customer: { name: isPlausibleCustomerName(user.profile?.name) ? user.profile.name : undefined, whatsappContact: userId },
+    customer: { name: isPlausibleCustomerName(currentTurnCustomerName) ? currentTurnCustomerName
+      : isPlausibleCustomerName(user.profile?.name) ? user.profile.name : undefined, whatsappContact: userId },
     conversation: { lastMessage: inquirySummary },
     opportunityIntake: inquiryMetadata.opportunityIntake,
     qualification: inquiryMetadata.qualification,
@@ -458,12 +459,6 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     delete user.profile.name;
     delete user.profile.nameSource;
     delete user.profile.nameUpdatedAt;
-  }
-  if (capturedName && capturedName !== user.profile?.name && typeof store.updateUser === "function") {
-    await store.updateUser(userId, (draft) => {
-      draft.profile = { ...(draft.profile || {}), name: capturedName, nameSource: "customer_stated", nameUpdatedAt: new Date().toISOString() };
-    });
-    user.profile = { ...(user.profile || {}), name: capturedName, nameSource: "customer_stated" };
   }
   const qualification = qualifyLead({ history, profile: user.profile || {}, booking: user.booking });
   const qualificationEvidence = privacyRisk ? [] : [
@@ -547,6 +542,9 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     safety,
     priority,
     complianceTriggers,
+    // A name volunteered in this message may personalize this reply, but it
+    // is deliberately transient and never written to the contact profile.
+    currentTurnCustomerName: capturedName || null,
     qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds },
     tierAction,
     buyingSignals,
@@ -766,7 +764,8 @@ async function routeContextualMessageResult({ userId, incoming, user, store, pre
   if (!controlledTest && !safety.restricted && (acceptedOffer || directRequest)) {
     const inquiryTurn = acceptedOffer ? offerTurn : null;
     const handover = handoverFor({ user, userId, incoming, inquiry: inquiryTurn?.message || incoming,
-      inquiryMetadata: inquiryTurn?.metadata || metadata, classification, language: classification.language, response: "" });
+      inquiryMetadata: inquiryTurn?.metadata || metadata, classification, language: classification.language, response: "",
+      currentTurnCustomerName: prepared.currentTurnCustomerName });
     metadata.handover = handover;
     metadata.specialistFollowUp = { consented: true, purpose: "specialist_follow_up", trackedOffer: acceptedOffer,
       offerSourceTurnId: inquiryTurn?.id || null, requestedAt: new Date().toISOString() };
@@ -922,7 +921,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
 
   // Ignore and clear legacy greeting/question strings previously mis-saved as names.
   const privacyRisk = safety.risks.includes("privacy");
-  const capturedName = privacyRisk ? null : prepared.metadata.customerNameCaptured ? user.profile?.name : explicitName || (nameWasRequested ? extractBareCustomerName(incoming) : null);
   if (user.profile?.name && !existingNameIsPlausible && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
       draft.profile = { ...(draft.profile || {}) };
@@ -933,13 +931,6 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     delete user.profile.name;
     delete user.profile.nameSource;
     delete user.profile.nameUpdatedAt;
-  }
-  if (capturedName && (!existingNameIsPlausible || capturedName !== user.profile?.name) && typeof store.updateUser === "function") {
-    await store.updateUser(userId, (draft) => {
-      draft.profile = { ...(draft.profile || {}), name: capturedName, nameSource: "customer_stated", nameUpdatedAt: new Date().toISOString() };
-    });
-    user.profile = { ...(user.profile || {}), name: capturedName, nameSource: "customer_stated" };
-    prepared.metadata.customerNameCaptured = true;
   }
 
   if (user.profile?.handover?.required && hasLimitedHandoverScope(incoming) && !["denied", "revoked"].includes(consentFromText(incoming))) {
@@ -1051,7 +1042,8 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       inquiryMetadata: currentTurnAddsInquiry ? prepared.metadata : inquiryTurn?.metadata || prepared.metadata,
       classification: handoverClassification,
       language,
-      response
+      response,
+      currentTurnCustomerName: prepared.currentTurnCustomerName
     });
     const metadata = { ...prepared.metadata, handover, specialistFollowUp: { consented: true, purpose: "specialist_follow_up", trackedOffer: affirmativeToTrackedOffer, offerSourceTurnId: referencedOfferTurn?.id || lastTurn?.id || null, requestedAt: new Date().toISOString() } };
     if (typeof store.updateUser === "function") {

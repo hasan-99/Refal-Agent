@@ -71,7 +71,14 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const commitState = createCommitState();
       const agentResult = await runAgentTurnForContact({
         currentMessage: String(agentMessage || ""), locale: language,
-        contact: { id: userId, name: currentUser?.profile?.name || null, nameSource: currentUser?.profile?.nameSource || null },
+        contact: {
+          id: userId,
+          // Prefer an explicit name in the current message for this reply only.
+          // It is not persisted as profile memory; the transcript remains the
+          // durable record and can provide continuity on later turns.
+          name: prepared?.currentTurnCustomerName || currentUser?.profile?.name || null,
+          nameSource: prepared?.currentTurnCustomerName ? "customer_stated" : currentUser?.profile?.nameSource || null
+        },
         recentConversation: buildRecentConversation(priorHistory),
         priorConfiguredIntroduction,
         conversationState, knownCustomerFacts: conversationState.agentFacts, currentOpenQuestion: deriveOpenQuestion(priorHistory.at(-1)),
