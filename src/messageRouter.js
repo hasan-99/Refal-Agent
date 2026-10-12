@@ -22,6 +22,7 @@ const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./oppor
 const { assessRedFlags } = require("./redFlagRules");
 const { detectComplianceEscalation, buildComplianceEscalation, applyComplianceLock, isComplianceLocked } = require("./complianceEscalation");
 const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
+const { probesAnotherCustomer, crossCustomerRefusal } = require("./crossCustomerPolicy");
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
 
 const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
@@ -430,7 +431,10 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     : "";
   const privacyContinuation = safePrivacyQuestion.length >= 8;
   const routingText = privacyContinuation ? safePrivacyQuestion : incoming;
-  const classification = contextual
+  const crossCustomerProbe = probesAnotherCustomer(incoming);
+  const classification = crossCustomerProbe
+    ? detectIntent(routingText)
+    : contextual
     ? await (classifyMessage || require("./contextualPreflight").classifyContextualMessage)({ message: routingText, user }, { onModelCall, onUsage })
     : detectIntent(routingText);
   const priority = assessPriority({ text: routingText, intents: classification.intents });
@@ -878,6 +882,15 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     const history = await recordHistory(store, userId, incoming, response, { metadata });
     metadata.complianceEscalation.recorded = history.complianceRecorded === true;
     return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
+  }
+
+  // Cross-customer privacy is a deterministic boundary. Do not let contextual
+  // classification route this request to the conversational model before the
+  // refusal runs, and do not send the request to a classifier model either.
+  if (probesAnotherCustomer(incoming)) {
+    response = crossCustomerRefusal(classification.language);
+    const history = await recordHistory(store, userId, incoming, response, { metadata: prepared.metadata });
+    return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
   if (classification.source === "contextual_model") {
