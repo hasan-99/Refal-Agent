@@ -162,7 +162,7 @@ test("an explicit name correction in conversation context overrides the saved ad
   assert.equal(reviewerInput.customerName, "Sami");
   assert.equal(reviewerInput.history[1].content, "[personal detail]");
   assert.match(prompt[0].content, /explicit correction override a saved name/);
-  assert.match(prompt[0].content, /conventional respectful honorific when clear and natural.*otherwise use the name alone/iu);
+  assert.match(prompt[0].content, /explicitly gives their name in a greeting, use a conventional respectful form of address.*Otherwise use the name alone/iu);
   assert.match(prompt[0].content, /Never guess a name, professional title, role,? or status/iu);
 });
 
