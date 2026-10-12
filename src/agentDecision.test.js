@@ -185,6 +185,21 @@ test("buildDecisionMessages carries forward recent conversation and prior tool o
   assert.match(userMessage, /Company formation price/);
 });
 
+test("summary requests require current evidence for facts repeated from conversation history", () => {
+  const messages = buildDecisionMessages(buildAgentContext({
+    currentMessage: "Can you summarize the services relevant to my situation in English?",
+    locale: "english",
+    recentConversation: [
+      { role: "user", content: "Does forming a company grant residency?" },
+      { role: "assistant", content: "Residency follows a separate route." }
+    ]
+  }));
+  const prompt = messages.map((message) => message.content || "").join("\n");
+  assert.match(prompt, /retrieve current approved evidence for that fact in this turn/);
+  assert.match(prompt, /when current evidence establishes only a service category, keep the recap at that level/i);
+  assert.match(prompt, /previous assistant replies.*never approved evidence/i);
+});
+
 test("decision prompt keeps follow-ups within the customer's current unexcluded scope", () => {
   const messages = buildDecisionMessages({ currentMessage: "What support continues after incorporation?", locale: "english", recentConversation: [
     { role: "user", content: "I only want company formation; I am not interested in investment or property." }

@@ -102,17 +102,52 @@ function attemptDeterministicCorrection(text, policy, thresholds, context = {}) 
   return recheck.valid ? recheck.text : null;
 }
 
+function removeRejectedEvidenceSpans(text, blockedClaims) {
+  const claims = blockedClaims.filter((claim) => {
+    const reasons = claim?.reasons || [];
+    return reasons.length > 0 && reasons.every((reason) =>
+      ["no_approved_evidence", "entities_not_in_evidence", "unsupported_relation", "personalized_marker"].includes(reason));
+  });
+  if (!claims.length || claims.length !== blockedClaims.length) return null;
+  let corrected = String(text || "");
+  for (const claim of claims) {
+    const span = String(claim.sentence || claim.claim || "").trim();
+    if (!span || !corrected.includes(span)) return null;
+    corrected = corrected.replace(span, "");
+  }
+  corrected = corrected.split(/\r?\n/u).map((line) => line.trim())
+    .filter(Boolean).join("\n").replace(/(?:^|\n)[•*-]\s*(?=\n|$)/gu, "\n").trim();
+  return corrected && corrected !== String(text || "").trim() ? corrected : null;
+}
+
+async function attemptEvidenceBoundPartialCorrection(text, policy, thresholds, context, assessDraft, step) {
+  if (!policy.reasons.every((reason) =>
+    ["no_approved_evidence", "prohibited_claim", "unconditional_prohibition", "unsupported_relation", "personalized_marker"].includes(reason))) return null;
+  const evidenceItems = currentDraftEvidence(context.observations || [], context);
+  const blockedClaims = Array.isArray(policy.blockedClaims) && policy.blockedClaims.length
+    ? policy.blockedClaims
+    : evaluateAnswerClaims(text, { evidence: evidenceItems, language: context.locale }).blocked;
+  const corrected = removeRejectedEvidenceSpans(text, blockedClaims);
+  if (!corrected) return null;
+  const recheck = await checkDraftPolicy(corrected, thresholds, context.observations || [], context.locale, context, assessDraft, step);
+  return recheck.valid ? recheck.text : null;
+}
+
 // Fed back to decideNextStep as an observation so a retried decision can see
 // *why* its last draft was rejected, reusing agentDecision.js's existing
 // observation formatting (it only expects {step, tool, args, result}).
 function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons, observations = []) {
   const hasUnsupportedRelation = policy.reasons?.includes("unsupported_relation");
   const hasContextMismatch = policy.reasons?.includes("context_mismatch");
+  const hasMissingEvidence = (policy.blockedClaims || []).some((claim) => (claim.reasons || []).some((reason) =>
+    ["no_approved_evidence", "entities_not_in_evidence"].includes(reason)));
   const correction = policy.reasons?.includes("no_approved_evidence")
     ? observations.some((item) => item?.tool === "searchApprovedKnowledge")
       ? "No approved knowledge supports the rejected claim. Preserve other supported facts, state only the unsupported detail as unconfirmed, and do not invent it. Do not repeat the same search unless a distinct missing fact can be retrieved."
       : "No approved-knowledge search has run this turn. Use searchApprovedKnowledge for the requested company or package facts before answering; a live-offer lookup does not establish general service scope. If approved search returns no relevant evidence, say the detail is unconfirmed and do not invent a price or condition."
-    : hasUnsupportedRelation && hasContextMismatch
+      : hasMissingEvidence
+        ? "This factual span lacks current approved evidence. If it is needed to answer the customer's current request, run one focused search for that missing fact using the resolved conversation context. If no distinct approved evidence supports it, remove that span and preserve the other supported answer. Do not rephrase or repeat the unsupported claim."
+      : hasUnsupportedRelation && hasContextMismatch
       ? "The comparison is not supported as drafted, and the quoted context span repeats or misuses earlier conversation. Use the immediately preceding relevant answer as the comparison set, not a narrower category. Remove the unsupported comparison and remove the full rejected repeat; do not restate it in new words, bullets or translation. Keep only supported information that adds value now. If no additional named service is established, acknowledge the prior scope briefly and ask for a specific area only when useful. Do not replace the removed text with a generic evidence or confirmation disclaimer, and do not search again unless a distinct missing fact is answerable from another source."
     : hasUnsupportedRelation
       ? "The rejected comparison or relationship is not established. Remove only that claim; do not replace it with an unsupported yes/no answer or a generic disclaimer about what you can confirm. Preserve and state the relevant approved scope naturally. Use conversation history to avoid repeating details already given, and ask for a particular area only when that helps the customer. Keep other supported facts and material conditions. Do not repeat the search unless new evidence could resolve a distinct missing detail."
@@ -126,6 +161,20 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
     result: { ok: false, status: "policy_rejected", reasonCode: diagnosticCodes.join(","),
       draft: policy.text, blockedClaims: policy.blockedClaims || [], correction }
   };
+}
+
+function normalizeBlockedClaimKey(claim) {
+  const sentence = String(claim?.sentence || claim?.claim || "").normalize("NFKC").toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  if (!sentence) return null;
+  return sentence;
+}
+
+function currentSearchEvidenceIds(observations) {
+  const ids = observations.filter((item) => item?.tool === "searchApprovedKnowledge")
+    .flatMap((item) => item?.result?.modelObservation?.evidence || [])
+    .map((item) => item?.sourceRef).filter((id) => typeof id === "string");
+  return new Set(ids);
 }
 
 function diagnosticPolicyCodes(text, policy, evidenceItems, locale) {
@@ -315,6 +364,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
   const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
   let knowledgeSearchExhausted = false;
   const rejectedDrafts = new Map();
+  const rejectedClaims = new Map();
 
   for (let step = 1; step <= maxSteps; step += 1) {
     let rawDecision;
@@ -435,13 +485,29 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         rejectedDrafts.set(progressKey, policy);
         const evidenceItems = currentDraftEvidence(observations, context);
         try { await onPolicyRejection({ step, type: "respond", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
-        if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft")) return {
+        const evidenceIds = currentSearchEvidenceIds(observations);
+        const blockedClaims = policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked;
+        const repeatedBlockedClaimWithoutEvidenceProgress = policy.reasons.some((reason) => ["prohibited_claim", "no_approved_evidence"].includes(reason)) && blockedClaims.some((claim) => {
+          if (!(claim.reasons || []).some((reason) => ["no_approved_evidence", "entities_not_in_evidence"].includes(reason))) return false;
+          const key = normalizeBlockedClaimKey(claim);
+          if (!key) return false;
+          const previousEvidence = rejectedClaims.get(key);
+          const evidenceProgress = previousEvidence instanceof Set && [...evidenceIds].some((id) => !previousEvidence.has(id));
+          rejectedClaims.set(key, new Set([...(previousEvidence || []), ...evidenceIds]));
+          return previousEvidence !== undefined && !evidenceProgress;
+        });
+        if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft") || repeatedBlockedClaimWithoutEvidenceProgress) return {
           finished: true, outcome: policy.technicalFailure ? "validation_failed" : "response_rejected", response: safeFallback(context),
-          steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || policy.reasons.join(",")
+          steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || (repeatedBlockedClaimWithoutEvidenceProgress ? "repeated_blocked_claim_without_evidence_progress" : policy.reasons.join(","))
         };
         const corrected = assessDraft ? null : attemptDeterministicCorrection(validated.text, policy, thresholds, { ...context, observations });
         if (corrected) {
           return { finished: true, outcome: "responded", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
+        }
+        const evidenceBoundPartial = await attemptEvidenceBoundPartialCorrection(validated.text, policy, thresholds,
+          { ...context, observations }, assessDraft, step);
+        if (evidenceBoundPartial) {
+          return { finished: true, outcome: "responded", response: evidenceBoundPartial, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
         if (step < maxSteps) {
         observations.push(policyRejectionObservation(step, "respond", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations));

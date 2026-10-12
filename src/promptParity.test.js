@@ -137,6 +137,8 @@ test("answer prompts format multiple inclusions clearly and allow one useful con
   }
   const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
   assert.match(edge, expected, "Edge mirror lost readable conversational formatting; regenerate it");
+  assert.match(RESPONSE_FORMAT_RULE, /start a bullet with a conjunction/);
+  assert.match(RESPONSE_FORMAT_RULE, /complete standalone item/);
   const { buildDecisionMessages } = require("./agentDecision");
   assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
     new RegExp(RESPONSE_FORMAT_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));

@@ -136,6 +136,82 @@ test("a no-evidence rejection routes general company facts to one knowledge sear
   assert.deepEqual(result.toolsUsed, ["lookupActiveOffer", "searchApprovedKnowledge"]);
 });
 
+test("a repeated unsupported claim stops when its approved evidence has not changed", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation.", review_status: "approved" };
+  const firstDraft = "Refalco Group offers company formation. Residency follows a separate route with its own requirements";
+  const secondDraft = "For company formation, Refalco Group can help. Residency follows a separate route with its own requirements";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize what is relevant to me.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: async ({ step, observations }) => {
+      calls += 1;
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } };
+      if (step === 2) return { type: "respond", text: firstDraft };
+      const feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      assert.match(feedback.result.correction, /one focused search/);
+      assert.match(feedback.result.correction, /remove that span/);
+      return { type: "respond", text: secondDraft };
+    },
+    assessDraft: async ({ text }) => text === firstDraft || text === secondDraft
+      ? { valid: false, reasons: ["prohibited_claim"], blockedClaims: [
+        { sentence: "Residency follows a separate route with its own requirements.", reasons: ["entities_not_in_evidence"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.outcome, "response_rejected");
+  assert.equal(result.reason, "repeated_blocked_claim_without_evidence_progress");
+  assert.equal(result.stepCount, 3);
+});
+
+test("an evidence-only rejection can preserve and revalidate the supported partial answer", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation and tax and accounting services.", review_status: "approved" };
+  const unsupported = "We also prepare payroll registrations.";
+  const draft = `Refalco Group offers company formation and tax and accounting services. ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize the relevant services.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["prohibited_claim"] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, "Refalco Group offers company formation and tax and accounting services.");
+  assert.equal(result.stepCount, 2);
+});
+
+test("an individualized eligibility clause is removed while the grounded summary is revalidated", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation.", review_status: "approved" };
+  const unsupported = "Your residence eligibility depends on the route.";
+  const draft = `Refalco Group offers company formation. ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize the relevant services.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["personalized_marker"], blockedClaims: [{ sentence: unsupported, reasons: ["personalized_marker"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, "Refalco Group offers company formation.");
+});
+
 test("a two-search turn keeps one tool-free correction step after the second rejected draft", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const sources = [
