@@ -10,7 +10,7 @@ const CARD_LIKE = /(?<![\p{L}\p{N}])(?:[0-9٠-٩۰-۹][ -]?){13,19}(?![\p{L}\p{N
 const { containsLabeledSensitiveValue } = require("./sensitiveOutputPolicy");
 const AUDIT_PRIVATE_KEY = /(?:email|phone|whatsapp|contact|customer|user|actor|reviewer|reason|message|response|content|error|name|address|iban|passport|token|secret|credential|account)/iu;
 const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
-const AUDIT_ENUM_KEY = /^(?:action|state|status|category|channel|source|level|trigger|department|intent|workflow|field|fields|operation|reasonCode|code|reportDate|type|upsertType|appointmentId|blockId|notificationId|handoverId|sourceTurnId|id)$/iu;
+const AUDIT_ENUM_KEY = /^(?:action|state|status|category|channel|source|level|trigger|department|intent|workflow|field|fields|operation|reasonCode|code|reportDate|type|upsertType|stage|appointmentId|blockId|notificationId|handoverId|sourceTurnId|traceId|id)$/iu;
 const AUDIT_ENUM_VALUE = /^[a-z][a-z0-9_-]{0,60}$/iu;
 const AUDIT_DATE_VALUE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/u;
 const AUDIT_ID_VALUE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[a-z][a-z0-9_-]{0,30}-[a-z0-9_-]{1,30})$/iu;
@@ -82,7 +82,7 @@ function redactAuditEventFields(value, parentKey = "") {
     if (typeof value !== "string") return value;
     if (AUDIT_ENUM_KEY.test(parentKey)) {
       if (/^(?:reportDate)$/iu.test(parentKey)) return AUDIT_DATE_VALUE.test(value) ? value : REDACTED;
-      if (/^(?:appointmentId|blockId|notificationId|handoverId|sourceTurnId|id)$/iu.test(parentKey)) return AUDIT_ID_VALUE.test(value) ? value : REDACTED;
+      if (/^(?:appointmentId|blockId|notificationId|handoverId|sourceTurnId|traceId|id)$/iu.test(parentKey)) return AUDIT_ID_VALUE.test(value) ? value : REDACTED;
       if (AUDIT_ENUM_VALUE.test(value)) return redactSensitiveData(value).replace(EMAIL_LIKE, REDACTED);
     }
     return REDACTED;
@@ -92,7 +92,7 @@ function redactAuditEventFields(value, parentKey = "") {
     AUDIT_SAFE_USAGE_COUNTS.has(key) && Number.isSafeInteger(item) && item >= 0
       ? item
       : AUDIT_SAFE_ERROR_DIAGNOSTICS.has(key) ? sanitizeErrorDiagnostic(key, item)
-      : AUDIT_PRIVATE_KEY.test(key) ? REDACTED : redactAuditEventFields(item, key)
+      : AUDIT_PRIVATE_KEY.test(key) && key !== "reasonCode" ? REDACTED : redactAuditEventFields(item, key)
   ]));
 }
 

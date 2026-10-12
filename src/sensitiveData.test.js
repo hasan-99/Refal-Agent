@@ -53,6 +53,14 @@ test("audit sanitizer redacts unknown short text while retaining validated opera
   assert.deepEqual(redactAuditEventFields({ id: "Hasan", reportDate: "Hasan" }), { id: "[redacted]", reportDate: "[redacted]" });
 });
 
+test("audit sanitizer keeps validated trace IDs, stages and reason codes for event correlation", () => {
+  const traceId = "c1d8809c-b04d-4b63-a6f8-2a552d643aa2";
+  assert.deepEqual(redactAuditEventFields({ traceId, stage: "response_total", reasonCode: "prohibited_claim", durationMs: 123 }), {
+    traceId, stage: "response_total", reasonCode: "prohibited_claim", durationMs: 123
+  });
+  assert.equal(redactAuditEventFields({ traceId: "customer@example.test" }).traceId, "[redacted]");
+});
+
 test("audit sanitizer preserves only nonnegative integer provider usage counts from token-named fields", () => {
   assert.deepEqual(redactAuditEventFields({
     promptTokens: 120,
