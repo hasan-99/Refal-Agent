@@ -533,7 +533,7 @@ function knowledgeSectionIdentity(row, fallbackIndex) {
 
 function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
   const sections = new Map();
-  for (const rows of resultSets) {
+  for (const [queryIndex, rows] of resultSets.entries()) {
     const seenInQuery = new Set();
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
@@ -542,9 +542,13 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
       const group = sections.get(key);
       if (seenInQuery.has(key)) continue;
       seenInQuery.add(key);
-      // The model's contextual query is primary. A raw follow-up is useful for
-      // recall but must not outvote its resolved meaning by appearing twice.
-      group.score = Math.max(group.score, (resultSets.indexOf(rows) < contextualCount ? 2 : 1) / (60 + index + 1));
+      // Reciprocal-rank fusion rewards a section that consistently answers
+      // several complementary searches, while weighting model-resolved
+      // queries twice as strongly as the raw current message. Taking only the
+      // best rank let a single unrelated first result tie a relevant section
+      // found again by later queries, then win solely by arrival order.
+      const queryWeight = queryIndex < contextualCount ? 2 : 1;
+      group.score += queryWeight / (60 + index + 1);
       group.rows.push(...rows.filter((candidate) => {
         const candidateKey = knowledgeSectionIdentity(candidate, index);
         return candidateKey === key;

@@ -33,7 +33,7 @@ test("prompt budget includes per-message framing and structured non-string field
 
 test("prompt budget includes request-level response schema and generation options", () => {
   const base = { model: "model", messages: [{ role: "user", content: "short" }] };
-  const extended = { ...base, response_format: { json_schema: { schema: { properties: { answer: { description: "x".repeat(32000) } } } } } };
+  const extended = { ...base, response_format: { json_schema: { schema: { properties: { answer: { description: "x".repeat(MAX_PROMPT_TOKEN_CEILING + 1) } } } } } };
   assert.ok(promptTokenUpperBound(extended) > MAX_PROMPT_TOKEN_CEILING);
   assert.ok(promptTokenUpperBound(extended) > promptTokenUpperBound(base));
 });

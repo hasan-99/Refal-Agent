@@ -2,7 +2,7 @@
 // the complete serialized request (messages, tool-call metadata, response
 // schema, and other body fields), then reserve framing tokens per message and
 // for the request. This is a conservative ceiling proxy, not provider usage.
-const MAX_PROMPT_TOKEN_CEILING = 32000;
+const MAX_PROMPT_TOKEN_CEILING = 40000;
 const PROMPT_MESSAGE_FRAMING_TOKEN_RESERVE = 16;
 const PROMPT_GLOBAL_FRAMING_TOKEN_RESERVE = 64;
 

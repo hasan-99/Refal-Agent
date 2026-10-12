@@ -19,6 +19,22 @@ test("later relevant evidence replaces weaker evidence without deleting omitted 
   assert.ok(omitted.excludedIds.includes("another"));
   assert.equal(observations[2].result.modelObservation.candidateEvidence.length, 1);
 });
+
+test("equal-ranked later search results do not evict earlier usable evidence", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const row = (id) => ({
+    result: { modelObservation: { type: "approved_knowledge", evidence: [
+      { sourceRef: id, title: id, content: "x".repeat(350), relevance: 2, selectionOrder: 0 }
+    ] } }
+  });
+  const observations = [row("earlier-approved-scope")];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(row("later-unrelated-result"));
+  const budget = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(budget.retainedIds, ["earlier-approved-scope"]);
+  assert.deepEqual(budget.excludedIds, ["later-unrelated-result"]);
+  assert.equal(budget.newEvidenceCount, 0);
+});
 const { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 

@@ -1,7 +1,7 @@
 // Keep the Edge provider boundary under the same conservative input ceiling as
 // the Node WhatsApp and Agent-decision paths. Count serialized request bytes,
 // including all body fields, then add per-message/request framing.
-export const MAX_PROMPT_TOKEN_CEILING = 32_000;
+export const MAX_PROMPT_TOKEN_CEILING = 40_000;
 export const PROMPT_MESSAGE_FRAMING_TOKEN_RESERVE = 16;
 export const PROMPT_GLOBAL_FRAMING_TOKEN_RESERVE = 64;
 

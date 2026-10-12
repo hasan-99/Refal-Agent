@@ -3,6 +3,23 @@ const assert = require("node:assert/strict");
 const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomerFact, proposeHandover, buildApprovedKnowledgeObservation, MAX_RAG_EVIDENCE_ITEMS, MAX_RAG_EVIDENCE_TOTAL_CHARS } = require("./agentTools");
 const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
 const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
+test("multi-query ranking promotes sections repeatedly relevant across complementary searches", async () => {
+  const calls = [];
+  const row = (id, query, rank) => ({ source_id: "source", document_id: id, section_index: "0", chunk_id: `${id}-chunk`,
+    chunk_index: 0, document_title: id, heading: id, content: `${query} approved support section`, review_status: "approved", rank });
+  const results = {
+    "broad scope": [row("single-query-topic", "broad scope", 1)],
+    "residency conditions": [row("supported-residency-route", "residency conditions", 1)],
+    "separate eligibility": [row("supported-residency-route", "separate eligibility", 1)],
+    "customer wording": [row("supported-residency-route", "customer wording", 1)]
+  };
+  const result = await searchApprovedKnowledge({ query: "broad scope", relatedQueries: ["residency conditions", "separate eligibility"] }, {
+    currentMessage: "customer wording", matchCount: 8, embedText: async () => null,
+    store: { searchKnowledge: async (query) => { calls.push(query); return results[query] || []; } }
+  });
+  assert.equal(calls.length, 4);
+  assert.equal(result.modelObservation.evidence[0].title, "supported-residency-route");
+});
 test("complementary model queries retain ranked capability and procedure sections without a second model call", async () => {
   const queries = [];
   const makeRows = prefix => Array.from({length:20}, (_, i)=>({chunk_id:`${prefix}-${i}`,content:`${prefix} approved section ${i}`,heading:`${prefix} ${i}`}));

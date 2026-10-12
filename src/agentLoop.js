@@ -161,7 +161,10 @@ function boundAccumulatedKnowledgeEvidence(observations, maxChars = 10000, maxBy
     }
   }
   const ranked = [...pool.values()].sort((a, b) => Number(b.item.relevance || 1) - Number(a.item.relevance || 1)
-    || b.roundIndex - a.roundIndex || Number(a.item.selectionOrder || 0) - Number(b.item.selectionOrder || 0));
+    // Equal-ranked later search results have not shown that they are better.
+    // Keep earlier usable evidence ahead of them so unrelated query drift or
+    // a long new section cannot evict the answer's existing support.
+    || a.roundIndex - b.roundIndex || Number(a.item.selectionOrder || 0) - Number(b.item.selectionOrder || 0));
   let used = 0;
   let usedBytes = 0;
   const retained = [];
@@ -402,7 +405,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       observations.push(observation);
       const evidenceBudget = validated.tool === "searchApprovedKnowledge" ? budgetCurrentEvidence(context, observations, tools) : null;
       if (validated.tool === "searchApprovedKnowledge" && result?.ok === true
-        && result.status === "found" && evidenceBudget?.newEvidenceCount === 0 && !evidenceBudget?.replacedIds?.length) {
+        && result.status === "found" && evidenceBudget?.newEvidenceCount === 0) {
         knowledgeSearchExhausted = true;
         if (result.status === "found") {
           observation.result.status = "no_new_evidence";
