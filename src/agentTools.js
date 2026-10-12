@@ -532,6 +532,18 @@ function knowledgeSectionIdentity(row, fallbackIndex) {
   return `row:${fallbackIndex}`;
 }
 
+function cosineSimilarity(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length || left.length === 0) return null;
+  let dot = 0; let leftNorm = 0; let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = Number(left[index]); const b = Number(right[index]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    dot += a * b; leftNorm += a * a; rightNorm += b * b;
+  }
+  if (leftNorm === 0 || rightNorm === 0) return null;
+  return dot / Math.sqrt(leftNorm * rightNorm);
+}
+
 function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historicalQueryIndex = -1 } = {}) {
   const sections = new Map();
   for (const [queryIndex, rows] of resultSets.entries()) {
@@ -591,9 +603,9 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     ? redactPersonalData(previousCustomerMessage).slice(0, 1000).trim()
     : "";
   const contextualQueries = [...new Set([query, ...related, crossLanguageHistoryQuery])].filter(Boolean);
-  const queries = [...new Set([...contextualQueries, currentQuery])].filter(Boolean);
-  const historicalQueryIndex = crossLanguageHistoryQuery ? queries.indexOf(crossLanguageHistoryQuery) : -1;
-  const resultSets = await Promise.all(queries.map(async (searchQuery) => {
+  let queries = [...new Set([...contextualQueries, currentQuery])].filter(Boolean);
+  let historicalQueryIndex = crossLanguageHistoryQuery ? queries.indexOf(crossLanguageHistoryQuery) : -1;
+  const searchPlans = await Promise.all(queries.map(async (searchQuery, index) => {
     let embedding = null;
     try {
       if (typeof embedText === "function") embedding = await embedText(searchQuery);
@@ -602,19 +614,45 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       // fail the tool just because the local embedding pipeline is unavailable.
       embedding = null;
     }
-    return store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
-  }).map((promise, index) => Promise.resolve(promise).then((value) => ({ ok: true, value, contextual: index < contextualQueries.length }), (error) => ({ ok: false, error }))));
-  const successfulResults = resultSets.filter((result) => result.ok).map((result) => Array.isArray(result.value) ? result.value : []);
+    return { searchQuery, embedding, contextual: index < contextualQueries.length };
+  }));
+  const resolvedEmbedding = searchPlans[0]?.embedding;
+  const currentIndex = queries.indexOf(currentQuery);
+  const currentEmbedding = currentIndex >= 0 ? searchPlans[currentIndex]?.embedding : null;
+  const currentAlignment = cosineSimilarity(resolvedEmbedding, currentEmbedding);
+  const historyAlignment = historicalQueryIndex >= 0
+    ? cosineSimilarity(resolvedEmbedding, searchPlans[historicalQueryIndex]?.embedding) : null;
+  if (historicalQueryIndex >= 0 && currentIndex >= 0) {
+    // The prior turn may resolve a cross-language follow-up, but a stale
+    // previous topic must not outrank evidence for a clear current question.
+    // When embeddings are unavailable, retain the legacy history search so
+    // lexical-only retrieval remains compatible.
+    if (historyAlignment !== null && currentAlignment !== null && historyAlignment < currentAlignment) {
+      queries = queries.filter((_value, index) => index !== historicalQueryIndex);
+      searchPlans.splice(historicalQueryIndex, 1);
+      historicalQueryIndex = -1;
+    }
+  }
+  const resultSets = await Promise.all(searchPlans.map(async ({ searchQuery, embedding, contextual }) => {
+    try {
+      const value = await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
+      return { ok: true, value, contextual };
+    } catch (error) {
+      return { ok: false, error, contextual };
+    }
+  }));
+  const successfulResults = resultSets.filter((result) => result.ok);
   if (!successfulResults.length) {
     const error = resultSets.find((result) => !result.ok)?.error;
     return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []), trace: { searchQueries: queries } });
   }
   const results = successfulResults.length > 1
-    ? mergeRankedKnowledgeResults(successfulResults, {
-      contextualCount: resultSets.filter(result => result.ok && result.contextual).length,
+    ? mergeRankedKnowledgeResults(resultSets.map((result) => result.ok && Array.isArray(result.value) ? result.value : []), {
+      contextualCount: resultSets.filter(result => result.contextual).length,
       historicalQueryIndex
     })
-    : successfulResults[0].map((row, index) => ({ ...row, selectionRelevance: 60 / (61 + index) }));
+    : (Array.isArray(successfulResults[0].value) ? successfulResults[0].value : [])
+      .map((row, index) => ({ ...row, selectionRelevance: 60 / (61 + index) }));
 
   // The RPC enforces source/document approval and expiry. Evidence/supporting
   // reference fields and Fact Register links are not admission requirements;
@@ -864,7 +902,7 @@ const TOOL_REGISTRY = Object.freeze({
     run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
   },
   searchApprovedKnowledge: {
-    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. Separate evidence needs into independent queries rather than paraphrasing one compound query: broad company capability without procedural/stage restrictions, current topic details, and conditions where needed. A topic description is not proof of a company's service. Use complementary queries in one search rather than repeating searches.",
+    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a direct factual question about a relationship or outcome, search that relationship and its conditions; add a company-capability query only if the customer also asks about REFAL's role. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {

@@ -169,6 +169,9 @@ test("the tool list sent to the model is generated from the real TOOL_REGISTRY, 
   }
   assert.match(TOOL_REGISTRY.lookupActiveOffer.description, /Do not use this instead of searchApprovedKnowledge for general company service scope/);
   assert.match(systemMessage, /Use searchApprovedKnowledge for company service scope, package inclusions, and process guidance/);
+  assert.match(systemMessage, /For a direct factual question about whether one business outcome follows from another, search that relationship and its conditions/);
+  assert.match(systemMessage, /Do not add a broad company-capability query unless the customer also asks what REFAL provides/);
+  assert.match(systemMessage, /Use a broad company-capability query only when the customer asks what REFAL offers/);
   assert.match(systemMessage, /lookupActiveOffer is only for a current offer-specific price/);
   assert.match(systemMessage, /Do not start a registration or name-reservation action unless the customer explicitly chooses it/);
   assert.doesNotMatch(systemMessage, /ask what the company will do as the next useful detail/u);

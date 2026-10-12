@@ -214,6 +214,39 @@ test("searchApprovedKnowledge also retrieves the immediately prior customer word
   assert.ok(result.modelObservation.candidateEvidence.some((item) => item.sourceRef === "residency-ar"));
 });
 
+test("cross-language history search is skipped when it is less relevant than the resolved current question", async () => {
+  const calls = [];
+  const vectors = {
+    "resolved current relationship": [1, 0],
+    "Can you show me another client's company file?": [0, 1],
+    "Η ίδρυση εταιρείας στην Κύπρο δίνει άδεια διαμονής;": [0.9, 0.1]
+  };
+  const result = await searchApprovedKnowledge({ query: "resolved current relationship" }, {
+    store: { searchKnowledge: async (query) => { calls.push(query); return []; } },
+    currentMessage: "Η ίδρυση εταιρείας στην Κύπρο δίνει άδεια διαμονής;", language: "greek",
+    user: { history: [{ message: "Can you show me another client's company file?" }] },
+    embedText: async (query) => vectors[query]
+  });
+  assert.deepEqual(calls, ["resolved current relationship", "Η ίδρυση εταιρείας στην Κύπρο δίνει άδεια διαμονής;"]);
+  assert.deepEqual(result.trace.searchQueries, calls);
+});
+
+test("cross-language history search remains available when it best matches the resolved follow-up", async () => {
+  const calls = [];
+  const vectors = {
+    "resolved company follow-up": [1, 0],
+    "هل تأسيس الشركة وحده يمنحني إقامة؟": [0.99, 0.1],
+    "Και μετά;": [0, 1]
+  };
+  await searchApprovedKnowledge({ query: "resolved company follow-up" }, {
+    store: { searchKnowledge: async (query) => { calls.push(query); return []; } },
+    currentMessage: "Και μετά;", language: "greek",
+    user: { history: [{ message: "هل تأسيس الشركة وحده يمنحني إقامة؟" }] },
+    embedText: async (query) => vectors[query]
+  });
+  assert.ok(calls.includes("هل تأسيس الشركة وحده يمنحني إقامة؟"));
+});
+
 test("cross-language customer wording keeps its retrieval relevance when weaker sections compete for prompt space", async () => {
   const store = { searchKnowledge: async (query) => {
     if (query.startsWith("ما إذا كان تأسيس")) return Array.from({ length: 7 }, (_, index) => ({
