@@ -4,6 +4,7 @@
 // whatever the caller has lying around: it protects the Agent decision step
 // from ever seeing secrets, raw WhatsApp transport internals, or more
 // personal data than it needs to help with the current message.
+const { INTENTS } = require("./intent");
 
 function safeTrim(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -15,6 +16,7 @@ function buildAgentContext({
   contact = {},
   recentConversation = [],
   priorConfiguredIntroduction = false,
+  intents = [],
   conversationState = {},
   knownCustomerFacts = {},
   currentOpenQuestion = null,
@@ -53,6 +55,10 @@ function buildAgentContext({
     // small continuity fact from the already-loaded full history so an older
     // introduction does not disappear when the prompt window advances.
     priorConfiguredIntroduction: priorConfiguredIntroduction === true,
+    // This is the validated current-turn classification, used only to preserve
+    // the direct answer when the customer explicitly asks who the agent is.
+    intents: Object.freeze([...new Set((Array.isArray(intents) ? intents : [])
+      .filter((intent) => Object.values(INTENTS).includes(intent)))]),
     conversationState: Object.freeze({ ...conversationState }),
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,

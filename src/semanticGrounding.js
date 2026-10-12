@@ -10,6 +10,7 @@ const { resolveOpenRouterModel, withOpenRouterPrivacyPolicy, DEFAULT_OPENROUTER_
 const { assertPromptWithinTokenCeiling } = require("./promptBudget");
 const { modelProviderCircuit } = require("./modelCircuitBreaker");
 const { normalizeOpenRouterUsage, redactPersonalData } = require("./ai");
+const { INTENTS } = require("./intent");
 
 const REVIEW_CODES = Object.freeze([
   "supported", "identity", "non_factual", "no_approved_evidence", "unsupported_relation",
@@ -20,6 +21,22 @@ const REVIEW_CODES = Object.freeze([
 function reviewIdentity() {
   // Deliberately exclude every company fact and credibility figure.
   return { brand: profile.brand, groupName: profile.groupName, legalName: profile.legalName, jurisdiction: profile.jurisdiction };
+}
+
+function repeatedConfiguredIntroduction(verdict, text, context = {}) {
+  const priorIntroduction = context.priorConfiguredIntroduction === true
+    || (Array.isArray(context.recentConversation) && context.recentConversation.some((turn) => {
+      if (turn?.role !== "assistant" || typeof turn.content !== "string") return false;
+      const content = turn.content.toLocaleLowerCase();
+      return content.includes(profile.brand.toLocaleLowerCase()) && content.includes(profile.groupName.toLocaleLowerCase());
+    }));
+  if (!priorIntroduction || context.intents?.includes(INTENTS.AGENT_IDENTITY)) return null;
+  const firstSentence = String(text || "").trim().split(/(?<=[.!?؟])\s+|\n/u, 1)[0] || "";
+  const normalized = firstSentence.toLocaleLowerCase();
+  const identitySegment = Array.isArray(verdict?.segments) && verdict.segments.find((segment) =>
+    segment?.status === "identity" && String(segment.text || "").trim().startsWith(firstSentence));
+  return identitySegment && normalized.includes(profile.brand.toLocaleLowerCase())
+    && normalized.includes(profile.groupName.toLocaleLowerCase()) ? firstSentence : null;
 }
 
 function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} } = {}) {
@@ -103,6 +120,11 @@ async function callGroundingReviewer(messages, { onUsage } = {}) {
 }
 
 function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequest = null, context = {}) {
+  const repeatedIntro = repeatedConfiguredIntroduction(verdict, text, context);
+  if (repeatedIntro) {
+    verdict = { ...verdict, contextValid: false,
+      contextIssues: [...new Set([...(Array.isArray(verdict?.contextIssues) ? verdict.contextIssues : []), repeatedIntro])].slice(0, 5) };
+  }
   const nonFactualSocialReply = context.socialOnlyTurn === true
     && Array.isArray(verdict?.segments) && verdict.segments.length > 0
     && verdict.segments.every((segment) => segment?.status === "non_factual");

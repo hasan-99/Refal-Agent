@@ -17,6 +17,40 @@ test("grounding review accepts an explicitly listed service category without inv
   assert.match(socialReview[0].content, /For that turn, a draft whose every clause is non_factual is an addressed social response/);
 });
 
+test("a repeated configured introduction is blocked on a later answer but allowed on first and direct identity replies", () => {
+  const identity = "أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group.";
+  const services = "نساعد في تأسيس الشركات.";
+  const text = `${identity} ${services}`;
+  const evidenceItems = [{ sourceRef: "services", content: "Company formation support is offered.", review_status: "approved" }];
+  const verdict = { segments: [
+    { text: identity, status: "identity", evidenceRefs: [], reasonCode: "identity" },
+    { text: services, status: "supported", evidenceRefs: ["services"], reasonCode: "supported" }
+  ], languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+
+  const firstReply = validateGroundingVerdict(verdict, text, evidenceItems, "What services do you offer?", { intents: ["business_areas"] });
+  assert.equal(firstReply.valid, true, "the configured identity remains allowed before any introduction");
+
+  const repeated = validateGroundingVerdict(verdict, text, evidenceItems, "What services do you offer?", {
+    priorConfiguredIntroduction: true, intents: ["business_areas"]
+  });
+  assert.equal(repeated.valid, false);
+  assert.ok(repeated.reasons.includes("context_mismatch"));
+  assert.ok(repeated.blockedClaims.some((claim) => claim.sentence === identity && claim.reasons.includes("context_mismatch")));
+
+  const directIdentityReply = validateGroundingVerdict(verdict, text, evidenceItems, "Who are you?", {
+    priorConfiguredIntroduction: true, intents: ["agent_identity"]
+  });
+  assert.equal(directIdentityReply.valid, true, "a direct identity request remains answerable");
+
+  const companyReference = "Refalco Group offers company formation support.";
+  const companyReferenceVerdict = { segments: [
+    { text: companyReference, status: "supported", evidenceRefs: ["services"], reasonCode: "supported" }
+  ], languageValid: true, contextValid: true, contextIssues: [], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+  assert.equal(validateGroundingVerdict(companyReferenceVerdict, companyReference, evidenceItems, "What service does Refalco Group offer?", {
+    priorConfiguredIntroduction: true, intents: ["business_areas"]
+  }).valid, true, "ordinary supported company references are not treated as repeated introductions");
+});
+
 test("supported service scope survives an unconfirmed stage relationship while stage claims stay blocked", () => {
   const text = "تذكر المعلومات المعتمدة خدمات قانونية للشركات. لكنها لا تحدد إن كانت ضمن دعم مستمر بعد التأسيس.";
   const scope = "service-scope";

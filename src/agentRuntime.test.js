@@ -29,6 +29,17 @@ test("the model decides when and how to search; there is no intent-triggered pre
   assert.equal(result.steps.length, 0);
 });
 
+test("validated turn intent is retained in the trusted conversation context", async () => {
+  let turnContext;
+  await runAgentTurnForContact({
+    currentMessage: "Who are you?", locale: "english", intents: ["agent_identity", "customer_supplied_value"], user: {}, userId: "u1"
+  }, { decideNextStep: async ({ context }) => {
+    turnContext = context;
+    return { type: "respond", text: "I am REFAL, Refalco Group's digital business agent." };
+  } });
+  assert.deepEqual(turnContext.intents, ["agent_identity"]);
+});
+
 test("a broad colloquial services request can retrieve and answer from approved evidence", async () => {
   const searches = [];
   const store = { searchKnowledge: async (query) => {
