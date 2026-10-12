@@ -24,6 +24,7 @@ const { resolveHumourLevel, assertHumourCompliance } = require("./humourEngine")
 const { detectAntiPatterns } = require("./antiPatterns");
 const { detectIntents } = require("./intent");
 const { detectMessageLanguage } = require("./language");
+const MAX_KNOWLEDGE_SEARCH_CALLS = 2;
 // REFAL-AGENT-026: ports the legacy ai.js wrong-language check (`answer.length
 // > 8 && detectMessageLanguage(answer) !== language`) into the Agent path.
 // Reuses agentObservability.js's existing languageSignalsFrom — the SAME
@@ -363,6 +364,8 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
   const observations = Array.isArray(initialObservations) ? [...initialObservations] : [];
   const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
   let knowledgeSearchExhausted = false;
+  let knowledgeSearchCalls = 0;
+  let exhaustedSearchRetries = 0;
   const rejectedDrafts = new Map();
   const rejectedClaims = new Map();
 
@@ -409,6 +412,18 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         && rawDecision?.tool === "searchApprovedKnowledge") {
         observations.push({ step, tool: "searchApprovedKnowledge", args: {},
           result: { ok: false, status: "search_exhausted", reasonCode: "NO_NEW_RELEVANT_SECTIONS" } });
+        // Give the model bounded same-turn chances to respond after it sees that
+        // retrieval is exhausted. Do not let a repeated search request consume
+        // the reserved validation/recovery step.
+        if (exhaustedSearchRetries < 2) {
+          exhaustedSearchRetries += 1;
+          step -= 1;
+        } else {
+          // After two bounded re-prompts, skip the remaining wasted retrieval
+          // attempts and preserve one composition step plus one validation
+          // correction step.
+          step = Math.max(step, maxSteps - 2);
+        }
         continue;
       }
       if (step < maxSteps && validated.reason !== "unknown_tool_requested") {
@@ -445,6 +460,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       }
       const tool = tools[validated.tool];
       let result;
+      if (validated.tool === "searchApprovedKnowledge") knowledgeSearchCalls += 1;
       const toolStartedAt = performance.now();
       try {
         result = await tool.run(validated.args, toolContext);
@@ -462,6 +478,15 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
           observation.result.reasonCode = "NO_NEW_RELEVANT_SECTIONS";
           if (observation.result.modelObservation) observation.result.modelObservation.status = "no_new_evidence";
         }
+      }
+      // A search call can already combine the current message, two
+      // complementary model queries, and the customer's prior-language
+      // wording. One focused recovery call is enough when the first search
+      // leaves a distinct gap. Requiring a response after that bounded pair
+      // prevents query drift from consuming every model step without adding
+      // useful answer evidence.
+      if (validated.tool === "searchApprovedKnowledge" && knowledgeSearchCalls >= MAX_KNOWLEDGE_SEARCH_CALLS) {
+        knowledgeSearchExhausted = true;
       }
       const evidence = result?.modelObservation?.evidence || [];
       try { await onToolCall({ step, tool: validated.tool, args: validated.args, result, durationMs: Math.max(0, Math.round(performance.now() - toolStartedAt)),

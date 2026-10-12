@@ -9,6 +9,7 @@
 
 const { createHash } = require("node:crypto");
 const { detectMessageLanguage } = require("./language");
+const { redactPersonalData } = require("./ai");
 
 const { getConsentState } = require("./leadQualification");
 const { createHandover } = require("./handover");
@@ -531,7 +532,7 @@ function knowledgeSectionIdentity(row, fallbackIndex) {
   return `row:${fallbackIndex}`;
 }
 
-function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
+function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historicalQueryIndex = -1 } = {}) {
   const sections = new Map();
   for (const [queryIndex, rows] of resultSets.entries()) {
     const seenInQuery = new Set();
@@ -547,7 +548,14 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
       // queries twice as strongly as the raw current message. Taking only the
       // best rank let a single unrelated first result tie a relevant section
       // found again by later queries, then win solely by arrival order.
-      const queryWeight = queryIndex < contextualCount ? 2 : 1;
+      // The customer's own prior-language wording is direct context for this
+      // follow-up and can retrieve a translated section that model paraphrases
+      // miss. Preserve its signal through both fusion and the later prompt cap.
+      // A prior-language customer question is the strongest direct context
+      // for a cross-language follow-up. Keep its ranked results visible when
+      // a broad English summary query and two complementary searches compete
+      // for the bounded evidence list.
+      const queryWeight = queryIndex === historicalQueryIndex ? 12 : queryIndex < contextualCount ? 2 : 1;
       group.score += queryWeight / (60 + index + 1);
       group.rows.push(...rows.filter((candidate) => {
         const candidateKey = knowledgeSectionIdentity(candidate, index);
@@ -558,7 +566,8 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1 } = {}) {
   return [...sections.values()]
     .sort((a, b) => b.score - a.score || a.firstSeen - b.firstSeen)
     .flatMap((group) => [...new Map(group.rows.map((row) => [row.chunk_id || `${row.document_id}:${row.chunk_index}`, row])).values()]
-      .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0)));
+      .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
+      .map((row) => ({ ...row, selectionRelevance: group.score * 60 })));
 }
 
 async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user } = {}) {
@@ -573,8 +582,23 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const candidateCount = Math.min(20, requestedCount * 3);
 
   const related = Array.isArray(args?.relatedQueries) ? args.relatedQueries.filter(isPlainString).map(value => value.trim().slice(0, 1000)).slice(0, 2) : [];
-  const contextualQueries = [...new Set([query, ...related])].filter(Boolean);
-  const queries = [...new Set([...contextualQueries, isPlainString(currentMessage) ? currentMessage.trim().slice(0, 1000) : ""])].filter(Boolean);
+  const currentQuery = isPlainString(currentMessage) ? currentMessage.trim().slice(0, 1000) : "";
+  const currentLanguage = detectMessageLanguage(currentQuery);
+  const previousCustomerMessage = [...(Array.isArray(user?.history) ? user.history : [])].reverse()
+    .map((turn) => typeof turn?.message === "string" ? turn.message.trim() : "")
+    .find((message) => message && message !== currentQuery);
+  const priorLanguage = previousCustomerMessage ? detectMessageLanguage(previousCustomerMessage) : "unknown";
+  // A language switch can make a model-resolved English query miss the
+  // approved section found by the customer's original Arabic or Greek wording.
+  // Reuse only the immediately previous customer message, redact personal
+  // data, and keep the extra retrieval bounded to this cross-language case.
+  const crossLanguageHistoryQuery = previousCustomerMessage && priorLanguage !== currentLanguage
+    && ["arabic", "english", "greek"].includes(priorLanguage) && ["arabic", "english", "greek"].includes(currentLanguage)
+    ? redactPersonalData(previousCustomerMessage).slice(0, 1000).trim()
+    : "";
+  const contextualQueries = [...new Set([query, ...related, crossLanguageHistoryQuery])].filter(Boolean);
+  const queries = [...new Set([...contextualQueries, currentQuery])].filter(Boolean);
+  const historicalQueryIndex = crossLanguageHistoryQuery ? queries.indexOf(crossLanguageHistoryQuery) : -1;
   const resultSets = await Promise.all(queries.map(async (searchQuery) => {
     let embedding = null;
     try {
@@ -592,8 +616,11 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []), trace: { searchQueries: queries } });
   }
   const results = successfulResults.length > 1
-    ? mergeRankedKnowledgeResults(successfulResults, { contextualCount: resultSets.filter(result => result.ok && result.contextual).length })
-    : successfulResults[0];
+    ? mergeRankedKnowledgeResults(successfulResults, {
+      contextualCount: resultSets.filter(result => result.ok && result.contextual).length,
+      historicalQueryIndex
+    })
+    : successfulResults[0].map((row, index) => ({ ...row, selectionRelevance: 60 / (61 + index) }));
 
   // The RPC enforces source/document approval and expiry. Evidence/supporting
   // reference fields and Fact Register links are not admission requirements;
@@ -624,7 +651,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // candidate window, then let the existing complete-section and prompt
   // budgets retain as many as fit for BOTH generation and validation.
   const selectedRows = visibleCatalogue.flatMap((item, index) => sectionRows.get(item.key)
-    .map((row) => ({ ...row, selectionRelevance: index === 0 ? 3 : 2, selectionOrder: index })));
+    .map((row) => ({ ...row, selectionRelevance: Number(row.selectionRelevance) || 1 + 1 / (index + 1), selectionOrder: index })));
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
   return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });

@@ -454,6 +454,51 @@ test("unselected new candidates without retained evidence stop repeated searches
   assert.equal(result.stepCount, 3);
 });
 
+test("two focused knowledge searches exhaust retrieval and reserve the remaining steps for an answer", async () => {
+  let calls = 0;
+  const tools = { searchApprovedKnowledge: { run: async () => {
+    calls += 1;
+    const source = { document_id: `doc-${calls}`, section_index: 0, chunk_id: `chunk-${calls}`, chunk_index: 0,
+      document_title: "Approved service information", heading: `Section ${calls}`,
+      content: `Approved service detail ${calls}.`, review_status: "approved" };
+    return { ok: true, status: "found", modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source]) };
+  } } };
+  let searchWasAvailableAfterLimit = true;
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 5, decideNextStep: async ({ step, tools: available }) => {
+    if (step <= 3) {
+      if (step === 3) searchWasAvailableAfterLimit = Object.hasOwn(available, "searchApprovedKnowledge");
+      return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `distinct approved detail ${step}` } };
+    }
+    return { type: "respond", text: "The approved information describes the supported service details." };
+  } });
+  assert.equal(calls, 2, "a bounded recovery search is allowed, then retrieval stops");
+  assert.equal(searchWasAvailableAfterLimit, false);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, "The approved information describes the supported service details.");
+});
+
+test("one exhausted-search correction does not consume the reserved answer-review step", async () => {
+  let calls = 0;
+  let stepThreeCalls = 0;
+  const tools = { searchApprovedKnowledge: { run: async () => {
+    calls += 1;
+    const source = { document_id: `doc-${calls}`, section_index: 0, chunk_id: `chunk-${calls}`, chunk_index: 0,
+      document_title: "Approved service information", heading: `Section ${calls}`,
+      content: `Approved service detail ${calls}.`, review_status: "approved" };
+    return { ok: true, status: "found", modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source]) };
+  } } };
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 5, decideNextStep: async ({ step }) => {
+    if (step <= 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `distinct approved detail ${step}` } };
+    if (step === 3 && stepThreeCalls++ === 0) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "one more search after exhaustion" } };
+    if (step === 3) return { type: "respond", text: "The approved information describes the supported service details." };
+    return { type: "respond", text: "The approved information describes the supported service details." };
+  } });
+  assert.equal(calls, 2);
+  assert.equal(stepThreeCalls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 3);
+});
+
 test("a decision naming an unknown tool stops safely with a deterministic fallback, not a thrown error", async () => {
   const decide = scriptedDecider([{ type: "tool", tool: "sendWireTransfer", args: {} }]);
   const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools: {} });

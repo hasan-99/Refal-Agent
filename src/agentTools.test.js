@@ -165,6 +165,72 @@ test("searchApprovedKnowledge rank-fuses model interpretation with the original 
   assert.deepEqual(result.modelObservation.evidence.map((item) => item.content), ["Company formation services", "خدمات تأسيس الشركات"]);
 });
 
+test("searchApprovedKnowledge also retrieves the immediately prior customer wording after a language switch, with personal data redacted", async () => {
+  const calls = [];
+  const priorArabic = "هل تأسيس الشركة وحده يعطيني إقامة؟ تواصلوا معي على test@example.com أو +357 99123456";
+  const store = { searchKnowledge: async (query) => {
+    calls.push(query);
+    return query.startsWith("هل تأسيس الشركة") ? [{
+      document_id: "residency-doc", section_index: 0, chunk_id: "residency-ar",
+      document_title: "Approved Cyprus residency information", heading: "Company and residence",
+      content: "تأسيس الشركة لا يمنح الإقامة تلقائيًا؛ للإقامة مسار منفصل وشروطه الخاصة.", review_status: "approved"
+    }] : [];
+  } };
+  const result = await searchApprovedKnowledge({ query: "Cyprus company formation and residence relationship" }, {
+    store, currentMessage: "Can you summarize my situation in English?", language: "english", embedText: async () => null,
+    user: { history: [{ message: priorArabic, response: "previous answer is not evidence" }] }
+  });
+
+  assert.ok(calls.some((query) => query.startsWith("هل تأسيس الشركة")));
+  assert.ok(calls.every((query) => !query.includes("test@example.com") && !query.includes("99123456")));
+  assert.ok(result.modelObservation.candidateEvidence.some((item) => item.sourceRef === "residency-ar"));
+});
+
+test("cross-language customer wording keeps its retrieval relevance when weaker sections compete for prompt space", async () => {
+  const store = { searchKnowledge: async (query) => {
+    if (query.startsWith("ما إذا كان تأسيس")) return Array.from({ length: 7 }, (_, index) => ({
+      document_id: `historic-${index}`, section_index: index, chunk_id: index === 6 ? "residency-separate" : `historic-distractor-${index}`,
+      document_title: index === 6 ? "Approved residence information" : `Historic result ${index}`,
+      heading: index === 6 ? "Residence is separate from registration" : "General context",
+      content: index === 6 ? "تسجيل الشركة لا يمنح الإقامة تلقائيًا، فالإقامة مسار منفصل." : `unrelated historical content ${index}`,
+      review_status: "approved"
+    }));
+    return [
+      { document_id: "overview", section_index: 0, chunk_id: "repeated-overview", document_title: "Overview", heading: "General business services", content: "x".repeat(1800), review_status: "approved" },
+      { document_id: "tax", section_index: 0, chunk_id: `tax-${query.length}`, document_title: "Tax", heading: "General tax content", content: "y".repeat(1800), review_status: "approved" }
+    ];
+  } };
+  const result = await searchApprovedKnowledge({
+    query: "Refalco services for a company founder",
+    relatedQueries: ["Company formation scope", "Residence conditions"]
+  }, {
+    store, currentMessage: "Summarize my options in English", language: "english", embedText: async () => null,
+    user: { history: [{ message: "ما إذا كان تأسيس الشركة يمنح الإقامة أو أن الإقامة لها مسار منفصل" }] }
+  });
+
+  const residence = result.modelObservation.candidateEvidence.find((item) => item.sourceRef === "residency-separate");
+  assert.ok(residence, "the lower-ranked original-language section must remain in the candidate evidence");
+  assert.ok(residence.relevance > 1, "its historical-context relevance must survive evidence assembly");
+});
+
+test("the lower-ranked original-language result remains in the bounded answer evidence", async () => {
+  const historicalQueryPrefix = "هل تأسيس الشركة وحده";
+  const makeRows = (prefix, count) => Array.from({ length: count }, (_, index) => ({
+    document_id: `${prefix}-doc-${index}`, section_index: 0, chunk_index: 0, chunk_id: `${prefix}-${index}`,
+    document_title: `${prefix} ${index}`, heading: "Approved section", content: `Approved content ${prefix} ${index}.`, review_status: "approved"
+  }));
+  const store = { searchKnowledge: async (query) => query.startsWith(historicalQueryPrefix)
+    ? [...makeRows("historic", 15), { ...makeRows("historic-residency", 1)[0], chunk_id: "historic-residency" }]
+    : makeRows(`broad-${query.length}`, 20) };
+  const result = await searchApprovedKnowledge({ query: "Summarize the company services relevant to my situation",
+    relatedQueries: ["Company formation and post-formation support", "Residency and company formation relationship"] }, {
+    store, currentMessage: "Summarize in English", language: "english", embedText: async () => null,
+    user: { history: [{ message: "هل تأسيس الشركة وحده يمنحني إقامة أم للإقامة شروط منفصلة؟" }] }
+  });
+  assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "historic-residency"),
+    "the prior-language result at rank 16 must survive fusion and the evidence cap");
+});
+
 test("searchApprovedKnowledge no_evidence produces no fabricated evidence payload", async () => {
   const store = { searchKnowledge: async () => [] };
   const result = await searchApprovedKnowledge({ query: "cryptocurrency custody" }, { store, embedText: async () => null });

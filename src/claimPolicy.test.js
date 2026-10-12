@@ -7,7 +7,8 @@ const {
   evaluateAnswerClaims,
   approvedEvidenceText,
   isApprovedEvidence,
-  containsGuaranteeMarker
+  containsGuaranteeMarker,
+  containsPersonalizedConclusion
 } = require("./claimPolicy");
 const { MB_CANDIDATES, LANGUAGES, LANGUAGE_NAMES } = require("./brainMbCandidates");
 
@@ -520,6 +521,32 @@ test("a personalized conclusion outranks a programme fact in the same sentence",
   const verdict = classifyClaim(sentence, { evidence: [approved(sentence)] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.PERSONALIZED_CONCLUSION);
   assert.equal(verdict.allowed, false);
+});
+
+test("a first-person refusal to determine eligibility is a limitation, not a personalized conclusion", () => {
+  const text = "I can’t determine the applicable conditions or your eligibility.";
+  const verdict = classifyClaim(text, { evidence: [] });
+  assert.equal(verdict.claimClass, CLAIM_CLASSES.NEUTRAL);
+  assert.equal(verdict.allowed, true);
+  assert.equal(containsPersonalizedConclusion(text), false);
+});
+
+test("a denied eligibility assessment does not hide a positive conclusion that follows it", () => {
+  const text = "I can’t determine your eligibility, but you qualify.";
+  const verdict = classifyClaim(text, { evidence: [] });
+  assert.equal(verdict.claimClass, CLAIM_CLASSES.PERSONALIZED_CONCLUSION);
+  assert.equal(verdict.allowed, false);
+  assert.equal(containsPersonalizedConclusion(text), true);
+});
+
+test("eligibility limitations are recognized in Arabic and Greek without allowing positive outcomes", () => {
+  for (const text of [
+    "ما فيني أكد أهليتك.",
+    "Δεν μπορώ να επιβεβαιώσω την επιλεξιμότητά σας."
+  ]) {
+    assert.equal(containsPersonalizedConclusion(text), false, text);
+    assert.equal(classifyClaim(text, { evidence: [] }).claimClass, CLAIM_CLASSES.NEUTRAL, text);
+  }
 });
 
 test("a programme fact outranks NEUTRAL whenever a number is present", () => {

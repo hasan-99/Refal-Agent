@@ -361,6 +361,12 @@ const guaranteeRules = foldRulePatterns(rawGuaranteeRules);
 const personalizedRules = foldRulePatterns(rawPersonalizedRules);
 const entityRules = foldRulePatterns(rawEntityRules);
 
+// A first-person refusal to decide eligibility is a limitation, not a claim
+// that the customer is eligible. Remove only the denied assessment span;
+// anything asserted after it (for example, "but you qualify") remains visible
+// to the ordinary personalized-conclusion rules.
+const NEGATED_PERSONALIZED_OUTCOME = /\b(?:i|we)\s+(?:cannot|can['’]t|can not|do not|don['’]t)\s+(?:confirm|determine|assess|establish|say)\b[^.!?;]{0,100}\b(?:your\s+(?:eligibility|suitability|qualification)|whether\s+you\s+(?:qualify|are\s+eligible|are\s+suitable))\b|(?:لا\s+(?:أستطيع|يمكنني)|ما\s+(?:فيني|بقدر))\s+(?:تأكيد|تحديد|تقييم)\s+[^.!؟؛]{0,100}(?:أهليتك|استحقاقك|إذا\s+كنت\s+مؤهل(?:اً|ة)?|إذا\s+كنت\s+مناسب(?:اً|ة)?)|δεν\s+μπορ\p{L}*\s+να\s+(?:επιβεβαιώσ\p{L}*|καθορίσ\p{L}*|αξιολογήσ\p{L}*)\s+[^.!?;]{0,100}(?:επιλεξιμότητ\p{L}*|αν\s+είστε\s+επιλέξιμ\p{L}*)/giu;
+
 // -------------------------------------------------------------- entity overlap
 
 const CLAIM_STOPWORDS = new Set([
@@ -434,7 +440,7 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
   // the customer, nor a programme fact needing evidence. The strip stops at a
   // contrastive conjunction, so "I cannot advise, but your company qualifies"
   // keeps its second half and still blocks.
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
@@ -535,7 +541,7 @@ function containsPersonalizedConclusion(text) {
 function assertedClaimText(text, rules) {
   const normalized = normalizeClaimText(text);
   if (!hasContent(normalized)) return false;
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) return false;
   return rules.some(([, pattern]) => pattern.test(assertedText));
 }

@@ -114,6 +114,18 @@ test("decideNextStep falls back safely when the model call throws", async () => 
   assert.equal(decision.text, null);
   assert.equal(decision.invalid, true);
   assert.match(decision.reason, /model_call_failed/);
+  assert.equal(decision.errorCode, "MODEL_CALL_FAILED");
+});
+
+test("decision diagnostics preserve timeout and network failure classes without raw provider messages", async () => {
+  const timeout = new Error("request aborted"); timeout.name = "AbortError";
+  const network = new TypeError("socket failure");
+  const timedOut = await decideNextStep({ context: CONTEXT, observations: [], step: 1 }, { callModel: async () => { throw timeout; } });
+  const disconnected = await decideNextStep({ context: CONTEXT, observations: [], step: 1 }, { callModel: async () => { throw network; } });
+  assert.equal(timedOut.errorCode, "MODEL_TIMEOUT");
+  assert.equal(disconnected.errorCode, "MODEL_NETWORK_ERROR");
+  assert.equal(timedOut.message, undefined);
+  assert.equal(disconnected.message, undefined);
 });
 
 test("decideNextStep falls back safely when the model returns unparseable text", async () => {
@@ -198,6 +210,9 @@ test("summary requests require current evidence for facts repeated from conversa
   assert.match(prompt, /retrieve current approved evidence for that fact in this turn/);
   assert.match(prompt, /when current evidence establishes only a service category, keep the recap at that level/i);
   assert.match(prompt, /previous assistant replies.*never approved evidence/i);
+  assert.match(prompt, /search relevant company facts in both the requested language and the original language/i);
+  assert.match(prompt, /one related query MUST restate the most recent relevant customer question in its original language/i);
+  assert.match(prompt, /one relatedQueries entry MUST restate the most recent relevant customer question in its original language/i);
 });
 
 test("decision prompt keeps follow-ups within the customer's current unexcluded scope", () => {

@@ -347,6 +347,8 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     "- Interpret explicit availability on its own as meaning that the customer can request that item without acquiring a distinct service line. After a reviewer rejects one unsupported clause, correct that clause only; keep other service facts that remain directly supported and do not turn a known offer or ongoing role into 'unconfirmed'.",
     "- Keep each knowledge search focused on one part of a multi-part request. For a broad overview plus conditions, limits, or process details, search the overview and the secondary detail separately instead of combining them into one query. A focused query should retrieve the source section most useful for that part; the current customer message is also searched automatically.",
     "- Form search queries that resolve the contextual need. Approved evidence in Arabic, English or Greek can support a faithful translation into the requested answer language. Preserve meaning, conditions and exceptions; language is not an extra knowledge approval requirement.",
+    "- When summarizing or following up in a different language from a relevant prior customer question, one relatedQueries entry MUST restate the most recent relevant customer question in its original language, including the relationship or condition being checked. Do not substitute a broad summary query or raw quotation. Keep it focused on the current need and never treat prior assistant text as evidence.",
+    "- For a returning customer's summary request, recap the relevant service areas and distinctions; omit detailed inclusions already explained unless the customer asks for them again.",
     "- A search result can be incomplete. For a broad request, use additional focused searches when the first approved sections point to other relevant details or when a prior draft was rejected for missing evidence. Do not repeat a search that added no new relevant section. On the final tool-free decision, answer the supported parts and state only what remains unconfirmed.",
     "- Keep the key factual terms of approved evidence close to the source wording. Do not add a category or replace a supported service name with a broader claim that the retrieved text does not establish.",
     "- Use conversation history to resolve references and follow-ups. Use current evidence for the comparison and do not infer broader scope than it establishes. Search the meaning of the customer's request, not just its surface wording. A search result is usable only when its approved evidence block is present in these tool results.",
@@ -550,7 +552,10 @@ async function decideNextStep({ context, observations = [], step = 1 } = {}, { c
   try {
     raw = await callModel(messages, { context, observations, step, onUsage: onModelUsage });
   } catch (error) {
-    const errorCode = /^[A-Z][A-Z0-9_.-]{0,39}$/u.test(String(error?.code || "")) ? error.code : Number.isInteger(error?.status) ? `HTTP_${error.status}` : "MODEL_CALL_FAILED";
+    const errorCode = /^[A-Z][A-Z0-9_.-]{0,39}$/u.test(String(error?.code || "")) ? error.code
+      : Number.isInteger(error?.status) ? `HTTP_${error.status}`
+        : error?.name === "AbortError" ? "MODEL_TIMEOUT"
+          : error?.name === "TypeError" ? "MODEL_NETWORK_ERROR" : "MODEL_CALL_FAILED";
     const evidence = observations.flatMap((item) => item?.result?.modelObservation?.evidence || []);
     const measurement = { durationMs: Math.max(0, Math.round(performance.now() - modelStartedAt)), outcome: "provider_error", step,
       evidenceCount: evidence.length, evidenceIds: evidence.map((item) => item.sourceRef).filter(Boolean), errorCode };
