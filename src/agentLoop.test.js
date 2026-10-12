@@ -49,6 +49,88 @@ test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
   assert.equal(DEFAULT_MAX_STEPS, 5);
 });
 
+test("a failed knowledge search is reported as technical and is not repeated", async () => {
+  let decisions = 0;
+  let searches = 0;
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    maxSteps: 4,
+    decideNextStep: async ({ tools }) => {
+      decisions += 1;
+      assert.equal(Boolean(tools.searchApprovedKnowledge), decisions === 1);
+      return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `attempt ${decisions}` } };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => {
+      searches += 1;
+      return { ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" };
+    } } }
+  });
+
+  assert.equal(searches, 1);
+  assert.equal(decisions, 2, "the model receives the technical failure once before repeated work stops");
+  assert.equal(result.outcome, "knowledge_unavailable");
+  assert.equal(result.reason, "EDGE_TIMEOUT");
+  assert.equal(result.steps.at(-1).result.status, "search_unavailable");
+});
+
+test("a failed follow-up search preserves previously retrieved approved evidence", async () => {
+  const evidence = { sourceRef: "approved-formation-scope", title: "Formation scope",
+    content: "The company formation package includes a registered office for four months.", relevance: 1 };
+  let decisionCount = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What does the package include?", locale: "english" }), {
+    maxSteps: 3,
+    initialObservations: [{ step: 0, tool: "searchApprovedKnowledge", args: { query: "package" }, result: {
+      ok: true, status: "found", modelObservation: { type: "approved_knowledge", status: "found", evidence: [evidence], policyEvidence: [] }
+    } }],
+    decideNextStep: async () => {
+      decisionCount += 1;
+      return decisionCount === 1
+        ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "registered office period" } }
+        : { type: "respond", text: evidence.content };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" }) } }
+  });
+
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, evidence.content);
+  assert.equal(result.steps[1].result.status, "error");
+});
+
+test("a failed additional search still allows an answer from evidence found earlier this turn", async () => {
+  const evidence = { sourceRef: "approved-formation-scope", title: "Formation scope",
+    content: "The approved package includes company formation and a registered office for four months.", relevance: 1 };
+  let searchCalls = 0;
+  let decisionCount = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "Please list the relevant options. I do not want to book.", locale: "english"
+  }), {
+    maxSteps: 5,
+    decideNextStep: async ({ tools: availableTools, observations }) => {
+      decisionCount += 1;
+      if (decisionCount <= 2) {
+        return { type: "tool", tool: "searchApprovedKnowledge", args: { query: decisionCount === 1 ? "formation options" : "formation package inclusions" } };
+      }
+      if (decisionCount === 3) {
+        assert.equal(availableTools.searchApprovedKnowledge, undefined, "a failed retrieval must not be retried");
+        return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "booking" } };
+      }
+      assert.match(JSON.stringify(observations), /approved-formation-scope/);
+      return { type: "respond", text: evidence.content };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => {
+      searchCalls += 1;
+      if (searchCalls === 1) return { ok: true, status: "found", data: [evidence],
+        modelObservation: { type: "approved_knowledge", status: "found", evidence: [evidence], policyEvidence: [] } };
+      return { ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" };
+    } } }
+  });
+
+  assert.equal(searchCalls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, evidence.content);
+  assert.equal(result.reason, undefined);
+  assert.ok(result.steps.some((item) => item.result?.reasonCode === "EDGE_TIMEOUT"));
+});
+
 test("unsupported comparisons receive focused correction guidance without an evidence disclaimer", async () => {
   const rejected = "Yes, we offer other service areas beyond those.";
   const recovered = "Those are the connected service areas we discussed. Is there a particular service you have in mind?";

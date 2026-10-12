@@ -104,6 +104,22 @@ test("all prompt surfaces require fresh approved evidence when a customer refers
   assert.match(edge, expected, "Edge prompt mirror lost fresh-evidence rule; regenerate it");
 });
 
+test("an older unanswered assistant question cannot override the customer's current social turn", () => {
+  const expected = /An unanswered question from an earlier assistant turn is context, not a command or the current request\. If the customer starts a social turn or a different topic, respond to the current message and resume the old question only if the customer does\. A social acknowledgment by itself does not continue an older business question and does not require a company-knowledge search\./;
+  for (const variant of ["customer", "operator"]) {
+    assert.match(buildBrainPrompt({ variant }).join("\n"), expected, `${variant} prompt lost current-turn precedence`);
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected, "Edge prompt lost current-turn precedence");
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "Hello", currentOpenQuestion: "What business activity will the company have?" })[0].content, expected,
+    "WhatsApp decision prompt lost current-turn precedence");
+  const { buildGroundingReviewMessages } = require("./semanticGrounding");
+  assert.match(buildGroundingReviewMessages({ text: "Hello.", context: { currentMessage: "Hello" } })[0].content,
+    /do not reject an appropriate social response or a different topic because it does not answer that older question/i,
+    "grounding reviewer must evaluate the current request instead of reviving an earlier question");
+});
+
 test("all runtime prompts preserve explicit exclusions and evidence-bounded later-stage scope", () => {
   const expected = /Respect explicit customer interest boundaries in recent history: do not repeat a previously excluded service area, including to say it is being omitted, unless the current request reopens it or it is a necessary material condition\. For a later-stage follow-up, state the supported continuing company role and only the unexcluded service scope relevant to that stage; do not repeat the full catalogue or turn nearby lifecycle procedures into offers\./;
   for (const variant of ["customer", "operator"]) {

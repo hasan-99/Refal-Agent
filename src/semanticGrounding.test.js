@@ -90,6 +90,19 @@ test("grounding coverage accepts presentation bullets while preserving every wor
   const result = validateGroundingVerdict({ segments:segments.map(text=>({text,status:"supported",evidenceRefs:["scope"],reasonCode:"supported"})),languageValid:true,contextValid:true,contextIssues:[],requestCoverage:{outcome:"addressed",unmetAspects:[]} },text,[{sourceRef:"scope"}]);
   assert.equal(result.valid,true);
 });
+test("coverage accepts reviewer-added terminal punctuation at bare bullet boundaries but keeps claim rejection", () => {
+  const text = "You can request formation on its own.\n- company formation\n- and remote handling.";
+  const segments = [
+    { text: "You can request formation on its own.", status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" },
+    { text: "- company formation.", status: "unsupported", evidenceRefs: ["scope"], reasonCode: "service_not_established" },
+    { text: "\n- and remote handling.", status: "supported", evidenceRefs: ["scope"], reasonCode: "supported" }
+  ];
+  const result = validateGroundingVerdict({ segments, languageValid: true, contextValid: true, contextIssues: [],
+    requestCoverage: { outcome: "addressed", unmetAspects: [] } }, text, [{ sourceRef: "scope" }]);
+  assert.equal(result.technicalFailure, undefined, "formatting-only punctuation must not fail segmentation coverage");
+  assert.equal(result.valid, false, "fixing coverage must not approve a claim the reviewer marked unsupported");
+  assert.ok(result.reasons.includes("service_not_established"));
+});
 test("comparative review receives prior scope, rejects false additions, and permits evidenced additions beside context", () => {
   const context = { currentMessage: "Anything else beyond those?", recentConversation: [{ role: "assistant", content: "We offer consulting and administration." }] };
   const text = "Yes, we also offer consulting and administration.";

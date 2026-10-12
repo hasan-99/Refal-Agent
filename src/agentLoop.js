@@ -388,6 +388,8 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
   const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
   let knowledgeSearchExhausted = false;
   let knowledgeSearchCalls = 0;
+  let knowledgeSearchFailed = false;
+  let knowledgeSearchFailureReason = null;
   let exhaustedSearchRetries = 0;
   const rejectedDrafts = new Map();
   const rejectedClaims = new Map();
@@ -434,10 +436,20 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       if (step < maxSteps && knowledgeSearchExhausted && validated.reason === "unknown_tool_requested"
         && rawDecision?.tool === "searchApprovedKnowledge") {
         observations.push({ step, tool: "searchApprovedKnowledge", args: {},
-          result: { ok: false, status: "search_exhausted", reasonCode: "NO_NEW_RELEVANT_SECTIONS" } });
-        // Give the model bounded same-turn chances to respond after it sees that
-        // retrieval is exhausted. Do not let a repeated search request consume
-        // the reserved validation/recovery step.
+          result: { ok: false, status: knowledgeSearchFailed ? "search_unavailable" : "search_exhausted",
+            reasonCode: knowledgeSearchFailed ? knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED" : "NO_NEW_RELEVANT_SECTIONS" } });
+        const hasApprovedEvidence = observations.some((item) =>
+          item?.result?.modelObservation?.status === "found"
+          && Array.isArray(item.result.modelObservation.evidence)
+          && item.result.modelObservation.evidence.length > 0);
+        if (knowledgeSearchFailed && !hasApprovedEvidence) {
+          return { finished: true, outcome: "knowledge_unavailable", response: safeFallback(context), steps: observations,
+            toolsUsed, stepCount: step, reason: knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED" };
+        }
+        // If retrieval failed after returning evidence, or was exhausted with
+        // no new sections, let the model compose from what is already in the
+        // current turn. Never repeat a failed search or discard usable evidence.
+        // Do not let repeated search requests consume the reserved recovery step.
         if (exhaustedSearchRetries < 2) {
           exhaustedSearchRetries += 1;
           step -= 1;
@@ -492,6 +504,16 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       }
       const observation = { step, tool: validated.tool, args: validated.args, result };
       observations.push(observation);
+      if (validated.tool === "searchApprovedKnowledge" && result?.status === "error") {
+        // A transport/provider failure is distinct from an empty knowledge
+        // result. Preserve any earlier approved evidence and allow other
+        // authorized tools, but never spend another step repeating retrieval
+        // that just failed technically.
+        knowledgeSearchFailed = true;
+        knowledgeSearchFailureReason = /^[A-Z][A-Z0-9_.-]{0,39}$/u.test(String(result.reasonCode || ""))
+          ? result.reasonCode : "KNOWLEDGE_SEARCH_FAILED";
+        knowledgeSearchExhausted = true;
+      }
       const evidenceBudget = validated.tool === "searchApprovedKnowledge" ? budgetCurrentEvidence(context, observations, tools) : null;
       if (validated.tool === "searchApprovedKnowledge" && result?.ok === true
         && result.status === "found" && evidenceBudget?.newEvidenceCount === 0) {

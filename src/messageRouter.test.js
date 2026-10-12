@@ -695,6 +695,40 @@ test("Agent source-turn persistence keeps workflow writes best-effort after the 
   assert.equal(workflowAttempts, 1);
 });
 
+test("contextual preflight writes qualification and intake once, after the source turn is durable", async () => {
+  const user = { id: "contextual-deferred-profile", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const profileWrites = [];
+  const updateUser = store.updateUser;
+  store.saveOpportunityIntake = async (...args) => user.workflowCalls.push(["opportunity_intake", ...args]);
+  store.updateUser = async (userId, updater) => {
+    profileWrites.push(user.history.length);
+    return updateUser(userId, updater);
+  };
+  const prepared = await prepareInboundMessage({
+    userId: user.id,
+    incoming: "I want to form a company in Cyprus.",
+    user,
+    store,
+    contextual: true,
+    classifyMessage: async () => ({ primary: "company_formation", intents: ["company_formation"], isMultiIntent: false,
+      language: "english", source: "contextual_model", operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false })
+  });
+
+  assert.equal(profileWrites.length, 0, "contextual preparation does not block generation on a derived profile write");
+  assert.equal(prepared.metadata.opportunityIntake.type, "company_formation");
+  const { turn } = await recordHistory(store, user.id, "I want to form a company in Cyprus.", "Your message is being processed.",
+    { metadata: prepared.metadata }, { bestEffortWorkflowWrites: true });
+
+  assert.equal(profileWrites.length, 1, "the final snapshot is persisted in the existing post-insert update");
+  assert.equal(profileWrites[0], 1, "profile persistence starts only after the source turn exists");
+  assert.equal(user.profile.opportunityIntake.type, "company_formation");
+  assert.equal(user.profile.opportunityIntakes.company_formation.type, "company_formation");
+  assert.equal(user.profile.leadQualification.source, "qualification_engine_v1");
+  assert.equal(user.history[0].id, turn.id);
+  assert.equal(user.workflowCalls.some(([kind]) => kind === "opportunity_intake"), true);
+});
+
 test("Greeklish closure reaches the model with Greek response language", async () => {
   for (const [text, language, intent] of [["Den exo kati allo, an xreiaso kati tha to zitiso","greek","small_talk"]]) {
     const user = { id: "contextual-router-case", profile: {}, history: [] };

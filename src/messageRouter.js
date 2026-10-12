@@ -132,7 +132,13 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     const scored = scoreQualification({ evidence });
     metadata.qualification = { ...metadata.qualification, ...scored };
     if (typeof store.updateUser === "function") {
-      try { await store.updateUser(userId, (draft) => { draft.profile = { ...(draft.profile || {}), leadQualification: { ...metadata.qualification, updatedAt: scored.scoredAt, source: "qualification_engine_v1" } }; }); } catch { /* The score snapshot write remains authoritative. */ }
+      try { await store.updateUser(userId, (draft) => {
+        draft.profile = { ...(draft.profile || {}), leadQualification: { ...metadata.qualification, updatedAt: scored.scoredAt, source: "qualification_engine_v1" } };
+        if (metadata.opportunityIntake) draft.profile.opportunityIntake = metadata.opportunityIntake;
+        if (Object.keys(metadata.opportunityIntakes || {}).length) {
+          draft.profile.opportunityIntakes = { ...(draft.profile.opportunityIntakes || {}), ...metadata.opportunityIntakes };
+        }
+      }); } catch { /* The score and intake snapshots remain authoritative. */ }
     }
   }
   // Agent writes require the source turn to be durable before any tool runs,
@@ -502,7 +508,12 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
   // immediately preceding, field-specific assistant question. It never replays
   // from an old profile alone.
   const opportunityIntake = Object.values(opportunityIntakes)[0] || null;
-  if (typeof store.updateUser === "function") {
+  // Contextual turns persist these derived profile snapshots after the source
+  // message is durable in recordHistory. Writing them here first made every
+  // AI turn pay an extra serialized contact ensure + update before generation.
+  // Deterministic routes still persist immediately because they may not pass
+  // through the contextual Agent's source-turn persistence path.
+  if (!contextual && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
       draft.profile = draft.profile || {};
       if (!privacyRisk) draft.profile.leadQualification = { ...qualification, updatedAt: new Date().toISOString(), source: "message_router_v1" };
