@@ -21,6 +21,23 @@ test("multi-query ranking promotes sections repeatedly relevant across complemen
   assert.equal(result.modelObservation.evidence[0].title, "supported-residency-route");
 });
 
+test("current-message retrieval focuses on the first substantive question across supported scripts", async () => {
+  const examples = [
+    ["Does company registration grant residence? I am not interested in property; what conditions apply?", "Does company registration grant residence?"],
+    ["إذا تسجيل الشركة بيعطيني إقامة؟ أنا ما بدي عقار أو استثمار، شو الشروط؟", "إذا تسجيل الشركة بيعطيني إقامة؟"],
+    ["Η εγγραφή εταιρείας δίνει διαμονή; Δεν ενδιαφέρομαι για ακίνητα, ποιες είναι οι προϋποθέσεις;", "Η εγγραφή εταιρείας δίνει διαμονή;"]
+  ];
+  for (const [message, focusedQuestion] of examples) {
+    const queries = [];
+    await searchApprovedKnowledge({ query: "resolved direct relationship" }, {
+      currentMessage: message, embedText: async () => null,
+      store: { searchKnowledge: async (query) => { queries.push(query); return []; } }
+    });
+    assert.equal(queries.at(-1), focusedQuestion);
+    assert.equal(queries.length, 2, "focusing the direct question reuses the existing bounded search call");
+  }
+});
+
 test("a strong overview result survives repeated low-value matches from secondary searches", async () => {
   const row = (id, title = id) => ({ source_id: "approved-source", document_id: id, section_index: "0",
     chunk_id: `${id}-chunk`, chunk_index: 0, document_title: title, heading: title,
@@ -225,7 +242,7 @@ test("searchApprovedKnowledge rank-fuses model interpretation with the original 
 
 test("a directly relevant customer-wording section survives the model and validator context budget", async () => {
   const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
-  const currentMessage = "هل تأسيس الشركة وحده بيعطيني إقامة، ولا للإقامة شروط منفصلة؟";
+  const currentMessage = "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟ أنا مش ناوي أشتري عقار أو أستثمر، فشو فيكم تأكدولي عن الموضوع؟";
   const section = (id, heading, content) => ({ document_id: id, section_index: 0, chunk_id: id,
     document_title: heading, heading, content, review_status: "approved" });
   const store = { searchKnowledge: async (query) => query === "resolved company context"
@@ -233,6 +250,8 @@ test("a directly relevant customer-wording section survives the model and valida
     : query === "company investment and residence conditions"
       ? [section("residence-conditions", "Permanent residence conditions", "The company-investment category requires a qualifying investment and actual operations. " + "r".repeat(240)),
         section("residence-adjacent", "Company and residence", "a".repeat(1000))]
+      : query === "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟"
+        ? [section("residency-relationship", "Company and residence", "Living in Cyprus is a documented path, not a side effect of company registration.")]
       : [section("generic-wording-hit", "General information", "g".repeat(1000))] };
   const result = await searchApprovedKnowledge({ query: "resolved company context", relatedQueries: ["company investment and residence conditions"] }, {
     store, currentMessage, embedText: async () => null, matchCount: 6
@@ -241,11 +260,12 @@ test("a directly relevant customer-wording section survives the model and valida
   const budget = boundAccumulatedKnowledgeEvidence(observations, 2800);
   const modelEvidence = result.modelObservation.evidence;
   const validatorEvidence = result.modelObservation.policyEvidence;
-  assert.ok(result.modelObservation.primarySearchRefs.includes("residence-conditions"),
-    "the best section from a complementary search must survive fusion as a priority candidate");
-  assert.ok(budget.retainedIds.includes("residence-conditions"));
-  assert.ok(modelEvidence.some((item) => item.sourceRef === "residence-conditions"));
-  assert.ok(validatorEvidence.some((item) => item.sourceRef === "residence-conditions"));
+  assert.deepEqual(result.trace.searchQueries.at(-1), "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟");
+  assert.ok(result.modelObservation.primarySearchRefs.includes("residency-relationship"),
+    "the concise customer question remains a primary retrieval anchor despite later exclusions");
+  assert.ok(budget.retainedIds.includes("residency-relationship"));
+  assert.ok(modelEvidence.some((item) => item.sourceRef === "residency-relationship"));
+  assert.ok(validatorEvidence.some((item) => item.sourceRef === "residency-relationship"));
 });
 
 test("a second-ranked section from the primary contextual search survives when it contains needed conditions", async () => {

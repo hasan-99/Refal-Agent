@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, KNOWLEDGE_QUERY_FOCUS_RULE
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -93,6 +93,16 @@ test("active prompt surfaces direct English, Arabic, and Greek register mirrorin
   const { buildDecisionMessages } = require("./agentDecision");
   assert.match(buildDecisionMessages({ currentMessage: "Could you please advise formally?", locale: "english" })[0].content,
     instruction, "active Agent decision prompt lost register mirroring");
+});
+
+test("all prompt surfaces keep direct relationship searches focused and preserve customer exclusions", () => {
+  for (const variant of ["customer", "operator"]) {
+    assert.ok(buildBrainPrompt({ variant }).join("\n").includes(KNOWLEDGE_QUERY_FOCUS_RULE));
+  }
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.ok(edge.includes(KNOWLEDGE_QUERY_FOCUS_RULE));
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.ok(buildDecisionMessages({ currentMessage: "Does company registration itself create residence?", locale: "english" })[0].content.includes(KNOWLEDGE_QUERY_FOCUS_RULE));
 });
 
 test("all prompt surfaces require fresh approved evidence when a customer refers to an earlier company-fact answer", () => {

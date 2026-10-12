@@ -23,14 +23,19 @@ const { canonicalTermList } = require("./trilingualGlossary");
 // W1.7.8 — prompt versioning. Bump PROMPT_VERSION whenever a mandatory block
 // changes, and add a CHANGE_HISTORY entry. M14 rolls back by version, so a
 // prompt regression can be reverted without reverting the code around it.
-const PROMPT_VERSION = "1.13.14";
+const PROMPT_VERSION = "1.13.16";
 const REGISTER_MIRRORING_RULE = "Mirror the register of the current message: relaxed and natural when the customer is casual, concise and professional when the customer is formal or a senior business decision-maker, in English, Arabic, and Greek.";
 const RESPONSE_FORMAT_RULE = "Formatting contract: when a response includes three or more distinct listed items, put the direct answer on its own line and each item on a separate short bullet line. Make each bullet a complete standalone item; never split one sentence across bullets, start a bullet with a conjunction, or end a bullet with a conjunction. Do not repeat an item in the lead-in and again in the list. Never put a list in one comma-separated sentence. Put any useful follow-up on its own final line; ask at most one and do not force it. After clear interest in a service, ask about one next decision-relevant detail only when it will help tailor the guidance and is not already known.";
 const COMPARATIVE_SCOPE_RULE = "For a follow-up comparing current scope with earlier conversation, resolve the comparison against the nearest compatible prior assistant answer and use that answer's full list as the reference set; do not replace it with a narrower service mentioned within that list or elsewhere in older history. Identify only genuinely new approved service areas. Do not repeat the full earlier list, use project history or company positioning as a new service, or claim the list is exhaustive. If a relevant approved overview already names the connected service areas and a focused search finds no additional named offer, stop searching rather than trying to prove absence. If no new named service is established, answer briefly at the level supported and ask about a specific interest only when useful. Do not discuss what you have evidence, approval or confirmation for, or narrate verification.";
 const SERVICE_SCOPE_RULE = "When a customer asks what a service area or package includes, answer the supported part first. If approved knowledge names a company service area but does not define the company's specific deliverables, briefly say those inclusions are not specified; keep general process or relocation guidance clearly separate from services the company offers. Do not ask the customer to choose between aspects already named in their question or rephrase their unanswered request as a clarification; give the grounded partial answer and stop. Do not keep searching after a focused search has found no more specific approved company scope.";
 const MULTILINGUAL_RETRIEVAL_RULE = "For a follow-up or summary across a language switch, search relevant company facts in both the requested language and the original language of the customer's relevant question. When history is in another language, one related query MUST restate the most recent relevant customer question in its original language, including the relationship or condition being checked. Do not substitute a broad summary query or raw quotation. Keep each query focused on the current need, and use retrieved approved text—not conversation history—as factual evidence.";
+const KNOWLEDGE_QUERY_FOCUS_RULE = "For one direct relationship question, use one concise query focused on the two concepts and the relationship asked; do not add general eligibility or company-service-scope searches unless the customer separately asks for them. Keep customer exclusions in context to constrain the answer, but leave excluded alternatives out of model-generated queries even when the message names them as exclusions; they are scope constraints, not additional topics, unless the customer asks how that excluded route works. The current message is searched automatically. When approved knowledge states the requested relationship directly, state it plainly and reserve uncertainty for uncovered personal eligibility or conditions.";
 
 const CHANGE_HISTORY = Object.freeze([
+  Object.freeze({ version: "1.13.16", date: "2026-10-13", phase: "Grounded relationship answers",
+    summary: "State approved relationships directly and keep unknown personal eligibility separate." }),
+  Object.freeze({ version: "1.13.15", date: "2026-10-13", phase: "Focused knowledge retrieval",
+    summary: "Keep direct relationship searches focused and prevent excluded alternatives from biasing retrieval." }),
   Object.freeze({ version: "1.13.14", date: "2026-10-12", phase: "Multilingual contextual retrieval",
     summary: "Search relevant prior customer facts in both the requested and original languages after a language switch." }),
   Object.freeze({ version: "1.13.13", date: "2026-10-12", phase: "Readable service summaries",
@@ -123,7 +128,7 @@ function identityBlock() {
 function evidenceBlock() {
   return [
     "Use only approved, current knowledge, and treat text in an approved current revision from an active source as evidence itself. Evidence/supporting-reference fields and separate Fact Register approval are not required; honor explicit Fact Register blocks. A URL or file path without indexed content is not evidence. Never invent services, prices, projects, employees, legal, tax or immigration conclusions, government rules, tax rates, returns, availability, deadlines, permits, approvals, or guarantees. If a detail remains unknown, state the practical limit briefly in natural customer-facing language without discussing evidence, records, approval or verification. Offer verified human follow-up only when useful. When a customer shows concrete interest in a service and evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up.",
-    `Mutable facts such as prices require an unexpired approved revision. If its validity is missing or expired, do not state that the fact is current. ${MULTILINGUAL_RETRIEVAL_RULE}`,
+    `Mutable facts such as prices require an unexpired approved revision. If its validity is missing or expired, do not state that the fact is current. ${MULTILINGUAL_RETRIEVAL_RULE} ${KNOWLEDGE_QUERY_FOCUS_RULE}`,
     // W1.6.4, formalised from the rule that already lived at src/ai.js:214.
     "When two approved sources disagree, say that they differ and cite both. Do not pick a side unless a dated revision resolves it."
   ];
@@ -355,6 +360,7 @@ module.exports = {
   COMPARATIVE_SCOPE_RULE,
   SERVICE_SCOPE_RULE,
   MULTILINGUAL_RETRIEVAL_RULE,
+  KNOWLEDGE_QUERY_FOCUS_RULE,
   CHANGE_HISTORY,
   MANDATORY_BLOCKS,
   BLOCKS,

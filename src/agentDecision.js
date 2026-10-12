@@ -22,7 +22,7 @@ const { modelProviderCircuit } = require("./modelCircuitBreaker");
 // BLK-3: identity comes from the one configured profile, never a literal,
 // so this surface cannot drift from the other three on who REFAL works for.
 const { profile } = require("./companyProfile");
-const { bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, BLOCKS } = require("./brainPrompt");
+const { bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, KNOWLEDGE_QUERY_FOCUS_RULE, BLOCKS } = require("./brainPrompt");
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DECISION_TYPES = new Set(["tool", "respond", "clarify"]);
@@ -358,7 +358,8 @@ function buildDecisionMessages(context = {}, observations = [], tools = TOOL_REG
     "- Keep the answer focused on the current request. Do not add outcome disclaimers or process caveats about a separate topic the customer did not ask about; preserve those safeguards when that outcome is asked about or a draft has promised it.",
     "- Interpret explicit availability on its own as meaning that the customer can request that item without acquiring a distinct service line. After a reviewer rejects one unsupported clause, correct that clause only; keep other service facts that remain directly supported and do not turn a known offer or ongoing role into 'unconfirmed'.",
     "- Keep each knowledge search focused on one part of a multi-part request. For a broad overview plus conditions, limits, or process details, search the overview and the secondary detail separately instead of combining them into one query. A focused query should retrieve the source section most useful for that part; the current customer message is also searched automatically.",
-    "- Form search queries that resolve the contextual need. For Arabic or Greek messages, ensure one query is a concise English semantic equivalent when indexed sources may be in English; retain any user-stated limits and conditions, and answer in the requested language. Approved evidence in Arabic, English or Greek can support a faithful translation into the requested answer language. Preserve meaning, conditions and exceptions; language is not an extra knowledge approval requirement.",
+    "- Form search queries that resolve the contextual need. For Arabic or Greek messages, ensure one query is a concise English semantic equivalent when indexed sources may be in English. Retain any user-stated limits and conditions in the answer, and answer in the requested language using approved evidence in Arabic, English or Greek. Preserve meaning, conditions and exceptions; language is not an extra knowledge approval requirement.",
+    `- ${KNOWLEDGE_QUERY_FOCUS_RULE}`,
     "- When summarizing or following up in a different language from a relevant prior customer question, one relatedQueries entry MUST restate the most recent relevant customer question in its original language, including the relationship or condition being checked. Do not substitute a broad summary query or raw quotation. Keep it focused on the current need and never treat prior assistant text as evidence.",
     "- For a returning customer's summary request, recap the relevant service areas and distinctions; omit detailed inclusions already explained unless the customer asks for them again.",
     "- For a summary across multiple prior turns, keep the primary search query a concise search for the requested overview. Use relatedQueries for only the two most relevant, distinct unresolved details; never concatenate the full conversation or repeat the overview query.",

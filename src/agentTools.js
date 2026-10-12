@@ -368,6 +368,18 @@ function isPlainString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function currentMessageSearchQuery(message) {
+  const text = isPlainString(message) ? message.trim().slice(0, 1000) : "";
+  const boundary = /[?؟;;]/u.exec(text);
+  if (!boundary) return text;
+  const focusedQuestion = text.slice(0, boundary.index + boundary[0].length).trim();
+  // A short social opener such as "Hi?" is not a useful knowledge query.
+  // Keep the full text in model context; this only makes retrieval follow the
+  // first substantive question before later exclusions or side questions.
+  return focusedQuestion.length >= 20 && text.slice(boundary.index + boundary[0].length).trim()
+    ? focusedQuestion : text;
+}
+
 // --- searchApprovedKnowledge -------------------------------------------------
 // Wraps the existing embed + knowledge-search path (src/ai.js embedText,
 // store.searchKnowledge). Approval/freshness/review-status filtering happens
@@ -605,7 +617,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const candidateCount = Math.min(20, requestedCount * 3);
 
   const related = Array.isArray(args?.relatedQueries) ? args.relatedQueries.filter(isPlainString).map(value => value.trim().slice(0, 1000)).slice(0, 2) : [];
-  const currentQuery = isPlainString(currentMessage) ? currentMessage.trim().slice(0, 1000) : "";
+  const currentQuery = currentMessageSearchQuery(currentMessage);
   const currentLanguage = detectMessageLanguage(currentQuery);
   const previousCustomerMessage = [...(Array.isArray(user?.history) ? user.history : [])].reverse()
     .map((turn) => typeof turn?.message === "string" ? turn.message.trim() : "")
@@ -945,7 +957,7 @@ const TOOL_REGISTRY = Object.freeze({
     run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
   },
   searchApprovedKnowledge: {
-    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a direct factual question about a relationship or outcome, search that relationship and its conditions; add a company-capability query only if the customer also asks about REFAL's role. For a summary across earlier turns, keep query a concise service overview; use relatedQueries only for distinct unresolved specifics from customer history, never repeat the full conversation in a query. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
+    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. For one direct relationship question, use one concise query for the relationship and its necessary conditions. Do not add general eligibility or company-service-scope queries unless separately requested. Keep customer exclusions in context, but leave excluded alternatives out of model-generated queries even when the message names them as exclusions; treat them as answer scope, not additional topics. The current message is searched automatically. When approved knowledge directly states the requested relationship, state it plainly and reserve uncertainty for uncovered personal eligibility or conditions. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a summary across earlier turns, keep query a concise service overview; use relatedQueries only for distinct unresolved specifics from customer history, never repeat the full conversation in a query. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {

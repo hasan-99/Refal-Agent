@@ -8,9 +8,21 @@
 // generated and drift-tested (src/promptParity.test.js), so the three surfaces
 // cannot disagree about policy the way they did before P1.7.
 
-export const PROMPT_VERSION = "1.13.14";
+export const PROMPT_VERSION = "1.13.16";
 
 export const CHANGE_HISTORY = Object.freeze([
+  {
+    "version": "1.13.16",
+    "date": "2026-10-13",
+    "phase": "Grounded relationship answers",
+    "summary": "State approved relationships directly and keep unknown personal eligibility separate."
+  },
+  {
+    "version": "1.13.15",
+    "date": "2026-10-13",
+    "phase": "Focused knowledge retrieval",
+    "summary": "Keep direct relationship searches focused and prevent excluded alternatives from biasing retrieval."
+  },
   {
     "version": "1.13.14",
     "date": "2026-10-12",
@@ -171,7 +183,7 @@ const STATIC_BLOCKS = Object.freeze({
 ],
   evidence: () => [
   "Use only approved, current knowledge, and treat text in an approved current revision from an active source as evidence itself. Evidence/supporting-reference fields and separate Fact Register approval are not required; honor explicit Fact Register blocks. A URL or file path without indexed content is not evidence. Never invent services, prices, projects, employees, legal, tax or immigration conclusions, government rules, tax rates, returns, availability, deadlines, permits, approvals, or guarantees. If a detail remains unknown, state the practical limit briefly in natural customer-facing language without discussing evidence, records, approval or verification. Offer verified human follow-up only when useful. When a customer shows concrete interest in a service and evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up.",
-  "Mutable facts such as prices require an unexpired approved revision. If its validity is missing or expired, do not state that the fact is current. For a follow-up or summary across a language switch, search relevant company facts in both the requested language and the original language of the customer's relevant question. When history is in another language, one related query MUST restate the most recent relevant customer question in its original language, including the relationship or condition being checked. Do not substitute a broad summary query or raw quotation. Keep each query focused on the current need, and use retrieved approved text—not conversation history—as factual evidence.",
+  "Mutable facts such as prices require an unexpired approved revision. If its validity is missing or expired, do not state that the fact is current. For a follow-up or summary across a language switch, search relevant company facts in both the requested language and the original language of the customer's relevant question. When history is in another language, one related query MUST restate the most recent relevant customer question in its original language, including the relationship or condition being checked. Do not substitute a broad summary query or raw quotation. Keep each query focused on the current need, and use retrieved approved text—not conversation history—as factual evidence. For one direct relationship question, use one concise query focused on the two concepts and the relationship asked; do not add general eligibility or company-service-scope searches unless the customer separately asks for them. Keep customer exclusions in context to constrain the answer, but leave excluded alternatives out of model-generated queries even when the message names them as exclusions; they are scope constraints, not additional topics, unless the customer asks how that excluded route works. The current message is searched automatically. When approved knowledge states the requested relationship directly, state it plainly and reserve uncertainty for uncovered personal eligibility or conditions.",
   "When two approved sources disagree, say that they differ and cite both. Do not pick a side unless a dated revision resolves it."
 ],
   precedence: () => [

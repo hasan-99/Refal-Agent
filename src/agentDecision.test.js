@@ -564,6 +564,9 @@ test("agent keeps general process questions general and honors explicit exclusio
   }, [], TOOL_REGISTRY)[0].content;
   assert.match(system, /does not establish the other process's requirements, alternatives or exceptions/u);
   assert.match(system, /Treat the customer's explicit exclusions as scope: do not present or elaborate on an excluded route or service/u);
+  assert.match(system, /leave excluded alternatives out of model-generated queries even when the message names them as exclusions/u);
+  assert.match(system, /For one direct relationship question, use one concise query focused on the two concepts and the relationship asked/u);
+  assert.match(system, /When approved knowledge states the requested relationship directly, state it plainly/u);
 });
 
 test("agent separates approved lifecycle guidance from REFAL service commitments and avoids stale discovery questions", () => {
