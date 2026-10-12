@@ -31,6 +31,14 @@ test("audit event sanitization preserves operational fields and handles malforme
   });
 });
 
+test("event API preserves only valid trace UUIDs for diagnostic correlation", () => {
+  const traceId = "c1d8809c-b04d-4b63-a6f8-2a552d643aa2";
+  assert.deepEqual(redactAuditEventFields({ traceId, stage: "response_total", reasonCode: "prohibited_claim", durationMs: 123 }), {
+    traceId, stage: "response_total", reasonCode: "prohibited_claim", durationMs: 123
+  });
+  assert.equal(redactAuditEventFields({ traceId: "customer@example.test" }).traceId, "[redacted]");
+});
+
 test("unknown short text is redacted while validated operational metadata survives", () => {
   assert.deepEqual(redactAuditEventFields({
     action: "appointment_admin_rejected", status: "failed", reportDate: "2026-10-11", appointmentId: "a-1",
