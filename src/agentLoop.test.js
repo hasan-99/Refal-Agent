@@ -33,6 +33,37 @@ test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
   assert.equal(DEFAULT_MAX_STEPS, 5);
 });
 
+test("unsupported comparisons receive focused correction guidance without an evidence disclaimer", async () => {
+  const rejected = "Yes, we offer other service areas beyond those.";
+  const recovered = "Those are the connected service areas we discussed. Is there a particular service you have in mind?";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "Are those all your services, or are there other areas too?", locale: "english",
+    recentConversation: [
+      { role: "user", content: "What services do you offer?" },
+      { role: "assistant", content: "We help with company formation, tax and accounting, investment and property, and residency and relocation." }
+    ]
+  }), {
+    maxSteps: 3,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: rejected };
+      const feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      assert.ok(feedback);
+      assert.equal(feedback.result.reasonCode, "unsupported_relation");
+      assert.match(feedback.result.correction, /Remove only that claim/);
+      assert.match(feedback.result.correction, /avoid repeating details already given/);
+      assert.match(feedback.result.correction, /generic disclaimer about what you can confirm/);
+      return { type: "respond", text: recovered };
+    },
+    assessDraft: async ({ text }) => text === rejected
+      ? { valid: false, reasons: ["unsupported_relation"], blockedClaims: [{ sentence: rejected, reasons: ["unsupported_relation"] }] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, recovered);
+});
+
 test("a no-evidence rejection routes general company facts to one knowledge search before fallback", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const source = { document_id: "formation-doc", section_index: "1", chunk_id: "package", chunk_index: 0,

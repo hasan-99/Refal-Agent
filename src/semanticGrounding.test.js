@@ -169,6 +169,28 @@ test("ongoing conversation review sees the prior introduction and rejects a redu
   assert.deepEqual(result.blockedClaims, [{ sentence: opener, claimClass: "CONTEXT", reasons: ["context_mismatch"] }]);
 });
 
+test("comparative review rejects a repeated catalogue padded with generic uncertainty", async () => {
+  const repeated = "• تأسيس الشركات والهيكلة المؤسسية،\n• الضرائب والمحاسبة،\n• الاستثمار والعقارات والتطوير،\n• وخدمات الإقامة والانتقال.";
+  const priorReply = `خدماتنا تشمل:\n${repeated}`;
+  const draft = `${repeated}\nما بقدر أكد إذا في مجالات إضافية.`;
+  const context = { currentMessage: "هدول كل خدماتكن، ولا في مجالات تانية كمان؟", locale: "arabic", recentConversation: [
+    { role: "user", content: "شو بتقدّموا خدمات؟" }, { role: "assistant", content: priorReply }
+  ] };
+  const result = await assessAgentDraft({ text: draft, evidenceItems: [evidence], context }, {
+    callModel: async (messages) => {
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.history.at(-1).content, priorReply);
+      assert.match(messages[0].content, /repeating the full list already given plus a generic uncertainty disclaimer is redundant/);
+      return { segments: [
+        { text: repeated, status: "supported", evidenceRefs: [evidence.sourceRef], reasonCode: "supported" },
+        { text: "ما بقدر أكد إذا في مجالات إضافية.", status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" }
+      ], languageValid: true, contextValid: false, contextIssues: [repeated], requestCoverage: { outcome: "supported_partial", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.blockedClaims.some((claim) => claim.claimClass === "CONTEXT" && claim.sentence === repeated));
+});
+
 test("reviewer distinguishes explicit ongoing scope from adjacent lifecycle procedures", async () => {
   const scope = { sourceRef: "profile:continuity", review_status: "approved", content: "The group keeps the same client file open beyond incorporation. Its connected services include company formation, tax and accounting, investment and property, and residency and relocation." };
   const text = "We continue supporting the client beyond incorporation across the stated service areas; specific registrations and filings depend on the company's circumstances.";
