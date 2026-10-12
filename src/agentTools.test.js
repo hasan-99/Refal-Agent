@@ -251,7 +251,8 @@ test("a directly relevant customer-wording section survives the model and valida
       ? [section("residence-conditions", "Permanent residence conditions", "The company-investment category requires a qualifying investment and actual operations. " + "r".repeat(240)),
         section("residence-adjacent", "Company and residence", "a".repeat(1000))]
       : query === "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟"
-        ? [section("residency-relationship", "Company and residence", "Living in Cyprus is a documented path, not a side effect of company registration.")]
+        ? [section("residency-current-rank-1", "Residence overview", "v".repeat(800)),
+          section("residency-relationship", "Company and residence", "Living in Cyprus is a documented path, not a side effect of company registration.")]
       : [section("generic-wording-hit", "General information", "g".repeat(1000))] };
   const result = await searchApprovedKnowledge({ query: "resolved company context", relatedQueries: ["company investment and residence conditions"] }, {
     store, currentMessage, embedText: async () => null, matchCount: 6
@@ -263,6 +264,8 @@ test("a directly relevant customer-wording section survives the model and valida
   assert.deepEqual(result.trace.searchQueries.at(-1), "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟");
   assert.ok(result.modelObservation.primarySearchRefs.includes("residency-relationship"),
     "the concise customer question remains a primary retrieval anchor despite later exclusions");
+  assert.ok(result.modelObservation.primarySearchRefs.includes("residency-current-rank-1"),
+    "the first exact-question result remains a primary retrieval anchor");
   assert.ok(budget.retainedIds.includes("residency-relationship"));
   assert.ok(modelEvidence.some((item) => item.sourceRef === "residency-relationship"));
   assert.ok(validatorEvidence.some((item) => item.sourceRef === "residency-relationship"));

@@ -579,7 +579,10 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
       // top result so broad variants cannot crowd out current evidence.
       if ((queryIndex === 0 && index < 2)
         || (queryIndex > 0 && queryIndex < contextualCount && index === 0)
-        || (queryIndex === currentQueryIndex && index === 0)) group.primaryMatch = true;
+        // Preserve the top two exact customer-question matches. A precise
+        // section can rank just below broader English or exclusion-heavy
+        // queries while still answering the relationship the customer asked.
+        || (queryIndex === currentQueryIndex && index < 2)) group.primaryMatch = true;
       if (queryIndex === historicalQueryIndex) group.historicalMatch = true;
       if (queryIndex === currentQueryIndex && (group.currentQueryRank === null || index < group.currentQueryRank)) group.currentQueryRank = index;
       group.contributions.push(queryWeight / (60 + index + 1));
