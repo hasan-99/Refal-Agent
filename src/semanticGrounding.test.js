@@ -12,6 +12,8 @@ test("grounding review accepts an explicitly listed service category without inv
   assert.match(reviewPrompt, /When approved evidence establishes a service but not whether it is available at the stage the customer asks about or included in continuing support/);
   assert.match(reviewPrompt, /Do not reject the service scope for lacking that relationship/);
   assert.match(reviewPrompt, /Do not ask the customer to repeat, choose among, or restate aspects already explicit in the current request/);
+  assert.match(reviewPrompt, /Assess entailment by meaning across languages, not exact word overlap/);
+  assert.match(reviewPrompt, /not a side effect of an action, it supports that the action alone does not make that outcome automatic/);
   const socialReview = buildGroundingReviewMessages({ text: "مرحبًا.", context: { socialOnlyTurn: true } });
   assert.equal(JSON.parse(socialReview[1].content).socialOnlyTurn, true);
   assert.match(socialReview[0].content, /For that turn, a draft whose every clause is non_factual is an addressed social response/);

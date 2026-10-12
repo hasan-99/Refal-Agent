@@ -37,12 +37,14 @@ test("import-safe live composition runs response gates, persists once, and sends
   const { user, store, events } = makeStore();
   const sent = [];
   const typing = [];
+  const logs = [];
   const result = await runAgentLiveAnswerTurn({
     socket: {}, chatId: "synthetic-chat", userId: user.id,
     text: "We need a large land development and a strategic partnership",
     providerMessageId: "synthetic-provider-id"
   }, {
     store,
+    logEvent: async (event, fields) => logs.push([event, fields]),
     setTyping: async (_socket, _chat, value) => typing.push(value),
     sendStoredTextReply: async (_socket, _chat, response, userId, turn) => {
       sent.push({ response, userId, turnId: turn.id });
@@ -65,6 +67,12 @@ test("import-safe live composition runs response gates, persists once, and sends
   assert.equal(user.history[0].response, sent[0].response);
   assert.equal(user.history[0].metadata.specialistOffer, undefined);
   assert.deepEqual(events.map(([event]) => event), ["persist", "update", "send"]);
+  const completed = logs.find(([event]) => event === "agent_turn_completed")?.[1];
+  assert.equal(completed.delivered, true);
+  for (const field of ["setupDurationMs", "preflightDurationMs", "routeDurationMs", "sourceTurnPersistDurationMs",
+    "contextLoadDurationMs", "agentExecutionDurationMs", "postAnswerDurationMs", "totalDurationMs"]) {
+    assert.ok(Number.isFinite(completed[field]), `${field} is measured on the completed WhatsApp composition`);
+  }
 });
 
 test("live composition retains introduction continuity after it leaves the bounded transcript window", async () => {

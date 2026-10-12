@@ -127,6 +127,35 @@ test("operational telemetry drops unknown free-text fields even when they contai
   assert.doesNotMatch(JSON.stringify(event), /holding company|call me tomorrow|premium package/u);
 });
 
+test("agent completion telemetry preserves only safe end-to-end stage timings", () => {
+  const event = buildOperationalEvent("agent_turn_completed", {
+    traceId: "730d2c62-071a-44e3-a8f1-ced313535c78",
+    sourceTurnId: "11111111-1111-4111-8111-111111111111",
+    setupDurationMs: 12,
+    preflightDurationMs: 2300,
+    routeDurationMs: 3,
+    sourceTurnPersistDurationMs: 5100,
+    contextLoadDurationMs: 7300,
+    agentExecutionDurationMs: 22000,
+    postAnswerDurationMs: 8500,
+    totalDurationMs: 45000,
+    customerText: "private question"
+  });
+  assert.deepEqual(event.fields, {
+    traceId: "730d2c62-071a-44e3-a8f1-ced313535c78",
+    sourceTurnId: "11111111-1111-4111-8111-111111111111",
+    setupDurationMs: 12,
+    preflightDurationMs: 2300,
+    routeDurationMs: 3,
+    sourceTurnPersistDurationMs: 5100,
+    contextLoadDurationMs: 7300,
+    agentExecutionDurationMs: 22000,
+    postAnswerDurationMs: 8500,
+    totalDurationMs: 45000
+  });
+  assert.doesNotMatch(JSON.stringify(event), /private question/u);
+});
+
 test("event and approved string fields accept labels only, never embedded customer prose", () => {
   const event = buildOperationalEvent("customer asked: tell me about premium", {
     stage: "customer asked for a Cyprus holding company",

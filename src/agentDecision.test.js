@@ -557,6 +557,15 @@ test("Agent prompt receives the computed tier and guarded buying-signal directiv
   assert.match(system, /A signal is not consent to create an appointment or handover/);
 });
 
+test("agent keeps general process questions general and honors explicit exclusions", () => {
+  const system = buildDecisionMessages({
+    ...CONTEXT,
+    currentMessage: "If I form a company, does that automatically settle a separate process? I do not want the investment route."
+  }, [], TOOL_REGISTRY)[0].content;
+  assert.match(system, /does not establish the other process's requirements, alternatives or exceptions/u);
+  assert.match(system, /Treat the customer's explicit exclusions as scope: do not present or elaborate on an excluded route or service/u);
+});
+
 test("agent separates approved lifecycle guidance from REFAL service commitments and avoids stale discovery questions", () => {
   const system = buildDecisionMessages(CONTEXT, [], TOOL_REGISTRY)[0].content;
   assert.match(system, /general business lifecycle.*neutral process information, preserving sequence, conditions and the named actor/u);

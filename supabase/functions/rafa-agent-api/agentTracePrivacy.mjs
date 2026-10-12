@@ -24,7 +24,10 @@ const TRACE_FIELDS = new Set([
   "locale", "primaryIntentCategory", "secondaryGoalCount", "decisionTypesUsed", "inspectionId",
   "retainedIds", "excludedIds", "catalogueOmittedIds", "contextOmittedIds", "replacedIds", "candidateIds", "newCandidateCount",
   "evidenceAssemblyDurationMs", "selectionStatus", "providerErrorCode", "promptTokens", "completionTokens",
-  "totalTokens", "costUsd", "estimatedCostUsd", "usage", "inputTokens", "outputTokens"
+  "totalTokens", "costUsd", "estimatedCostUsd", "usage", "inputTokens", "outputTokens",
+  "setupDurationMs", "preflightDurationMs", "routeDurationMs", "sourceTurnPersistDurationMs",
+  "contextLoadDurationMs", "agentExecutionDurationMs", "turnUpdateDurationMs", "topicSummaryDurationMs",
+  "replyDeliveryDurationMs", "postAnswerDurationMs", "totalDurationMs"
 ]);
 const TRACE_CODES = new Set(["validationReasons", "rejectionReasonCodes", "toolsUsed", "decisionTypesUsed"]);
 const TRACE_CODE = /^[A-Za-z0-9_.:/,-]{1,160}$/u;

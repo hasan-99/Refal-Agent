@@ -38,8 +38,20 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   toolRegistry = TOOL_REGISTRY
 } = {}) {
   if (!store) throw new TypeError("Agent live answer turn requires a store.");
-  await setTyping(socket, chatId, true);
-  const user = await store.ensureUser(userId);
+  const turnStartedAt = performance.now();
+  const timing = {};
+  const measure = async (key, action) => {
+    const startedAt = performance.now();
+    try { return await action(); }
+    finally { timing[key] = Math.max(0, Math.round(performance.now() - startedAt)); }
+  };
+  let completedAgentResult = null;
+  let completedSourceTurnId = null;
+  let user;
+  await measure("setupDurationMs", async () => {
+    await setTyping(socket, chatId, true);
+    user = await store.ensureUser(userId);
+  });
   const controlled = user?.profile?.qaControlledDiagnostics === true && user?.profile?.followUpBlocked === true;
   const sessionStartForPreflight = controlled ? Date.parse(user?.profile?.qaSessionStartedAt || "") : NaN;
   const preflightUser = Number.isFinite(sessionStartForPreflight) ? { ...user,
@@ -47,8 +59,8 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   const activeRegistry = controlled ? Object.fromEntries(Object.entries(toolRegistry).filter(([name]) =>
     ["searchApprovedKnowledge", "lookupActiveOffer", "lookupRenewalFees", "lookupGovernmentFees", "searchPropertyInventory", "lookupReservationRules"].includes(name))) : toolRegistry;
   const bookingState = user?.booking?.status;
-  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user: preflightUser, store, contextual: true,
-    ...preflightOptions, onModelCall: (measurement) => logEvent("agent_model_call", { ...measurement, traceId }) });
+  const prepared = await measure("preflightDurationMs", () => prepareInboundMessage({ userId, incoming: String(text || "").trim(), user: preflightUser, store, contextual: true,
+    ...preflightOptions, onModelCall: (measurement) => logEvent("agent_model_call", { ...measurement, traceId }) }));
   const socialOnlyTurn = isSocialOnlyClassification(prepared.classification);
   prepared.metadata.traceId = traceId;
   if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || prepared.classification?.operation === "booking_request") {
@@ -57,16 +69,18 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
     error.preparedInbound = prepared;
     throw error;
   }
-  const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
+  const routed = await measure("routeDurationMs", () => routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared }));
   const language = prepared.classification?.language || user?.profile?.language || "english";
   const agentMessage = safeAgentSourceMessage(text, prepared, routed);
   const result = await runAgentAfterPreflight({
     prepared, routed, userId, sourceMessage: String(agentMessage || ""), locale: language,
     metadata: prepared.metadata || {}, pendingResponse: "Your message is being processed."
   }, {
-    persistTurn: async ({ message, response, metadata }) => (await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true })).turn,
+    persistTurn: async ({ message, response, metadata }) => measure("sourceTurnPersistDurationMs",
+      async () => (await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true })).turn),
     runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
-      const currentUser = await store.getUser(userId);
+      completedSourceTurnId = sourceTurnId;
+      const currentUser = await measure("contextLoadDurationMs", () => store.getUser(userId));
       const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
       const sessionStart = controlled ? Date.parse(currentUser?.profile?.qaSessionStartedAt || "") : NaN;
       const priorHistory = history.filter((turn) => turn.id !== sourceTurnId && (!Number.isFinite(sessionStart) || Date.parse(turn.at) >= sessionStart));
@@ -79,7 +93,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const conversationState = getConversationState(currentUser || {});
       const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
       const commitState = createCommitState();
-      const agentResult = await runAgentTurnForContact({
+      const agentResult = await measure("agentExecutionDurationMs", () => runAgentTurnForContact({
         currentMessage: String(agentMessage || ""), locale: language,
         contact: {
           id: userId,
@@ -141,10 +155,9 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
           providerReported: usage.providerReported
         }),
         ...(embedText ? { embedText } : {})
-      });
+      }));
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
-      await logEvent("agent_turn_completed", { traceId, sourceTurnId, outcome: agentResult.outcome,
-        stepCount: agentResult.stepCount, toolsUsed: agentResult.toolsUsed, terminationCause: agentResult.reason || "validated_answer" });
+      completedAgentResult = agentResult;
       if (!decision.send) {
         const failedStep = Array.isArray(agentResult.steps) ? agentResult.steps.find((step) => step?.result?.ok === false) : null;
         const knowledgeStep = Array.isArray(agentResult.steps) ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge") : null;
@@ -161,16 +174,26 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
       return decision.responseText;
     },
-    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId, patch),
+    updateTurn: ({ turnId, patch }) => measure("turnUpdateDurationMs", () => store.updateHistoryTurn(userId, turnId, patch)),
     afterTurnPersisted: async ({ turnId, message }) => {
-      try { await refreshCustomerTopicSummaryFromStore({ store, userId, currentMessage: message, sourceTurnId: turnId }); }
+      try { await measure("topicSummaryDurationMs", () => refreshCustomerTopicSummaryFromStore({ store, userId, currentMessage: message, sourceTurnId: turnId })); }
       catch (error) { await logEvent("conversation_summary_error", safeErrorDiagnostics(error)); }
     },
     send: async (response, turn) => {
-      await setTyping(socket, chatId, false);
-      await sendStoredTextReply(socket, chatId, response, userId, turn);
+      await measure("replyDeliveryDurationMs", async () => {
+        await setTyping(socket, chatId, false);
+        await sendStoredTextReply(socket, chatId, response, userId, turn);
+      });
     }
   });
+  if (completedAgentResult) {
+    timing.postAnswerDurationMs = Math.max(0, (timing.turnUpdateDurationMs || 0) + (timing.topicSummaryDurationMs || 0) + (timing.replyDeliveryDurationMs || 0));
+    timing.totalDurationMs = Math.max(0, Math.round(performance.now() - turnStartedAt));
+    await logEvent("agent_turn_completed", { traceId, sourceTurnId: completedSourceTurnId, outcome: completedAgentResult.outcome,
+      stepCount: completedAgentResult.stepCount, toolsUsed: completedAgentResult.toolsUsed,
+      terminationCause: completedAgentResult.reason || "validated_answer", delivered: result.sent === true,
+      persistenceUpdated: result.persistenceUpdated === true, ...timing });
+  }
   if (result.persistenceUpdated === false) {
     try { await logEvent("agent_reply_persistence_failed", { persistenceUpdated: false, delivered: result.sent === true }); }
     catch { /* Observability must not cause a persisted customer turn to be retried. */ }
