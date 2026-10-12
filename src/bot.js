@@ -21,7 +21,7 @@ const { startMonthlyReportSchedule } = require("./reportScheduler");
 const { startFollowUpSchedule } = require("./followUp");
 const { startReminderSchedule } = require("./reminderScheduler");
 const { startNotificationSchedule } = require("./notificationScheduler");
-const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
+const { isPhoneJid, resolvePhoneJid, needsWhatsAppContactRefresh } = require("./whatsappContact");
 const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
 const { detectMessageLanguage, inboundRetryMessage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
@@ -171,11 +171,12 @@ function isSupportedChatId(chatId) {
 async function rememberWhatsAppContact(userId, message, socket) {
   const pushName = String(message.pushName || "").trim();
   const phoneJid = await resolvePhoneJid(userId, message, socket?.signalRepository?.lidMapping);
+  const current = store.data?.users?.[userId];
+  if (!needsWhatsAppContactRefresh(userId, current, pushName, phoneJid)) return false;
   await store.updateUser(userId, (user) => {
     user.whatsapp = {
       ...(user.whatsapp || {}),
-      jid: userId,
-      lastSeenAt: new Date().toISOString()
+      jid: userId
     };
     if (phoneJid) user.whatsapp.phoneJid = phoneJid;
 
@@ -184,6 +185,7 @@ async function rememberWhatsAppContact(userId, message, socket) {
       if (!user.profile.whatsappName) user.profile.whatsappName = pushName;
     }
   });
+  return true;
 }
 
 async function backfillKnownWhatsAppPhoneNumbers(socket) {
@@ -603,10 +605,6 @@ async function handleMessage(socket, message, upsertType) {
       }
     }
 
-    let stageStartedAt = performance.now();
-    await rememberWhatsAppContact(remoteJid, message, socket);
-    stage("whatsapp_contact_refresh", stageStartedAt);
-
     if (typeof store.isContactBlocked === "function") {
       try {
         stageStartedAt = performance.now();
@@ -647,6 +645,16 @@ async function handleMessage(socket, message, upsertType) {
 
     stage("inbound_preprocess", inboundStartedAt, { messageType: messageType(message) });
     await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt }, providerMessageId);
+    // Contact labels are useful metadata but not a prerequisite for answering.
+    // Refresh them after delivery so slow profile persistence cannot hold the
+    // customer's reply; unchanged cached metadata avoids a needless write.
+    const contactRefreshStartedAt = performance.now();
+    void rememberWhatsAppContact(remoteJid, message, socket)
+      .then(() => stage("whatsapp_contact_refresh", contactRefreshStartedAt))
+      .catch((error) => {
+        stage("whatsapp_contact_refresh", contactRefreshStartedAt, { failed: true });
+        logEvent("whatsapp_contact_refresh_error", safeErrorDiagnostics(error));
+      });
     receiptShouldComplete = true;
     logEvent("replied", { mode: "customer" });
   } catch (error) {

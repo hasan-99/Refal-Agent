@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { runAgentLiveAnswerTurn: realRun } = require("./agentLiveAnswerTurn");
+const { needsWhatsAppContactRefresh } = require("./whatsappContact");
 async function runAgentLiveAnswerTurn(input, options) { return realRun(input, { ...options, preflightOptions: { classifyMessage: async () => ({ source: "contextual_model", intents: ["general_information"], language: "english", operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false }) }, agentOptions: { assessDraft: require("../scripts/helpers/scriptedGrounding").scriptedGrounding, ...options.agentOptions } }); }
 
 function makeStore() {
@@ -32,6 +33,15 @@ function makeStore() {
   };
   return { user, store, events };
 }
+
+test("contact refresh skips unchanged WhatsApp metadata and persists newly supplied identifiers", () => {
+  const user = { whatsapp: { jid: "12345@lid", phoneJid: "35799123456@s.whatsapp.net", pushName: "Rafa" },
+    profile: { whatsappName: "Rafa" } };
+  assert.equal(needsWhatsAppContactRefresh("12345@lid", user, "Rafa", "35799123456@s.whatsapp.net"), false);
+  assert.equal(needsWhatsAppContactRefresh("12345@lid", user, "Rafa Updated", "35799123456@s.whatsapp.net"), true);
+  assert.equal(needsWhatsAppContactRefresh("12345@lid", user, "Rafa", "35799111111@s.whatsapp.net"), true);
+  assert.equal(needsWhatsAppContactRefresh("12345@lid", null, "Rafa", ""), true);
+});
 
 test("import-safe live composition runs response gates, persists once, and sends one localized specialist offer", async () => {
   const { user, store, events } = makeStore();
