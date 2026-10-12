@@ -23,7 +23,7 @@ function buildToolContext({
 }
 
 async function runAgentTurnForContact({
-  currentMessage, locale, contact, recentConversation, conversationState,
+  currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, conversationState,
   knownCustomerFacts, currentOpenQuestion, consentState, allowedCapabilities,
   leadTier, buyingSignals, conversationPreferences, contextualWorkflow, store, user, userId, intents, language, embedText,
   embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy
@@ -32,7 +32,7 @@ async function runAgentTurnForContact({
   onToolCall, onPolicyRejection, assessDraft = assessAgentDraft, tools = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS
 } = {}) {
   const context = buildAgentContext({
-    currentMessage, locale, contact, recentConversation, conversationState,
+    currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, conversationState,
     knownCustomerFacts, currentOpenQuestion, consentState, allowedCapabilities,
     leadTier, buyingSignals, conversationPreferences, contextualWorkflow
   });

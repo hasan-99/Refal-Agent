@@ -16,6 +16,7 @@ const { safeErrorDiagnostics } = require("./operationalTelemetry");
 const { deriveOpenQuestion } = require("./openQuestion");
 const { randomUUID } = require("node:crypto");
 const { sanitizeControlledInspection } = require("./controlledDiagnostics");
+const { profile } = require("./companyProfile");
 
 async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMessageId = null, traceId = randomUUID() } = {}, {
   store,
@@ -59,6 +60,12 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
       const sessionStart = controlled ? Date.parse(currentUser?.profile?.qaSessionStartedAt || "") : NaN;
       const priorHistory = history.filter((turn) => turn.id !== sourceTurnId && (!Number.isFinite(sessionStart) || Date.parse(turn.at) >= sessionStart));
+      const brand = profile.brand.toLocaleLowerCase();
+      const group = profile.groupName.toLocaleLowerCase();
+      const priorConfiguredIntroduction = priorHistory.some((turn) => {
+        const response = typeof turn?.response === "string" ? turn.response.toLocaleLowerCase() : "";
+        return Boolean(brand && group && response.includes(brand) && response.includes(group));
+      });
       const conversationState = getConversationState(currentUser || {});
       const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
       const commitState = createCommitState();
@@ -66,6 +73,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         currentMessage: String(agentMessage || ""), locale: language,
         contact: { id: userId, name: currentUser?.profile?.name || null, nameSource: currentUser?.profile?.nameSource || null },
         recentConversation: buildRecentConversation(priorHistory),
+        priorConfiguredIntroduction,
         conversationState, knownCustomerFacts: conversationState.agentFacts, currentOpenQuestion: deriveOpenQuestion(priorHistory.at(-1)),
         consentState, allowedCapabilities, sourceTurnId, store, user: currentUser, userId,
         intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],

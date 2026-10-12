@@ -67,6 +67,34 @@ test("import-safe live composition runs response gates, persists once, and sends
   assert.deepEqual(events.map(([event]) => event), ["persist", "update", "send"]);
 });
 
+test("live composition retains introduction continuity after it leaves the bounded transcript window", async () => {
+  const { user, store } = makeStore();
+  const { profile } = require("./companyProfile");
+  user.history.push({ id: "opening", message: "Hello", response: `Hello, I’m ${profile.brand}, ${profile.groupName}'s digital business agent.` });
+  for (let index = 0; index < 14; index += 1) {
+    user.history.push({ id: `prior-${index}`, message: `Earlier question ${index}`, response: `Earlier answer ${index}.` });
+  }
+  let turnContext;
+  const result = await runAgentLiveAnswerTurn({
+    socket: {}, chatId: "synthetic-chat", userId: user.id, text: "What can you help with now?"
+  }, {
+    store,
+    setTyping: async () => {},
+    sendStoredTextReply: async () => {},
+    agentOptions: {
+      decideNextStep: async ({ context }) => {
+        turnContext = context;
+        return { type: "respond", text: "I can help with the question you have now." };
+      }
+    }
+  });
+
+  assert.equal(result.outcome, "agent");
+  assert.equal(turnContext.priorConfiguredIntroduction, true);
+  assert.equal(turnContext.recentConversation.some((turn) => turn.content.includes(profile.brand)), false,
+    "the introduction is older than the bounded prompt history");
+});
+
 test("live composition applies jurisdiction guard before persistence and reports ambiguous send failure without retry", async () => {
   const { user, store, events } = makeStore();
   let sendAttempts = 0;

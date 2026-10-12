@@ -212,6 +212,29 @@ test("an individualized eligibility clause is removed while the grounded summary
   assert.equal(result.response, "Refalco Group offers company formation.");
 });
 
+test("removing a rejected trailing span also repairs its stranded semicolon", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Residency and relocation are separate service areas.", review_status: "approved" };
+  const unsupported = "forming a company alone does not establish whether you qualify for residency, and the specific inclusions of those services aren’t detailed here.";
+  const draft = `Residency and relocation are separate service areas; ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What about residency?", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "residency services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["personalized_marker"], blockedClaims: [{ sentence: unsupported, reasons: ["personalized_marker"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, "Residency and relocation are separate service areas.");
+  assert.doesNotMatch(result.response, /[;,:]$/u);
+});
+
 test("a claim that a topic is an established service is removed while supported answer content is preserved", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,

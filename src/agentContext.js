@@ -14,6 +14,7 @@ function buildAgentContext({
   locale,
   contact = {},
   recentConversation = [],
+  priorConfiguredIntroduction = false,
   conversationState = {},
   knownCustomerFacts = {},
   currentOpenQuestion = null,
@@ -47,6 +48,10 @@ function buildAgentContext({
         .filter((turn) => turn && ["user", "assistant"].includes(turn.role) && typeof turn.content === "string")
         .map((turn) => Object.freeze({ role: turn.role, content: safeTrim(turn.content, 1200) }))
     ),
+    // The transcript sent to the model is intentionally bounded. Preserve this
+    // small continuity fact from the already-loaded full history so an older
+    // introduction does not disappear when the prompt window advances.
+    priorConfiguredIntroduction: priorConfiguredIntroduction === true,
     conversationState: Object.freeze({ ...conversationState }),
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,

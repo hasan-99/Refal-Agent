@@ -113,11 +113,20 @@ function removeRejectedEvidenceSpans(text, blockedClaims) {
   let corrected = String(text || "");
   for (const claim of claims) {
     const span = String(claim.sentence || claim.claim || "").trim();
-    if (!span || !corrected.includes(span)) return null;
-    corrected = corrected.replace(span, "");
+    const start = span ? corrected.indexOf(span) : -1;
+    if (!span || start < 0) return null;
+    let before = corrected.slice(0, start);
+    let after = corrected.slice(start + span.length);
+    // A rejected sentence can be attached to the grounded sentence with a
+    // semicolon/comma. Remove only separators made orphaned by this deletion.
+    before = before.replace(/[ \t]*[,;:]\s*$/u, " ");
+    after = after.replace(/^\s*[,;:]\s*/u, " ");
+    corrected = `${before}${after}`;
   }
   corrected = corrected.split(/\r?\n/u).map((line) => line.trim())
     .filter(Boolean).join("\n").replace(/(?:^|\n)[•*-]\s*(?=\n|$)/gu, "\n").trim();
+  if (/[,;:]$/u.test(corrected)) corrected = corrected.slice(0, -1).trimEnd();
+  if (/[\p{L}\p{N}]$/u.test(corrected)) corrected += ".";
   return corrected && corrected !== String(text || "").trim() ? corrected : null;
 }
 

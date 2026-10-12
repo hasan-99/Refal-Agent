@@ -24,7 +24,9 @@ async function main() {
   for (const message of cases) {
     const memory = new MemoryStore();
     const user = memory.ensureUser("self-test:whatsapp-audit");
-    const position = history.findIndex((turn) => turn.message === message);
+    // Repeated questions in a returning conversation should replay the newest
+    // occurrence, with all earlier attempts preserved as context.
+    const position = history.map((turn) => turn.message).lastIndexOf(message);
     if (position < 0) throw new Error("Audit source turn missing");
     user.history = history.slice(0, position).map((turn) => ({ ...turn }));
     // Only the retrieval methods are forwarded to the live gateway. No live
