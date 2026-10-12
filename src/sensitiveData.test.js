@@ -75,3 +75,16 @@ test("audit sanitizer preserves only nonnegative integer provider usage counts f
     assert.equal(redactAuditEventFields({ promptTokens: value }).promptTokens, "[redacted]");
   }
 });
+
+test("audit sanitizer preserves validated error diagnostics without exposing error messages", () => {
+  assert.deepEqual(redactAuditEventFields({
+    errorName: "TypeError", errorCode: "ERR_PROVIDER_TIMEOUT", statusCode: 504,
+    errorMessage: "customer Hasan@example.com timed out", errorCodeUnsafe: "customer-data"
+  }), {
+    errorName: "TypeError", errorCode: "ERR_PROVIDER_TIMEOUT", statusCode: 504,
+    errorMessage: "[redacted]", errorCodeUnsafe: "[redacted]"
+  });
+  assert.deepEqual(redactAuditEventFields({ errorName: "Customer Hasan", errorCode: "private message", statusCode: 999 }), {
+    errorName: "[redacted]", errorCode: "[redacted]", statusCode: "[redacted]"
+  });
+});
