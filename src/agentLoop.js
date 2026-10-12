@@ -106,12 +106,18 @@ function attemptDeterministicCorrection(text, policy, thresholds, context = {}) 
 // *why* its last draft was rejected, reusing agentDecision.js's existing
 // observation formatting (it only expects {step, tool, args, result}).
 function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons, observations = []) {
+  const hasUnsupportedRelation = policy.reasons?.includes("unsupported_relation");
+  const hasContextMismatch = policy.reasons?.includes("context_mismatch");
   const correction = policy.reasons?.includes("no_approved_evidence")
     ? observations.some((item) => item?.tool === "searchApprovedKnowledge")
       ? "No approved knowledge supports the rejected claim. Preserve other supported facts, state only the unsupported detail as unconfirmed, and do not invent it. Do not repeat the same search unless a distinct missing fact can be retrieved."
       : "No approved-knowledge search has run this turn. Use searchApprovedKnowledge for the requested company or package facts before answering; a live-offer lookup does not establish general service scope. If approved search returns no relevant evidence, say the detail is unconfirmed and do not invent a price or condition."
-    : policy.reasons?.includes("unsupported_relation")
+    : hasUnsupportedRelation && hasContextMismatch
+      ? "The comparison is not supported as drafted, and the quoted context span repeats or misuses earlier conversation. Use the immediately preceding relevant answer as the comparison set, not a narrower category. Remove the unsupported comparison and remove the full rejected repeat; do not restate it in new words, bullets or translation. Keep only supported information that adds value now. If no additional named service is established, acknowledge the prior scope briefly and ask for a specific area only when useful. Do not replace the removed text with a generic evidence or confirmation disclaimer, and do not search again unless a distinct missing fact is answerable from another source."
+    : hasUnsupportedRelation
       ? "The rejected comparison or relationship is not established. Remove only that claim; do not replace it with an unsupported yes/no answer or a generic disclaimer about what you can confirm. Preserve and state the relevant approved scope naturally. Use conversation history to avoid repeating details already given, and ask for a particular area only when that helps the customer. Keep other supported facts and material conditions. Do not repeat the search unless new evidence could resolve a distinct missing detail."
+    : hasContextMismatch
+      ? "Correct the exact quoted context span. If it repeats or misuses earlier conversation, remove the full span rather than restating it in different words. Preserve other supported details, answer the current request directly, and do not narrate evidence or confirmation state."
     : "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. For a CONTEXT span, correct only the quoted passage to respect the customer's role, preference, or prior scope; preserve other supported facts. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support.";
   return {
     step,

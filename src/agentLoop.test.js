@@ -64,6 +64,30 @@ test("unsupported comparisons receive focused correction guidance without an evi
   assert.equal(result.response, recovered);
 });
 
+test("combined comparison and context rejection directs the agent to remove the repeated span", async () => {
+  const draft = "The areas are broader than company formation. We provide company formation, tax, investment, property, and residency services.";
+  const response = "Those are the connected areas we discussed. Is there a specific service you have in mind?";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Are those all your services?", locale: "english",
+    recentConversation: [{ role: "assistant", content: "We provide company formation, tax, investment, property, and residency services." }] }), {
+    maxSteps: 3,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: draft };
+      const feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      assert.equal(feedback.result.reasonCode, "unsupported_relation,context_mismatch");
+      assert.match(feedback.result.correction, /remove the full rejected repeat/);
+      assert.match(feedback.result.correction, /do not restate it in new words, bullets or translation/);
+      return { type: "respond", text: response };
+    },
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["unsupported_relation", "context_mismatch"], blockedClaims: [{ sentence: draft, reasons: ["unsupported_relation", "context_mismatch"] }] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, response);
+});
+
 test("a no-evidence rejection routes general company facts to one knowledge search before fallback", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const source = { document_id: "formation-doc", section_index: "1", chunk_id: "package", chunk_index: 0,

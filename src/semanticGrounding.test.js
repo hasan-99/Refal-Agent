@@ -191,6 +191,27 @@ test("comparative review rejects a repeated catalogue padded with generic uncert
   assert.ok(result.blockedClaims.some((claim) => claim.claimClass === "CONTEXT" && claim.sentence === repeated));
 });
 
+test("comparative review rejects a pivot from the previous full list to a narrower category", async () => {
+  const priorList = "Company formation, tax and accounting, investment and property, and residency and relocation.";
+  const request = "Are those all your services, or are there other areas too?";
+  const draft = "Yes, we support areas beyond company formation.";
+  const context = { currentMessage: request, locale: "english", recentConversation: [
+    { role: "assistant", content: priorList }
+  ] };
+  const result = await assessAgentDraft({ text: draft, evidenceItems: [evidence], context }, {
+    callModel: async (messages) => {
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.history[0].content, priorList);
+      assert.match(messages[0].content, /compare against that whole list/);
+      assert.match(messages[0].content, /do not pivot to a narrower service/);
+      return { segments: [{ text: draft, status: "supported", evidenceRefs: [evidence.sourceRef], reasonCode: "supported" }],
+        languageValid: true, contextValid: false, contextIssues: [draft], requestCoverage: { outcome: "not_addressed", unmetAspects: [request] } };
+    }
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.blockedClaims.some((claim) => claim.claimClass === "CONTEXT" && claim.sentence === draft));
+});
+
 test("reviewer distinguishes explicit ongoing scope from adjacent lifecycle procedures", async () => {
   const scope = { sourceRef: "profile:continuity", review_status: "approved", content: "The group keeps the same client file open beyond incorporation. Its connected services include company formation, tax and accounting, investment and property, and residency and relocation." };
   const text = "We continue supporting the client beyond incorporation across the stated service areas; specific registrations and filings depend on the company's circumstances.";

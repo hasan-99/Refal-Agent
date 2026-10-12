@@ -194,6 +194,17 @@ test("decision prompt keeps follow-ups within the customer's current unexcluded 
   assert.match(messages[0].content, /do not repeat the full catalogue or turn nearby lifecycle procedures into offers/);
 });
 
+test("comparative follow-up uses the complete nearest prior list and stops searching for absence", () => {
+  const priorList = "Company formation, tax and accounting, investment and property, and residency and relocation.";
+  const messages = buildDecisionMessages({ currentMessage: "Are those all your services or are there other areas too?", locale: "english", recentConversation: [
+    { role: "assistant", content: priorList }
+  ] });
+  assert.match(messages[0].content, /use that answer's full list as the reference set/);
+  assert.match(messages[0].content, /do not replace it with a narrower service mentioned within that list/);
+  assert.match(messages[0].content, /stop searching rather than trying to prove absence/);
+  assert.match(messages[1].content, /Company formation, tax and accounting, investment and property, and residency and relocation/);
+});
+
 // REFAL-AGENT-027 -----------------------------------------------------------
 
 test("buildDecisionMessages includes the model-safe RAG evidence content from a tool's modelObservation", () => {

@@ -23,12 +23,14 @@ const { canonicalTermList } = require("./trilingualGlossary");
 // W1.7.8 — prompt versioning. Bump PROMPT_VERSION whenever a mandatory block
 // changes, and add a CHANGE_HISTORY entry. M14 rolls back by version, so a
 // prompt regression can be reverted without reverting the code around it.
-const PROMPT_VERSION = "1.13.10";
+const PROMPT_VERSION = "1.13.11";
 const REGISTER_MIRRORING_RULE = "Mirror the register of the current message: relaxed and natural when the customer is casual, concise and professional when the customer is formal or a senior business decision-maker, in English, Arabic, and Greek.";
 const RESPONSE_FORMAT_RULE = "Formatting contract: when a response includes three or more distinct listed items, put the direct answer on its own line and each item on a separate short bullet line. Never put such a list in one comma-separated sentence. Put any useful follow-up on its own final line; ask at most one and do not force it. After clear interest in a service, ask about one next decision-relevant detail only when it will help tailor the guidance and is not already known.";
-const COMPARATIVE_SCOPE_RULE = "For a follow-up comparing current scope with earlier conversation, identify only genuinely new approved service areas. Do not repeat the full earlier list, use project history or company positioning as a new service, or claim the list is exhaustive. If no new named service is established, answer briefly from the supported scope or ongoing role and ask about a specific interest only when useful. Do not discuss what you have evidence, approval or confirmation for, or narrate verification.";
+const COMPARATIVE_SCOPE_RULE = "For a follow-up comparing current scope with earlier conversation, resolve the comparison against the nearest compatible prior assistant answer and use that answer's full list as the reference set; do not replace it with a narrower service mentioned within that list or elsewhere in older history. Identify only genuinely new approved service areas. Do not repeat the full earlier list, use project history or company positioning as a new service, or claim the list is exhaustive. If a relevant approved overview already names the connected service areas and a focused search finds no additional named offer, stop searching rather than trying to prove absence. If no new named service is established, answer briefly at the level supported and ask about a specific interest only when useful. Do not discuss what you have evidence, approval or confirmation for, or narrate verification.";
 
 const CHANGE_HISTORY = Object.freeze([
+  Object.freeze({ version: "1.13.11", date: "2026-10-12", phase: "Contextual scope follow-ups",
+    summary: "Resolve comparisons against the full prior service list and stop searching once the relevant overview is complete." }),
   Object.freeze({ version: "1.13.10", date: "2026-10-12", phase: "Natural scope follow-ups",
     summary: "Align missing-knowledge guidance across generation and review so uncertainty stays customer-facing." }),
   Object.freeze({ version: "1.13.9", date: "2026-10-12", phase: "Natural scope follow-ups",
