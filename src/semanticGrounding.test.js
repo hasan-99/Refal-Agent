@@ -144,6 +144,31 @@ test("reviewer resolves a follow-up to the nearest compatible turn without treat
   assert.equal(result.valid, true);
 });
 
+test("ongoing conversation review sees the prior introduction and rejects a redundant social opener", async () => {
+  const priorReply = "مرحبًا، أنا REFAL، مساعد الأعمال الرقمي لدى Refalco Group. كيف أقدر أساعدك؟";
+  const request = "مرحبا، ممكن أعرف شو بتقدّموا خدمات بقبرص؟";
+  const opener = "أهلًا!";
+  const supportedText = "بتقدّم Refalco Group خدمات تأسيس الشركات والهيكلة والضرائب والمحاسبة.";
+  const draft = `${opener}\n${supportedText}`;
+  const context = { currentMessage: request, locale: "arabic", recentConversation: [
+    { role: "user", content: "مرحبا" }, { role: "assistant", content: priorReply }
+  ] };
+  const result = await assessAgentDraft({ text: draft, evidenceItems: [evidence], context }, {
+    callModel: async (messages) => {
+      const input = JSON.parse(messages[1].content);
+      assert.equal(input.history.at(-1).content, priorReply);
+      assert.match(messages[0].content, /assess opening text by its conversational function/);
+      assert.match(messages[0].content, /Do not excuse redundant opening text as harmless style/);
+      return { segments: [
+        { text: opener, status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
+        { text: supportedText, status: "supported", evidenceRefs: [evidence.sourceRef], reasonCode: "supported" }
+      ], languageValid: true, contextValid: false, contextIssues: [opener], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+    }
+  });
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.blockedClaims, [{ sentence: opener, claimClass: "CONTEXT", reasons: ["context_mismatch"] }]);
+});
+
 test("reviewer distinguishes explicit ongoing scope from adjacent lifecycle procedures", async () => {
   const scope = { sourceRef: "profile:continuity", review_status: "approved", content: "The group keeps the same client file open beyond incorporation. Its connected services include company formation, tax and accounting, investment and property, and residency and relocation." };
   const text = "We continue supporting the client beyond incorporation across the stated service areas; specific registrations and filings depend on the company's circumstances.";

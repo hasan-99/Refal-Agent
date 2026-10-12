@@ -130,9 +130,9 @@ test("later turns carry the introduction in history and continue without another
 
   assert.equal(result.outcome, "responded");
   assert.equal(result.response, draft);
-  assert.match(prompt[0].content, /later turns, continue directly.*without repeating your introduction or a generic opening greeting/s);
+  assert.match(prompt[0].content, /later turns, start with the answer itself.*Apply this by conversational function/s);
   assert.match(prompt[1].content, new RegExp(firstReply));
-  assert.match(review[0].content, /ongoing conversation.*repeated self-introduction or generic opening greeting is a context issue/s);
+  assert.match(review[0].content, /ongoing conversation.*assess opening text by its conversational function.*Do not excuse redundant opening text as harmless style/s);
   assert.equal(reviewerInput.history[1].content, firstReply);
   assert.doesNotMatch(result.response, /REFAL|Refalco Group|أهلاً حسن/u);
 });
