@@ -64,7 +64,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const commitState = createCommitState();
       const agentResult = await runAgentTurnForContact({
         currentMessage: String(agentMessage || ""), locale: language,
-        contact: { id: userId, name: currentUser?.profile?.name || null },
+        contact: { id: userId, name: currentUser?.profile?.name || null, nameSource: currentUser?.profile?.nameSource || null },
         recentConversation: buildRecentConversation(priorHistory),
         conversationState, knownCustomerFacts: conversationState.agentFacts, currentOpenQuestion: deriveOpenQuestion(priorHistory.at(-1)),
         consentState, allowedCapabilities, sourceTurnId, store, user: currentUser, userId,

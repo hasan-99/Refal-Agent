@@ -436,7 +436,12 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
   const history = [...(user.history || []), { message: incoming }];
   const lastTurn = user.history?.[user.history.length - 1];
   const askedForName = wasNameRequested(lastTurn);
-  const capturedName = contextual || privacyRisk || complianceTriggers.length ? null : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
+  const contextualName = contextual ? extractExplicitCustomerName(incoming) : null;
+  const capturedName = privacyRisk || complianceTriggers.length
+    ? null
+    : contextual
+      ? contextualName
+      : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
   if (user.profile?.name && !isPlausibleCustomerName(user.profile.name) && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
       draft.profile = { ...(draft.profile || {}) };
@@ -649,6 +654,14 @@ function extractCustomerName(text) {
   if (genericGreekIdentityIntro && /^(?:ιδιοκτήτης|ιδιοκτήτρια|υπεύθυνος|υπεύθυνη|πελάτης|πελάτισσα)(?:\s|$)/iu.test(candidate)) return null;
   if (!isPlausibleCustomerName(candidate)) return null;
   return candidate;
+}
+
+// Contextual turns may contain an explicit correction to a saved name. Accept
+// only unambiguous name-introduction forms here: the broader "I am ..." form
+// can also describe a need or role, so it remains disabled in this path.
+function extractExplicitCustomerName(text) {
+  if (!/^(?:my name is|call me|(?:أنا|انا) اسمي|اسمي|με λένε|με λενε|λέγομαι|λεγομαι|ονομάζομαι|ονομαζομαι)\s+/iu.test(String(text || "").trim())) return null;
+  return extractCustomerName(text);
 }
 
 function isPlausibleCustomerName(value) {

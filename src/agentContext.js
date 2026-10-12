@@ -33,7 +33,10 @@ function buildAgentContext({
     locale: safeTrim(locale, 20) || "unknown",
     contact: Object.freeze({
       id: safeTrim(contact.id, 120),
-      name: safeTrim(contact.name, 120) || null
+      // Only names explicitly captured from customer wording are eligible for
+      // personalization. Transport/contact labels and inferred names stay out.
+      name: contact.nameSource === "customer_stated" ? safeTrim(contact.name, 80) || null : null,
+      nameSource: contact.nameSource === "customer_stated" ? "customer_stated" : null
     }),
     recentConversation: Object.freeze(
       (Array.isArray(recentConversation) ? recentConversation : [])

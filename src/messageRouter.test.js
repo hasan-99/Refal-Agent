@@ -41,6 +41,18 @@ test("clear name introductions are saved even when the message also gives contac
   }
 });
 
+test("a contextual explicit name correction updates trusted contact memory without treating a need as a name", async () => {
+  for (const [text, expected] of [["My name is Sami", "Sami"], ["I am comparing options", "Hasan"]]) {
+    const user = { id: `contextual-name-${Math.random()}`, profile: { name: "Hasan", nameSource: "customer_stated" }, history: [] };
+    const store = integrationStore(user);
+    const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store, contextual: true,
+      classifyMessage: async () => ({ primary: "small_talk", intents: ["small_talk"], isMultiIntent: false, language: "english", source: "contextual_model", operation: "none" }) });
+    assert.equal(user.profile.name, expected, text);
+    assert.equal(user.profile.nameSource, "customer_stated", text);
+    assert.equal(Boolean(prepared.metadata.customerNameCaptured), text === "My name is Sami", text);
+  }
+});
+
 test("a language switch into Greek captures an explicit name and persists it to the contact", async () => {
   const user = {
     id: "greek-name@s.whatsapp.net",
