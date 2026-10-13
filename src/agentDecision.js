@@ -124,21 +124,10 @@ function hasPriorConfiguredIntroduction(recentConversation = []) {
 }
 
 function formatCommaSeparatedLists(text) {
-  const source = String(text || "");
-  if (!source) return source;
-  let changed = false;
-  const paragraphs = source.split(/\n{2,}/u).map((paragraph) => {
-    if (/^\s*[-*•]\s/mu.test(paragraph)) return paragraph;
-    const sentences = paragraph.split(/(?<=[.!?؟])\s+/u);
-    const formatted = sentences.map((sentence) => {
-      const items = sentence.split(/(?<=[,،;؛])/u).map((item) => item.trim()).filter(Boolean);
-      if (items.length < 4 || items.some((item) => item.length > 240)) return sentence;
-      changed = true;
-      return items.map((item) => `• ${item}`).join("\n");
-    });
-    return formatted.join("\n");
-  });
-  return changed ? paragraphs.join("\n\n") : source;
+  // Commas also separate opening phrases, clauses and conditions. Splitting
+  // them into bullets changes a natural answer into fragments. The decision
+  // prompt already asks the model to write real lists as complete bullet lines.
+  return String(text || "");
 }
 
 function evidenceAnchor(kind, record) {

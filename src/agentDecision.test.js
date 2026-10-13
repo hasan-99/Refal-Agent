@@ -46,26 +46,25 @@ test("parseDecisionJson accepts a respond object and strips a markdown fence if 
   assert.deepEqual(parsed, { type: "respond", text: "The published price is EUR 1500." });
 });
 
-test("long comma-separated lists are formatted as bullets without changing their words", () => {
+test("comma-separated prose retains its sentence structure", () => {
   const raw = "{\"type\":\"respond\",\"text\":\"The package includes company formation, name reservation, document preparation, and registration certificates. Timing depends on complete documents. Shall I explain the next step?\"}";
   const parsed = parseDecisionJson(raw);
-  assert.equal((parsed.text.match(/^•/gm) || []).length, 4);
-  assert.match(parsed.text, /Timing depends on complete documents\./);
-  assert.match(parsed.text, /Shall I explain the next step\?$/);
-  const words = (value) => value.toLowerCase().match(/[a-z]+/gu).join(" ");
-  assert.equal(words(parsed.text), words(JSON.parse(raw).text));
+  assert.equal(parsed.text, JSON.parse(raw).text);
   assert.equal(parseDecisionJson('{"type":"respond","text":"I can help with your question."}').text,
     "I can help with your question.");
 });
 
-test("a list is formatted even when the reply already has separate follow-up paragraphs", () => {
+test("paragraphs and follow-up remain intact after comma-separated prose", () => {
   const raw = "The company package includes formation, name reservation, document filing, and the registration certificate.\n\nThe usual timing is about two weeks after documents are complete.\n\nWhat activity will the company carry out?";
   const parsed = parseDecisionJson(JSON.stringify({ type: "respond", text: raw }));
-  assert.equal((parsed.text.match(/^•/gm) || []).length, 4);
-  assert.match(parsed.text, /\n\nThe usual timing is about two weeks after documents are complete\./);
-  assert.match(parsed.text, /\n\nWhat activity will the company carry out\?$/);
-  const words = (value) => value.toLowerCase().match(/[a-z]+/gu).join(" ");
-  assert.equal(words(parsed.text), words(raw));
+  assert.equal(parsed.text, raw);
+});
+
+test("Arabic company overview does not turn its opening and conjunctions into bullet fragments", () => {
+  const raw = "بشكل عام، Refalco Group بتقدّم حلول مرتبطة بتأسيس الشركات وهيكلتها، وخدمات الضرائب والمحاسبة، والاستثمار والعقارات والتطوير، إضافةً إلى خدمات الإقامة والانتقال. شو الموضوع اللي عم تفكر فيه بقبرص؟";
+  const parsed = parseDecisionJson(JSON.stringify({ type: "respond", text: raw }));
+  assert.equal(parsed.text, raw);
+  assert.doesNotMatch(parsed.text, /•/u);
 });
 
 test("parseDecisionJson maps only a well-formed response alias to the guarded respond decision", () => {
