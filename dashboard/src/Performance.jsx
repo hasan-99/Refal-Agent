@@ -169,14 +169,6 @@ export default function Performance({ isAdmin = false }) {
         </article>
       </div>
 
-      <article className="performance-usage-table-wrap"><div className="performance-subheading"><h4>Spend by conversation</h4><span>WhatsApp threads · top 20 by exact cost</span></div>
-        {(actualUsage?.clients || []).length ? <div className="performance-table-scroll"><table className="performance-usage-table"><thead><tr><th>Client</th><th>Interactions</th><th>Reported tokens</th><th>Exact spend</th><th>Cost unavailable</th></tr></thead><tbody>{actualUsage.clients.map((client, index) => <tr key={`${client.clientLabel}-${index}`}><td>{client.clientLabel}</td><td>{client.interactions.toLocaleString()}</td><td>{client.tokenReportedInteractions ? client.actualTokens.toLocaleString() : "Unavailable"}</td><td>{client.exactCostInteractions ? formatUsd(client.exactCostUsd) : "Unavailable"}</td><td>{client.missingCostInteractions.toLocaleString()}</td></tr>)}</tbody></table></div> : <p className="performance-state">Client-level actuals will appear after usage events are recorded.</p>}
-        <p className="performance-table-note">Dashboard chat usage is included in workspace totals above, but excluded from WhatsApp client totals.</p>
-      </article>
-
-      <article className="performance-usage-table-wrap"><div className="performance-subheading"><h4>Recent model interactions</h4><span>Latest 30 · message content is never logged here</span></div>
-        {(actualUsage?.interactionsList || []).length ? <div className="performance-table-scroll"><table className="performance-usage-table"><thead><tr><th>Time</th><th>Client / source</th><th>Model</th><th>Prompt / completion / total tokens</th><th>Provider cost</th></tr></thead><tbody>{actualUsage.interactionsList.map((interaction, index) => <tr key={`${interaction.at}-${index}`}><td>{formatShortDate(interaction.at)}</td><td>{interaction.clientLabel}{interaction.source === "dashboard" ? " · dashboard" : ""}</td><td>{interaction.model}</td><td>{tokenValue(interaction.promptTokens)} / {tokenValue(interaction.completionTokens)} / {tokenValue(interaction.totalTokens)}</td><td>{interaction.costUsd === null ? "Unavailable" : formatUsd(interaction.costUsd)}</td></tr>)}</tbody></table></div> : <p className="performance-state">No model usage interactions have been tracked yet. Older model requests are not backfilled.</p>}
-      </article>
     </section>
 
     <section className="performance-panel performance-leads">
@@ -257,10 +249,6 @@ function formatMonth(value) {
 
 function share(part, whole) {
   return whole > 0 ? Math.min(100, Math.max(0, Math.round((part / whole) * 100))) : 0;
-}
-
-function tokenValue(value) {
-  return typeof value === "number" && Number.isSafeInteger(value) ? value.toLocaleString() : "—";
 }
 
 function PipelineRow({ label, value, total }) {

@@ -1240,6 +1240,11 @@ function AgentStatus({ isAdmin }) {
   const loading = overviewLoading;
   const status = overviewData.status || {};
   const usage = overviewData.usage || {};
+  const actualUsage = overviewData.usageAnalytics?.actual || {};
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const monthUsage = actualUsage.byMonth?.find((month) => month.period === currentMonth) || {};
+  const hasReportedCost = Number(monthUsage.exactCostInteractions || 0) > 0;
+  const missingCostInteractions = Number(monthUsage.missingCostInteractions || 0);
   const whatsappReady = status.connected === true;
 
   function refreshAll() {
@@ -1268,12 +1273,12 @@ function AgentStatus({ isAdmin }) {
         <PanelTitle icon={Sparkles} title="AI usage" />
         {overviewLoading ? <Loading label="Loading usage" /> : <>
           <dl className="facts compact-facts">
-            <dt>Model</dt><dd>{usage.model || "Not set"}</dd>
-            <dt>Requests</dt><dd>{Number(usage.aiRequests || 0).toLocaleString()}</dd>
-            <dt>Tokens</dt><dd>{Number(usage.estimatedTokens || 0).toLocaleString()}</dd>
-            <dt>Estimated cost</dt><dd>${Number(usage.estimatedCost || 0).toFixed(4)}</dd>
+            <dt>Configured model</dt><dd>{usage.model || "Not set"}</dd>
+            <dt>Requests this month</dt><dd>{Number(monthUsage.interactions || 0).toLocaleString()}</dd>
+            <dt>Tokens this month</dt><dd>{Number(monthUsage.actualTokens || 0).toLocaleString()}</dd>
+            <dt>Provider cost this month</dt><dd>{hasReportedCost ? `$${Number(monthUsage.exactCostUsd || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8, useGrouping: false })}` : "Unavailable"}</dd>
           </dl>
-          <p className="hint">Cost is estimated from message counts and configured model assumptions.</p>
+          <p className="hint">Values use recorded provider usage. {missingCostInteractions ? `Cost was not reported for ${missingCostInteractions.toLocaleString()} of ${Number(monthUsage.interactions || 0).toLocaleString()} requests.` : "Cost is shown only when the provider reports it."}</p>
         </>}
       </article>
     </section>

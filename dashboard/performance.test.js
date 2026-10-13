@@ -78,7 +78,11 @@ test("usage aggregation keeps exact reported spend separate and never invents mi
   assert.equal(report.missingCostInteractions, 1);
   assert.equal(report.byDay.find((day) => day.period === "2026-09-30").interactions, 2);
   assert.equal(report.byDay.length, 366);
-  assert.equal(report.byMonth.find((month) => month.period === "2026-09").exactCostUsd, 0.0017);
+  const septemberUsage = report.byMonth.find((month) => month.period === "2026-09");
+  assert.equal(septemberUsage.interactions, 3);
+  assert.equal(septemberUsage.actualTokens, 150);
+  assert.equal(septemberUsage.exactCostUsd, 0.0017);
+  assert.equal(septemberUsage.exactCostInteractions, 2);
   assert.equal(report.clients.length, 1);
   assert.equal(report.clients[0].clientLabel, "Lead A1B2C3");
   assert.equal(report.clients[0].missingCostInteractions, 1);
