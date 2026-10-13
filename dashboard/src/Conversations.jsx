@@ -206,6 +206,14 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
       setDeleteTarget(null);
       setRows((current) => current.filter((item) => String(item.userId || item.user?.id || item.id || "") !== userId));
       setLeads((current) => current.map((lead) => String(lead.id || "") === userId ? { ...lead, conversationCount: 0, lastMessagePreview: "", lastMessageAt: "" } : lead));
+      listRefreshController.current?.abort();
+      const controller = new AbortController();
+      listRefreshController.current = controller;
+      try {
+        await loadRows(controller.signal);
+      } finally {
+        if (listRefreshController.current === controller) listRefreshController.current = null;
+      }
     } catch (cause) {
       setDeleteError(cause.message || "Could not delete this conversation.");
     } finally {
@@ -282,12 +290,12 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
     {deleteTarget && <div className="conversation-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingId) setDeleteTarget(null); }}>
       <section className="conversation-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="conversation-delete-title" aria-describedby="conversation-delete-description">
         <span className="conversation-delete-dialog-icon"><Trash2 size={19} /></span>
-        <h2 id="conversation-delete-title">Delete conversation history?</h2>
+        <h2 id="conversation-delete-title">Reset conversation?</h2>
         <p className="conversation-delete-dialog-contact">{deleteTarget.user?.name || deleteTarget.user?.pushName || deleteTarget.user?.phone || deleteTarget.userId || deleteTarget.id}</p>
-        <p id="conversation-delete-description">This permanently removes the customer's messages and REFAL's replies from Supabase. The contact/lead record, appointments, and related workflow or audit records will remain. This cannot be undone.</p>
+        <p id="conversation-delete-description">This permanently removes the messages, REFAL's replies, and conversation-derived memory. The next message starts a fresh conversation. The contact record, appointments, handovers, complaints, audit records, and contact restrictions remain. This cannot be undone.</p>
         <div className="conversation-delete-dialog-actions">
           <button type="button" className="conversation-subtle-button" onClick={() => setDeleteTarget(null)} disabled={Boolean(deletingId)}>Cancel</button>
-          <button type="button" className="conversation-delete-confirm-button" onClick={() => deleteConversation(deleteTarget)} disabled={Boolean(deletingId)}>{deletingId ? <><span className="conversation-spinner small" /> Deleting…</> : <><Trash2 size={14} /> Delete history</>}</button>
+          <button type="button" className="conversation-delete-confirm-button" onClick={() => deleteConversation(deleteTarget)} disabled={Boolean(deletingId)}>{deletingId ? <><span className="conversation-spinner small" /> Resetting…</> : <><Trash2 size={14} /> Reset conversation</>}</button>
         </div>
       </section>
     </div>}
@@ -360,7 +368,7 @@ function ConversationRow({ row, isAdmin, deleting, onOpen, onDelete }) {
     <td data-label="Reply status"><span className={`conversation-status ${statusClass(status, row.needsReply)}`}>{statusLabel(status)}</span></td>
     <td data-label="Updated"><time className="conversation-time" dateTime={when || undefined}>{formatDate(when)}</time></td>
     <td className="conversation-row-action"><span className="conversation-row-actions">
-      {isAdmin && <button type="button" className="conversation-delete-button" disabled={deleting} aria-label={`Delete ${name} conversation history`} title="Delete conversation history" onClick={(event) => { event.stopPropagation(); onDelete(); }}>{deleting ? <span className="conversation-spinner" aria-label="Deleting" /> : <Trash2 size={15} />}</button>}
+      {isAdmin && <button type="button" className="conversation-delete-button" disabled={deleting} aria-label={`Reset ${name} conversation`} title="Reset conversation" onClick={(event) => { event.stopPropagation(); onDelete(); }}>{deleting ? <span className="conversation-spinner" aria-label="Resetting" /> : <Trash2 size={15} />}</button>}
       <button type="button" className="conversation-open-button" aria-label={`Open ${name} conversation`} onClick={(event) => { event.stopPropagation(); onOpen(); }}><MoreHorizontal size={16} /></button>
     </span></td>
   </tr>;

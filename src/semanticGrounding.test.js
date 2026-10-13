@@ -53,6 +53,31 @@ test("a repeated configured introduction is blocked on a later answer but allowe
   }).valid, true, "ordinary supported company references are not treated as repeated introductions");
 });
 
+test("a direct compound identity request accepts configured identity after a reviewer mistakes it for an unsupported repeated introduction", () => {
+  const text = "أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group.";
+  const context = { currentMessage: "مين انت؟ وشو اسم الشركة؟", intents: ["company_info"], priorConfiguredIntroduction: true };
+  const review = { segments: [
+    { text: "أنا REFAL، ", status: "non_factual", evidenceRefs: [], reasonCode: "non_factual" },
+    { text: "وكيل الأعمال الرقمي لدى Refalco Group.", status: "unsupported", evidenceRefs: [], reasonCode: "no_approved_evidence" }
+  ], languageValid: true, contextValid: false, contextIssues: [text], requestCoverage: { outcome: "addressed", unmetAspects: [] } };
+  const accepted = validateGroundingVerdict(review, text, [], context.currentMessage, context);
+  assert.equal(accepted.valid, true);
+  assert.deepEqual(accepted.blockedClaims, []);
+
+  const extraService = `${text} ونضمن الموافقة على طلبك.`;
+  const unsafeReview = { ...review, segments: [...review.segments,
+    { text: " ونضمن الموافقة على طلبك.", status: "unsupported", evidenceRefs: [], reasonCode: "unsupported_guarantee" }
+  ], contextValid: true, contextIssues: [] };
+  assert.equal(validateGroundingVerdict(unsafeReview, extraService, [], context.currentMessage, context).valid, false);
+
+  const wrongGroup = "أنا REFAL، وكيل الأعمال الرقمي لدى Another Group.";
+  assert.equal(validateGroundingVerdict({ ...review, segments: [{ text: wrongGroup, status: "unsupported", evidenceRefs: [], reasonCode: "no_approved_evidence" }],
+    contextValid: true, contextIssues: [] }, wrongGroup, [], context.currentMessage, context).valid, false);
+
+  const unrelated = { ...context, currentMessage: "شو الأسعار؟" };
+  assert.equal(validateGroundingVerdict(review, text, [], unrelated.currentMessage, unrelated).valid, false);
+});
+
 test("supported service scope survives an unconfirmed stage relationship while stage claims stay blocked", () => {
   const text = "تذكر المعلومات المعتمدة خدمات قانونية للشركات. لكنها لا تحدد إن كانت ضمن دعم مستمر بعد التأسيس.";
   const scope = "service-scope";

@@ -216,8 +216,20 @@ async function runAgentAfterPreflight({
     response = await fallbackText(safeFallback, { stage: "update", error, locale, turn, userId });
   }
 
-  // Optional continuity work must never change the selected customer
-  // response or cause the outer router to retry a persisted source turn.
+  let sent = false;
+  let deliveryError;
+  try {
+    await send(response, updatedTurn);
+    sent = true;
+  } catch (error) {
+    // Never throw after source-turn persistence: the outer router must not
+    // retry and potentially duplicate a committed action or customer send.
+    deliveryError = error;
+  }
+
+  // Refresh continuity after the send attempt so a slow profile write does
+  // not delay the reply. Await it before releasing the contact's turn, which
+  // keeps the next inbound message behind the completed summary update.
   if (persistenceUpdated && typeof afterTurnPersisted === "function") {
     try {
       await afterTurnPersisted({ userId, turnId: sourceTurnId, message: sourceMessage, response, turn: updatedTurn });
@@ -226,33 +238,17 @@ async function runAgentAfterPreflight({
     }
   }
 
-  try {
-    await send(response, updatedTurn);
-    return {
-      route: "agent",
-      response,
-      turn: updatedTurn,
-      sourceTurnId,
-      allowedCapabilities,
-      sent: true,
-      persistenceUpdated,
-      agentError: agentError || null
-    };
-  } catch (error) {
-    // Never throw after source-turn persistence: the outer router must not
-    // retry and potentially duplicate a committed action or customer send.
-    return {
-      route: "agent",
-      response,
-      turn: updatedTurn,
-      sourceTurnId,
-      allowedCapabilities,
-      sent: false,
-      persistenceUpdated,
-      deliveryError: error,
-      agentError: agentError || null
-    };
-  }
+  return {
+    route: "agent",
+    response,
+    turn: updatedTurn,
+    sourceTurnId,
+    allowedCapabilities,
+    sent,
+    persistenceUpdated,
+    ...(deliveryError ? { deliveryError } : {}),
+    agentError: agentError || null
+  };
 }
 
 module.exports = {

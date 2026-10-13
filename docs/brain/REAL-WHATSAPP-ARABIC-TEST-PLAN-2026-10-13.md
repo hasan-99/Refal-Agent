@@ -28,7 +28,16 @@ Status: Active. Run cases in the owner-controlled WhatsApp chat labelled `Rafa`,
 | AR-12 | Correct a deliberate misunderstanding in the preceding turn. | Accept the correction and answer the corrected request without defending the earlier interpretation. |
 | AR-13 | Ask to switch to English, then explicitly switch back to Arabic. | Honor each requested language and preserve conversation context and approved-fact grounding. |
 | AR-14 | `لخّصلي شو قلتلك` | Recap only customer-stated information and actions the system actually recorded; never invent a preference, qualification, or completed action. |
+| AR-15 | Delete the Rafa conversation from the dashboard, then send `مرحبا انا حسن`. | Remove conversation-derived memory as well as turns; treat the next inbound turn as fresh, address `أستاذ حسن`, and persist only the new turn's customer statements. Preserve protected workflow and opt-out records. |
+| AR-16 | After a few turns, ask `شو اسمي؟`, then state `لا، اسمي سامر` and ask again. | Resolve the latest customer-stated name from the actual conversation, accept the correction, and never revert to an older saved name. |
 
 ## First live observation
 
-**AR-01 baseline, 2026-10-13:** Sent `مرحبا انا حسن` to the verified `Rafa` test chat. Delivered reply: `مرحباً حسن، أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group. كيف أقدر أساعدك؟` Identity and language were correct, but the reply omitted the requested respectful address `أستاذ حسن`. The source already had a generic respectful-address rule; a shared prompt rule now states the conventional Arabic courtesy form explicitly. Regression checks pass locally. Restart and live re-test are pending before AR-02.
+**AR-01 baseline, 2026-10-13:** Sent `مرحبا انا حسن` to the verified `Rafa` test chat. Delivered reply: `مرحباً حسن، أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group. كيف أقدر أساعدك؟` Identity and language were correct, but the reply omitted the requested respectful address `أستاذ حسن`. The source already had a generic respectful-address rule; a shared prompt rule now states the conventional Arabic courtesy form explicitly. The post-deployment live re-test is recorded below.
+
+## Current live run, 2026-10-13
+
+- **AR-01 re-test — PASS:** The real message `مرحبا انا حسن` received `مرحبًا أستاذ حسن، أنا REFAL، وكيل الأعمال الرقمي لدى Refalco Group. كيف أستطيع مساعدتك؟` at about 16:40 Cyprus time. The observed send-to-reply interval was about 31 seconds. The new source turn was persisted. A first post-restart attempt around 16:25 was marked read in WhatsApp but produced no worker inbound event; it is not counted as a passing turn.
+- **AR-02 — FAIL, sequence stopped:** `مين انت؟ وشو اسم الشركة؟` received `ما فيني أكّد هالشي هلأ. جرّب مرة تانية لاحقًا.` at about 16:42 Cyprus time. The configured identity is available without company-fact retrieval, so this is an incorrect fallback. Inspect the correlated live trace, fix the generic identity path, deploy, restart, and repeat AR-02 before moving to AR-03.
+- A one-off `!rafa hi` diagnostic command was mistakenly sent during connection investigation. It is not a human conversation scenario and is excluded from the scenario results.
+- Dashboard conversation deletion currently removes turn rows while leaving customer-derived profile memory. The reset flow is being repaired before AR-15 and AR-16; the live diagnostic reply alone does not establish which saved name source was used.

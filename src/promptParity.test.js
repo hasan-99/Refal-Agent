@@ -206,7 +206,7 @@ test("Agent decision avoids repeating an introduction already delivered in conve
   const { buildDecisionMessages } = require("./agentDecision");
   const { profile } = require("./companyProfile");
   const withIntroduction = buildDecisionMessages({ recentConversation: [{ role: "assistant", content: `Hello, I am ${profile.brand}, ${profile.groupName}'s digital business agent.` }] })[0].content;
-  assert.match(withIntroduction, /A prior assistant reply has already introduced the configured agent and group.*Do not repeat that introduction/s);
+  assert.match(withIntroduction, /A prior assistant reply has already introduced the configured agent and group.*repeat the configured identity only if the customer now asks who you are or which group you represent/s);
   const withoutIntroduction = buildDecisionMessages({ recentConversation: [{ role: "assistant", content: "Hello, how can I help?" }] })[0].content;
   assert.doesNotMatch(withoutIntroduction, /A prior assistant reply has already introduced the configured agent/);
 });

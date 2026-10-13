@@ -235,20 +235,21 @@ test("full synthetic customer-answer path retrieves approved fixture evidence, r
   assert.equal(events.at(-1)[2], turn.id);
 });
 
-test("continuity summary hook runs only after the source turn and response are durable", async () => {
+test("continuity summary hook runs after the durable answer is sent", async () => {
   const events = [];
   const result = await runAgentAfterPreflight({
     ...eligibleInput(), userId: "contact-1", sourceMessage: "I am looking at property in Limassol."
   }, {
     persistTurn: async () => ({ id: "turn-1" }),
     runAgent: async () => "What kind of property are you considering?",
-    updateTurn: async ({ patch }) => ({ id: "turn-1", response: patch.response }),
+    updateTurn: async ({ patch }) => { events.push(["update", patch.response]); return { id: "turn-1", response: patch.response }; },
     afterTurnPersisted: async ({ userId, turnId, message }) => { events.push(["summary", userId, turnId, message]); },
     send: async () => { events.push(["send"]); }
   });
   assert.deepEqual(events, [
-    ["summary", "contact-1", "turn-1", "I am looking at property in Limassol."],
-    ["send"]
+    ["update", "What kind of property are you considering?"],
+    ["send"],
+    ["summary", "contact-1", "turn-1", "I am looking at property in Limassol."]
   ]);
   assert.equal(result.sent, true);
 });
@@ -264,7 +265,7 @@ test("continuity summary failure never changes the saved response or retries a p
     afterTurnPersisted: async () => { events.push("summary"); throw new Error("profile write failed"); },
     send: async (response) => { events.push(["send", response]); }
   });
-  assert.deepEqual(events, ["summary", ["send", "I can help with your question."]]);
+  assert.deepEqual(events, [["send", "I can help with your question."], "summary"]);
   assert.equal(result.sent, true);
   assert.equal(result.persistenceUpdated, true);
 });
@@ -364,11 +365,40 @@ test("send failure is reported without a second send attempt or thrown fallback"
     runAgent: async () => "Answer",
     updateTurn: async () => { events.push("update"); },
     send: async () => { events.push("send"); throw new Error("socket closed"); },
+    afterTurnPersisted: async () => { events.push("summary"); },
     safeFallback: async () => { events.push("fallback"); return "Fallback"; }
   });
-  assert.deepEqual(events, ["update", "send"]);
+  assert.deepEqual(events, ["update", "send", "summary"]);
   assert.equal(result.sent, false);
   assert.match(result.deliveryError.message, /socket closed/u);
+});
+
+test("continuity refresh remains awaited after delivery before the turn resolves", async () => {
+  const events = [];
+  let releaseSummary;
+  const summaryPending = new Promise((resolve) => { releaseSummary = resolve; });
+  let turnResolved = false;
+  const turnPromise = runAgentAfterPreflight({
+    ...eligibleInput(), userId: "contact-1", sourceMessage: "I want to form a company."
+  }, {
+    persistTurn: async () => ({ id: "turn-1" }),
+    runAgent: async () => "What business activity are you planning?",
+    updateTurn: async ({ patch }) => { events.push("update"); return { id: "turn-1", response: patch.response }; },
+    send: async () => { events.push("send"); },
+    afterTurnPersisted: async () => { events.push("summary-start"); await summaryPending; events.push("summary-done"); }
+  }).then((result) => { turnResolved = true; return result; });
+
+  try {
+    for (let attempt = 0; attempt < 10 && !events.includes("summary-start"); attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, ["update", "send", "summary-start"]);
+    assert.equal(turnResolved, false);
+  } finally {
+    releaseSummary();
+  }
+  const result = await turnPromise;
+  assert.equal(result.sent, true);
+  assert.equal(turnResolved, true);
+  assert.deepEqual(events, ["update", "send", "summary-start", "summary-done"]);
 });
 
 test("a throwing fallback provider uses a localized neutral fallback", async () => {

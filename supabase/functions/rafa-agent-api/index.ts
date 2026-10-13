@@ -1530,20 +1530,10 @@ async function deleteUser(userId: string) {
 
 async function deleteConversationData(userId: string) {
   if (!validWhatsAppJid(userId)) throw new HttpError("A valid WhatsApp contact is required.", 400);
-  const { data: contact, error: contactError } = await supabase
-    .from("rafa_contacts")
-    .select("id")
-    .eq("whatsapp_jid", userId)
-    .maybeSingle();
-  if (contactError) throw contactError;
-
-  let deletion = supabase.from("rafa_conversation_turns").delete({ count: "exact" });
-  deletion = contact
-    ? deletion.or(`contact_id.eq.${contact.id},user_id.eq.${userId}`)
-    : deletion.eq("user_id", userId);
-  const { count, error } = await deletion;
+  const { data, error } = await supabase.rpc("refal_reset_conversation_context", { p_whatsapp_jid: userId });
+  if (["55006", "55P03"].includes(error?.code || "")) throw new HttpError("A message or follow-up is still being processed. Retry when it finishes.", 409);
   if (error) throw error;
-  return { deleted: Boolean(contact) || Boolean(count), deletedTurns: count || 0 };
+  return { deleted: data?.deleted === true, deletedTurns: Number(data?.deletedTurns) || 0 };
 }
 
 const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk", "agent_identity", "language_capability", "business_areas", "project_enquiry", "land_development", "pricing"]);

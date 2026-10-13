@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EdgeApiStore } = require("./supabaseStore");
 const { MemoryStore } = require("./store");
+const { buildConversationContext } = require("./conversationMemory");
 const { recordHistory } = require("./messageRouter");
 const { hasAutomatedReminderPermission } = require("./leadQualification");
 
@@ -124,7 +125,35 @@ test("updateHistoryTurn sends a scoped PATCH and returns the saved turn", async 
   }
 });
 
-test("deleteConversation removes only the saved transcript and targets the conversation endpoint", async () => {
+test("MemoryStore conversation reset forgets names and interests while retaining safety settings", () => {
+  const store = new MemoryStore();
+  const userId = "123@s.whatsapp.net";
+  const user = store.ensureUser(userId);
+  user.profile = {
+    name: "Karim", nameSource: "customer_stated", conversationSummary: "Wants a company",
+    agentFacts: { businessactivity: { value: "Consulting" } },
+    followUpBlocked: true,
+    conversationPreferences: { noProactiveBookingOrContact: true, preferredReplyStyle: "old" }
+  };
+  user.booking = { status: "awaiting_details" };
+  user.consent = { followUp: "granted" };
+  store.addHistory(userId, "مرحبا انا كريم", "أهلا أستاذ كريم");
+
+  assert.deepEqual(store.deleteConversation(userId), { deleted: true, deletedTurns: 1 });
+  const fresh = store.getUser(userId);
+  assert.deepEqual(fresh.history, []);
+  assert.deepEqual(fresh.profile, {
+    followUpBlocked: true,
+    conversationPreferences: { noProactiveBookingOrContact: true }
+  });
+  assert.equal(fresh.booking, null);
+  assert.deepEqual(fresh.consent, { followUp: "revoked" });
+  assert.equal(fresh.step, "name");
+  const context = buildConversationContext(fresh, { currentMessage: "مرحبا" });
+  assert.doesNotMatch(context.summary, /Karim|كريم|Consulting|company/iu);
+});
+
+test("deleteConversation invalidates the entire cached user after a server-side reset", async () => {
   const originalFetch = global.fetch;
   let request;
   global.fetch = async (url, options) => {
@@ -135,14 +164,14 @@ test("deleteConversation removes only the saved transcript and targets the conve
   try {
     const store = new EdgeApiStore({ apiUrl: "https://example.test/rafa-agent-api", key: "public-key", apiSecret: "internal-secret" });
     const userId = "123@s.whatsapp.net";
-    store.data.users[userId] = { id: userId, history: [{ message: "hello" }, { message: "services?" }] };
+    store.data.users[userId] = { id: userId, profile: { name: "Karim", conversationSummary: "Old question" }, history: [{ message: "hello" }, { message: "services?" }] };
     const result = await store.deleteConversation(userId);
 
     assert.deepEqual(result, { deleted: true, deletedTurns: 2 });
     assert.equal(request.url, "https://example.test/rafa-agent-api/contacts/123%40s.whatsapp.net/conversation");
     assert.equal(request.options.method, "DELETE");
     assert.equal(request.options.headers["x-rafa-api-secret"], "internal-secret");
-    assert.deepEqual(store.data.users[userId].history, []);
+    assert.equal(store.data.users[userId], undefined, "old profile and history must not be reused");
   } finally {
     global.fetch = originalFetch;
   }

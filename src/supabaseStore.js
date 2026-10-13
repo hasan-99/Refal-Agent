@@ -205,7 +205,9 @@ class EdgeApiStore {
 
   async deleteConversation(userId) {
     const { deleted, deletedTurns } = await this.request(`/contacts/${encodeURIComponent(userId)}/conversation`, { method: "DELETE" });
-    if (deleted && this.data.users[userId]) this.data.users[userId].history = [];
+    // The server also clears conversational profile and CRM state. Drop the
+    // whole snapshot so a later read cannot restore a stale saved name.
+    if (deleted) delete this.data.users[userId];
     return { deleted: Boolean(deleted), deletedTurns: Number(deletedTurns) || 0 };
   }
 

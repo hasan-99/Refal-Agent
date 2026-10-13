@@ -453,6 +453,26 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     : contextual
       ? contextualName
       : extractCustomerName(incoming) || (askedForName ? extractBareCustomerName(incoming) : null);
+  // The current explicit self-introduction is the source of truth for this
+  // conversation. Remove older saved labels that disagree, while leaving the
+  // new name in its customer turn rather than creating unsourced profile data.
+  if (capturedName && typeof store.updateUser === "function") {
+    const savedNames = [user.profile?.name, user.profile?.nameOverride].filter(Boolean);
+    const sameName = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/[\u064b-\u065f\u0670\u0640]/gu, "").replace(/\s+/gu, " ").trim();
+    if (savedNames.some((value) => sameName(value) !== sameName(capturedName))) {
+      await store.updateUser(userId, (draft) => {
+        draft.profile = { ...(draft.profile || {}) };
+        delete draft.profile.name;
+        delete draft.profile.nameSource;
+        delete draft.profile.nameUpdatedAt;
+        delete draft.profile.nameOverride;
+      });
+      delete user.profile.name;
+      delete user.profile.nameSource;
+      delete user.profile.nameUpdatedAt;
+      delete user.profile.nameOverride;
+    }
+  }
   if (user.profile?.name && !isPlausibleCustomerName(user.profile.name) && typeof store.updateUser === "function") {
     await store.updateUser(userId, (draft) => {
       draft.profile = { ...(draft.profile || {}) };

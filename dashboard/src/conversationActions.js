@@ -1,7 +1,7 @@
 export const conversationDeleteConfirmation = (displayName) => [
-  `Delete the conversation history for ${displayName}?`,
-  "This permanently removes the customer's messages and REFAL's replies from Supabase.",
-  "The contact/lead record, appointments, and related workflow or audit records will remain.",
+  `Reset the conversation for ${displayName}?`,
+  "This permanently removes the messages, REFAL's replies, and conversation-derived memory from Supabase. The next message starts a fresh conversation.",
+  "The contact record, appointments, handovers, complaints, audit records, and contact restrictions will remain.",
   "This cannot be undone."
 ].join("\n\n");
 

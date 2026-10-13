@@ -12,6 +12,32 @@ const { modelProviderCircuit } = require("./modelCircuitBreaker");
 const { normalizeOpenRouterUsage, redactPersonalData } = require("./ai");
 const { INTENTS } = require("./intent");
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+// The reviewer can mistake an already configured self-introduction for an
+// unsupported company claim. Reconcile only a complete, plain identity
+// statement against the frozen profile; an added service, status, figure or
+// promise makes the whole statement fail this deliberately narrow check.
+function isConfiguredIdentityStatement(value) {
+  const text = String(value || "").trim();
+  const brand = escapeRegExp(profile.brand);
+  const group = escapeRegExp(profile.groupName);
+  const jurisdiction = escapeRegExp(profile.jurisdiction);
+  return [
+    new RegExp(`^(?:أنا|انا|نحن)\\s+${brand}\\s*[،,]?\\s*(?:ال)?(?:وكيل|مساعد|ممثل)\\s+الأعمال\\s+الرقمي\\s+(?:لدى|ل|مع)\\s+${group}(?:\\s+في\\s+(?:قبرص|${jurisdiction}))?[.!؟]?$`, "iu"),
+    new RegExp(`^(?:I am|I'm|We are)\\s+${brand}\\s*[,:]?\\s*(?:the|a)\\s+digital\\s+business\\s+(?:agent|assistant|representative)\\s+(?:of|for)\\s+${group}(?:\\s+(?:in|based in|operating from)\\s+${jurisdiction})?[.!?]?$`, "iu"),
+    new RegExp(`^(?:Είμαι|Είμαστε)\\s+(?:ο|η|το)?\\s*${brand}\\s*[,:]?\\s*(?:ο|η|το)?\\s*ψηφιακ\\p{L}*\\s+(?:επιχειρηματικ\\p{L}*\\s+)?(?:εκπρόσωπ\\p{L}*|βοηθ\\p{L}*|πράκτορ\\p{L}*)\\s+(?:του|της|για\\s+τον)\\s+${group}(?:\\s+στην\\s+Κύπρο)?[.!;;]?$`, "iu")
+  ].some((pattern) => pattern.test(text));
+}
+
+function asksAgentIdentity(context = {}) {
+  if (context.intents?.includes(INTENTS.AGENT_IDENTITY)) return true;
+  const request = String(context.currentMessage || "");
+  return /(?:\bwho\s+are\s+you\b|\bwho\s+is\s+this\b|(?:مين|من)\s+(?:انت|أنت)(?=\s|[؟?!,،.;؛]|$)|(?:ποιος|ποια|ποιοι)\s+είστε)/iu.test(request);
+}
+
 const REVIEW_CODES = Object.freeze([
   "supported", "identity", "non_factual", "no_approved_evidence", "unsupported_relation",
   "contradicted_by_evidence", "condition_missing", "service_not_established", "unsupported_guarantee",
@@ -23,14 +49,18 @@ function reviewIdentity() {
   return { brand: profile.brand, groupName: profile.groupName, legalName: profile.legalName, jurisdiction: profile.jurisdiction };
 }
 
-function repeatedConfiguredIntroduction(verdict, text, context = {}) {
-  const priorIntroduction = context.priorConfiguredIntroduction === true
+function hasPriorConfiguredIntroduction(context = {}) {
+  return context.priorConfiguredIntroduction === true
     || (Array.isArray(context.recentConversation) && context.recentConversation.some((turn) => {
       if (turn?.role !== "assistant" || typeof turn.content !== "string") return false;
       const content = turn.content.toLocaleLowerCase();
       return content.includes(profile.brand.toLocaleLowerCase()) && content.includes(profile.groupName.toLocaleLowerCase());
     }));
-  if (!priorIntroduction || context.intents?.includes(INTENTS.AGENT_IDENTITY)) return null;
+}
+
+function repeatedConfiguredIntroduction(verdict, text, context = {}) {
+  const priorIntroduction = hasPriorConfiguredIntroduction(context);
+  if (!priorIntroduction || asksAgentIdentity(context)) return null;
   const firstSentence = String(text || "").trim().split(/(?<=[.!?؟])\s+|\n/u, 1)[0] || "";
   const normalized = firstSentence.toLocaleLowerCase();
   const identitySegment = Array.isArray(verdict?.segments) && verdict.segments.find((segment) =>
@@ -62,7 +92,7 @@ function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} }
     "Evaluate the answer language against the customer's current request, including an explicit request for another language, with history for continuity. Evaluate contextual references and explicit preferences, including refusal to book or be contacted. For a comparative follow-up, compare each item in the draft with the actual prior answer and current evidence: repeated items must not be labeled new, and unsupported additions must be rejected. A draft may briefly restate earlier items for context while separately identifying a genuinely new, supported area; do not mark that new area context-invalid merely because earlier items are also mentioned. Project history or positioning is not by itself an additional service. A repeated list without a supported distinction does not answer a request for additional scope. In a scope comparison, repeating the full list already given plus a generic uncertainty disclaimer is redundant; flag the repeated span as a context issue and prefer a concise answer at the supported level. Do not demand a qualification question when the customer can be answered directly. If context is invalid, quote only the exact offending draft spans in contextIssues; do not return a bare boolean without actionable spans.",
     "Check the speaker/customer roles and interest boundaries from history. Do not attribute the company's assistance to the customer. Only a customer's explicit disinterest excludes a service area; a stated goal or preference for one service is not a ban on related areas. The current request sets the active answer scope and can reopen a later stage; honor earlier exclusions only for the named areas. Do not mark a directly responsive, unexcluded service fact context-invalid. Set contextValid false only for a wrong speaker, a contradicted reference, an ignored explicit preference, or irrelevant content that changes the answer's scope. Keep explicit exclusions out of the response. A broad source overview does not override a narrower current need. Quote each offending span exactly in contextIssues so correction targets only that passage.",
     "A follow-up question is useful only if it advances the customer's stated goal. Do not ask the customer to repeat, choose among, or restate aspects already explicit in the current request. If the same question was already asked in recent conversation, mark only that exact question as a context issue; a different, unasked question about a decision-relevant detail is context-valid when it helps the current goal. When no unasked company-specific detail would help, accept a grounded answer without a follow-up question.",
-    "The first assistant response in a conversation must naturally identify the configured agent, its role and group. If there is no prior assistant response in history and this introduction is missing, set contextValid false. In an ongoing conversation, assess opening text by its conversational function across Arabic, English and Greek, not by matching particular words. A self-introduction repeated from history or a social opener that merely restarts the conversation is a context issue when the current customer message calls for a substantive answer; later replies should start with that answer. Do not excuse redundant opening text as harmless style. When the customer greets the agent and explicitly states their name in the same message, a brief acknowledgment of that name may lead into the direct answer; it is not a context issue unless it replaces the answer. A conventional respectful form attached to that exact customer-stated name is courtesy-only personalization: classify it as non_factual, not as a claim about profession, title, role, status or relationship, and do not require company evidence for it. Permit the form only when the name was explicitly stated and its language use is clear. Never invent or alter the customer's name or infer a professional role/status; a current explicit correction overrides any saved name. For other substantive requests, set contextValid false for a redundant standalone greeting and quote only that opening span in contextIssues.",
+    "The first assistant response in a conversation must naturally identify the configured agent, its role and group. If there is no prior assistant response in history and this introduction is missing, set contextValid false. In an ongoing conversation, assess opening text by its conversational function across Arabic, English and Greek, not by matching particular words. A self-introduction repeated from history or a social opener that merely restarts the conversation is a context issue when the current customer message calls for a different substantive answer; later replies should start with that answer. A direct question about the agent's identity or represented group calls for the configured identity again, even if it was introduced earlier. Do not mark that direct answer as repeated or context-invalid. Do not excuse redundant opening text as harmless style. When the customer greets the agent and explicitly states their name in the same message, a brief acknowledgment of that name may lead into the direct answer; it is not a context issue unless it replaces the answer. A conventional respectful form attached to that exact customer-stated name is courtesy-only personalization: classify it as non_factual, not as a claim about profession, title, role, status or relationship, and do not require company evidence for it. Permit the form only when the name was explicitly stated and its language use is clear. Never invent or alter the customer's name or infer a professional role/status; a current explicit correction overrides any saved name. For other substantive requests, set contextValid false for a redundant standalone greeting and quote only that opening span in contextIssues.",
     "Assess requestCoverage separately from factual support. Set outcome addressed when the draft directly answers the current request, or supported_partial when it answers the supported parts and accurately identifies evidence limits. Do not demand unavailable contract details, an exhaustive list, or a qualification answer before accepting a useful grounded overview. Set not_addressed only for an actual ignored request aspect; unmetAspects must then quote those exact spans from the current customer request, never a rationale or a newly invented requirement. For addressed/supported_partial, unmetAspects must be empty. Requested short bullet lists are allowed. Return only reason codes, exact claim text and quoted request spans; no rationale or hidden reasoning."
   ].join("\n") }, { role: "user", content: JSON.stringify({
     identity: reviewIdentity(),
@@ -177,9 +207,12 @@ function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequ
   }
   const refs = new Set(evidenceItems.map((item) => item.sourceRef).filter(Boolean));
   const blockedClaims = [];
+  const directIdentityRequest = asksAgentIdentity(context);
+  const configuredIdentityReply = isConfiguredIdentityStatement(text)
+    && (!hasPriorConfiguredIntroduction(context) || directIdentityRequest);
   for (const item of verdict.segments) {
-    if (item.status === "unsupported") blockedClaims.push({ sentence: item.text, claimClass: "UNSUPPORTED", reasons: [item.reasonCode] });
-    if (item.status === "supported" && (!item.evidenceRefs.length || item.evidenceRefs.some((ref) => typeof ref !== "string" || !refs.has(ref)))) {
+    if (item.status === "unsupported" && !configuredIdentityReply) blockedClaims.push({ sentence: item.text, claimClass: "UNSUPPORTED", reasons: [item.reasonCode] });
+    if (item.status === "supported" && !configuredIdentityReply && (!item.evidenceRefs.length || item.evidenceRefs.some((ref) => typeof ref !== "string" || !refs.has(ref)))) {
       blockedClaims.push({ sentence: item.text, claimClass: "UNSUPPORTED", reasons: ["no_approved_evidence"] });
     }
     // Identity has no factual evidence grant; any numbers need approved facts.
@@ -187,11 +220,14 @@ function validateGroundingVerdict(verdict, text, evidenceItems = [], currentRequ
   }
   const reasons = [...new Set(blockedClaims.flatMap((item) => item.reasons))];
   if (!verdict.languageValid) reasons.push("language_mismatch");
-  if (!verdict.contextValid) reasons.push("context_mismatch");
+  const effectiveContextIssues = configuredIdentityReply && directIdentityRequest
+    ? verdict.contextIssues.filter((issue) => normalize(text) !== normalize(issue))
+    : verdict.contextIssues;
+  if (!verdict.contextValid && effectiveContextIssues.length) reasons.push("context_mismatch");
   if (invalidContextIssueSpan) {
     reasons.push("context_mismatch");
     blockedClaims.push({ sentence: text, claimClass: "CONTEXT", reasons: ["context_mismatch"] });
-  } else if (!verdict.contextValid) blockedClaims.push(...verdict.contextIssues.map(sentence => ({ sentence, claimClass: "CONTEXT", reasons: ["context_mismatch"] })));
+  } else if (!verdict.contextValid) blockedClaims.push(...effectiveContextIssues.map(sentence => ({ sentence, claimClass: "CONTEXT", reasons: ["context_mismatch"] })));
   if (verdict.requestCoverage.outcome === "not_addressed" || verdict.requestCoverage.unmetAspects.length > 0) {
     reasons.push("question_not_answered");
     blockedClaims.push(...verdict.requestCoverage.unmetAspects.map(sentence => ({sentence,claimClass:"UNMET_REQUEST",reasons:["question_not_answered"]})));

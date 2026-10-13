@@ -20,7 +20,33 @@ class MemoryStore {
     const user = this.data.users[userId];
     if (!user) return { deleted: false, deletedTurns: 0 };
     const deletedTurns = Array.isArray(user.history) ? user.history.length : 0;
+    const previousProfile = user.profile || {};
+    const safeProfile = {};
+    if (previousProfile.followUpBlocked === true) safeProfile.followUpBlocked = true;
+    if (previousProfile.qaControlledDiagnostics === true) {
+      safeProfile.qaControlledDiagnostics = true;
+      if (previousProfile.qaSessionStartedAt) safeProfile.qaSessionStartedAt = previousProfile.qaSessionStartedAt;
+      if (previousProfile.qaInitialVerificationStartedAt) safeProfile.qaInitialVerificationStartedAt = previousProfile.qaInitialVerificationStartedAt;
+    }
+    if (previousProfile.conversationPreferences?.noProactiveBookingOrContact === true) {
+      safeProfile.conversationPreferences = { noProactiveBookingOrContact: true };
+    }
     user.history = [];
+    user.profile = safeProfile;
+    user.step = "name";
+    user.booking = null;
+    if (user.consent && typeof user.consent === "object") {
+      const retainedConsent = {};
+      for (const scope of ["followUp", "automatedReminder"]) {
+        const prior = user.consent[scope];
+        if (["denied", "revoked"].includes(prior)) retainedConsent[scope] = prior;
+        else if (prior === "granted") retainedConsent[scope] = "revoked";
+      }
+      if (Object.keys(retainedConsent).length) user.consent = retainedConsent;
+      else delete user.consent;
+    }
+    if (user.followUpState) user.followUpState = { ...user.followUpState, consentState: "revoked", status: "suppressed", nextDueAt: null };
+    delete user.leadQualification;
     user.updatedAt = new Date().toISOString();
     return { deleted: true, deletedTurns };
   }

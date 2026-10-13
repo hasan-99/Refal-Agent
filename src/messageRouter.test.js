@@ -72,14 +72,15 @@ test("clear name introductions are available for the current reply without profi
   }
 });
 
-test("a contextual name correction is transient and does not turn a need into a name", async () => {
+test("an explicit name correction clears an older saved label without turning a need into a name", async () => {
   for (const [text, expected] of [["My name is Sami", "Sami"], ["I am comparing options", "Hasan"]]) {
-    const user = { id: `contextual-name-${Math.random()}`, profile: { name: "Hasan", nameSource: "customer_stated" }, history: [] };
+    const user = { id: `contextual-name-${Math.random()}`, profile: { name: "Hasan", nameSource: "customer_stated", nameOverride: "Hasan" }, history: [] };
     const store = integrationStore(user);
     const prepared = await prepareInboundMessage({ userId: user.id, incoming: text, user, store, contextual: true,
       classifyMessage: async () => ({ primary: "small_talk", intents: ["small_talk"], isMultiIntent: false, language: "english", source: "contextual_model", operation: "none" }) });
-    assert.equal(user.profile.name, "Hasan", text);
-    assert.equal(user.profile.nameSource, "customer_stated", text);
+    assert.equal(user.profile.name, text === "My name is Sami" ? undefined : "Hasan", text);
+    assert.equal(user.profile.nameSource, text === "My name is Sami" ? undefined : "customer_stated", text);
+    assert.equal(user.profile.nameOverride, text === "My name is Sami" ? undefined : "Hasan", text);
     assert.equal(Boolean(prepared.metadata.customerNameCaptured), text === "My name is Sami", text);
     assert.equal(prepared.currentTurnCustomerName, text === "My name is Sami" ? "Sami" : null, text);
   }
