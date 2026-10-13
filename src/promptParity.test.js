@@ -172,6 +172,7 @@ test("answer prompts format multiple inclusions clearly and allow one useful con
     /Ask at most one question when it helps move the customer's stated goal forward/);
   assert.match(RESPONSE_FORMAT_RULE, /answer first, then usually offer one specific, useful next step/u);
   assert.match(RESPONSE_FORMAT_RULE, /do not add a generic offer or force a question/u);
+  assert.match(RESPONSE_FORMAT_RULE, /When safety or missing information limits the exact answer, do not end with a bare refusal/u);
   const detailRule = /When a customer shows concrete interest in a service and (?:current approved )?evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up/i;
   for (const variant of ["customer", "operator"]) assert.match(buildBrainPrompt({ variant }).join("\n"), detailRule);
   assert.match(edge, detailRule);
