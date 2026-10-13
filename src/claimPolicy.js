@@ -297,6 +297,12 @@ const rawRefusalToProvide = new RegExp(
 );
 const [, REFUSAL_TO_PROVIDE] = foldRulePatterns([["refusal_to_provide", rawRefusalToProvide]])[0];
 
+// A denial of a guaranteed return is not a promise. Keep these spans narrow:
+// stop at punctuation or the first guarantee word, leaving any later positive
+// promise in the sentence available to the guarantee gate.
+const rawNegatedReturnGuarantee = /(?:ما\s+في\s+(?:ربح|عائد)\s+مضمون\p{L}*|ما\s+عندي\s+(?:أساس|معلومات\s+موثوقة)(?:(?!لكن|بس)[^.!?;,؟؛،]){0,90}مضمون\p{L}*|ما\s+بقدر\s+(?:أذكر|أحدد)(?:(?!لكن|بس)[^.!?;,؟؛،]){0,90}مضمون\p{L}*)(?:(?!لكن|بس)[^.!?;,؟؛،]){0,90}/giu;
+const [, NEGATED_RETURN_GUARANTEE] = foldRulePatterns([["negated_return_guarantee", rawNegatedReturnGuarantee]])[0];
+
 const rawGuaranteeRules = [
   ["guarantee_marker", /\bguarantee(?:s|d|ing)?\b|\bwe\s+guarantee\b|\bcertain\s+approval\b|\bassured\b|\bassure\s+you\b|\bpromise\s+you\b|\bi\s+promise\b|\b100\s*(?:%|percent)\s*(?:approval|success|acceptance)|(?:approval|acceptance|success)\s+is\s+(?:certain|guaranteed|assured|100\s*%)/iu],
   // Arabic: authored pointed, folded at module load. No \b anywhere near these.
@@ -431,12 +437,12 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
   // the customer, nor a programme fact needing evidence. The strip stops at a
   // contrastive conjunction, so "I cannot advise, but your company qualifies"
   // keeps its second half and still blocks.
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
   const assertedGuaranteeText = normalizeClaimText(maskPointedArabicInclusion(original))
-    .replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+    .replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (guaranteeRules.some(([, pattern]) => pattern.test(assertedGuaranteeText))) {
     return { claimClass: CLAIM_CLASSES.GUARANTEE, allowed: false, reasons: ["guarantee_marker"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
@@ -541,7 +547,7 @@ function containsPersonalizedConclusion(text) {
 function assertedClaimText(text, rules) {
   const normalized = normalizeClaimText(text);
   if (!hasContent(normalized)) return false;
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) return false;
   return rules.some(([, pattern]) => pattern.test(assertedText));
 }

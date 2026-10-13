@@ -430,6 +430,18 @@ test("qualified absence of a guaranteed government timeline is not mistaken for 
   assert.deepEqual(mixed.reasons, ["guarantee_marker"]);
 });
 
+test("Arabic refusal to state a guaranteed investment return is not a guarantee", () => {
+  for (const sentence of [
+    "ما عندي أساس أقدر أحدد منه ربحًا مضمونًا لاستثمار ١٠٠ ألف؛ لذلك ما بقدر أذكر مبلغًا أو نسبة مضمونة.",
+    "ما عندي معلومات موثوقة تحدد ربحًا مضمونًا لاستثمار ١٠٠ ألف، لذلك ما بقدر أذكر مبلغًا أو نسبة مضمونة."
+  ]) {
+    assert.equal(classifyClaim(sentence, { language: "arabic" }).allowed, true, sentence);
+  }
+  const mixed = classifyClaim("ما في ربح مضمون لكن نضمن لك ربحًا مضمونًا.", { language: "arabic" });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(mixed.allowed, false);
+});
+
 test("a contracted statement that approval is not guaranteed remains a permitted safeguard", () => {
   for (const sentence of [
     "A bank account isn't guaranteed.",

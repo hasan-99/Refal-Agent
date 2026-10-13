@@ -247,6 +247,12 @@ test("response policy preserves affirmative outcome and mixed-clause blocking", 
   ]) assert.ok(validateResponse(claim).reasons.includes("prohibited_claim"), claim);
 });
 
+test("response policy accepts Arabic refusal of a guaranteed return but blocks a later promise", () => {
+  const refusal = "ما عندي معلومات موثوقة تحدد ربحًا مضمونًا لاستثمار ١٠٠ ألف، لذلك ما بقدر أذكر مبلغًا أو نسبة مضمونة.";
+  assert.equal(validateResponse(refusal, { minSentences: 0 }).reasons.includes("prohibited_claim"), false);
+  assert.equal(validateResponse("ما في ربح مضمون لكن نضمن لك ربحًا مضمونًا.", { minSentences: 0 }).reasons.includes("prohibited_claim"), true);
+});
+
 test("safe fallback data is deterministic and multilingual", () => {
   for (const language of ["en", "ar", "el"]) {
     const result = safeFallbackData({ language, category: "uncertainty" });
