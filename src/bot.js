@@ -662,7 +662,7 @@ async function handleMessage(socket, message, upsertType) {
     logEvent("error", { mode: "customer", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
       try {
-        await sendTextReplyWithPresence(socket, remoteJid, "Sorry, something went wrong. Please try again.");
+        await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
         receiptShouldComplete = true;
       } catch (sendError) {
         logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
@@ -730,7 +730,7 @@ async function handleSelfTestMessage(socket, message) {
     console.error("Failed to handle self-test message:", safeErrorDiagnostics(error));
     logEvent("error", { mode: "self-test", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
-      await sendTextReplyWithPresence(socket, remoteJid, "Sorry, something went wrong. Please try again.");
+      await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
     }
   }
 }

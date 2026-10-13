@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
 const { detectMessageLanguage, detectExplicitLanguageRequest, languageInstruction, inboundRetryMessage } = require("./language");
 
 test("detects script Arabic, Syrian Arabizi, and Greek reliably", () => {
@@ -117,4 +118,7 @@ test("temporary inbound failures and overload notices use the customer's languag
   assert.match(inboundRetryMessage("greek", "busy"), /στείλτε ξανά το μήνυμά σας/);
   assert.match(inboundRetryMessage("english", "busy"), /resend your message/);
   assert.match(inboundRetryMessage("unknown"), /checking your message/);
+  const workerSource = readFileSync(require.resolve("./bot"), "utf8");
+  assert.doesNotMatch(workerSource, /Sorry, something went wrong\. Please try again\./u);
+  assert.match(workerSource, /Failed to handle message:[\s\S]*?inboundRetryMessage\(detectMessageLanguage\(extractText\(message\)\)\)/u);
 });
