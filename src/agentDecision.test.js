@@ -188,8 +188,8 @@ test("multi-part knowledge requests are searched as focused parts instead of one
   assert.match(systemMessage, /current customer message is also searched automatically/);
   assert.match(systemMessage, /For Arabic or Greek messages, ensure one query is a concise English semantic equivalent/);
   assert.match(systemMessage, /answer in the requested language/);
-  assert.match(systemMessage, /when the customer greets you and explicitly gives their name in that message, address them with a conventional respectful form of address/u);
-  assert.match(systemMessage, /This is courtesy only and must not imply a profession or status/);
+  assert.match(systemMessage, /When a customer greets you and explicitly gives their name, address them using a conventional respectful form for that language/u);
+  assert.match(systemMessage, /Treat this strictly as courtesy, never as a claim about profession or status/);
   assert.match(systemMessage, /Never invent a name, professional title, role, or status/iu);
   assert.match(systemMessage, /different, decision-relevant detail only when it helps move that goal forward/u);
 });

@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, KNOWLEDGE_QUERY_FOCUS_RULE
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPECTFUL_ADDRESS_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, KNOWLEDGE_QUERY_FOCUS_RULE
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -432,6 +432,22 @@ test("all three surfaces name REFAL and gate facts on approved evidence", () => 
     assert.doesNotMatch(source, /content: \[\s*\n\s*"You are a business assistant operating inside the dashboard\. No company identity/,
       `${name} still opens with BLK-3`);
   }
+});
+
+test("respectful Arabic name greetings stay aligned across every answer surface", async () => {
+  const customer = buildBrainPrompt({ variant: "customer" }).join("\n");
+  const operator = buildBrainPrompt({ variant: "operator" }).join("\n");
+  const { buildDecisionMessages } = require("./agentDecision");
+  const decision = buildDecisionMessages({ currentMessage: "مرحبا انا حسن", locale: "arabic" })[0].content;
+  const edge = await import(pathToFileURL(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs")).href);
+  const rules = fs.readFileSync(path.join(REPO, "config/refal-agent-rules.md"), "utf8");
+
+  assert.ok(customer.includes(RESPECTFUL_ADDRESS_RULE));
+  assert.ok(operator.includes(RESPECTFUL_ADDRESS_RULE));
+  assert.ok(decision.includes(RESPECTFUL_ADDRESS_RULE));
+  assert.ok(edge.buildBrainPrompt({ variant: "operator" }).join("\n").includes(RESPECTFUL_ADDRESS_RULE));
+  assert.match(rules, /In Arabic,\s+use أستاذ or\s+أستاذة with the exact customer-stated name when the appropriate form is clear/);
+  assert.match(RESPECTFUL_ADDRESS_RULE, /courtesy, never as a claim about profession or status/);
 });
 
 test("the three surfaces agree on the mandatory compliance rules verbatim", () => {

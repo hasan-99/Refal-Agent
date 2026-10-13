@@ -162,8 +162,8 @@ test("an explicit name correction in conversation context overrides the saved ad
   assert.equal(reviewerInput.customerName, "Sami");
   assert.equal(reviewerInput.history[1].content, "[personal detail]");
   assert.match(prompt[0].content, /explicit correction override a saved name/);
-  assert.match(prompt[0].content, /explicitly gives their name in a greeting, use a conventional respectful form of address.*Otherwise use the name alone/iu);
-  assert.match(prompt[0].content, /Never guess a name, professional title, role,? or status/iu);
+  assert.match(prompt[0].content, /When a customer greets you and explicitly gives their name, address them using a conventional respectful form for that language.*Do not use only the bare name in this case.*If the appropriate form is unclear, use the name alone/iu);
+  assert.match(prompt[0].content, /Never invent a name, professional title, role, or status/iu);
 });
 
 test("needs discovery reflects the customer's problem, answers first, and asks one relevant question", async () => {
