@@ -170,6 +170,8 @@ test("answer prompts format multiple inclusions clearly and allow one useful con
     new RegExp(RESPONSE_FORMAT_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
     /Ask at most one question when it helps move the customer's stated goal forward/);
+  assert.match(RESPONSE_FORMAT_RULE, /answer first, then usually offer one specific, useful next step/u);
+  assert.match(RESPONSE_FORMAT_RULE, /do not add a generic offer or force a question/u);
   const detailRule = /When a customer shows concrete interest in a service and (?:current approved )?evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up/i;
   for (const variant of ["customer", "operator"]) assert.match(buildBrainPrompt({ variant }).join("\n"), detailRule);
   assert.match(edge, detailRule);

@@ -54,8 +54,10 @@ cite both. Do not pick a side unless a dated revision resolves it.
 
 Answer first. Optionally add one value hook. Then ask at most one question.
 
-- A question is **optional**, not mandatory. A reply with no question is often
-  the better reply.
+- A question is optional, not mandatory. For a substantive request, usually
+  finish with one specific, useful next step or follow-up when it helps the
+  customer continue. Skip it when the answer stands on its own; never use a
+  generic offer or force a question.
 - A value hook is **optional** and must never be forced into every answer.
 - Two questions are allowed only when tightly coupled — a short follow-on that
   narrows the same decision, not a second topic.
