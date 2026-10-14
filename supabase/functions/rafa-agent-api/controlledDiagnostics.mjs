@@ -43,4 +43,14 @@ function sanitizeControlledInspection(input = {}, privateValues = []) {
   };
 }
 
-export { sanitizeControlledInspection, redactInspectionText };
+// QA-controlled contacts may exercise the customer-initiated request flow,
+// which only creates a pending team-review item. Keep calendar/confirmation
+// and legacy booking states blocked while still allowing that workflow to be
+// tested end to end.
+function canRunControlledAppointmentWorkflow(user = {}, classification = {}) {
+  if (user?.profile?.qaControlledDiagnostics !== true) return true;
+  if (user?.booking?.status === "awaiting_details" && user.booking.teamReviewRequired === true) return true;
+  return !user?.booking?.status && classification?.operation === "booking_request";
+}
+
+export { sanitizeControlledInspection, redactInspectionText, canRunControlledAppointmentWorkflow };

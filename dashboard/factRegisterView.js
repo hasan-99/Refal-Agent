@@ -12,15 +12,13 @@
 //     and the re-approval guard rails, and
 //   * calls the two audited RPCs the migration defines.
 //
-// THE UNAPPLIED MIGRATION
-// -----------------------
-// supabase/migrations/20261009180000_refal_fact_register.sql has been written
-// but NOT applied, and this environment has no Supabase access at all. The one
-// outcome that must never happen is an empty table that reads as "no facts need
-// review" when the truth is "the register does not exist yet". So every call
-// here classifies a missing relation/function (Postgres 42P01 / 42883, or
-// PostgREST's PGRST205 / PGRST202 schema-cache equivalents) and turns it into an
-// explicit 503 that says so.
+// MIGRATION AVAILABILITY
+// ----------------------
+// The fact-register schema and review RPCs are tracked by migrations. A target
+// environment may not have all required migrations yet, so every call
+// classifies a missing relation/function (Postgres 42P01 / 42883, or
+// PostgREST's PGRST205 / PGRST202 schema-cache equivalents) and returns an
+// explicit 503. An absent register must never look like "no facts need review."
 //
 // This file is ESM (dashboard/package.json: "type": "module") and src/ is
 // CommonJS, so the behaviour layer is pulled in via `createRequire` — the exact

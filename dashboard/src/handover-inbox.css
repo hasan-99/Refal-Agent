@@ -69,6 +69,10 @@
 .handover-draft-card strong { display:flex; align-items:center; gap:6px; color:#3a545a; font-size:12px; text-transform:capitalize; }
 .handover-draft-card p { margin:0; color:#566d73; font-size:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
 .handover-empty { margin:14px 0 4px; color:#829198; font-size:12px; line-height:1.5; }
+.handover-unavailable { display:grid; justify-items:start; gap:7px; margin:14px 0 4px; padding:13px; border:1px solid #f0d4c8; border-radius:9px; background:#fff8f4; }
+.handover-unavailable strong { color:#784c3b; font-size:12px; }
+.handover-unavailable span,.handover-stale-note { color:#829198; font-size:11px; line-height:1.5; }
+.handover-stale-note { margin:0 0 8px; }
 .handover-alert,.handover-notice { padding:11px 14px; border-radius:10px; color:#90452e; background:#fff2eb; font-size:12px; }
 .handover-notice { color:#276b55; background:#eaf7f1; }
 @media (max-width:900px) { .handover-layout { grid-template-columns:1fr; } }

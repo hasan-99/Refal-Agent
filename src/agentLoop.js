@@ -536,6 +536,20 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
           if (observation.result.modelObservation) observation.result.modelObservation.status = "no_new_evidence";
         }
       }
+      // Broad searches already run the approved profile, generated facets,
+      // and exact customer wording in parallel. The next search-selection
+      // model call tends to paraphrase that same bundle and often returns no
+      // additional section. Drop the large retrieval tool description from
+      // the answer prompt, keep the remaining review/correction steps, and go
+      // directly to composition with the complete bounded evidence bundle.
+      if (validated.tool === "searchApprovedKnowledge" && result?.ok === true
+        && result.status === "found" && result.trace?.comprehensiveSearch === true
+        && evidenceBudget?.newEvidenceCount > 0) {
+        knowledgeSearchExhausted = true;
+        if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
+        step = Math.max(step, maxSteps - 3);
+        continue;
+      }
       // A search call can already combine the current message, two
       // complementary model queries, and the customer's prior-language
       // wording. One focused recovery call is enough when the first search

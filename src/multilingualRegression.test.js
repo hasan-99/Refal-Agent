@@ -273,7 +273,7 @@ test("[014-9] a later revocation overrides an earlier grant, independent of whic
 
 // --- 10. Booking request -------------------------------------------------------
 
-test("[014-10] a booking request creates a live confirmed event only after exact time confirmation, EN/AR/EL", async (t) => {
+test("[014-10] an explicit booking request creates a pending team-review request, EN/AR/EL", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
   google.calendar = () => ({
@@ -283,17 +283,17 @@ test("[014-10] a booking request creates a live confirmed event only after exact
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss Refalco Group services", confirm: "yes 10:00", genericConfirm: "yes", expect: /meeting is booked/i },
-    arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات الشركة", confirm: "نعم 10:00", genericConfirm: "نعم", expect: /تم تأكيد الموعد/ },
+    english: { start: "I'd like to book a meeting", details: "Monday 10:00 to discuss Refalco Group services", expect: /team to review/i },
+    arabic: { start: "أريد حجز اجتماع", details: "الاثنين الساعة 10:00 لمناقشة خدمات الشركة", expect: /للفريق/ },
     // The booking parser accepts natural Greek weekday/month wording; its
     // direct parser coverage is in booking.test.js. This integration fixture
     // keeps an explicit ISO date so the full state transition is unambiguous.
-    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της Refalco Group", confirm: "ναι 10:00", genericConfirm: "ναι", expect: /Το ραντεβού σας έχει κλειστεί/ }
+    greek: { start: "Θέλω να κλείσω ένα ραντεβού", details: "2026-01-05 10:00 για τις υπηρεσίες της Refalco Group", expect: /ομάδα/ }
   };
-  for (const [locale, { start, details, confirm, genericConfirm, expect }] of Object.entries(CASES)) {
+  for (const [locale, { start, details, expect }] of Object.entries(CASES)) {
     const user = { id: `booking-${locale}`, phone: "35799000000", profile: { name: "Test" }, booking: null };
     const appointmentId = `${locale}-appt-id`;
-    const persisted = { id: appointmentId, status: "awaiting_customer_confirmation", created_at: "2026-01-02T08:00:00.000Z", metadata: {} };
+    const persisted = { id: appointmentId, status: "pending_review", created_at: "2026-01-02T08:00:00.000Z", metadata: {} };
     const store = {
       ensureUser: async () => user,
       getBookingPolicy: async () => BOOKING_POLICY,
@@ -305,29 +305,26 @@ test("[014-10] a booking request creates a live confirmed event only after exact
     const now = new Date("2026-01-02T08:00:00.000Z");
     await handleBookingMessage({ userId: user.id, text: start, store, now });
     const proposed = await handleBookingMessage({ userId: user.id, text: details, store, now });
-    assert.doesNotMatch(proposed.response, /confirmed|تم تأكيد|επιβεβαιώθηκε/i, locale);
-    const generic = await handleBookingMessage({ userId: user.id, text: genericConfirm, store, now });
-    assert.doesNotMatch(generic.response, expect, locale);
-    assert.equal(persisted.status, "awaiting_customer_confirmation", locale);
-    const confirmed = await handleBookingMessage({ userId: user.id, text: confirm, store, now });
-    assert.match(confirmed.response, expect, locale);
-    assert.match(confirmed.response, /Confirmed|تم تأكيد الموعد|Επιβεβαιώθηκε\./i, locale);
-    assert.equal(persisted.status, "confirmed", locale);
+    assert.match(proposed.response, expect, locale);
+    assert.match(proposed.response, /not confirmed|لم يتم تأكيد|δεν έχει επιβεβαιωθεί/i, locale);
+    assert.doesNotMatch(proposed.response, /(?:appointment|meeting) (?:is )?(?:confirmed|booked)|تم تأكيد الموعد:|Το ραντεβού σας έχει κλειστεί/i, locale);
+    assert.equal(persisted.status, "pending_review", locale);
+    assert.equal(user.booking.status, "pending_review", locale);
   }
 });
 
 // --- 11. Booking failure --------------------------------------------------------
 
-test("[014-11] a calendar access failure offers a truthful pending-request path in the customer's language, EN/AR/EL", async (t) => {
+test("[014-11] booking requests do not prefetch calendar availability, EN/AR/EL", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
   google.calendar = () => ({ freebusy: { query: async () => { throw new Error("invalid_grant"); } } });
   t.after(() => { google.calendar = originalCalendar; });
 
   const CASES = {
-    english: { text: "I'd like to book a meeting", expect: /verify calendar availability right now/i },
-    arabic: { text: "أريد حجز اجتماع", expect: /لا أستطيع التحقق من توفر التقويم/ },
-    greek: { text: "Θέλω να κλείσω ραντεβού", expect: /Δεν μπορώ να επαληθεύσω τη διαθεσιμότητα/ }
+    english: { text: "I'd like to book a meeting", expect: /tomorrow or a later working day/i },
+    arabic: { text: "أريد حجز اجتماع", expect: /غدًا أو يوم عمل لاحق/ },
+    greek: { text: "Θέλω να κλείσω ραντεβού", expect: /αύριο ή κάποια επόμενη εργάσιμη ημέρα/ }
   };
   for (const [locale, { text, expect }] of Object.entries(CASES)) {
     const user = { id: `bookfail-${locale}`, profile: {}, booking: null };
@@ -335,7 +332,7 @@ test("[014-11] a calendar access failure offers a truthful pending-request path 
     const result = await handleBookingMessage({ userId: user.id, text, store });
     assert.match(result.response, expect, locale);
     assert.doesNotMatch(result.response, /confirmed|تم تأكيد|επιβεβαιώθηκε/i, locale);
-    assert.equal(user.booking.calendarUnavailable, true, locale);
+    assert.equal(user.booking.calendarUnavailable, false, locale);
   }
 });
 

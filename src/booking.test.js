@@ -49,8 +49,10 @@ test("booking intent recognizes natural English and Arabic requests without trea
     "Please set up a call next week",
     "I'd like an appointment on Tuesday",
     "Are you available for a meeting tomorrow?",
+    "Is tomorrow at 10 available?",
     "ممكن ترتيب موعد الخميس",
-    "أريد اجتماع يوم الخميس"
+    "أريد اجتماع يوم الخميس",
+    "بكرا الساعة ١٠ الصبح في موعد متاح؟"
   ]) assert.equal(isBookingRequest(message), true, message);
 
   for (const message of [
@@ -60,6 +62,45 @@ test("booking intent recognizes natural English and Arabic requests without trea
     "بدي أعرف بشكل عام شو خدماتكم، وما بدي احجز موعد حالياً.",
     "I want to know your services, but I don't want to book a meeting yet."
   ]) assert.equal(isBookingRequest(message), false, message);
+});
+
+test("specific Arabic time inquiry retains the slot, collects only missing details, then queues team review", async (t) => {
+  resetCalendarEnv(t, false);
+  const userId = "35799111222@s.whatsapp.net";
+  const user = { id: userId, phone: "35799111222", profile: {}, booking: null };
+  const store = makeStore(completePolicy, user);
+  const now = new Date("2026-10-13T12:00:00.000Z");
+
+  const availability = await handleBookingMessage({ userId, text: "الخميس الساعة ١٠ الصبح في موعد متاح؟", store, now });
+  assert.match(availability.response, /السبب المختصر للاجتماع/u);
+  assert.equal((await store.ensureUser()).booking.status, "awaiting_details");
+  assert.equal((await store.ensureUser()).booking.selectedSlot.start, "2026-10-15T07:00:00.000Z");
+  assert.equal(store.calls.appointments, 0);
+
+  const purpose = await handleBookingMessage({ userId, text: "مناقشة تأسيس شركتي", store, now });
+  assert.match(purpose.response, /الاسم/u);
+  assert.equal((await store.ensureUser()).booking.purpose, "مناقشة تأسيس شركتي");
+  assert.equal(store.calls.appointments, 0);
+
+  const submitted = await handleBookingMessage({ userId, text: "حسن", store, now });
+  assert.equal(submitted.appointment.status, "pending_review");
+  assert.match(submitted.response, /للفريق/u);
+  assert.doesNotMatch(submitted.response, /الموعد متاح/u);
+  assert.equal((await store.ensureUser()).booking.status, "pending_review");
+  assert.equal(submitted.appointment.metadata.appointmentDetails.name, "حسن");
+  assert.equal(submitted.appointment.metadata.appointmentDetails.phone, "35799111222");
+  assert.equal(submitted.appointment.metadata.appointmentDetails.topic, "مناقشة تأسيس شركتي");
+  assert.equal(store.calls.appointments, 1);
+});
+
+test("specific next-morning requests inside the minimum-notice window do not create a dashboard request", async (t) => {
+  resetCalendarEnv(t, false);
+  const store = makeStore(completePolicy);
+  const now = new Date("2026-10-13T14:49:00.000Z");
+  const result = await handleBookingMessage({ userId: "35799111222@s.whatsapp.net", text: "بكرا الساعة ١٠ الصبح في موعد متاح؟", store, now });
+  assert.match(result.response, /24 ساعة/u);
+  assert.equal(store.calls.appointments, 0);
+  assert.equal((await store.ensureUser()).booking, null);
 });
 
 test("Rafa acknowledges a booking customer's name naturally without saying it was saved", async (t) => {
@@ -105,18 +146,20 @@ test("calendar access check reports missing or inaccessible calendar IDs", async
   await assert.rejects(verifyCalendarAccess(completePolicy), /missing or not accessible/);
 });
 
-test("calendar access failure preserves a truthful pending request path instead of dead-ending the customer", async (t) => {
+test("a booking request does not prefetch calendar availability before collecting details", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
-  google.calendar = () => ({ freebusy: { query: async () => { throw new Error("invalid_grant"); } } });
+  const calendarCalls = [];
+  google.calendar = () => ({ freebusy: { query: async () => { calendarCalls.push(true); throw new Error("invalid_grant"); } } });
   t.after(() => { google.calendar = originalCalendar; });
   const store = makeStore(completePolicy);
 
   const result = await handleBookingMessage({ userId: "test-user", text: "Could we book a meeting next Thursday?", store });
 
-  assert.match(result.response, /verify calendar availability right now/i);
+  assert.match(result.response, /tomorrow or a later working day/i);
   assert.doesNotMatch(result.response, /that time (?:is )?available/i);
-  assert.equal((await store.ensureUser()).booking.calendarUnavailable, true);
+  assert.equal((await store.ensureUser()).booking.calendarUnavailable, false);
+  assert.equal(calendarCalls.length, 0);
   assert.equal(store.calls.updates, 1);
   assert.equal(store.calls.appointments, 0);
 });
@@ -126,7 +169,7 @@ test("calendar configuration remains ready when optional Meet-link creation is d
   assert.equal(hasCalendarConfig({ ...completePolicy, createMeetLink: false }), true);
 });
 
-test("Greek customer can submit a preferred time for admin review when calendar availability cannot be verified", async (t) => {
+test("Greek customer can submit a preferred time for admin review without calendar prefetch", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
   const calendarCalls = [];
@@ -138,7 +181,7 @@ test("Greek customer can submit a preferred time for admin review when calendar 
   const policy = { ...completePolicy, startTime: "10:00", endTime: "15:00", createMeetLink: true };
   const user = { id: "35799111222@c.us", phone: "35799111222", profile: { name: "Test" }, booking: null };
   let persistedInput;
-  const appointment = { id: "11111111-1111-4111-8111-111111111111", status: "awaiting_customer_confirmation", created_at: "2026-01-02T08:00:00.000Z", metadata: {} };
+  const appointment = { id: "11111111-1111-4111-8111-111111111111", status: "pending_review", created_at: "2026-01-02T08:00:00.000Z", metadata: {} };
   const store = {
     ensureUser: async () => user,
     getBookingPolicy: async () => policy,
@@ -149,24 +192,17 @@ test("Greek customer can submit a preferred time for admin review when calendar 
   const now = new Date("2026-01-02T08:00:00.000Z");
 
   const started = await handleBookingMessage({ userId: user.id, text: "Θέλω να κλείσω ένα ραντεβού", store, now });
-  assert.match(started.response, /Δεν μπορώ να επαληθεύσω τη διαθεσιμότητα/);
+  assert.match(started.response, /αύριο ή κάποια επόμενη εργάσιμη ημέρα/);
   const proposed = await handleBookingMessage({ userId: user.id, text: "Δευτέρα 5 Ιανουαρίου 2026 στις 11:00 για συζήτηση έργου", store, now });
-  assert.match(proposed.response, /Δεν μπορώ να επιβεβαιώσω.*11:00/);
-  assert.match(proposed.response, /Απαντήστε ναι ή όχι/);
+  assert.match(proposed.response, /ομάδα/);
+  assert.match(proposed.response, /δεν έχει επιβεβαιωθεί/);
   assert.doesNotMatch(proposed.response, /Βρήκα διαθέσιμη ώρα/);
-  assert.equal(calendarCalls.length, 1, "availability was unavailable at entry and is not misrepresented as checked");
-  assert.equal(persistedInput.status, "awaiting_customer_confirmation", "the chosen time is durably stored before confirmation");
-  assert.equal(appointment.status, "awaiting_customer_confirmation");
-
-  const genericYes = await handleBookingMessage({ userId: user.id, text: "ναι", store, now });
-  assert.match(genericYes.response, /ακριβή ώρα/);
-  assert.equal(appointment.status, "awaiting_customer_confirmation");
-  const requested = await handleBookingMessage({ userId: user.id, text: "ναι 11:00", store, now });
-  assert.match(requested.response, /στάλθηκε στην ομάδα για έλεγχο/);
-  assert.match(requested.response, /δεν έχει επιβεβαιωθεί/);
+  assert.equal(calendarCalls.length, 0, "the request path does not prefetch calendar availability");
+  assert.equal(persistedInput.status, "pending_review", "the requested time is queued for admin review");
+  assert.equal(appointment.status, "pending_review");
   assert.equal(persistedInput.metadata.availabilityVerified, false);
   assert.equal(persistedInput.startsAt, "2026-01-05T09:00:00.000Z");
-  assert.equal(appointment.status, "pending_calendar");
+  assert.equal(appointment.status, "pending_review");
 });
 
 test("booking stays unavailable and makes no state changes until required policy is complete", async (t) => {
@@ -385,19 +421,20 @@ test("a date-like reply after an informational topic switch asks once before res
   assert.match(dateReply.response, /resume the earlier appointment request/i);
   assert.equal((await store.ensureUser()).booking.resumePrompted, true);
   const resumed = await handleBookingMessage({ userId: "test-user", text: "yes", store, now });
-  assert.match(resumed.response, /I found that time available/);
-  assert.equal((await store.ensureUser()).booking.status, "awaiting_confirmation");
+  assert.match(resumed.response, /team to review/);
+  assert.doesNotMatch(resumed.response, /time available/u);
+  assert.equal((await store.ensureUser()).booking.status, "pending_review");
   assert.equal(store.calls.appointments, 1);
 });
 
-test("Arabic and Greek confirmation prompts specify the exact 24-hour time initially and after a bare yes", async (t) => {
+test("Arabic and Greek appointment requests enter team review without claiming availability", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
   google.calendar = () => ({ freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) } });
   t.after(() => { google.calendar = originalCalendar; });
   for (const [language, start, expected] of [
-    ["arabic", "2026-10-12T07:30:00.000Z", /نعم، 10:30/],
-    ["greek", "2026-10-12T07:30:00.000Z", /ναι, 10:30/]
+    ["arabic", "2026-10-12T07:30:00.000Z", /أرسلت طلب الموعد/],
+    ["greek", "2026-10-12T07:30:00.000Z", /ομάδα/]
   ]) {
     const now = new Date("2026-10-11T05:00:00.000Z");
     const userId = `3579900000${language === "arabic" ? "1" : "2"}@c.us`;
@@ -413,10 +450,9 @@ test("Arabic and Greek confirmation prompts specify the exact 24-hour time initi
     });
     const proposed = await handleBookingMessage({ userId, text: language === "arabic" ? "مشروع جديد 10:30" : "Νέο έργο 10:30", store, now });
     assert.match(proposed.response, expected, `${language} initial prompt`);
-    assert.equal((await store.ensureUser()).booking.status, "awaiting_confirmation");
-
-    const retry = await handleBookingMessage({ userId, text: language === "arabic" ? "نعم" : "ναι", store, now });
-    assert.match(retry.response, expected, `${language} bare-yes retry`);
+    assert.match(proposed.response, /not confirmed|لم يتم تأكيد|δεν έχει επιβεβαιωθεί/iu);
+    assert.equal((await store.ensureUser()).booking.status, "pending_review");
+    assert.equal(store.calls.appointments, 1);
   }
 });
 
@@ -599,7 +635,7 @@ test("booking cancellation uses the current Supabase hours", async (t) => {
   assert.equal(store.calls.appointments, 0);
 });
 
-test("Arabic WhatsApp booking persists the confirmation state before creating a live calendar event", async (t) => {
+test("Arabic WhatsApp booking persists a pending team-review request without creating a calendar event", async (t) => {
   resetCalendarEnv(t, true);
   const originalCalendar = google.calendar;
   const busyChecks = [];
@@ -642,23 +678,15 @@ test("Arabic WhatsApp booking persists the confirmation state before creating a 
   const started = await handleBookingMessage({ userId: user.id, text: "أريد حجز اجتماع", store, now });
   assert.match(started.response, /غدًا أو يوم عمل لاحق/);
   const proposed = await handleBookingMessage({ userId: user.id, text: "الاثنين الساعة 11:00 لمناقشة مشروع الشركة", store, now });
-  assert.match(proposed.response, /الموعد متاح/);
-  assert.match(proposed.response, /أجب بنعم، 11:00/);
-  assert.equal(busyChecks.length, 2);
+  assert.match(proposed.response, /أرسلت طلب الموعد/);
+  assert.match(proposed.response, /لم يتم تأكيد الموعد/);
+  assert.equal(busyChecks.length, 0, "the request enters team review without checking or claiming calendar availability");
   assert.equal(events.length, 0);
-
-  const genericYes = await handleBookingMessage({ userId: user.id, text: "نعم", store, now });
-  assert.match(genericYes.response, /وقت الموعد المحدد/);
-  assert.equal(persisted.status, "awaiting_customer_confirmation");
-  const requested = await handleBookingMessage({ userId: user.id, text: "نعم 11:00", store, now });
-  assert.match(requested.response, /تم تأكيد الموعد/);
-  assert.equal(busyChecks.length, 3);
-  assert.equal(events.length, 1);
-  assert.equal(persisted.status, "confirmed");
-  assert.deepEqual(writes, ["creating", "confirmed"]);
-  assert.equal(user.booking.status, "booked");
+  assert.equal(persisted.status, "pending_review");
+  assert.deepEqual(writes, []);
+  assert.equal(user.booking.status, "pending_review");
   assert.equal(user.booking.appointmentId, appointmentId);
-  assert.equal(reminders.length, 2);
+  assert.equal(reminders.length, 0);
 });
 
 test("admin approval succeeds without a Meet link when its creation is disabled", async (t) => {
@@ -740,7 +768,7 @@ test("the main WhatsApp flow offers at most two live slots for tomorrow and asks
   const selected = await handleBookingMessage({ userId: user.id, text: "2", store, now });
   assert.match(selected.response, /brief purpose/);
   assert.equal(user.booking.status, "awaiting_details");
-  assert.equal(queries.length, 2, "startup access check and live slot listing both queried the calendar");
+  assert.equal(queries.length, 1, "only the date-specific live slot listing queries the calendar");
 });
 
 test("booking offers tomorrow or a later workday, and localized date choices return compliant live slots", async (t) => {
@@ -779,5 +807,5 @@ test("booking offers tomorrow or a later workday, and localized date choices ret
     }
     assert.equal(user.booking.status, "awaiting_slot_choice");
   }
-  assert.equal(queries.length, 6, "each locale performs a read-only access check and one date-specific availability query");
+  assert.equal(queries.length, 3, "each locale performs only one date-specific availability query");
 });

@@ -33,6 +33,7 @@ const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTe
 const { createMessageExecutor, parseMessageQueueLimit } = require("./messageConcurrency");
 const { claimInboundReceipt } = require("./inboundMessageReceipt");
 const { runAgentLiveAnswerTurn: runAgentLiveAnswerTurnComposition } = require("./agentLiveAnswerTurn");
+const { canRunControlledAppointmentWorkflow } = require("./controlledDiagnostics");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -272,7 +273,9 @@ async function runOperationalBookingTurn(socket, chatId, userId, text, requestTr
   const requestStartedAt = performance.now();
   const user = await store.getUser(userId);
   if (prepared.safety?.restricted || prepared.complianceTriggers?.length) throw Object.assign(new Error("Booking restricted by policy."), { code: "BOOKING_POLICY_RESTRICTED" });
-  if (user.profile?.qaControlledDiagnostics === true) throw Object.assign(new Error("Controlled test cannot create bookings."), { code: "TEST_ACTION_FORBIDDEN" });
+  if (user.profile?.qaControlledDiagnostics === true && !canRunControlledAppointmentWorkflow(user, prepared.classification)) {
+    throw Object.assign(new Error("Controlled test cannot create confirmed bookings."), { code: "TEST_ACTION_FORBIDDEN" });
+  }
   const traceId = requestTrace.traceId;
   const stage = (name, startedAt, fields = {}) => logEvent("response_stage", { traceId, stage: name, durationMs: Math.round(performance.now() - startedAt), ...fields });
   let stageStartedAt;
@@ -306,7 +309,7 @@ async function runOperationalBookingTurn(socket, chatId, userId, text, requestTr
         const expectedAppointmentStatus = booking.appointment.status;
         const payload = {
           name: booking.user.profile?.name || "",
-          phone: booking.user.phone || String(userId || "").replace(/@.+$/, ""),
+          phone: booking.appointment?.metadata?.appointmentDetails?.phone || "",
           startsAt: booking.details.start.toISOString(),
           timezone: booking.policy.timezone,
           purpose: booking.details.purpose,

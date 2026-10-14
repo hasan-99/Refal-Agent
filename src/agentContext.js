@@ -5,6 +5,10 @@
 // from ever seeing secrets, raw WhatsApp transport internals, or more
 // personal data than it needs to help with the current message.
 const { INTENTS } = require("./intent");
+const { RESPONSE_STYLE_DEFAULTS, validateResponseStyle } = require("./responseStyle");
+const { profile } = require("./companyProfile");
+const { identityFromProfile, validateCompanyIdentity } = require("./companyIdentitySettings");
+const { BUSINESS_GUIDANCE_DEFAULTS, validateBusinessGuidance } = require("./businessGuidance");
 
 function safeTrim(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -26,7 +30,10 @@ function buildAgentContext({
   leadTier = "",
   buyingSignals = [],
   conversationPreferences = {},
-  contextualWorkflow = "none"
+  contextualWorkflow = "none",
+  responseStyle = RESPONSE_STYLE_DEFAULTS,
+  companyIdentity = null,
+  businessGuidance = BUSINESS_GUIDANCE_DEFAULTS
 } = {}) {
   const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
   const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
@@ -66,6 +73,9 @@ function buildAgentContext({
     consentState: safeTrim(consentState, 20) || "unknown",
     conversationPreferences: Object.freeze({ noProactiveBookingOrContact: conversationPreferences.noProactiveBookingOrContact === true }),
     contextualWorkflow: safeTrim(contextualWorkflow, 40),
+    responseStyle: validateResponseStyle(responseStyle),
+    companyIdentity: validateCompanyIdentity(companyIdentity || identityFromProfile(profile)),
+    businessGuidance: validateBusinessGuidance(businessGuidance),
     leadTier: safeLeadTier,
     buyingSignals: Object.freeze(safeBuyingSignals),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))])

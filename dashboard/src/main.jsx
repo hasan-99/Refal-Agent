@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
   Clock3,
   Database,
   Eye,
@@ -49,6 +50,8 @@ import { readSseData } from "./sse.js";
 import { notificationJobLabel } from "../notificationLabels.js";
 import { notificationBadgeText } from "../notificationBadge.js";
 import { normalizeWhatsAppNumber } from "../phoneNumber.js";
+import { formatUsageUsd } from "./usageDisplay.js";
+import { COMPANY_IDENTITY_CHANGE_REASONS } from "../companyIdentity.js";
 import KnowledgeCommercialWarning from "./KnowledgeCommercialWarning.jsx";
 import rafaLogo from "./assets/rafa-mark.png";
 const Conversations = React.lazy(() => import("./Conversations.jsx"));
@@ -62,11 +65,7 @@ const navItems = [
   { id: "agent-status", label: "Agent status", icon: Activity },
   { id: "performance", label: "Performance", icon: TrendingUp },
   { id: "conversations", label: "Conversations", icon: MessageCircleMore },
-  { id: "knowledge", label: "Knowledge", icon: BookOpenCheck },
-  // W3.9.7 — the fact register. Admin only: re-approval is an accountability
-  // record, and blocking a fact removes it from retrieval entirely.
-  { id: "facts", label: "Facts", icon: ShieldCheck, adminOnly: true },
-  { id: "commercial-data", label: "Commercial data", icon: Database, adminOnly: true },
+  { id: "company-brain", label: "Company brain", icon: BrainCircuit },
   { id: "bookings", label: "Bookings", icon: CalendarClock },
   { id: "follow-ups", label: "Follow-ups", icon: Bell, adminOnly: true },
   { id: "blocked", label: "Blocked numbers", icon: ShieldBan, adminOnly: true }
@@ -75,7 +74,25 @@ const navItems = [
 const DASHBOARD_SECTION_STORAGE_KEY = "rafa-dashboard-active-section";
 const DASHBOARD_CONVERSATION_VIEW_STORAGE_KEY = "rafa-dashboard-conversation-view";
 const DASHBOARD_CONVERSATION_ID_STORAGE_KEY = "rafa-dashboard-conversation-id";
-const dashboardSections = new Set([...navItems.map((item) => item.id), "account", "team"]);
+const legacyBrainSections = new Set(["knowledge", "identity", "facts", "commercial-data", "response-style"]);
+const dashboardSections = new Set([...navItems.map((item) => item.id), ...legacyBrainSections, "account", "team", "audit"]);
+
+function initialDashboardSection() {
+  const section = readInitialValue("section", DASHBOARD_SECTION_STORAGE_KEY, dashboardSections, "overview");
+  return legacyBrainSections.has(section) ? "company-brain" : section;
+}
+
+function initialBrainCategory() {
+  try {
+    const params = new URL(window.location.href).searchParams;
+    const section = params.get("section");
+    if (legacyBrainSections.has(section)) return section;
+    const category = params.get("category");
+    return ["knowledge", "identity", "facts", "commercial-data", "response-style", "business-guidance"].includes(category) ? category : "knowledge";
+  } catch {
+    return "knowledge";
+  }
+}
 
 function readInitialValue(param, key, allowed, fallback) {
   try {
@@ -114,7 +131,8 @@ function App() {
   const [authMode, setAuthMode] = useState("login");
   const [outstandingNotificationCount, setOutstandingNotificationCount] = useState(0);
   const [notificationCountUnavailable, setNotificationCountUnavailable] = useState(false);
-  const [active, setActive] = useState(() => readInitialValue("section", DASHBOARD_SECTION_STORAGE_KEY, dashboardSections, "overview"));
+  const [active, setActive] = useState(initialDashboardSection);
+  const [brainCategory, setBrainCategory] = useState(initialBrainCategory);
   const [conversationView, setConversationView] = useState(() => readInitialValue("view", DASHBOARD_CONVERSATION_VIEW_STORAGE_KEY, new Set(["inbox", "leads"]), "inbox"));
   const [selectedConversationId, setSelectedConversationId] = useState(readInitialConversationId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -145,8 +163,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (authState?.role !== "admin" && ["team", "facts", "commercial-data", "follow-ups", "blocked"].includes(active)) setActive("overview");
-  }, [active, authState?.role]);
+    if (authState?.authenticated && authState.role !== "admin" && ["team", "follow-ups", "blocked"].includes(active)) setActive("overview");
+    if (authState?.authenticated && authState.role !== "admin" && ["facts", "commercial-data"].includes(brainCategory)) setBrainCategory("knowledge");
+  }, [active, authState?.role, brainCategory]);
 
   useEffect(() => {
     if (dashboardSections.has(active)) writeStoredValue(DASHBOARD_SECTION_STORAGE_KEY, active);
@@ -164,12 +183,14 @@ function App() {
     if (!authState?.authenticated) return;
     const url = new URL(window.location.href);
     url.searchParams.set("section", active);
+    if (active === "company-brain") url.searchParams.set("category", brainCategory);
+    else url.searchParams.delete("category");
     if (active === "conversations") url.searchParams.set("view", conversationView);
     else url.searchParams.delete("view");
     if (active === "conversations" && selectedConversationId) url.searchParams.set("conversation", selectedConversationId);
     else url.searchParams.delete("conversation");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [active, authState?.authenticated, conversationView, selectedConversationId]);
+  }, [active, authState?.authenticated, brainCategory, conversationView, selectedConversationId]);
 
   useEffect(() => {
     if (!authState?.authenticated) return undefined;
@@ -233,6 +254,11 @@ function App() {
   const isAdmin = authState.role === "admin";
   const roleLabel = isAdmin ? "Admin" : "User";
   const navigateTo = (section, view) => {
+    if (legacyBrainSections.has(section)) {
+      setBrainCategory(section);
+      setActive("company-brain");
+      return;
+    }
     if (section === "leads") {
       setConversationView("leads");
       setSelectedConversationId("");
@@ -252,6 +278,7 @@ function App() {
   const visibleNavItems = navItems.filter((item) => !item.adminOnly || isAdmin);
   const current = visibleNavItems.find((item) => item.id === active) ||
     (active === "team" ? { id: "team", label: "Team", icon: UserRoundPlus } : null) ||
+    (active === "audit" && isAdmin ? { id: "audit", label: "Admin audit", icon: ClipboardList } : null) ||
     (active === "account" ? { id: "account", label: "Account", icon: UserRound } : null) ||
     visibleNavItems[0];
   const ActiveIcon = current.icon;
@@ -306,6 +333,7 @@ function App() {
             <button className="sidebar-menu-action" type="button" onClick={() => { setActive("account"); setSidebarSettingsOpen(false); }}><UserRound size={16} /><span>Account details</span><ChevronRight size={14} /></button>
             <button className="sidebar-menu-action" type="button" onClick={() => { setAuthMode("reset"); setSidebarSettingsOpen(false); }}><KeyRound size={16} /><span>Change password</span><ChevronRight size={14} /></button>
             {isAdmin && <button className="sidebar-menu-action" type="button" onClick={() => { setActive("team"); setSidebarSettingsOpen(false); }}><UserRoundPlus size={16} /><span>Manage team</span><ChevronRight size={14} /></button>}
+            {isAdmin && <button className="sidebar-menu-action" type="button" onClick={() => { setActive("audit"); setSidebarSettingsOpen(false); }}><ClipboardList size={16} /><span>Admin audit</span><ChevronRight size={14} /></button>}
             <button className="sidebar-menu-action disabled" type="button" disabled><Bell size={16} /><span>Notification preferences</span><small>Later</small></button>
             <button className="logout" onClick={() => api("/api/logout", { method: "POST" }).then(() => { clearApiCache(); setAuthState({ authenticated: false }); })} aria-label="Sign out"><LogOut size={17} /><span>Sign out</span></button>
           </div>}
@@ -325,14 +353,13 @@ function App() {
         {active === "agent-status" && <AgentStatus isAdmin={isAdmin} />}
         {active === "performance" && <React.Suspense fallback={<Loading label="Loading performance" />}><Performance isAdmin={isAdmin} /></React.Suspense>}
         {active === "conversations" && <React.Suspense fallback={<Loading label="Loading conversations" />}><Conversations isAdmin={isAdmin} view={conversationView} onViewChange={setConversationView} selectedConversationId={selectedConversationId} onSelectedConversationChange={setSelectedConversationId} onNavigate={navigateTo} /></React.Suspense>}
-        {active === "knowledge" && <Knowledge isAdmin={isAdmin} onNavigate={navigateTo} />}
-        {active === "facts" && isAdmin && <React.Suspense fallback={<Loading label="Loading the fact register" />}><FactRegister isAdmin={isAdmin} /></React.Suspense>}
-        {active === "commercial-data" && isAdmin && <React.Suspense fallback={<Loading label="Loading commercial data" />}><DynamicData isAdmin={isAdmin} /></React.Suspense>}
+        {active === "company-brain" && <CompanyBrain isAdmin={isAdmin} category={brainCategory} onCategoryChange={setBrainCategory} onNavigate={navigateTo} />}
         {active === "bookings" && <Bookings isAdmin={isAdmin} />}
         {active === "follow-ups" && isAdmin && <React.Suspense fallback={<Loading label="Loading specialist follow-ups" />}><HandoverInbox onNavigate={navigateTo} /></React.Suspense>}
         {active === "blocked" && isAdmin && <BlockedNumbers />}
         {active === "account" && <AccountDetails authState={authState} />}
         {active === "team" && isAdmin && <Team />}
+        {active === "audit" && (isAdmin ? <AdminAudit /> : <Overview onNavigate={navigateTo} isAdmin={isAdmin} />)}
       </main>
       <AgentSidebar role={authState.role} />
     </div>
@@ -492,6 +519,31 @@ function Team() {
   </div>;
 }
 
+function AdminAudit() {
+  const { data, loading, error, reload } = useApi("/api/admin/audit");
+  const auditEvents = Array.isArray(data.databaseAuditEvents) ? data.databaseAuditEvents : [];
+  const adminEvents = Array.isArray(data.events) ? data.events : [];
+  return <div className="page-stack admin-audit-page">
+    <section className="team-intro">
+      <div><span className="eyebrow"><ClipboardList size={14} /> CHANGE HISTORY</span><h2>Admin audit</h2><p>Review company-data and workflow changes. Private message content and contact identifiers are filtered from this view.</p></div>
+      <button className="ghost icon-button" type="button" onClick={reload} aria-label="Refresh admin audit" title="Refresh"><RefreshCcw size={16} /></button>
+    </section>
+    {error && <p className="error" role="alert">{error}</p>}
+    <section className="panel admin-audit-panel" aria-labelledby="database-audit-title">
+      <div className="team-table-heading"><div><h2 id="database-audit-title">Workflow and record changes</h2><p>Latest database audit events · read only</p></div><span className="badge">{auditEvents.length} events</span></div>
+      {loading ? <Loading label="Loading audit history" /> : auditEvents.length ? <div className="admin-audit-list">{auditEvents.map((event) => <article className="admin-audit-event" key={event.id}>
+        <div className="admin-audit-event-heading"><strong>{event.event.replaceAll("_", " ")}</strong><time dateTime={event.at}>{formatDate(event.at)}</time></div>
+        <p><span>{event.source}</span><span>Actor: {event.actorType}</span></p>
+        {Object.keys(event.details || {}).length > 0 && <details><summary>Safe audit fields</summary><pre>{JSON.stringify(event.details, null, 2)}</pre></details>}
+      </article>)}</div> : <p className="empty">No workflow changes have been recorded yet.</p>}
+    </section>
+    <section className="panel admin-audit-panel" aria-labelledby="dashboard-audit-title">
+      <div className="team-table-heading"><div><h2 id="dashboard-audit-title">Dashboard admin actions</h2><p>Access, memory, qualification, reply edits, and business guidance changes</p></div><span className="badge">{adminEvents.length} events</span></div>
+    {adminEvents.length ? <div className="table-scroll"><table><thead><tr><th>Action</th><th>Actor</th><th>Fields</th><th>When</th></tr></thead><tbody>{adminEvents.map((event, index) => <tr key={`${event.event}-${event.at}-${index}`}><td>{event.action.replaceAll("_", " ")}</td><td>{event.actor}</td><td>{event.fields.map((field) => field.replaceAll("_", " ")).join(", ") || "—"}</td><td>{formatDate(event.at)}</td></tr>)}</tbody></table></div> : <p className="empty">No dashboard admin actions have been recorded yet.</p>}
+    </section>
+  </div>;
+}
+
 function StatusPill() {
   const [overview, setOverview] = useState(null);
   useEffect(() => {
@@ -515,6 +567,7 @@ function AgentSidebar({ role }) {
   const [memoryText, setMemoryText] = useState("");
   const [modelInput, setModelInput] = useState("");
   const [error, setError] = useState("");
+  const [deletingSessionId, setDeletingSessionId] = useState("");
   const [section, setSection] = useState("chat");
   const isAdmin = role === "admin";
   const [collapsed, setCollapsed] = useState(true);
@@ -591,14 +644,21 @@ function AgentSidebar({ role }) {
     }
   }
 
-  async function deleteSession(sessionId) {
+  async function deleteSession(session) {
+    const sessionId = String(session?.id || "");
+    if (!sessionId) return;
+    const title = String(session.title || "New chat");
+    if (typeof window.confirm === "function" && !window.confirm(`Delete “${title}” and its chat messages? Saved memories are managed separately.`)) return;
     setError("");
+    setDeletingSessionId(sessionId);
     try {
       await api(`/api/agent/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
       const next = await api("/api/agent/state");
       setState(next);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setDeletingSessionId("");
     }
   }
 
@@ -785,21 +845,18 @@ function AgentSidebar({ role }) {
         {loading ? <Loading label="Loading REFAL" /> : (
           <div className="session-list">
             {state.sessions.length ? state.sessions.map((session) => (
-              <button
+              <div
                 key={session.id}
                 className={state.session?.id === session.id ? "session-item active" : "session-item"}
-                onClick={() => openSession(session.id)}
               >
-                <span>{session.title}</span>
-                <small>{formatDate(session.updated_at)}</small>
-                <Trash2
-                  size={14}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    deleteSession(session.id);
-                  }}
-                />
-              </button>
+                <button type="button" className="session-item-open" onClick={() => openSession(session.id)} disabled={deletingSessionId === session.id}>
+                  <span>{session.title}</span>
+                  <small>{formatDate(session.updated_at)}</small>
+                </button>
+                <button type="button" className="session-item-delete" onClick={() => void deleteSession(session)} disabled={Boolean(deletingSessionId)} aria-label={`Delete chat ${session.title || "New chat"}`} title="Delete chat">
+                  {deletingSessionId === session.id ? <span className="conversation-spinner" aria-label="Deleting chat" /> : <Trash2 size={14} />}
+                </button>
+              </div>
             )) : <p className="empty">No chats yet.</p>}
           </div>
         )}
@@ -881,8 +938,254 @@ function AgentSidebar({ role }) {
   );
 }
 
-function Knowledge({ isAdmin, onNavigate }) {
-  const { data, loading, reload } = useApi("/api/knowledge");
+function CompanyBrain({ isAdmin, category, onCategoryChange, onNavigate }) {
+  const [openKnowledgeCreate, setOpenKnowledgeCreate] = useState(false);
+  function startKnowledgeCreate() {
+    setOpenKnowledgeCreate(true);
+    onCategoryChange("knowledge");
+  }
+  const categories = [
+    { id: "knowledge", label: "Knowledge library", description: "Company service and guidance material", icon: BookOpenCheck },
+    ...(isAdmin ? [
+      { id: "identity", label: "Company identity", description: "Configured identity and operating footprint", icon: Building2 },
+      { id: "facts", label: "Verified facts", description: "Evidence, review status, and freshness", icon: ShieldCheck },
+      { id: "commercial-data", label: "Services and commercial data", description: "Typed offers, fees, property, and terms", icon: Database },
+      { id: "response-style", label: "Response style", description: "Formatting, next steps, and service suggestions", icon: Settings },
+      { id: "business-guidance", label: "Business rules & hooks", description: "Editable guidance and localized conversation cues", icon: ClipboardList }
+    ] : [])
+  ];
+  const activeCategory = categories.some((item) => item.id === category) ? category : "knowledge";
+  return <div className="page-stack company-brain-page">
+    <section className="company-brain-intro">
+      <div><span className="eyebrow"><BrainCircuit size={14} /> REFAL KNOWLEDGE AND COMPANY DATA</span><h2>Company brain</h2><p>Manage the existing records REFAL uses to answer company questions. Each category keeps its own review and audit controls.</p></div>
+      <button type="button" className="ghost" onClick={() => onNavigate("bookings")}>Open appointment rules <ArrowUpRight size={14} /></button>
+    </section>
+    <nav className="company-brain-categories" aria-label="Company brain categories" role="tablist">
+      {categories.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" role="tab" aria-selected={activeCategory === item.id} className={activeCategory === item.id ? "active" : ""} onClick={() => onCategoryChange(item.id)}><Icon size={17} /><span><strong>{item.label}</strong><small>{item.description}</small></span><ChevronRight size={15} /></button>; })}
+    </nav>
+    <div role="tabpanel" aria-label={categories.find((item) => item.id === activeCategory)?.label}>
+      {activeCategory === "knowledge" && <Knowledge isAdmin={isAdmin} onNavigate={onNavigate} openCreateRequest={openKnowledgeCreate} onCreateRequestHandled={() => setOpenKnowledgeCreate(false)} />}
+      {activeCategory === "identity" && isAdmin && <CompanyIdentity />}
+      {activeCategory === "facts" && isAdmin && <React.Suspense fallback={<Loading label="Loading the fact register" />}><FactRegister isAdmin={isAdmin} onAddKnowledge={startKnowledgeCreate} /></React.Suspense>}
+      {activeCategory === "commercial-data" && isAdmin && <React.Suspense fallback={<Loading label="Loading commercial data" />}><DynamicData isAdmin={isAdmin} /></React.Suspense>}
+      {activeCategory === "response-style" && isAdmin && <ResponseStyleSettings />}
+      {activeCategory === "business-guidance" && isAdmin && <BusinessGuidanceSettings />}
+    </div>
+  </div>;
+}
+
+function CompanyIdentity() {
+  const { data, loading, error, reload } = useApi("/api/company/identity");
+  const [identity, setIdentity] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [message, setMessage] = useState("");
+  useEffect(() => { if (data.identity) setIdentity(data.identity); }, [data.identity]);
+  if (loading && !identity) return <Loading label="Loading company identity" />;
+  if (error && !identity) return <section className="panel company-identity-panel" role="alert"><PanelTitle icon={Building2} title="Company identity" /><p className="booking-policy-intro">The saved company identity could not be loaded.</p><p className="inline-error">{error}</p><button type="button" className="ghost" onClick={reload}><RefreshCcw size={15} /> Retry</button></section>;
+  if (!identity) return null;
+
+  async function saveIdentity(event) {
+    event.preventDefault();
+    setSaving(true); setSaveError(""); setMessage("");
+    const list = (value) => (Array.isArray(value) ? value : String(value || "").split(/\r?\n/u)).map((entry) => entry.trim()).filter(Boolean);
+    try {
+      const next = { ...identity, cities: list(identity.cities), departments: list(identity.departments), languages: list(identity.languages) };
+      const result = await api("/api/company/identity", { method: "PUT", body: JSON.stringify({ identity: next, reason }) });
+      setIdentity(result.identity); setEditing(false); setReason("");
+      setMessage(result.changedFields?.length ? `Saved ${result.changedFields.length} changed ${result.changedFields.length === 1 ? "field" : "fields"}. New replies use the updated identity.` : "Company identity is unchanged.");
+      reload();
+    } catch (cause) { setSaveError(cause.message || "Could not save company identity."); }
+    finally { setSaving(false); }
+  }
+
+  function changeIdentity(field, value) { setIdentity((current) => ({ ...current, [field]: value })); setSaveError(""); setMessage(""); }
+
+  const languageNames = new Intl.DisplayNames(undefined, { type: "language" });
+  const displayList = (value) => (Array.isArray(value) ? value : String(value || "").split(/\r?\n/u).filter(Boolean));
+  const rows = [
+    ["Brand", identity.brand],
+    ["Group", identity.groupName],
+    ["Legal name", identity.legalName],
+    ["Jurisdiction", identity.jurisdiction],
+    ["Timezone", identity.timezone],
+    ["Languages", displayList(identity.languages).map((language) => languageNames.of(language)).join(", ")],
+    ["Cities", displayList(identity.cities).join(", ")],
+    ["Departments", displayList(identity.departments).join(", ")]
+  ];
+  return <section className="panel company-identity-panel">
+    <PanelTitle icon={Building2} title="Company identity" action={!editing && <button type="button" className="ghost" onClick={() => { setEditing(true); setMessage(""); }}>Edit identity</button>} />
+    <p className="booking-policy-intro">Manage the identity Rafa uses across WhatsApp and the dashboard Agent. Credibility figures and company claims stay in reviewed facts and approved knowledge.</p>
+    {message && <p className="success-message" role="status">{message}</p>}
+    {error && identity && <p className="inline-error" role="status">The saved identity could not be refreshed. The last saved values remain visible; retry before making another change.</p>}
+    {editing ? <form className="company-identity-form" onSubmit={saveIdentity}>
+      <label className="field">Brand<input value={identity.brand} maxLength={120} required onChange={(event) => changeIdentity("brand", event.target.value)} /></label>
+      <label className="field">Group name<input value={identity.groupName} maxLength={120} required onChange={(event) => changeIdentity("groupName", event.target.value)} /></label>
+      <label className="field">Legal name<input value={identity.legalName} maxLength={120} required onChange={(event) => changeIdentity("legalName", event.target.value)} /></label>
+      <label className="field">Jurisdiction<input value={identity.jurisdiction} maxLength={120} required onChange={(event) => changeIdentity("jurisdiction", event.target.value)} /></label>
+      <label className="field">Timezone<input value={identity.timezone} maxLength={120} required aria-describedby="company-identity-timezone-help" onChange={(event) => changeIdentity("timezone", event.target.value)} /><small id="company-identity-timezone-help">Use an IANA timezone, for example Europe/Nicosia.</small></label>
+      <label className="field">Cities<textarea value={displayList(identity.cities).join("\n")} rows={4} required onChange={(event) => changeIdentity("cities", event.target.value)} /><small>One city per line.</small></label>
+      <label className="field">Departments<textarea value={displayList(identity.departments).join("\n")} rows={5} required onChange={(event) => changeIdentity("departments", event.target.value)} /><small>One department per line.</small></label>
+      <label className="field">Languages<textarea value={displayList(identity.languages).join("\n")} rows={3} required aria-describedby="company-identity-languages-help" onChange={(event) => changeIdentity("languages", event.target.value)} /><small id="company-identity-languages-help">Use supported language codes: ar, en, el. One per line.</small></label>
+      <label className="field company-identity-reason">Reason for change<select value={reason} required onChange={(event) => setReason(event.target.value)}><option value="">Choose a reason</option>{COMPANY_IDENTITY_CHANGE_REASONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
+      {saveError && <p className="inline-error" role="alert">{saveError}</p>}
+      <div className="form-actions"><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save identity"}</button><button type="button" className="ghost" disabled={saving} onClick={() => { setIdentity(data.identity); setEditing(false); setReason(""); setSaveError(""); }}>Cancel</button></div>
+    </form> : <dl className="company-identity-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "Not configured"}</dd></div>)}</dl>}
+    <p className="company-identity-source">The validated <code>config/company-profile.json</code> remains the startup fallback. Dashboard changes are stored in Supabase and consumed by both answer runtimes. Credibility figures remain in Verified facts and cannot be changed here.</p>
+  </section>;
+}
+
+function ResponseStyleSettings() {
+  const defaults = { paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true };
+  const { data, loading, error: loadError, reload } = useApi("/api/settings/response-style");
+  const [style, setStyle] = useState(defaults);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (data.style) setStyle({ ...defaults, ...data.style });
+  }, [data.style]);
+
+  async function save(event) {
+    event.preventDefault(); setBusy(true); setError(""); setMessage("");
+    try {
+      const result = await api("/api/settings/response-style", { method: "PUT", body: JSON.stringify({ style }) });
+      setStyle({ ...defaults, ...result.style }); setMessage("Response style saved to Supabase and will be used on new replies."); reload();
+    } catch (cause) { setError(cause.message || "Could not save response style."); }
+    finally { setBusy(false); }
+  }
+
+  if (loading && !data.style) return <Loading label="Loading response style" />;
+  if (loadError) return <section className="panel response-style-panel response-style-load-error" role="alert">
+    <PanelTitle icon={Settings} title="Rafa response style" />
+    <p className="booking-policy-intro">Saved preferences could not be loaded, so the current response style is unavailable.</p>
+    <p className="inline-error">{loadError}</p>
+    <button type="button" className="ghost" onClick={reload}><RefreshCcw size={15} /> Retry loading</button>
+  </section>;
+  return <section className="panel response-style-panel">
+    <PanelTitle icon={Settings} title="Rafa response style" />
+    <p className="booking-policy-intro">Set reply formatting, helpful continuations, and whether Rafa may offer one relevant service suggestion. Suggestions stay optional and require approved evidence; these preferences never override privacy, safety, or appointment rules.</p>
+    {loadError && <p className="inline-error" role="alert">{loadError}</p>}
+    <form onSubmit={save}>
+      <div className="form-grid">
+        <label className="field">Paragraph length<select value={style.paragraphLength} onChange={(event) => setStyle({ ...style, paragraphLength: event.target.value })}><option value="short">Short</option><option value="very_short">Very short</option></select></label>
+        <label className="field">List marker<select value={style.listMarker} onChange={(event) => setStyle({ ...style, listMarker: event.target.value })}><option value="hyphen">Hyphen bullets</option><option value="numbered">Numbered list</option></select></label>
+        <label className="field">How to continue<select value={style.continuationStyle} onChange={(event) => setStyle({ ...style, continuationStyle: event.target.value })}><option value="adaptive">Useful question or next step</option><option value="useful_question">One useful question</option><option value="helpful_next_step">Useful next step</option></select><small>Only add a question or next step when it helps; otherwise finish the answer.</small></label>
+        <label className="booking-confirm-duration"><input type="checkbox" checked={style.boldLabels} onChange={(event) => setStyle({ ...style, boldLabels: event.target.checked })} /> Bold short labels when useful</label>
+        <label className="response-style-suggestion-control"><input type="checkbox" checked={style.allowRelevantServiceSuggestions} onChange={(event) => setStyle({ ...style, allowRelevantServiceSuggestions: event.target.checked })} /><span><strong>Allow one relevant service suggestion</strong><small>When enabled, Rafa may add at most one optional suggestion after answering, only when approved knowledge supports it and it helps the customer's stated goal.</small></span></label>
+      </div>
+      <div className="booking-policy-actions"><button className="primary" type="submit" disabled={busy}><Save size={15} />{busy ? "Saving" : "Save response style"}</button>{message && <span role="status">{message}</span>}{error && <span className="calendar-check-error" role="alert">{error}</span>}</div>
+    </form>
+    <section className="response-style-preview" aria-labelledby="response-style-preview-title" aria-label="Reply formatting preview">
+      <div><h3 id="response-style-preview-title">Reply formatting preview</h3><span>Preview only · edits apply after saving</span></div>
+      <div className="response-style-preview-message" dir="auto">
+        <p>{style.boldLabels ? <><strong>Key detail:</strong> </> : "Key detail: "}One clear point in a short paragraph.</p>
+        <p>Separate points stay on their own lines, with space between paragraphs.</p>
+        <ul className={style.listMarker === "numbered" ? "numbered" : "hyphen"}>
+          <li>First supporting detail</li>
+          <li>Second supporting detail</li>
+        </ul>
+        <p className="response-style-preview-continuation">{style.continuationStyle === "useful_question" ? "One focused question when needed." : style.continuationStyle === "helpful_next_step" ? "A useful next step when it helps." : "A useful question or next step when relevant."}</p>
+        <p className="response-style-preview-suggestion" role="status">{style.allowRelevantServiceSuggestions ? "A relevant service suggestion is allowed when helpful and supported by approved knowledge." : "Unsolicited service suggestions are disabled."}</p>
+      </div>
+    </section>
+  </section>;
+}
+
+function BusinessGuidanceSettings() {
+  const empty = { rules: [], hooks: [] };
+  const { data, loading, error: loadError, reload } = useApi("/api/settings/business-guidance");
+  const [guidance, setGuidance] = useState(empty);
+  const [baseline, setBaseline] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    if (data.guidance) {
+      const saved = { rules: data.guidance.rules || [], hooks: data.guidance.hooks || [] };
+      setGuidance(saved);
+      setBaseline(JSON.stringify(saved));
+    }
+  }, [data.guidance]);
+
+  function newId(kind) {
+    return `${kind}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`}`;
+  }
+  function updateItem(collection, id, patch) {
+    setGuidance((current) => ({ ...current, [collection]: current[collection].map((item) => item.id === id ? { ...item, ...patch } : item) }));
+    setMessage(""); setSaveError("");
+  }
+  function addRule() {
+    setGuidance((current) => ({ ...current, rules: [...current.rules, { id: newId("rule"), title: "", language: "all", instruction: "", enabled: true }] }));
+    setMessage(""); setSaveError("");
+  }
+  function addHook() {
+    setGuidance((current) => ({ ...current, hooks: [...current.hooks, { id: newId("hook"), title: "", when: "", enabled: true, phrases: { en: "", ar: "", el: "" } }] }));
+    setMessage(""); setSaveError("");
+  }
+  function removeItem(collection, id) {
+    setGuidance((current) => ({ ...current, [collection]: current[collection].filter((item) => item.id !== id) }));
+    setMessage(""); setSaveError("");
+  }
+  async function save(event) {
+    event.preventDefault(); setBusy(true); setMessage(""); setSaveError("");
+    try {
+      const result = await api("/api/settings/business-guidance", { method: "PUT", body: JSON.stringify({ guidance, reason }) });
+      const saved = { rules: result.guidance.rules || [], hooks: result.guidance.hooks || [] };
+      setGuidance(saved); setBaseline(JSON.stringify(saved)); setReason(""); setMessage("Business rules and hooks saved. WhatsApp replies use the saved guidance within 30 seconds."); reload();
+    } catch (cause) { setSaveError(cause.message || "Could not save business guidance."); }
+    finally { setBusy(false); }
+  }
+
+  if (loading && !baseline) return <Loading label="Loading business rules and hooks" />;
+  if (loadError && !baseline) return <section className="panel business-guidance-panel" role="alert"><PanelTitle icon={ClipboardList} title="Business rules & hooks" /><p className="booking-policy-intro">Saved guidance could not be loaded, so editing is unavailable.</p><p className="inline-error">{loadError}</p><button type="button" className="ghost" onClick={reload}><RefreshCcw size={15} /> Retry loading</button></section>;
+
+  const dirty = baseline !== JSON.stringify(guidance);
+  return <section className="panel business-guidance-panel">
+    <PanelTitle icon={ClipboardList} title="Business rules & hooks" />
+    <p className="booking-policy-intro">Add, edit, enable, or remove business guidance that Rafa uses in live replies. Rules can apply to all languages or one language. Each hook has separate English, Arabic, and Greek wording.</p>
+    <div className="business-guidance-boundary"><ShieldCheck size={17} /><p><strong>Safety stays protected.</strong> These are optional business preferences, not company evidence or reply scripts. Approved knowledge still supports company claims; privacy, consent, and booking rules remain enforced.</p></div>
+    {loadError && <p className="inline-error" role="status">The last saved values remain visible. Retry before saving further changes.</p>}
+    <form onSubmit={save}>
+      <div className="business-guidance-section-heading"><div><h3>Business guidance</h3><p>Short instructions for how Rafa handles a company conversation.</p></div><button type="button" className="ghost" onClick={addRule} disabled={guidance.rules.length >= 12}><Plus size={15} /> Add rule</button></div>
+      {guidance.rules.length === 0 && <p className="business-guidance-empty">No extra business rules are configured.</p>}
+      <div className="business-guidance-list">{guidance.rules.map((rule, index) => <article className="business-guidance-item" key={rule.id}>
+        <div className="business-guidance-item-head"><strong>Rule {index + 1}</strong><button type="button" className="business-guidance-remove" aria-label={`Remove rule ${index + 1}`} onClick={() => removeItem("rules", rule.id)}><Trash2 size={15} /> Remove</button></div>
+        <div className="form-grid">
+          <label className="field">Name<input value={rule.title} maxLength={80} required placeholder="For example: Existing clients" onChange={(event) => updateItem("rules", rule.id, { title: event.target.value })} /></label>
+          <label className="field">Applies to<select value={rule.language} onChange={(event) => updateItem("rules", rule.id, { language: event.target.value })}><option value="all">All languages</option><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select></label>
+          <label className="field business-guidance-wide">Guidance<textarea value={rule.instruction} maxLength={500} rows={3} required placeholder="Describe the preferred handling in a few clear sentences." onChange={(event) => updateItem("rules", rule.id, { instruction: event.target.value })} /></label>
+          <label className="business-guidance-enabled"><input type="checkbox" checked={rule.enabled} onChange={(event) => updateItem("rules", rule.id, { enabled: event.target.checked })} /> Enabled</label>
+        </div>
+      </article>)}</div>
+
+      <div className="business-guidance-section-heading"><div><h3>Conversation hooks</h3><p>Optional localized wording ideas. Rafa adapts them to the conversation and never has to use them.</p></div><button type="button" className="ghost" onClick={addHook} disabled={guidance.hooks.length >= 12}><Plus size={15} /> Add hook</button></div>
+      {guidance.hooks.length === 0 && <p className="business-guidance-empty">No extra conversation hooks are configured.</p>}
+      <div className="business-guidance-list">{guidance.hooks.map((hook, index) => <article className="business-guidance-item" key={hook.id}>
+        <div className="business-guidance-item-head"><strong>Hook {index + 1}</strong><button type="button" className="business-guidance-remove" aria-label={`Remove hook ${index + 1}`} onClick={() => removeItem("hooks", hook.id)}><Trash2 size={15} /> Remove</button></div>
+        <div className="form-grid">
+          <label className="field">Name<input value={hook.title} maxLength={80} required placeholder="For example: Offer a specialist review" onChange={(event) => updateItem("hooks", hook.id, { title: event.target.value })} /></label>
+          <label className="field business-guidance-wide">Use only when<textarea value={hook.when} maxLength={200} rows={2} required placeholder="Describe the situation where this may help." onChange={(event) => updateItem("hooks", hook.id, { when: event.target.value })} /></label>
+          <label className="field">English<textarea value={hook.phrases.en} maxLength={240} rows={2} required onChange={(event) => updateItem("hooks", hook.id, { phrases: { ...hook.phrases, en: event.target.value } })} /></label>
+          <label className="field">العربية<textarea dir="rtl" lang="ar" value={hook.phrases.ar} maxLength={240} rows={2} required onChange={(event) => updateItem("hooks", hook.id, { phrases: { ...hook.phrases, ar: event.target.value } })} /></label>
+          <label className="field">Ελληνικά<textarea lang="el" value={hook.phrases.el} maxLength={240} rows={2} required onChange={(event) => updateItem("hooks", hook.id, { phrases: { ...hook.phrases, el: event.target.value } })} /></label>
+          <label className="business-guidance-enabled"><input type="checkbox" checked={hook.enabled} onChange={(event) => updateItem("hooks", hook.id, { enabled: event.target.checked })} /> Enabled</label>
+        </div>
+      </article>)}</div>
+
+      <label className="field business-guidance-reason">Reason for change<select value={reason} required onChange={(event) => setReason(event.target.value)}><option value="">Choose a reason</option><option value="clarify_customer_follow_up">Clarify customer follow-up</option><option value="improve_localized_wording">Improve language-specific wording</option><option value="align_with_approved_process">Align with an approved process</option><option value="remove_outdated_guidance">Remove outdated guidance</option><option value="other_operational_adjustment">Other operational adjustment</option></select></label>
+      <div className="booking-policy-actions"><button className="primary" type="submit" disabled={busy || !dirty}><Save size={15} />{busy ? "Saving" : "Save rules & hooks"}</button>{message && <span role="status">{message}</span>}{saveError && <span className="calendar-check-error" role="alert">{saveError}</span>}</div>
+    </form>
+  </section>;
+}
+
+function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateRequestHandled }) {
+  const { data, loading, error: loadError, reload } = useApi("/api/knowledge");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState("");
@@ -901,6 +1204,9 @@ function Knowledge({ isAdmin, onNavigate }) {
   const [archiveUndo, setArchiveUndo] = useState(null);
   const [reviewReasons, setReviewReasons] = useState({});
   const [knowledgeSearch, setKnowledgeSearch] = useState("");
+  const [knowledgeDomain, setKnowledgeDomain] = useState("all");
+  const [knowledgeLanguage, setKnowledgeLanguage] = useState("all");
+  const [knowledgeStatus, setKnowledgeStatus] = useState("all");
 
   useEffect(() => {
     if (!selectedId && data.documents?.length) setSelectedId(data.documents[0].source_id);
@@ -920,11 +1226,37 @@ function Knowledge({ isAdmin, onNavigate }) {
   const documents = data.documents || [];
   const normalizeSearchText = (value) => String(value || "").normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
   const normalizedSearch = normalizeSearchText(knowledgeSearch.trim());
-  const visibleDocuments = normalizedSearch ? documents.filter((doc) => {
+  const knowledgeDomains = [...new Set(documents.map((doc) => String(doc.metadata?.domain || "other").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const knowledgeLanguages = [...new Set(documents.map((doc) => String(doc.language_code || "und").trim().toLowerCase()))].sort((a, b) => a.localeCompare(b));
+  const languageName = (language) => {
+    if (language === "und") return "Unspecified language";
+    try { return new Intl.DisplayNames(["en"], { type: "language" }).of(language) || language.toUpperCase(); }
+    catch { return language.toUpperCase(); }
+  };
+  const languageCollator = (language) => {
+    try { return new Intl.Collator(language === "und" ? undefined : language, { sensitivity: "base", numeric: true }); }
+    catch { return new Intl.Collator(undefined, { sensitivity: "base", numeric: true }); }
+  };
+  const orderedKnowledgeLanguages = [...knowledgeLanguages].sort((a, b) => languageName(a).localeCompare(languageName(b), "en", { sensitivity: "base" }) || a.localeCompare(b));
+  const knowledgeStatuses = [...new Set(documents.map((doc) => String(doc.review_status || "unknown").trim().toLowerCase()))].sort((a, b) => a.localeCompare(b));
+  const visibleDocuments = documents.filter((doc) => {
+    if (knowledgeDomain !== "all" && (doc.metadata?.domain || "other") !== knowledgeDomain) return false;
+    if (knowledgeLanguage !== "all" && String(doc.language_code || "und").trim().toLowerCase() !== knowledgeLanguage) return false;
+    if (knowledgeStatus !== "all" && String(doc.review_status || "unknown").trim().toLowerCase() !== knowledgeStatus) return false;
+    if (!normalizedSearch) return true;
     const source = sources.find((item) => item.id === doc.source_id);
-    return [doc.title, doc.canonical_content, doc.language_code, doc.review_status, source?.display_name]
+    return [doc.title, doc.canonical_content, doc.language_code, doc.review_status, source?.display_name, doc.metadata?.topic, doc.metadata?.domain]
       .some((value) => normalizeSearchText(value).includes(normalizedSearch));
-  }) : documents;
+  }).sort((a, b) => languageName(String(a.language_code || "und").trim().toLowerCase()).localeCompare(languageName(String(b.language_code || "und").trim().toLowerCase()), "en", { sensitivity: "base" })
+    || languageCollator(String(a.language_code || "und").trim().toLowerCase()).compare(String(a.title || ""), String(b.title || ""))
+    || Number(b.revision || 0) - Number(a.revision || 0)
+    || String(a.id).localeCompare(String(b.id)));
+  const visibleDocumentsByLanguage = visibleDocuments.reduce((groups, doc) => {
+    const language = String(doc.language_code || "und").trim().toLowerCase();
+    if (!groups.has(language)) groups.set(language, []);
+    groups.get(language).push(doc);
+    return groups;
+  }, new Map());
   const selected = detail?.source || sources.find((source) => source.id === selectedId);
 
   function openKnowledgeEditor(document = null) {
@@ -947,6 +1279,12 @@ function Knowledge({ isAdmin, onNavigate }) {
     setUploadFile(null);
     setKnowledgeMode("text");
   }
+
+  useEffect(() => {
+    if (!openCreateRequest || loading || (data.documents?.length > 0 && !selectedId)) return;
+    openKnowledgeEditor();
+    onCreateRequestHandled?.();
+  }, [openCreateRequest, onCreateRequestHandled, loading, data.documents, selectedId]);
 
   async function run(action, fn) {
     setBusy(action); setError(""); setNotice("");
@@ -1031,6 +1369,21 @@ function Knowledge({ isAdmin, onNavigate }) {
   }
 
   if (loading) return <Loading />;
+  if (loadError) return (
+    <div className="page-stack knowledge-page">
+      <section className="knowledge-hero">
+        <div>
+          <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> KNOWLEDGE OPERATIONS</span>
+          <h2>Agent knowledge</h2>
+          <p>Knowledge could not be loaded, so the library counts and entries are unavailable.</p>
+        </div>
+      </section>
+      <section className="panel knowledge-load-error" role="alert">
+        <p className="error">{loadError}</p>
+        <button type="button" className="ghost" onClick={reload}><RefreshCcw size={15} /> Retry loading</button>
+      </section>
+    </div>
+  );
   return (
     <div className="page-stack knowledge-page">
       <section className="knowledge-hero">
@@ -1052,20 +1405,32 @@ function Knowledge({ isAdmin, onNavigate }) {
       <div className="knowledge-layout">
         <section className="panel knowledge-sources">
           <div className="knowledge-sources-heading"><div><span className="knowledge-section-kicker">LIBRARY</span><h2>Agent knowledge</h2></div><span className="knowledge-result-count">{visibleDocuments.length} {visibleDocuments.length === 1 ? "revision" : "revisions"}</span></div>
+          <p className="knowledge-language-note">Language entries are shown separately because their information can differ. Titles are sorted using each language’s alphabet.</p>
           <label className="knowledge-search-label" htmlFor="knowledge-library-search">Search all knowledge</label>
           <input id="knowledge-library-search" className="knowledge-search" type="search" value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="Search titles or content in any language" autoComplete="off" />
+          <label className="knowledge-search-label knowledge-category-label" htmlFor="knowledge-category-filter">Filter by category</label>
+          <select id="knowledge-category-filter" className="knowledge-category-filter" value={knowledgeDomain} onChange={(event) => setKnowledgeDomain(event.target.value)}><option value="all">All categories</option>{knowledgeDomains.map((domain) => <option key={domain} value={domain}>{domain.replaceAll("-", " ").replace(/\b\w/gu, (letter) => letter.toUpperCase())}</option>)}</select>
+          <label className="knowledge-search-label knowledge-category-label" htmlFor="knowledge-language-filter">Filter by language</label>
+          <select id="knowledge-language-filter" className="knowledge-category-filter" value={knowledgeLanguage} onChange={(event) => setKnowledgeLanguage(event.target.value)}><option value="all">All languages</option>{orderedKnowledgeLanguages.map((language) => <option key={language} value={language}>{languageName(language)}</option>)}</select>
+          <label className="knowledge-search-label knowledge-category-label" htmlFor="knowledge-status-filter">Filter by review status</label>
+          <select id="knowledge-status-filter" className="knowledge-category-filter" value={knowledgeStatus} onChange={(event) => setKnowledgeStatus(event.target.value)}><option value="all">All review statuses</option>{knowledgeStatuses.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ").replace(/\b\w/gu, (letter) => letter.toUpperCase())}</option>)}</select>
           <div className="knowledge-source-list">
-            {visibleDocuments.map((doc) => {
+            {[...visibleDocumentsByLanguage].sort(([a], [b]) => languageName(a).localeCompare(languageName(b), "en", { sensitivity: "base" }) || a.localeCompare(b)).map(([language, languageDocuments]) => <div className="knowledge-language-group" key={language}>
+              <h3 className="knowledge-language-heading">{languageName(language)} <span>{languageDocuments.length} {languageDocuments.length === 1 ? "revision" : "revisions"}</span></h3>
+              {languageDocuments.map((doc) => {
               const source = sources.find((item) => item.id === doc.source_id);
               const snippet = String(doc.canonical_content || "").replace(/\s+/g, " ").trim();
+              const domainLabel = String(doc.metadata?.domain || "Other").replaceAll("-", " ");
+              const topicLabel = String(doc.metadata?.topic || "").replaceAll("-", " ");
               return <button key={doc.id} className={`knowledge-source${selectedId === doc.source_id ? " selected" : ""}`} onClick={() => setSelectedId(doc.source_id)}>
                 <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></span>
-                <small>{source?.display_name || "Knowledge entry"}</small>
+                <small>{String(doc.language_code || "und").toUpperCase()} · Revision v{doc.revision || 1}{source?.enabled === false ? " · Archived source" : " · Active source"} · {domainLabel}{topicLabel ? ` · ${topicLabel}` : ""} · {source?.display_name || "Knowledge entry"}</small>
                 <span className="knowledge-source-preview">{snippet.slice(0, 150)}{snippet.length > 150 ? "…" : ""}</span>
               </button>;
             })}
+            </div>)}
             {!documents.length && <p className="knowledge-empty">Nothing active in REFAL’s knowledge database yet.</p>}
-            {documents.length > 0 && !visibleDocuments.length && <p className="knowledge-empty">No content matches “{knowledgeSearch.trim()}”. Try another search.</p>}
+            {documents.length > 0 && !visibleDocuments.length && <p className="knowledge-empty">No revisions match these filters{knowledgeSearch.trim() ? ` and “${knowledgeSearch.trim()}”` : ""}. Change the category, language, or review status and try again.</p>}
           </div>
         </section>
         <section className="panel knowledge-detail">
@@ -1237,6 +1602,8 @@ function Overview({ onNavigate, isAdmin }) {
 function AgentStatus({ isAdmin }) {
   const { data: overviewData, loading: overviewLoading, reload: reloadOverview, error: overviewError } = useApi("/api/overview", [], { pollMs: 15000 });
   const [controlRefresh, setControlRefresh] = useState(0);
+  const [credits, setCredits] = useState(null);
+  const [creditsRefresh, setCreditsRefresh] = useState(0);
   const loading = overviewLoading;
   const status = overviewData.status || {};
   const usage = overviewData.usage || {};
@@ -1247,9 +1614,28 @@ function AgentStatus({ isAdmin }) {
   const missingCostInteractions = Number(monthUsage.missingCostInteractions || 0);
   const whatsappReady = status.connected === true;
 
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let active = true;
+    const loadCredits = async () => {
+      try {
+        const response = await fetch("/api/openrouter/credits", { credentials: "include", cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error("Could not verify provider credits.");
+        if (active) setCredits(body);
+      } catch {
+        if (active) setCredits({ available: false, reason: "temporarily_unavailable" });
+      }
+    };
+    void loadCredits();
+    const timer = setInterval(loadCredits, 60000);
+    return () => { active = false; clearInterval(timer); };
+  }, [isAdmin, creditsRefresh]);
+
   function refreshAll() {
     reloadOverview();
     setControlRefresh((value) => value + 1);
+    setCreditsRefresh((value) => value + 1);
   }
 
   return <div className="page-stack agent-status-page">
@@ -1272,13 +1658,14 @@ function AgentStatus({ isAdmin }) {
       <article className="panel agent-status-card agent-usage-card">
         <PanelTitle icon={Sparkles} title="AI usage" />
         {overviewLoading ? <Loading label="Loading usage" /> : <>
-          <dl className="facts compact-facts">
-            <dt>Configured model</dt><dd>{usage.model || "Not set"}</dd>
-            <dt>Requests this month</dt><dd>{Number(monthUsage.interactions || 0).toLocaleString()}</dd>
-            <dt>Tokens this month</dt><dd>{Number(monthUsage.actualTokens || 0).toLocaleString()}</dd>
-            <dt>Provider cost this month</dt><dd>{hasReportedCost ? `$${Number(monthUsage.exactCostUsd || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8, useGrouping: false })}` : "Unavailable"}</dd>
+          <div className="agent-usage-model"><span>Configured model</span><strong>{usage.model || "Not set"}</strong></div>
+          <dl className="agent-usage-metrics">
+            <div><dt>Requests</dt><dd>{numberValue(monthUsage.interactions).toLocaleString("en-US")}<small>This month</small></dd></div>
+            <div><dt>Tokens</dt><dd>{numberValue(monthUsage.actualTokens).toLocaleString("en-US")}<small>Provider reported</small></dd></div>
+            <div><dt>Provider cost</dt><dd>{hasReportedCost ? formatUsageUsd(monthUsage.exactCostUsd) : "Unavailable"}<small>This month · provider reported</small></dd></div>
+            {isAdmin && <div><dt>Remaining credits</dt><dd>{credits === null ? "Checking…" : credits.available ? formatUsageUsd(credits.remainingCreditsUsd) : "Unavailable"}<small>{credits === null ? "Checking connected account" : openRouterCreditHint(credits)}</small></dd></div>}
           </dl>
-          <p className="hint">Values use recorded provider usage. {missingCostInteractions ? `Cost was not reported for ${missingCostInteractions.toLocaleString()} of ${Number(monthUsage.interactions || 0).toLocaleString()} requests.` : "Cost is shown only when the provider reports it."}</p>
+          <p className="hint">Usage reflects recorded provider data. {missingCostInteractions ? `Cost was not reported for ${missingCostInteractions.toLocaleString("en-US")} of ${numberValue(monthUsage.interactions).toLocaleString("en-US")} requests.` : "The provider reports exact cost for the requests included above."}</p>
         </>}
       </article>
     </section>
@@ -1921,7 +2308,7 @@ function Bookings({ isAdmin }) {
                 <div className="booking-record-when"><CalendarClock size={17} /><span><strong>{start || formatDate(booking.bookedAt)}</strong>{end && <small>{end} · {booking.timezone}</small>}</span></div>
                 <div className={`booking-record-purpose${purposeMissing ? " is-missing" : ""}`}><small>MEETING PURPOSE</small><p>{purposeMissing ? "Purpose not provided" : purpose}</p>{purposeMissing && <span>Ask the customer before confirming.</span>}</div>
               </div>
-              {pending && <div className="booking-pending-note"><Clock3 size={16} /><span><strong>{booking.status === "pending_review" ? "Waiting for Refalco Group review" : "Waiting for Google Calendar"}</strong><small>{booking.status === "pending_review" ? "The customer agreed to this time. It is not confirmed until an admin approves it." : "The booking is saved, but Google has not confirmed it yet."}</small></span></div>}
+              {pending && <div className="booking-pending-note"><Clock3 size={16} /><span><strong>{booking.status === "pending_review" ? "Waiting for Refalco Group review" : "Waiting for Google Calendar"}</strong><small>{booking.status === "pending_review" ? "The customer requested this time. Availability is not verified, and the appointment is not confirmed." : "The booking is saved, but Google has not confirmed it yet."}</small></span></div>}
               {isAdmin && booking.status === "pending_review" && <div className="booking-policy-actions"><button className="primary" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "approve")}>{reviewing === booking.id ? "Saving…" : "Approve and confirm"}</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "reject")}>Reject and request another time</button></div>}
               {isAdmin && booking.status === "confirmed" && <div className="booking-policy-actions"><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "reschedule")}>Reschedule</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "cancel")}>Cancel appointment</button></div>}
               {booking.status === "rejected" && booking.reviewReason && <p className="booking-muted">Admin review note: {booking.reviewReason}</p>}
@@ -2139,6 +2526,13 @@ function formatDate(value) {
 function numberValue(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function openRouterCreditHint(credits) {
+  if (credits?.available) return `Verified from OpenRouter · ${formatDate(credits.checkedAt)}`;
+  if (credits?.reason === "management_key_required") return "A management key is required to verify the account balance.";
+  if (credits?.reason === "not_configured") return "No OpenRouter key is configured.";
+  return "The account balance could not be verified.";
 }
 
 function initials(value) {

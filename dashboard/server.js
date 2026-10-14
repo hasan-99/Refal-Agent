@@ -28,6 +28,8 @@ import { mapWithConcurrency } from "./mapWithConcurrency.js";
 import { HandoverStatusSyncError, syncHandoverStatus } from "./handoverStatusSync.js";
 import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
+import { shapeDatabaseAuditEvents, shapeLegacyAdminEvents } from "./adminAudit.js";
+import { COMPANY_IDENTITY_CHANGE_REASONS, companyIdentityView } from "./companyIdentity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +47,8 @@ const { createCalendarReadinessTracker, isBookingPolicyReady } = require("../src
 const { validateBookingPolicy } = require("../src/bookingPolicy.js");
 const { workerCredentialsReady } = require("../scripts/googleCalendarCredentialStore.js");
 const { dashboardFailureReply } = await import("./agentFallback.js");
+const { selectRelevantPinnedMemories } = await import("./agentMemoryRelevance.js");
+const { createAgentApiHeaders } = await import("./agentApiHeaders.js");
 const {
   DEFAULT_OPENROUTER_MODEL,
   resolveOpenRouterModel
@@ -252,17 +256,12 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
 app.get("/api/admin/audit", requireAdmin, async (_req, res) => {
   try {
     const events = await readEvents();
-    const auditEvents = new Set(["dashboard_admin_action", "contact_memory_admin_updated", "lead_qualification_admin_updated", "conversation_reply_admin_edited"]);
-    res.json({ events: events.filter((event) => auditEvents.has(event.event)).slice(-100).reverse().map((event) => ({
-      event: event.event,
-      at: event.at,
-      actor: String(event.actor || event.reviewer || "admin").slice(0, 160),
-      action: String(event.action || event.event).slice(0, 120),
-      targetId: String(event.contactId || event.userId || event.targetId || "").slice(0, 200),
-      fields: Array.isArray(event.fields) ? event.fields.slice(0, 20).map((field) => String(field).slice(0, 80)) : []
-    })) });
+    const auditEvents = new Set(["dashboard_admin_action", "contact_memory_admin_updated", "lead_qualification_admin_updated", "conversation_reply_admin_edited", "business_guidance_admin_updated"]);
+    const databaseAuditRows = await supabaseRest("rafa_audit_events?select=id,event,actor_type,source,details,created_at&order=created_at.desc&limit=100");
+    res.json({ events: shapeLegacyAdminEvents(events, auditEvents), databaseAuditEvents: shapeDatabaseAuditEvents(databaseAuditRows) });
   } catch (error) {
-    res.status(502).json({ error: error.message || "Could not load the admin audit." });
+    console.error("Admin audit load failed:", error?.message || "unknown error");
+    res.status(502).json({ error: "Could not load the admin audit." });
   }
 });
 
@@ -1256,6 +1255,82 @@ app.put("/api/bookings/policy", requireAdmin, async (req, res) => {
   } catch (error) { res.status(error.statusCode || 400).json({ error: error.message }); }
 });
 
+app.get("/api/company/identity", requireAdmin, async (_req, res) => {
+  try { res.json({ identity: companyIdentityView(await store.getCompanyIdentity({ timeoutMs: 8000 })) }); }
+  catch (error) {
+    console.error("Could not load the validated company identity:", error?.message || "unknown error");
+    res.status(error.status || 502).json({ error: "Company identity is unavailable." });
+  }
+});
+
+app.put("/api/company/identity", requireAdmin, authRateLimit, async (req, res) => {
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  const reasonCodes = new Set(COMPANY_IDENTITY_CHANGE_REASONS.map(({ value }) => value));
+  if (!reasonCodes.has(reason)) return res.status(400).json({ error: "Choose a valid reason for this change." });
+  try {
+    const current = await store.getCompanyIdentity({ timeoutMs: 8000 });
+    const saved = companyIdentityView(await store.updateCompanyIdentity(req.body?.identity));
+    const changedFields = Object.keys(saved).filter((field) => JSON.stringify(saved[field]) !== JSON.stringify(current[field]));
+    try {
+      await logDashboardEvent("company_identity_admin_updated", {
+        actor: req.dashboardUser.email || req.dashboardUser.id,
+        changedFields,
+        reason: reason.slice(0, 300)
+      });
+    } catch (error) {
+      console.error("Company identity saved but its dashboard audit event failed:", error?.message || "unknown error");
+    }
+    res.json({ identity: saved, changedFields });
+  } catch (error) { res.status(error.status || error.statusCode || 400).json({ error: error.message || "Could not save company identity." }); }
+});
+
+app.get("/api/settings/response-style", requireAdmin, async (_req, res) => {
+  try { res.json({ style: await store.getResponseStyle({ timeoutMs: 8000 }) }); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: error.message || "Could not load response style." }); }
+});
+
+app.put("/api/settings/response-style", requireAdmin, async (req, res) => {
+  try {
+    const { validateResponseStyle } = require("../src/responseStyle.js");
+    const style = validateResponseStyle(req.body?.style);
+    res.json({ style: await store.updateResponseStyle(style) });
+  } catch (error) { res.status(error.statusCode || 400).json({ error: error.message || "Could not save response style." }); }
+});
+
+app.get("/api/settings/business-guidance", requireAdmin, async (_req, res) => {
+  try { res.json({ guidance: await store.getBusinessGuidance({ timeoutMs: 8000 }) }); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: error.message || "Could not load business guidance." }); }
+});
+
+app.put("/api/settings/business-guidance", requireAdmin, authRateLimit, async (req, res) => {
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  const reasonCodes = new Set(["clarify_customer_follow_up", "improve_localized_wording", "align_with_approved_process", "remove_outdated_guidance", "other_operational_adjustment"]);
+  if (!reasonCodes.has(reason)) return res.status(400).json({ error: "Choose a valid reason for this change." });
+  try {
+    const { validateBusinessGuidance } = require("../src/businessGuidance.js");
+    const guidance = validateBusinessGuidance(req.body?.guidance);
+    const previous = await store.getBusinessGuidance({ timeoutMs: 8000 });
+    const saved = await store.updateBusinessGuidance(guidance);
+    const changedIds = (before, after) => [...new Set([
+      ...before.filter((item) => JSON.stringify(item) !== JSON.stringify(after.find((savedItem) => savedItem.id === item.id))),
+      ...after.filter((item) => JSON.stringify(item) !== JSON.stringify(before.find((oldItem) => oldItem.id === item.id)))
+    ].map((item) => item.id))];
+    const changedRuleIds = changedIds(previous.rules, saved.rules);
+    const changedHookIds = changedIds(previous.hooks, saved.hooks);
+    try {
+      await logDashboardEvent("business_guidance_admin_updated", {
+        actor: req.dashboardUser.email || req.dashboardUser.id,
+        guidanceItemCodes: [...changedRuleIds, ...changedHookIds],
+        reasonCode: reason
+      });
+    } catch (error) {
+      console.error("Business guidance saved but its dashboard audit event failed:", error?.message || "unknown error");
+      return res.status(503).json({ saved: true, error: "Guidance was saved, but its audit record could not be confirmed. Refresh the page to verify the saved values before retrying." });
+    }
+    res.json({ guidance: saved, changedRuleIds, changedHookIds });
+  } catch (error) { res.status(error.status || error.statusCode || 400).json({ error: error.message || "Could not save business guidance." }); }
+});
+
 app.get("/api/reports", async (_req, res) => {
   try {
     res.json({ reports: reportHistory(await readEvents()) });
@@ -1964,13 +2039,15 @@ async function dashboardKnowledge(text) {
 }
 
 async function relevantAgentMemories(text) {
+  const fallback = async () => selectRelevantPinnedMemories(text, await listAgentMemories());
   try {
-    return await supabaseRest("rpc/rafa_search_agent_memories", {
+    const results = await supabaseRest("rpc/rafa_search_agent_memories", {
       method: "POST",
       body: JSON.stringify({ p_query: text, p_match_count: 5 })
     });
+    return Array.isArray(results) && results.length ? results : fallback();
   } catch {
-    return (await listAgentMemories()).filter((memory) => memory.pinned).slice(0, 5);
+    return fallback();
   }
 }
 
@@ -1984,13 +2061,14 @@ async function askDashboardAgent({ text, messages, model: sessionModel, memories
 async function askSupabaseAgent({ text, messages, model, memories, evidence, signal, onToken, onUsage }) {
   const apiUrl = process.env.RAFA_API_URL || `${String(process.env.SUPABASE_URL || "").replace(/\/$/, "")}/functions/v1/rafa-agent-api`;
   const apiSecret = process.env.RAFA_API_SECRET;
-  if (!apiUrl || !apiSecret) throw new Error("RAFA Supabase agent API is not configured.");
+  const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!apiUrl) throw new Error("RAFA Supabase agent API is not configured.");
   const response = await fetch(`${apiUrl.replace(/\/$/, "")}/agent/generate`, {
     method: "POST",
     signal,
     headers: {
       "Content-Type": "application/json",
-      "x-rafa-api-secret": apiSecret
+      ...createAgentApiHeaders({ apiKey, apiSecret })
     },
     body: JSON.stringify({ text, messages, model, memories, evidence })
   });

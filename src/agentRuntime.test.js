@@ -54,7 +54,7 @@ test("a broad colloquial services request can retrieve and answer from approved 
     modelEvidence = observations[0].result.modelObservation.evidence;
     return { type: "respond", text: "المجموعة تقدم دعماً بتأسيس الشركات والمحاسبة." };
   } });
-  assert.deepEqual(searches, ["مجالات الخدمات التي تقدمها المجموعة", "ممكم اعرف شو بتقدمو خدمات؟"]);
+  assert.deepEqual(searches, ["مو مكتب تسجيل شركات ضيق", "مجالات الخدمات التي تقدمها المجموعة", "ممكم اعرف شو بتقدمو خدمات؟"]);
   assert.match(modelEvidence[0].content, /تأسيس الشركات والمحاسبة/u);
   assert.equal(result.outcome, "responded");
   assert.match(result.response, /تأسيس الشركات والمحاسبة/u);
@@ -94,7 +94,7 @@ test("the last bounded model call has no tools and is reserved for the final ans
   assert.equal(result.outcome, "responded");
 });
 
-test("an identical search is skipped without another retrieval call", async () => {
+test("a repeated broad search is skipped after one query plan includes the approved scope overview", async () => {
   let searches = 0;
   const store = { searchKnowledge: async () => { searches += 1; return []; } };
   const result = await runAgentTurnForContact({ currentMessage: "What services are supported?", locale: "english", store, user: {}, userId: "u1", embedText: async () => null }, {
@@ -104,7 +104,7 @@ test("an identical search is skipped without another retrieval call", async () =
       { type: "respond", text: "I do not have an approved answer for that yet." }
     ])
   });
-  assert.equal(searches, 2, "one logical search searches both the model's interpretation and the original turn");
+  assert.equal(searches, 3, "one logical broad search runs the overview, model interpretation, and original turn together");
   assert.equal(result.steps[1].result.reasonCode, "REPEATED_SEARCH_NO_ADDITIONAL_VALUE");
   assert.equal(result.outcome, "responded");
 });

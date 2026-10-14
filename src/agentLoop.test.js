@@ -82,6 +82,30 @@ test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
   assert.equal(DEFAULT_MAX_STEPS, 5);
 });
 
+test("a comprehensive broad retrieval goes straight to composition with multiple complete sections retained", async () => {
+  const decisions = [];
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    decideNextStep: async ({ step, tools, observations }) => {
+      decisions.push({ step, searchAvailable: Boolean(tools.searchApprovedKnowledge), evidenceCount: observations
+        .flatMap((item) => item.result?.modelObservation?.evidence || []).length });
+      return step === 1
+        ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company overview" } }
+        : { type: "clarify", text: "Which part would you like to explore?", tool: null, args: null };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", trace: { comprehensiveSearch: true }, modelObservation: {
+      type: "approved_knowledge", status: "found", truncated: false,
+      evidence: ["scope", "process", "limits"].map((sourceRef, selectionOrder) => ({ sourceRef, title: sourceRef,
+        section: sourceRef, language: "english", content: `Complete ${sourceRef} section.`, selectionOrder })),
+      policyEvidence: []
+    } }) } },
+    assessDraft: async () => ({ valid: true, reasons: [] })
+  });
+  assert.equal(result.outcome, "clarified");
+  assert.deepEqual(decisions.map(({ step }) => step), [1, 3]);
+  assert.equal(decisions[1].searchAvailable, false);
+  assert.equal(decisions[1].evidenceCount, 3);
+});
+
 test("a failed knowledge search is reported as technical and is not repeated", async () => {
   let decisions = 0;
   let searches = 0;

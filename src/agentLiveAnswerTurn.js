@@ -17,7 +17,10 @@ const { deriveOpenQuestion } = require("./openQuestion");
 const { randomUUID } = require("node:crypto");
 const { sanitizeControlledInspection } = require("./controlledDiagnostics");
 const { profile } = require("./companyProfile");
+const { identityFromProfile } = require("./companyIdentitySettings");
 const { INTENTS } = require("./intent");
+const { RESPONSE_STYLE_DEFAULTS } = require("./responseStyle");
+const { BUSINESS_GUIDANCE_DEFAULTS } = require("./businessGuidance");
 
 function isSocialOnlyClassification(classification = {}) {
   const intents = Array.isArray(classification.intents) ? classification.intents : [];
@@ -48,9 +51,20 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   let completedAgentResult = null;
   let completedSourceTurnId = null;
   let user;
+  let responseStyle = RESPONSE_STYLE_DEFAULTS;
+  let businessGuidance = BUSINESS_GUIDANCE_DEFAULTS;
+  let companyIdentity = identityFromProfile(profile);
   await measure("setupDurationMs", async () => {
     await setTyping(socket, chatId, true);
     user = await store.ensureUser(userId);
+    const settingsReads = await Promise.allSettled([
+      typeof store.getResponseStyle === "function" ? store.getResponseStyle() : Promise.resolve(null),
+      typeof store.getCompanyIdentity === "function" ? store.getCompanyIdentity() : Promise.resolve(null),
+      typeof store.getBusinessGuidance === "function" ? store.getBusinessGuidance() : Promise.resolve(null)
+    ]);
+    if (settingsReads[0].status === "fulfilled" && settingsReads[0].value) responseStyle = settingsReads[0].value;
+    if (settingsReads[1].status === "fulfilled" && settingsReads[1].value) companyIdentity = settingsReads[1].value;
+    if (settingsReads[2].status === "fulfilled" && settingsReads[2].value) businessGuidance = settingsReads[2].value;
   });
   const controlled = user?.profile?.qaControlledDiagnostics === true && user?.profile?.followUpBlocked === true;
   const sessionStartForPreflight = controlled ? Date.parse(user?.profile?.qaSessionStartedAt || "") : NaN;
@@ -85,8 +99,8 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const sessionStart = controlled ? Date.parse(currentUser?.profile?.qaSessionStartedAt || "") : NaN;
       const priorHistory = history.filter((turn) => turn.id !== sourceTurnId && (!Number.isFinite(sessionStart) || Date.parse(turn.at) >= sessionStart));
       const priorCustomerName = latestCustomerStatedName(priorHistory);
-      const brand = profile.brand.toLocaleLowerCase();
-      const group = profile.groupName.toLocaleLowerCase();
+      const brand = companyIdentity.brand.toLocaleLowerCase();
+      const group = companyIdentity.groupName.toLocaleLowerCase();
       const priorConfiguredIntroduction = priorHistory.some((turn) => {
         const response = typeof turn?.response === "string" ? turn.response.toLocaleLowerCase() : "";
         return Boolean(brand && group && response.includes(brand) && response.includes(group));
@@ -96,6 +110,9 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const commitState = createCommitState();
       const agentResult = await measure("agentExecutionDurationMs", () => runAgentTurnForContact({
         currentMessage: String(agentMessage || ""), locale: language,
+        responseStyle,
+        businessGuidance,
+        companyIdentity,
         contact: {
           id: userId,
           // Keep customer-stated names transient: the latest explicit name in

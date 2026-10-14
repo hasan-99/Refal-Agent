@@ -24,6 +24,7 @@ const { detectComplianceEscalation, buildComplianceEscalation, applyComplianceLo
 const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
 const { probesAnotherCustomer, crossCustomerRefusal } = require("./crossCustomerPolicy");
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
+const { isSpecificAppointmentAvailabilityInquiry } = require("./contextualPreflight");
 
 const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
 const QUALIFICATION_EVIDENCE = Symbol("qualification evidence retained until durable turn insert");
@@ -432,11 +433,17 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
   const privacyContinuation = safePrivacyQuestion.length >= 8;
   const routingText = privacyContinuation ? safePrivacyQuestion : incoming;
   const crossCustomerProbe = probesAnotherCustomer(incoming);
-  const classification = crossCustomerProbe
+  let classification = crossCustomerProbe
     ? detectIntent(routingText)
     : contextual
     ? await (classifyMessage || require("./contextualPreflight").classifyContextualMessage)({ message: routingText, user }, { onModelCall, onUsage })
     : detectIntent(routingText);
+  if (contextual && !crossCustomerProbe && isSpecificAppointmentAvailabilityInquiry(routingText)
+    && classification.noProactiveBookingOrContact !== true) {
+    const intents = [INTENTS.APPOINTMENT, ...(classification.intents || []).filter((intent) => intent !== INTENTS.APPOINTMENT)];
+    classification = Object.freeze({ ...classification, operation: "booking_request", intents,
+      primary: INTENTS.APPOINTMENT, isMultiIntent: intents.length > 1, source: "contextual_specific_availability" });
+  }
   const priority = assessPriority({ text: routingText, intents: classification.intents });
   const redFlags = assessRedFlags(routingText, { profile: user.profile || {} });
   // MB-SEC2. Resolved here, on the FULL incoming text rather than the privacy
@@ -925,7 +932,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
-  if (classification.source === "contextual_model") {
+  if (classification.source === "contextual_model" || classification.source === "contextual_fallback") {
     return routeContextualMessageResult({ userId, incoming: prepared.metadata.privacySafeQuestion || incoming, user, store, prepared });
   }
   const statesNoProactivePreference = NO_PROACTIVE_CONTACT_OR_BOOKING.test(incoming);

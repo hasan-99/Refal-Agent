@@ -26,7 +26,7 @@ async function runAgentTurnForContact({
   currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, intents, conversationState,
   knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, consentState, allowedCapabilities,
   leadTier, buyingSignals, conversationPreferences, contextualWorkflow, store, user, userId, language, embedText,
-  embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy
+  embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy, responseStyle, businessGuidance, companyIdentity
 } = {}, {
   decideNextStep = defaultDecideNextStep, onModelCall, onModelUsage,
   onToolCall, onPolicyRejection, assessDraft = assessAgentDraft, tools = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS
@@ -34,7 +34,7 @@ async function runAgentTurnForContact({
   const context = buildAgentContext({
     currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, intents, conversationState,
     knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, consentState, allowedCapabilities,
-    leadTier, buyingSignals, conversationPreferences, contextualWorkflow
+    leadTier, buyingSignals, conversationPreferences, contextualWorkflow, responseStyle, businessGuidance, companyIdentity
   });
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
@@ -45,6 +45,7 @@ async function runAgentTurnForContact({
     : decideNextStep;
   if (typeof assessDraft !== "function") throw new TypeError("Production Agent requires independent grounding assessment.");
   const measuredAssessDraft = (args) => assessDraft(args, { onModelCall, onModelUsage });
+
   return runAgentTurn(context, { decideNextStep: measuredDecideNextStep, assessDraft: measuredAssessDraft, tools, toolContext, maxSteps, onToolCall, onPolicyRejection });
 }
 

@@ -9,6 +9,17 @@
 
 const { createHash } = require("node:crypto");
 const { detectMessageLanguage } = require("./language");
+const { INTENTS } = require("./intent");
+const { buildKnowledgeSearchQueries } = require("./knowledgeQuery");
+
+function isBroadServiceScopeRequest(message, intents = []) {
+  const text = String(message || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, " ").toLocaleLowerCase();
+  const focusedDetail = /\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and what about|what about (?:the|that))\b|(?:كم\s*(?:السعر|التكلفة)|قديش\s*(?:السعر|بتكلف)|شو\s*(?:بتشمل|بيشمل)|تفاصيل\s*(?:أكثر|اكتر)|(?:τιμή|κόστος|χρέωση|τι\s+περιλαμβάνει|περισσότερες\s+λεπτομέρειες))/iu.test(text);
+  if (focusedDetail) return false;
+  const explicitlyBroad = /\b(?:what services|which services|what business areas|which business areas|business lines|service overview|what do you do(?:\s+in\s+\w+)?|what can you help (?:with|me with))\b|(?:شو\s*(?:بتعملوا|بتعملو|بتقدموا|بتقدمو)|ما\s*(?:هي|هى)\s*(?:خدمات|مجالات)|شو\s*(?:مجالات|خدمات)|مجالات\s*(?:عمل|خدمات))|(?:ποιες?\s+(?:υπηρεσίες|δραστηριότητες)|τομείς\s+(?:υπηρεσιών|δραστηριότητας)|τι\s+υπηρεσίες\s+(?:προσφέρετε|παρέχετε))/iu.test(text);
+  const focusedTopic = /\b(?:vat|accounting|bookkeeping|tax|company formation|bank account|property|residency|construction|investment|payroll)\b|(?:ضريبة|محاسبة|تأسيس|بنك|عقار|إقامة|إنشاءات|استثمار)|(?:φπα|λογιστικ|φορολογ|ίδρυση|τράπεζ|ακίνητ|διαμονή|κατασκευ)/iu.test(text);
+  return explicitlyBroad || (!focusedTopic && Array.isArray(intents) && intents.includes(INTENTS.BUSINESS_AREAS));
+}
 const { redactPersonalData } = require("./ai");
 
 const { getConsentState } = require("./leadQualification");
@@ -443,7 +454,7 @@ function isCustomerFacingKnowledgeChunk(row) {
 // guidance") that has already been through human review/approval. The trust
 // boundary here is the existing `review_status = 'approved'` filter, not a
 // second text scrub.
-function buildApprovedKnowledgeObservation(status, rows = [], { candidatePool = false } = {}) {
+function buildApprovedKnowledgeObservation(status, rows = [], { candidatePool = false, candidateRows = null } = {}) {
   const inputRows = Array.isArray(rows) ? rows : [];
   // The Edge search route expands each ranked hit to its complete parent
   // section. Reassemble ordered chunks into that section before applying the
@@ -474,7 +485,8 @@ function buildApprovedKnowledgeObservation(status, rows = [], { candidatePool = 
   const policyEvidence = [];
   const factRegisterRows = new Map();
   let totalContentChars = 0;
-  let truncated = safeRows.length > MAX_RAG_EVIDENCE_ITEMS;
+  let truncated = safeRows.length > MAX_RAG_EVIDENCE_ITEMS
+    || (Array.isArray(candidateRows) && candidateRows.length > safeRows.length);
 
   for (const row of safeRows) {
     if (!candidatePool && evidence.length >= MAX_RAG_EVIDENCE_ITEMS) {
@@ -532,7 +544,8 @@ function buildApprovedKnowledgeObservation(status, rows = [], { candidatePool = 
     });
   }
 
-  const pool = candidatePool ? { evidence, policyEvidence } : buildApprovedKnowledgeObservation(status, rows, { candidatePool: true });
+  const poolRows = Array.isArray(candidateRows) ? candidateRows : rows;
+  const pool = candidatePool ? { evidence, policyEvidence } : buildApprovedKnowledgeObservation(status, poolRows, { candidatePool: true });
   return { type: "approved_knowledge", status, evidence, candidateEvidence: pool.evidence.map((item) => ({ ...item })), truncated, policyEvidence, candidatePolicyEvidence: pool.policyEvidence.map((item) => ({ ...item })), factRegisterRows: [...factRegisterRows.values()] };
 }
 
@@ -608,7 +621,7 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
         currentQueryMatch: group.currentQueryRank !== null, currentQueryRank: group.currentQueryRank, selectionRelevance: group.score * 60 })));
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user } = {}) {
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user, intents = [] } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
@@ -635,7 +648,13 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     ? redactPersonalData(previousCustomerMessage).slice(0, 1000).trim()
     : "";
   const contextualQueries = [...new Set([query, ...related, crossLanguageHistoryQuery])].filter(Boolean);
-  let queries = [...new Set([...contextualQueries, currentQuery])].filter(Boolean);
+  const broadServiceRequest = isBroadServiceScopeRequest(currentMessage, intents);
+  const scopeQueries = broadServiceRequest
+    ? buildKnowledgeSearchQueries(currentMessage, user, [INTENTS.BUSINESS_AREAS], language || currentLanguage).slice(0, 1) : [];
+  // A broad service-scope question needs an explicit profile/overview retrieval
+  // in the same parallel operation as model interpretation and exact wording.
+  // Focused questions retain the previous narrow query plan.
+  let queries = [...new Set([...scopeQueries, ...contextualQueries, currentQuery])].filter(Boolean);
   let historicalQueryIndex = crossLanguageHistoryQuery ? queries.indexOf(crossLanguageHistoryQuery) : -1;
   const searchPlans = await Promise.all(queries.map(async (searchQuery, index) => {
     let embedding = null;
@@ -725,7 +744,14 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const prioritizedCatalogue = visibleCatalogue.map((item, index) => ({ item, index,
     primarySearchMatch: sectionRows.get(item.key).some((row) => row.primarySearchMatch === true) }))
     .sort((a, b) => Number(b.primarySearchMatch) - Number(a.primarySearchMatch) || a.index - b.index);
-  const selectedRows = prioritizedCatalogue.flatMap(({ item }, selectionRank) => sectionRows.get(item.key)
+  // `requestedCount` is a section budget, not a chunk budget. The RPC can
+  // return several chunks for one ranked section; slicing the flattened rows
+  // below used to let one multi-chunk section consume the entire limit. That
+  // silently reduced a broad question to a single section before the complete
+  // section assembler ever saw the other relevant results.
+  const rankedSections = prioritizedCatalogue.map(({ item }, selectionRank) => ({ item, selectionRank }));
+  const selectedSections = rankedSections.slice(0, MAX_RAG_EVIDENCE_ITEMS);
+  const selectedRows = selectedSections.flatMap(({ item, selectionRank }) => sectionRows.get(item.key)
     // Fusion scores depend on how many related searches were issued, so their
     // raw values are not comparable across separate tool calls. Rank within
     // this search round instead; accumulated-evidence budgeting can then
@@ -740,11 +766,21 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
         + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
       primarySearchMatch: row.primarySearchMatch === true,
       selectionOrder: selectionRank })));
-  const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
+  // Keep the bounded prompt-facing evidence to the requested number of whole
+  // sections, while retaining the larger ranked candidate window for the
+  // accumulated-evidence budget to choose complementary current/history facts.
+  const rankedRows = rankedSections.flatMap(({ item }, selectionRank) => sectionRows.get(item.key)
+    .map((row) => ({ ...row,
+      selectionRelevance: 1 / (selectionRank + 1) + (row.historicalSearchMatch ? 1 : 0)
+        + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
+      primarySearchMatch: row.primarySearchMatch === true,
+      selectionOrder: selectionRank })));
+  const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows,
+    { candidateRows: rankedRows });
   modelObservation.primarySearchRefs = [...new Set(selectedRows.filter((row) => row.primarySearchMatch)
     .map((row) => row.chunk_id).filter((id) => typeof id === "string"))];
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
-  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });
+  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, comprehensiveSearch: broadServiceRequest, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedSections.length, selectedChunkCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });
 }
 
 // --- getCustomerContext ------------------------------------------------------

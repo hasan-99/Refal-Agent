@@ -233,7 +233,7 @@ test("searchApprovedKnowledge rank-fuses model interpretation with the original 
   const result = await searchApprovedKnowledge({ query: "Refalco Group service overview" }, {
     store, currentMessage: "ممكم اعرف شو بتقدمو خدمات؟", embedText: async () => [0.1], language: "arabic"
   });
-  assert.deepEqual(calls, ["Refalco Group service overview", "ممكم اعرف شو بتقدمو خدمات؟"]);
+  assert.deepEqual(calls, ["مو مكتب تسجيل شركات ضيق", "Refalco Group service overview", "ممكم اعرف شو بتقدمو خدمات؟"]);
   assert.equal(result.modelObservation.evidence.length, 2);
   assert.deepEqual(result.modelObservation.evidence.map((item) => item.content), ["Company formation services", "خدمات تأسيس الشركات"]);
   assert.ok(result.modelObservation.primarySearchRefs.includes("ar-chunk"),
@@ -295,6 +295,63 @@ test("a second-ranked section from the primary contextual search survives when i
   }));
   assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "rank-two-conditions"));
   assert.ok(result.modelObservation.policyEvidence.some((item) => item.sourceRef === "rank-two-conditions"));
+});
+
+test("broad retrieval limits distinct complete sections, not individual chunks", async () => {
+  const section = (documentId, index, count) => ({
+    document_id: documentId, section_index: 0, chunk_id: `${documentId}-${index}`, chunk_index: index,
+    document_title: `Approved ${documentId}`, heading: `Section ${documentId}`,
+    content: `${documentId} approved content chunk ${index}.`, review_status: "approved"
+  });
+  // A long top-ranked section must not use all six requested slots before the
+  // selector can consider the next five sections.
+  const rows = [
+    ...Array.from({ length: 8 }, (_, index) => section("scope", index, 8)),
+    ...["formation", "tax", "property", "residency", "construction"].map((id) => section(id, 0, 1)),
+    { ...section("pending", 0, 1), review_status: "pending" },
+    { ...section("finding-aid", 0, 1), chunk_kind: "aliases" }
+  ];
+  const result = await searchApprovedKnowledge({ query: "Refalco services overview" }, {
+    store: { searchKnowledge: async () => rows }, currentMessage: "What services do you provide in Cyprus?",
+    embedText: async () => null, matchCount: 6, intents: ["business_areas"]
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.trace.selectedCount, 6);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.section), [
+    "Section scope", "Section formation", "Section tax", "Section property", "Section residency", "Section construction"
+  ]);
+  assert.match(result.modelObservation.evidence[0].content, /chunk 7/u,
+    "all chunks from a selected section stay together");
+  assert.ok(result.modelObservation.evidence.every((item) => !/pending|finding-aid/u.test(item.sourceRef)),
+    "ineligible revisions and finding-aid chunks never enter broad service evidence");
+  assert.equal(result.trace.selectedChunkCount, 13);
+});
+
+test("broad service intent adds a neutral overview query in parallel with model and exact customer queries", async () => {
+  const calls = [];
+  const result = await searchApprovedKnowledge({ query: "Refalco support areas", relatedQueries: ["approved service scope"] }, {
+    store: { searchKnowledge: async (query) => { calls.push(query); return []; } },
+    currentMessage: "شو بتعملوا بقبرص؟", language: "arabic", intents: ["business_areas"],
+    embedText: async () => null
+  });
+  assert.deepEqual(calls, [
+    "مو مكتب تسجيل شركات ضيق",
+    "Refalco support areas",
+    "approved service scope",
+    "شو بتعملوا بقبرص؟"
+  ]);
+  assert.equal(result.status, "no_evidence");
+});
+
+test("a focused question does not add broad company-scope retrieval", async () => {
+  const calls = [];
+  await searchApprovedKnowledge({ query: "Cyprus VAT registration cost" }, {
+    store: { searchKnowledge: async (query) => { calls.push(query); return []; } },
+    currentMessage: "How much is VAT registration?", language: "english", intents: ["services"],
+    embedText: async () => null
+  });
+  assert.deepEqual(calls, ["Cyprus VAT registration cost", "How much is VAT registration?"]);
 });
 
 test("searchApprovedKnowledge also retrieves the immediately prior customer wording after a language switch, with personal data redacted", async () => {

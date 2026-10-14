@@ -1,5 +1,8 @@
 const { redactSensitiveData, redactAuditEventFields } = require("./sensitiveData");
 const { sanitizeAgentTraceFields } = require("./operationalTelemetry");
+const { profile } = require("./companyProfile");
+const { identityFromProfile, validateCompanyIdentity } = require("./companyIdentitySettings");
+const { BUSINESS_GUIDANCE_DEFAULTS, validateBusinessGuidance } = require("./businessGuidance");
 
 function requireRafaApiConfig() {
   const url = process.env.SUPABASE_URL;
@@ -31,12 +34,18 @@ class EdgeApiStore {
     this.key = config.key;
     this.apiSecret = config.apiSecret;
     this.data = { users: {} };
+    this.responseStyleCache = null;
+    this.responseStyleCacheAt = 0;
+    this.companyIdentityCache = null;
+    this.companyIdentityCacheAt = 0;
+    this.businessGuidanceCache = null;
+    this.businessGuidanceCacheAt = 0;
   }
 
   async request(path, options = {}) {
-    const { timeoutMs = 8000, signal, ...fetchOptions } = options;
+    const { timeoutMs = 8000, signal, attempts: requestedAttempts, ...fetchOptions } = options;
     const method = String(fetchOptions.method || "GET").toUpperCase();
-    const attempts = method === "GET" ? 3 : 1;
+    const attempts = method === "GET" ? Math.max(1, Math.min(3, Number(requestedAttempts) || 3)) : 1;
     let lastError;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const timeout = AbortSignal.timeout(Math.max(500, Math.min(15000, Number(timeoutMs) || 8000)));
@@ -423,6 +432,62 @@ class EdgeApiStore {
       body: JSON.stringify({ policy })
     });
     return saved;
+  }
+
+  async getResponseStyle({ timeoutMs = 1200 } = {}) {
+    if (this.responseStyleCache && Date.now() - this.responseStyleCacheAt < 30_000) return this.responseStyleCache;
+    const { style } = await this.request("/settings/response-style", { timeoutMs, attempts: 1 });
+    this.responseStyleCache = style || null;
+    this.responseStyleCacheAt = Date.now();
+    return this.responseStyleCache;
+  }
+
+  async updateResponseStyle(style) {
+    const { style: saved } = await this.request("/settings/response-style", {
+      method: "PUT",
+      body: JSON.stringify({ style })
+    });
+    this.responseStyleCache = saved || null;
+    this.responseStyleCacheAt = Date.now();
+    return saved;
+  }
+
+  async getCompanyIdentity({ timeoutMs = 1200 } = {}) {
+    if (this.companyIdentityCache && Date.now() - this.companyIdentityCacheAt < 5000) return this.companyIdentityCache;
+    const { identity } = await this.request("/settings/company-identity", { timeoutMs, attempts: 1 });
+    this.companyIdentityCache = identity ? validateCompanyIdentity(identity) : identityFromProfile(profile);
+    this.companyIdentityCacheAt = Date.now();
+    return this.companyIdentityCache;
+  }
+
+  async updateCompanyIdentity(identity) {
+    const validated = validateCompanyIdentity(identity);
+    const { identity: saved } = await this.request("/settings/company-identity", {
+      method: "PUT",
+      body: JSON.stringify({ identity: validated })
+    });
+    this.companyIdentityCache = validateCompanyIdentity(saved);
+    this.companyIdentityCacheAt = Date.now();
+    return this.companyIdentityCache;
+  }
+
+  async getBusinessGuidance({ timeoutMs = 1200 } = {}) {
+    if (this.businessGuidanceCache && Date.now() - this.businessGuidanceCacheAt < 30_000) return this.businessGuidanceCache;
+    const { guidance } = await this.request("/settings/business-guidance", { timeoutMs, attempts: 1 });
+    this.businessGuidanceCache = validateBusinessGuidance(guidance || BUSINESS_GUIDANCE_DEFAULTS);
+    this.businessGuidanceCacheAt = Date.now();
+    return this.businessGuidanceCache;
+  }
+
+  async updateBusinessGuidance(guidance) {
+    const validated = validateBusinessGuidance(guidance);
+    const { guidance: saved } = await this.request("/settings/business-guidance", {
+      method: "PUT",
+      body: JSON.stringify({ guidance: validated })
+    });
+    this.businessGuidanceCache = validateBusinessGuidance(saved || BUSINESS_GUIDANCE_DEFAULTS);
+    this.businessGuidanceCacheAt = Date.now();
+    return this.businessGuidanceCache;
   }
 
   async createAppointment(appointment) {

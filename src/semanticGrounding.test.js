@@ -5,6 +5,29 @@ const { assessAgentDraft, validateGroundingVerdict, reviewIdentity } = require("
 const { runAgentTurnForContact } = require("./agentRuntime");
 const { buildDecisionMessages } = require("./agentDecision");
 const { buildGroundingReviewMessages } = require("./semanticGrounding");
+const { INTENTS } = require("./intent");
+
+test("configured identity answers skip the extra model review only for an exact same-language identity reply", async () => {
+  let calls = 0;
+  const measurements = [];
+  const result = await assessAgentDraft({
+    text: "أنا REFAL، وكيل الأعمال الرقمي لمجموعة Refalco Group.",
+    context: { currentMessage: "مين انت؟ وشو اسم الشركة؟", intents: [INTENTS.AGENT_IDENTITY], locale: "arabic" }
+  }, {
+    callModel: async () => { calls += 1; throw new Error("identity fast path should not call the reviewer"); },
+    onModelCall: (measurement) => measurements.push(measurement)
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(calls, 0);
+  assert.equal(measurements[0].outcome, "configured_identity_fast_path");
+
+  await assessAgentDraft({
+    text: "أنا REFAL، وكيل الأعمال الرقمي لمجموعة Refalco Group. نقدم خدمات تأسيس الشركات.",
+    context: { currentMessage: "مين انت؟ وشو اسم الشركة؟", intents: [INTENTS.AGENT_IDENTITY], locale: "arabic" }
+  }, { callModel: async () => { calls += 1; return {}; } });
+  assert.equal(calls, 1, "adding any unconfigured business claim must retain independent review");
+});
 test("grounding review accepts an explicitly listed service category without inventing its inclusions", () => {
   const reviewPrompt = buildGroundingReviewMessages({ text: "Residency and relocation are service areas." })[0].content;
   assert.match(reviewPrompt, /current approved company overview that explicitly lists a service category is direct evidence that the group offers that category at the same general level/);
@@ -12,6 +35,9 @@ test("grounding review accepts an explicitly listed service category without inv
   assert.match(reviewPrompt, /When approved evidence establishes a service but not whether it is available at the stage the customer asks about or included in continuing support/);
   assert.match(reviewPrompt, /Do not reject the service scope for lacking that relationship/);
   assert.match(reviewPrompt, /Do not ask the customer to repeat, choose among, or restate aspects already explicit in the current request/);
+  assert.match(reviewPrompt, /For a question about guaranteed immigration, residency, banking, permit or investment outcomes, accept a concise refusal only when no safe related next step is available/);
+  assert.match(reviewPrompt, /claims about who decides, eligibility factors, requirements, application steps, timelines or available options are factual and require direct current approved evidence/);
+  assert.match(reviewPrompt, /a goal, jurisdiction or detail already stated must not be asked again/);
   assert.match(reviewPrompt, /Assess entailment by meaning across languages, not exact word overlap/);
   assert.match(reviewPrompt, /not a side effect of an action, it supports that the action alone does not make that outcome automatic/);
   const socialReview = buildGroundingReviewMessages({ text: "مرحبًا.", context: { socialOnlyTurn: true } });
@@ -252,6 +278,14 @@ test("generation and review use the same configured identity across languages, i
     assert.equal(rejected.valid, false);
     assert.deepEqual(rejected.reasons, ["no_approved_evidence", "context_mismatch"]);
   }
+});
+
+test("grounding review receives the current dashboard identity without credibility figures", () => {
+  const identity = { legalName: "REFAL QA Ltd", brand: "REFAL QA", groupName: "QA Group", jurisdiction: "Cyprus", timezone: "Europe/Nicosia", cities: ["Limassol"], departments: ["Corporate"], languages: ["en"] };
+  const messages = buildGroundingReviewMessages({ text: "I am REFAL QA, QA Group's digital business agent.", context: { companyIdentity: identity } });
+  const supplied = JSON.parse(messages[1].content);
+  assert.deepEqual(supplied.identity, { brand: "REFAL QA", groupName: "QA Group", legalName: "REFAL QA Ltd", jurisdiction: "Cyprus" });
+  assert.equal(JSON.stringify(supplied.identity).includes("400"), false);
 });
 const verdict = (text, status, evidenceRefs = [], reasonCode = status === "unsupported" ? "unsupported_relation" : status) => ({
   segments: [{ text, status, evidenceRefs, reasonCode }], languageValid: true, contextValid: true, contextIssues:[], requestCoverage:{outcome:"addressed",unmetAspects:[]}
