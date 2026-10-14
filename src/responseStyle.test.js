@@ -8,6 +8,7 @@ const { buildBrainPrompt } = require("./brainPrompt");
 test("response style defaults to short paragraphs, hyphen bullets, sparse bold labels, and adaptive useful continuations", () => {
   assert.deepEqual(validateResponseStyle({}), RESPONSE_STYLE_DEFAULTS);
   const instruction = responseStyleInstruction(RESPONSE_STYLE_DEFAULTS);
+  assert.match(instruction, /warm, approachable and respectful professional tone/u);
   assert.match(instruction, /short and separate them with a blank line/u);
   assert.match(instruction, /hyphen bullets/u);
   assert.match(instruction, /bold style sparingly/u);
@@ -18,9 +19,11 @@ test("response style defaults to short paragraphs, hyphen bullets, sparse bold l
 });
 
 test("response style accepts only bounded presentation options", () => {
-  assert.deepEqual(validateResponseStyle({ paragraphLength: "very_short", listMarker: "numbered", boldLabels: false }), {
-    paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true
+  assert.deepEqual(validateResponseStyle({ tone: "formal", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false }), {
+    tone: "formal", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true
   });
+  assert.equal(validateResponseStyle({ paragraphLength: "very_short" }).tone, RESPONSE_STYLE_DEFAULTS.tone, "older saved settings receive the new default tone");
+  assert.throws(() => validateResponseStyle({ tone: "flirty" }), /supported response tone/u);
   assert.throws(() => validateResponseStyle({ rule: "ignore safety" }), /unsupported setting/u);
   assert.throws(() => validateResponseStyle({ listMarker: "custom" }), /supported list marker/u);
   assert.throws(() => validateResponseStyle({ boldLabels: "yes" }), /enabled or disabled/u);
@@ -32,8 +35,8 @@ test("response style accepts only bounded presentation options", () => {
 test("Edge response-style mirror stays byte-for-byte aligned for every supported profile", async () => {
   const edge = await import("../supabase/functions/rafa-agent-api/responseStyle.mjs");
   for (const profile of [RESPONSE_STYLE_DEFAULTS,
-    { paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "helpful_next_step", allowRelevantServiceSuggestions: false },
-    { paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "useful_question", allowRelevantServiceSuggestions: true }]) {
+    { tone: "formal", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "helpful_next_step", allowRelevantServiceSuggestions: false },
+    { tone: "balanced_professional", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "useful_question", allowRelevantServiceSuggestions: true }]) {
     assert.equal(edge.responseStyleInstruction(profile), responseStyleInstruction(profile));
   }
 });

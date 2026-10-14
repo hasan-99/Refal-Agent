@@ -1038,7 +1038,7 @@ function CompanyIdentity() {
 }
 
 function ResponseStyleSettings() {
-  const defaults = { paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true };
+  const defaults = { tone: "warm_professional", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true };
   const { data, loading, error: loadError, reload } = useApi("/api/settings/response-style");
   const [style, setStyle] = useState(defaults);
   const [busy, setBusy] = useState(false);
@@ -1067,10 +1067,11 @@ function ResponseStyleSettings() {
   </section>;
   return <section className="panel response-style-panel">
     <PanelTitle icon={Settings} title="Rafa response style" />
-    <p className="booking-policy-intro">Set reply formatting, helpful continuations, and whether Rafa may offer one relevant service suggestion. Suggestions stay optional and require approved evidence; these preferences never override privacy, safety, or appointment rules.</p>
+    <p className="booking-policy-intro">Choose Rafa’s tone and reply formatting, how to continue the conversation, and whether to allow one relevant service suggestion. Suggestions stay optional and require approved evidence; these preferences never override privacy, safety, or appointment rules.</p>
     {loadError && <p className="inline-error" role="alert">{loadError}</p>}
     <form onSubmit={save}>
       <div className="form-grid">
+        <label className="field">Reply tone<select value={style.tone} onChange={(event) => setStyle({ ...style, tone: event.target.value })}><option value="warm_professional">Warm and professional</option><option value="balanced_professional">Balanced and professional</option><option value="formal">Formal and polished</option></select><small>Applies in the customer’s language and does not change what Rafa may claim.</small></label>
         <label className="field">Paragraph length<select value={style.paragraphLength} onChange={(event) => setStyle({ ...style, paragraphLength: event.target.value })}><option value="short">Short</option><option value="very_short">Very short</option></select></label>
         <label className="field">List marker<select value={style.listMarker} onChange={(event) => setStyle({ ...style, listMarker: event.target.value })}><option value="hyphen">Hyphen bullets</option><option value="numbered">Numbered list</option></select></label>
         <label className="field">How to continue<select value={style.continuationStyle} onChange={(event) => setStyle({ ...style, continuationStyle: event.target.value })}><option value="adaptive">Useful question or next step</option><option value="useful_question">One useful question</option><option value="helpful_next_step">Useful next step</option></select><small>Only add a question or next step when it helps; otherwise finish the answer.</small></label>
@@ -1082,6 +1083,7 @@ function ResponseStyleSettings() {
     <section className="response-style-preview" aria-labelledby="response-style-preview-title" aria-label="Reply formatting preview">
       <div><h3 id="response-style-preview-title">Reply formatting preview</h3><span>Preview only · edits apply after saving</span></div>
       <div className="response-style-preview-message" dir="auto">
+        <p className="response-style-preview-tone">{style.tone === "formal" ? "Tone: courteous, polished, and formal." : style.tone === "balanced_professional" ? "Tone: clear, neutral, and professional." : "Tone: warm, approachable, and professional."}</p>
         <p>{style.boldLabels ? <><strong>Key detail:</strong> </> : "Key detail: "}One clear point in a short paragraph.</p>
         <p>Separate points stay on their own lines, with space between paragraphs.</p>
         <ul className={style.listMarker === "numbered" ? "numbered" : "hyphen"}>
