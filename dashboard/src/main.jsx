@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
+  Archive,
   ArrowRight,
   ArrowUpRight,
   BarChart3,
@@ -18,7 +19,9 @@ import {
   Database,
   Eye,
   EyeOff,
+  FolderOpen,
   KeyRound,
+  Languages,
   Link2,
   LogOut,
   Mail,
@@ -27,6 +30,7 @@ import {
   MessageSquareText,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
   Phone,
   RefreshCcw,
@@ -34,6 +38,7 @@ import {
   Search,
   Send,
   Settings,
+  ClipboardCheck,
   ShieldCheck,
   ShieldBan,
   Sparkles,
@@ -219,9 +224,9 @@ function App() {
         }
       } catch { if (mounted) setNotificationCountUnavailable(true); }
     };
-    void refreshCount();
-    const timer = setInterval(refreshCount, 20000);
-    return () => { mounted = false; clearInterval(timer); };
+    const initial = setTimeout(refreshCount, 1800);
+    const timer = setInterval(refreshCount, 60000);
+    return () => { mounted = false; clearTimeout(initial); clearInterval(timer); };
   }, [authState?.role]);
 
   useEffect(() => {
@@ -340,11 +345,11 @@ function App() {
         </div>
       </aside>
       <main>
-        <header className="topbar">
-          <div>
+        <header className={active === "company-brain" ? "topbar topbar-company-brain" : "topbar"}>
+          {active !== "company-brain" && <div>
             <div className="eyebrow"><ActiveIcon size={16} /> {current.label}</div>
             <h1>{current.label}</h1>
-          </div>
+          </div>}
           <div className="topbar-actions">
             <StatusPill />
           </div>
@@ -547,10 +552,10 @@ function AdminAudit() {
 function StatusPill() {
   const [overview, setOverview] = useState(null);
   useEffect(() => {
-    api("/api/overview").then(setOverview).catch(() => {});
+    api("/api/whatsapp/status").then((result) => setOverview({ status: result.status })).catch(() => {});
     const timer = setInterval(() => {
-      api("/api/overview").then(setOverview).catch(() => {});
-    }, 15000);
+      api("/api/whatsapp/status").then((result) => setOverview({ status: result.status })).catch(() => {});
+    }, 30000);
     return () => clearInterval(timer);
   }, []);
   const connected = overview?.status?.connected;
@@ -571,16 +576,13 @@ function AgentSidebar({ role }) {
   const [section, setSection] = useState("chat");
   const isAdmin = role === "admin";
   const [collapsed, setCollapsed] = useState(true);
+  const agentStateLoaded = useRef(false);
   const streamController = useRef(null);
   const chatEndRef = useRef(null);
   const chatListRef = useRef(null);
   const followStreamRef = useRef(true);
   const tokenBufferRef = useRef({ assistantId: "", text: "" });
   const tokenFrameRef = useRef(0);
-
-  useEffect(() => {
-    loadAgentState();
-  }, []);
 
   useEffect(() => () => {
     if (tokenFrameRef.current) cancelAnimationFrame(tokenFrameRef.current);
@@ -606,11 +608,18 @@ function AgentSidebar({ role }) {
     setError("");
     try {
       setState(await api("/api/agent/state"));
+      agentStateLoaded.current = true;
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  }
+
+  function openAgent(section = "chat") {
+    setSection(section);
+    setCollapsed(false);
+    if (!agentStateLoaded.current) void loadAgentState();
   }
 
   async function openSession(sessionId) {
@@ -817,7 +826,7 @@ function AgentSidebar({ role }) {
       <div className="agent-rail-head">
         <div className="agent-identity"><span className="agent-avatar"><img src={rafaLogo} alt="" /></span><span><strong>REFAL</strong><small>Refalco Group agent</small></span></div>
         <div className="agent-head-actions">
-          <button className="icon-button rail-toggle" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Open REFAL chat" : "Close REFAL chat"} title={collapsed ? "Open chat" : "Close chat"}>
+          <button className="icon-button rail-toggle" onClick={() => collapsed ? openAgent() : setCollapsed(true)} aria-label={collapsed ? "Open REFAL chat" : "Close REFAL chat"} title={collapsed ? "Open chat" : "Close chat"}>
             {collapsed ? <MessageCircle size={23} strokeWidth={2} /> : <X size={18} />}
           </button>
         </div>
@@ -829,7 +838,7 @@ function AgentSidebar({ role }) {
           ["history", Clock3, "History"],
           ...(isAdmin ? [["memory", BrainCircuit, "Memory"], ["settings", Settings, "Settings"]] : [])
         ].map(([id, Icon, label]) => (
-          <button key={id} className={section === id ? "agent-nav-item active" : "agent-nav-item"} onClick={() => { setSection(id); setCollapsed(false); }} aria-label={label} title={label}>
+          <button key={id} className={section === id ? "agent-nav-item active" : "agent-nav-item"} onClick={() => openAgent(id)} aria-label={label} title={label}>
             <Icon size={18} /><span>{label}</span>
           </button>
         ))}
@@ -1058,6 +1067,29 @@ function ResponseStyleSettings() {
     finally { setBusy(false); }
   }
 
+  const toneOptions = [
+    { value: "warm_professional", title: "Warm & professional", description: "Approachable, thoughtful, and still business-ready.", icon: Sparkles },
+            { value: "balanced_professional", title: "Clear & balanced", description: "Direct, calm, and naturally professional.", icon: MessageCircle },
+    { value: "formal", title: "Formal & polished", description: "More structured and courteous for formal enquiries.", icon: Building2 },
+    { value: "natural_conversational", title: "Natural & conversational", description: "Friendly and relaxed, while staying professional.", icon: MessageCircleMore }
+  ];
+  const previewOpening = {
+    warm_professional: "Thanks for reaching out. I’m happy to help.",
+    balanced_professional: "I can help with that. Here’s a clear place to start.",
+    formal: "Thank you for your enquiry. I would be pleased to assist.",
+    natural_conversational: "Of course, happy to help. Let’s make this clear and simple."
+  }[style.tone];
+  const previewDetail = style.paragraphLength === "very_short"
+    ? "I’ll keep the reply focused on your question."
+    : style.paragraphLength === "detailed"
+      ? "I’ll explain the key details and what they mean, while keeping the answer focused on what you need."
+      : "I’ll explain the relevant details clearly and keep the conversation focused on what you need.";
+  const previewContinuation = {
+    adaptive: "What would you like to clarify first?",
+    useful_question: "Which detail would you like me to clarify?",
+    helpful_next_step: "A useful next step is to tell me which part you want to explore."
+  }[style.continuationStyle];
+
   if (loading && !data.style) return <Loading label="Loading response style" />;
   if (loadError) return <section className="panel response-style-panel response-style-load-error" role="alert">
     <PanelTitle icon={Settings} title="Rafa response style" />
@@ -1067,33 +1099,45 @@ function ResponseStyleSettings() {
   </section>;
   return <section className="panel response-style-panel">
     <PanelTitle icon={Settings} title="Rafa response style" />
-    <p className="booking-policy-intro">Choose Rafa’s tone and reply formatting, how to continue the conversation, and whether to allow one relevant service suggestion. Suggestions stay optional and require approved evidence; these preferences never override privacy, safety, or appointment rules.</p>
+    <p className="booking-policy-intro">Shape how Rafa sounds and keeps a conversation moving. These settings apply to new replies in the customer’s language; approved knowledge and safety rules always take priority.</p>
     {loadError && <p className="inline-error" role="alert">{loadError}</p>}
-    <form onSubmit={save}>
-      <div className="form-grid">
-        <label className="field">Reply tone<select value={style.tone} onChange={(event) => setStyle({ ...style, tone: event.target.value })}><option value="warm_professional">Warm and professional</option><option value="balanced_professional">Balanced and professional</option><option value="formal">Formal and polished</option></select><small>Applies in the customer’s language and does not change what Rafa may claim.</small></label>
-        <label className="field">Paragraph length<select value={style.paragraphLength} onChange={(event) => setStyle({ ...style, paragraphLength: event.target.value })}><option value="short">Short</option><option value="very_short">Very short</option></select></label>
-        <label className="field">List marker<select value={style.listMarker} onChange={(event) => setStyle({ ...style, listMarker: event.target.value })}><option value="hyphen">Hyphen bullets</option><option value="numbered">Numbered list</option></select></label>
-        <label className="field">How to continue<select value={style.continuationStyle} onChange={(event) => setStyle({ ...style, continuationStyle: event.target.value })}><option value="adaptive">Useful question or next step</option><option value="useful_question">One useful question</option><option value="helpful_next_step">Useful next step</option></select><small>Only add a question or next step when it helps; otherwise finish the answer.</small></label>
-        <label className="booking-confirm-duration"><input type="checkbox" checked={style.boldLabels} onChange={(event) => setStyle({ ...style, boldLabels: event.target.checked })} /> Bold short labels when useful</label>
-        <label className="response-style-suggestion-control"><input type="checkbox" checked={style.allowRelevantServiceSuggestions} onChange={(event) => setStyle({ ...style, allowRelevantServiceSuggestions: event.target.checked })} /><span><strong>Allow one relevant service suggestion</strong><small>When enabled, Rafa may add at most one optional suggestion after answering, only when approved knowledge supports it and it helps the customer's stated goal.</small></span></label>
+    <form className="response-style-form" onSubmit={save}>
+      <div className="response-style-controls">
+        <section className="response-style-section" aria-labelledby="response-style-tone-title">
+          <div className="response-style-section-heading"><div><h3 id="response-style-tone-title">Choose Rafa’s voice</h3><p>Pick the tone that best fits your customers.</p></div><span>ONE TONE</span></div>
+          <div className="response-style-tone-options" role="group" aria-label="Reply tone">
+            {toneOptions.map(({ value, title, description, icon: ToneIcon }) => <button key={value} type="button" className={`response-style-tone-option${style.tone === value ? " selected" : ""}`} aria-pressed={style.tone === value} onClick={() => setStyle({ ...style, tone: value })}>
+              <span className="response-style-tone-icon"><ToneIcon size={17} /></span><span className="response-style-tone-copy"><strong>{title}</strong><small>{description}</small></span><span className="response-style-tone-check"><CheckCircle2 size={16} /></span>
+            </button>)}
+          </div>
+        </section>
+        <section className="response-style-section" aria-labelledby="response-style-layout-title">
+          <div className="response-style-section-heading"><div><h3 id="response-style-layout-title">Reply shape</h3><p>Keep messages readable and easy to respond to.</p></div></div>
+          <div className="response-style-fields">
+            <label className="field">Answer detail<StyledDropdown id="response-length" label="Answer detail" icon={MessageSquareText} value={style.paragraphLength} highlightSelection={false} onChange={(value) => setStyle({ ...style, paragraphLength: value })} options={[{ value: "very_short", label: "Brief" }, { value: "short", label: "Balanced" }, { value: "detailed", label: "More context" }]} /><small>Rafa still answers the full question and keeps important conditions.</small></label>
+            <label className="field">When useful, format lists as<StyledDropdown id="response-list-marker" label="List format" icon={ClipboardList} value={style.listMarker} highlightSelection={false} onChange={(value) => setStyle({ ...style, listMarker: value })} options={[{ value: "hyphen", label: "Simple bullets" }, { value: "numbered", label: "Numbered steps" }]} /></label>
+            <label className="field response-style-continuation">Conversation follow-up<StyledDropdown id="response-continuation" label="Conversation follow-up" icon={MessageCircle} value={style.continuationStyle} highlightSelection={false} onChange={(value) => setStyle({ ...style, continuationStyle: value })} options={[{ value: "adaptive", label: "A useful question or next step" }, { value: "useful_question", label: "Ask one useful question" }, { value: "helpful_next_step", label: "Suggest a helpful next step" }]} /><small>Rafa won’t add one when the answer is already complete.</small></label>
+          </div>
+        </section>
+        <section className="response-style-section response-style-toggles" aria-label="Optional formatting">
+          <label className="response-style-toggle"><input type="checkbox" checked={style.boldLabels} onChange={(event) => setStyle({ ...style, boldLabels: event.target.checked })} /><span><strong>Emphasize short labels</strong><small>Use bold labels when they make an answer easier to scan.</small></span></label>
+          <label className="response-style-toggle"><input type="checkbox" checked={style.allowRelevantServiceSuggestions} onChange={(event) => setStyle({ ...style, allowRelevantServiceSuggestions: event.target.checked })} /><span><strong>Allow a relevant service suggestion</strong><small>At most one, only when approved knowledge supports it and it helps the customer.</small></span></label>
+        </section>
+        <div className="response-style-save-row"><button className="primary" type="submit" disabled={busy}><Save size={15} />{busy ? "Saving style…" : "Save response style"}</button>{message && <span role="status">{message}</span>}{error && <span className="calendar-check-error" role="alert">{error}</span>}</div>
       </div>
-      <div className="booking-policy-actions"><button className="primary" type="submit" disabled={busy}><Save size={15} />{busy ? "Saving" : "Save response style"}</button>{message && <span role="status">{message}</span>}{error && <span className="calendar-check-error" role="alert">{error}</span>}</div>
+      <aside className="response-style-preview" aria-labelledby="response-style-preview-title" aria-label="Live reply preview">
+        <div className="response-style-preview-heading"><span className="response-style-preview-kicker"><MessageCircle size={14} /> LIVE PREVIEW</span><span>Updates as you choose</span></div>
+        <h3 id="response-style-preview-title">How Rafa will sound</h3>
+        <div className={`response-style-preview-message ${style.tone}`} dir="auto">
+          <p className="response-style-preview-opening">{previewOpening}</p>
+          <p>{style.boldLabels && <strong>Key point: </strong>}{previewDetail}</p>
+          {style.listMarker === "numbered" ? <ol><li>Clear details in an easy order.</li><li>Only what helps answer the question.</li></ol> : <ul><li>Clear details in an easy order.</li><li>Only what helps answer the question.</li></ul>}
+          <p>{previewContinuation}</p>
+          {style.allowRelevantServiceSuggestions && <p className="response-style-preview-suggestion">An optional related suggestion appears only when it is relevant and supported.</p>}
+        </div>
+        <p className="response-style-preview-note">Example wording is illustrative. Actual answers follow the customer’s language and approved information.</p>
+      </aside>
     </form>
-    <section className="response-style-preview" aria-labelledby="response-style-preview-title" aria-label="Reply formatting preview">
-      <div><h3 id="response-style-preview-title">Reply formatting preview</h3><span>Preview only · edits apply after saving</span></div>
-      <div className="response-style-preview-message" dir="auto">
-        <p className="response-style-preview-tone">{style.tone === "formal" ? "Tone: courteous, polished, and formal." : style.tone === "balanced_professional" ? "Tone: clear, neutral, and professional." : "Tone: warm, approachable, and professional."}</p>
-        <p>{style.boldLabels ? <><strong>Key detail:</strong> </> : "Key detail: "}One clear point in a short paragraph.</p>
-        <p>Separate points stay on their own lines, with space between paragraphs.</p>
-        <ul className={style.listMarker === "numbered" ? "numbered" : "hyphen"}>
-          <li>First supporting detail</li>
-          <li>Second supporting detail</li>
-        </ul>
-        <p className="response-style-preview-continuation">{style.continuationStyle === "useful_question" ? "One focused question when needed." : style.continuationStyle === "helpful_next_step" ? "A useful next step when it helps." : "A useful question or next step when relevant."}</p>
-        <p className="response-style-preview-suggestion" role="status">{style.allowRelevantServiceSuggestions ? "A relevant service suggestion is allowed when helpful and supported by approved knowledge." : "Unsolicited service suggestions are disabled."}</p>
-      </div>
-    </section>
   </section>;
 }
 
@@ -1186,6 +1230,38 @@ function BusinessGuidanceSettings() {
   </section>;
 }
 
+function StyledDropdown({ id, label, icon: Icon, value, options, onChange, className = "", highlightSelection = true }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
+  const triggerRef = useRef(null);
+  const selected = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOutside = (event) => { if (!menuRef.current?.contains(event.target)) setOpen(false); };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return <div className={`dashboard-dropdown ${className}${open ? " open" : ""}${highlightSelection && value !== "all" ? " has-selection" : ""}`} ref={menuRef}>
+    <button type="button" className="dashboard-dropdown-trigger" id={`${id}-trigger`} aria-haspopup="listbox" aria-expanded={open} aria-label={`${label}: ${selected?.label || ""}`} onClick={() => setOpen((current) => !current)} ref={triggerRef}>
+      {Icon && <Icon size={14} />}<span>{selected?.label}</span><ChevronDown size={13} className="dashboard-dropdown-chevron" />
+    </button>
+    {open && <div className="dashboard-dropdown-options" role="listbox" aria-label={label} aria-labelledby={`${id}-trigger`}>
+      {options.map((option) => <button type="button" role="option" aria-selected={option.value === value} className="dashboard-dropdown-option" key={option.value} onClick={() => { onChange(option.value); setOpen(false); }}>
+        <span>{option.label}</span>{option.value === value && <CheckCircle2 size={14} />}
+      </button>)}
+    </div>}
+  </div>;
+}
+
 function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateRequestHandled }) {
   const { data, loading, error: loadError, reload } = useApi("/api/knowledge");
   const [selectedId, setSelectedId] = useState("");
@@ -1198,6 +1274,9 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
   const [importLanguage, setImportLanguage] = useState("en");
   const [uploadFile, setUploadFile] = useState(null);
   const [knowledgeMode, setKnowledgeMode] = useState("text");
+  const [importUrl, setImportUrl] = useState("");
+  const [fetchPolicy, setFetchPolicy] = useState({ allowedHosts: [] });
+  const [fetchPolicyError, setFetchPolicyError] = useState("");
   const [knowledgeView, setKnowledgeView] = useState("content");
   const [editorMode, setEditorMode] = useState("update");
   const [editingDocument, setEditingDocument] = useState(null);
@@ -1260,9 +1339,12 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
     return groups;
   }, new Map());
   const selected = detail?.source || sources.find((source) => source.id === selectedId);
+  const canFetchSelectedSource = /^https:\/\//i.test(String(selected?.canonical_url || ""));
 
   function openKnowledgeEditor(document = null) {
+    setError("");
     setKnowledgeMode("text");
+    setImportUrl("");
     setEditingDocument(document);
     setEditorMode(document ? "update" : "new");
     setImportTitle(document?.title || "");
@@ -1272,14 +1354,36 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
     setKnowledgeView("edit");
   }
 
-  function startNewKnowledgeEntry() {
-    setEditorMode("new");
-    setEditingDocument(null);
+  useEffect(() => {
+    if (knowledgeView !== "edit") return;
+    const editor = document.querySelector(".knowledge-add-panel");
+    if (!editor) return;
+    const frame = requestAnimationFrame(() => {
+      const main = editor.closest("main");
+      if (!main) {
+        editor.scrollIntoView({ block: "start", behavior: "smooth" });
+        return;
+      }
+      const top = main.scrollTop + editor.getBoundingClientRect().top - main.getBoundingClientRect().top - 12;
+      main.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [knowledgeView]);
+
+  useEffect(() => {
+    if (knowledgeView !== "edit" || knowledgeMode !== "url") return;
+    api("/api/knowledge/fetch-policy").then((value) => { setFetchPolicy(value); setFetchPolicyError(""); }).catch((value) => setFetchPolicyError(value.message || "Could not load the approved website list."));
+  }, [knowledgeView, knowledgeMode]);
+
+  function cancelKnowledgeEditor() {
+    setError("");
     setImportTitle("");
     setImportContent("");
-    setImportLanguage("en");
+    setEditingDocument(null);
     setUploadFile(null);
-    setKnowledgeMode("text");
+    setImportUrl("");
+    setEditorMode("new");
+    setKnowledgeView("content");
   }
 
   useEffect(() => {
@@ -1296,8 +1400,12 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
   }
 
   async function fetchSource() {
+    if (!canFetchSelectedSource) {
+      setError("This is saved REFAL content, not a web page. Use Edit or Add knowledge to update it.");
+      return;
+    }
     await run("fetch", async () => {
-      const value = await api(`/api/knowledge/${selectedId}/fetch`, { method: "POST" });
+      const value = await api(`/api/knowledge/${selectedId}/fetch`, { method: "POST", body: JSON.stringify({ language: detail?.documents?.[0]?.language_code || "en" }) });
       setDetail(await api(`/api/knowledge/${selectedId}`));
       return { message: value.deduplicated ? "No content change; existing revision kept." : `Revision v${value.revision} saved pending review. It is not available to REFAL until approved.` };
     });
@@ -1318,6 +1426,7 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
         setSelectedId(targetSourceId);
       }
       setImportTitle(""); setImportContent(""); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
+      if (saved.titleUpdated) return { message: "Title updated on the existing pending revision. The text was unchanged, so no duplicate knowledge was added." };
       if (saved.embeddingWarning) return { message: `Saved to the database. Text search is ready, but semantic indexing failed: ${saved.embeddingWarning}` };
       return { message: saved.unchanged ? "No content change detected. The existing revision and review status were kept." : `Revision v${saved.revision} saved as pending review. REFAL will not use or index it until an administrator approves it.` };
     });
@@ -1346,6 +1455,28 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
       return { message: value.unchanged ? "No content change detected. The existing revision and review status were kept." : `File saved as revision v${value.revision}, pending review. REFAL will not use or index it until an administrator approves it.` };
     });
   }
+
+  async function fetchNewSource(event) {
+    event.preventDefault();
+    await run("fetch-url", async () => {
+      const url = new URL(importUrl.trim());
+      const created = await api("/api/knowledge", { method: "POST", body: JSON.stringify({ displayName: importTitle, url: url.href }) });
+      setSelectedId(created.source.id);
+      setKnowledgeView("content");
+      reload();
+      const fetched = await api(`/api/knowledge/${created.source.id}/fetch`, { method: "POST", body: JSON.stringify({ language: importLanguage }) });
+      setDetail(await api(`/api/knowledge/${created.source.id}`));
+      setImportUrl("");
+      return { message: `Fetched ${fetched.characterCount.toLocaleString()} characters. Revision v${fetched.revision} is pending review and cannot be used by REFAL until approved.` };
+    });
+  }
+
+  const canFetchImportUrl = (() => {
+    try {
+      const url = new URL(importUrl.trim());
+      return url.protocol === "https:" && fetchPolicy.allowedHosts.includes(url.hostname.toLowerCase());
+    } catch { return false; }
+  })();
 
   async function archiveSource(source, archived, reason) {
     await run(`archive-${source.id}`, async () => {
@@ -1388,67 +1519,53 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
   );
   return (
     <div className="page-stack knowledge-page">
-      <section className="knowledge-hero">
-        <div>
-          <span className="knowledge-hero-kicker"><BookOpenCheck size={14} /> KNOWLEDGE OPERATIONS</span>
-          <h2>Agent knowledge</h2>
-          <p>Find source material, inspect revisions, and review updates before REFAL uses them in customer answers.</p>
-        </div>
-        {isAdmin && <button type="button" className="primary knowledge-add-button" onClick={() => openKnowledgeEditor()}><Plus size={16} /> Add knowledge</button>}
-      </section>
-      <section className="knowledge-summary">
-        <article className="knowledge-stat"><span>ACTIVE SOURCES</span><strong>{sources.filter((source) => source.enabled).length}</strong><small>Available to REFAL.</small></article>
-        <article className="knowledge-stat approved"><span>APPROVED REVISIONS</span><strong>{documents.filter((doc) => doc.review_status === "approved").length}</strong><small>Ready for retrieval.</small></article>
-        <article className="knowledge-stat pending"><span>AWAITING REVIEW</span><strong>{documents.filter((doc) => doc.review_status === "pending").length}</strong><small>Not used by REFAL yet.</small></article>
-        <article className="knowledge-stat"><span>ALL REVISIONS</span><strong>{documents.length}</strong><small>Across your knowledge sources.</small></article>
-      </section>
+      <div className="knowledge-filter-bar" role="group" aria-label="Search and filter knowledge">
+        <label className="knowledge-filter-search"><Search size={15} /><input id="knowledge-library-search" type="search" aria-label="Search all knowledge" value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="Search knowledge" autoComplete="off" /></label>
+        <StyledDropdown className="knowledge-filter-menu" id="knowledge-category-filter" label="Filter by category" icon={FolderOpen} value={knowledgeDomain} onChange={setKnowledgeDomain} options={[{ value: "all", label: "All categories" }, ...knowledgeDomains.map((domain) => ({ value: domain, label: domain.replaceAll("-", " ").replace(/\b\w/gu, (letter) => letter.toUpperCase()) }))]} />
+        <StyledDropdown className="knowledge-filter-menu" id="knowledge-language-filter" label="Filter by language" icon={Languages} value={knowledgeLanguage} onChange={setKnowledgeLanguage} options={[{ value: "all", label: "All languages" }, ...orderedKnowledgeLanguages.map((language) => ({ value: language, label: languageName(language) }))]} />
+        <StyledDropdown className="knowledge-filter-menu" id="knowledge-status-filter" label="Filter by review status" icon={ClipboardCheck} value={knowledgeStatus} onChange={setKnowledgeStatus} options={[{ value: "all", label: "All review statuses" }, ...knowledgeStatuses.map((status) => ({ value: status, label: status.replaceAll("_", " ").replace(/\b\w/gu, (letter) => letter.toUpperCase()) }))]} />
+        {(knowledgeSearch.trim() || knowledgeDomain !== "all" || knowledgeLanguage !== "all" || knowledgeStatus !== "all") && <button type="button" className="knowledge-filter-clear" onClick={() => { setKnowledgeSearch(""); setKnowledgeDomain("all"); setKnowledgeLanguage("all"); setKnowledgeStatus("all"); }} aria-label="Clear knowledge filters" title="Clear filters"><X size={15} /></button>}
+        {isAdmin && <button type="button" className="primary knowledge-filter-add" onClick={() => openKnowledgeEditor()}><Plus size={15} /> Add knowledge</button>}
+      </div>
       {error && <p className="error knowledge-message">{error}</p>}
       {notice && <p className="notice knowledge-message">{notice}</p>}
-      <div className="knowledge-layout">
+      <div className={`knowledge-layout${knowledgeView === "edit" ? " knowledge-layout-editing" : ""}`}>
         <section className="panel knowledge-sources">
           <div className="knowledge-sources-heading"><div><span className="knowledge-section-kicker">LIBRARY</span><h2>Agent knowledge</h2></div><span className="knowledge-result-count">{visibleDocuments.length} {visibleDocuments.length === 1 ? "revision" : "revisions"}</span></div>
           <p className="knowledge-language-note">Language entries are shown separately because their information can differ. Titles are sorted using each language’s alphabet.</p>
-          <label className="knowledge-search-label" htmlFor="knowledge-library-search">Search all knowledge</label>
-          <input id="knowledge-library-search" className="knowledge-search" type="search" value={knowledgeSearch} onChange={(event) => setKnowledgeSearch(event.target.value)} placeholder="Search titles or content in any language" autoComplete="off" />
-          <label className="knowledge-search-label knowledge-category-label" htmlFor="knowledge-category-filter">Filter by category</label>
-          <select id="knowledge-category-filter" className="knowledge-category-filter" value={knowledgeDomain} onChange={(event) => setKnowledgeDomain(event.target.value)}><option value="all">All categories</option>{knowledgeDomains.map((domain) => <option key={domain} value={domain}>{domain.replaceAll("-", " ").replace(/\b\w/gu, (letter) => letter.toUpperCase())}</option>)}</select>
-          <label className="knowledge-search-label knowledge-category-label" htmlFor="knowledge-language-filter">Filter by language</label>
-          <select id="knowledge-language-filter" className="knowledge-category-filter" value={knowledgeLanguage} onChange={(event) => setKnowledgeLanguage(event.target.value)}><option value="all">All languages</option>{orderedKnowledgeLanguages.map((language) => <option key={language} value={language}>{languageName(language)}</option>)}</select>
-          <label className="knowledge-search-label knowledge-category-label" htmlFor="knowledge-status-filter">Filter by review status</label>
-          <select id="knowledge-status-filter" className="knowledge-category-filter" value={knowledgeStatus} onChange={(event) => setKnowledgeStatus(event.target.value)}><option value="all">All review statuses</option>{knowledgeStatuses.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ").replace(/\b\w/gu, (letter) => letter.toUpperCase())}</option>)}</select>
           <div className="knowledge-source-list">
             {[...visibleDocumentsByLanguage].sort(([a], [b]) => languageName(a).localeCompare(languageName(b), "en", { sensitivity: "base" }) || a.localeCompare(b)).map(([language, languageDocuments]) => <div className="knowledge-language-group" key={language}>
               <h3 className="knowledge-language-heading">{languageName(language)} <span>{languageDocuments.length} {languageDocuments.length === 1 ? "revision" : "revisions"}</span></h3>
               {languageDocuments.map((doc) => {
               const source = sources.find((item) => item.id === doc.source_id);
-              const snippet = String(doc.canonical_content || "").replace(/\s+/g, " ").trim();
               const domainLabel = String(doc.metadata?.domain || "Other").replaceAll("-", " ");
-              const topicLabel = String(doc.metadata?.topic || "").replaceAll("-", " ");
-              return <button key={doc.id} className={`knowledge-source${selectedId === doc.source_id ? " selected" : ""}`} onClick={() => setSelectedId(doc.source_id)}>
-                <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></span>
-                <small>{String(doc.language_code || "und").toUpperCase()} · Revision v{doc.revision || 1}{source?.enabled === false ? " · Archived source" : " · Active source"} · {domainLabel}{topicLabel ? ` · ${topicLabel}` : ""} · {source?.display_name || "Knowledge entry"}</small>
-                <span className="knowledge-source-preview">{snippet.slice(0, 150)}{snippet.length > 150 ? "…" : ""}</span>
-              </button>;
+              return <div key={doc.id} className={`knowledge-source-row${selectedId === doc.source_id ? " selected" : ""}`}>
+                <button type="button" className="knowledge-source" onClick={() => setSelectedId(doc.source_id)} aria-label={`View ${doc.title}`}>
+                  <span className="knowledge-source-top"><strong dir="auto">{doc.title}</strong><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></span>
+                  <small>{String(doc.language_code || "und").toUpperCase()} · {domainLabel}{source?.enabled === false ? " · Archived" : ""}</small>
+                </button>
+                {isAdmin && <div className="knowledge-source-actions" aria-label={`Actions for ${doc.title}`}>
+                  <button type="button" className="knowledge-icon-action edit" title={`Edit ${doc.title}`} aria-label={`Edit ${doc.title}`} onClick={() => openKnowledgeEditor(doc)}><Pencil size={14} /></button>
+                  {source?.enabled && <button type="button" className="knowledge-icon-action archive" title={`Remove ${doc.title} from agent knowledge`} aria-label={`Remove ${doc.title} from agent knowledge`} onClick={() => { setArchiveTarget(source); setArchiveReason(""); }}><Trash2 size={14} /></button>}
+                  {source && !source.enabled && <button type="button" className="knowledge-icon-action restore" title={`Restore ${doc.title} to agent knowledge`} aria-label={`Restore ${doc.title} to agent knowledge`} onClick={() => archiveSource(source, false, "Restored by administrator from the knowledge library.")} disabled={Boolean(busy)}><RefreshCcw size={14} /></button>}
+                </div>}
+              </div>;
             })}
             </div>)}
             {!documents.length && <p className="knowledge-empty">Nothing active in REFAL’s knowledge database yet.</p>}
             {documents.length > 0 && !visibleDocuments.length && <p className="knowledge-empty">No revisions match these filters{knowledgeSearch.trim() ? ` and “${knowledgeSearch.trim()}”` : ""}. Change the category, language, or review status and try again.</p>}
           </div>
         </section>
-        <section className="panel knowledge-detail">
-          {!selected ? <p className="empty">Select a knowledge entry to inspect its saved content.</p> : <>
-            <PanelTitle icon={Building2} title={detail?.documents?.[0]?.title || selected.display_name} action={isAdmin && !String(selected.canonical_url || "").startsWith("manual:") && <button className="ghost" onClick={fetchSource} disabled={Boolean(busy)}><RefreshCcw size={15} /> {busy === "fetch" ? "Fetching" : "Fetch"}</button>} />
-            {selected.last_error && <p className="knowledge-error">{selected.last_error}</p>}
-            {knowledgeView === "content" && isAdmin && <div className="knowledge-entry-toolbar"><span>Saved content</span></div>}
+        <section className={`panel knowledge-detail${knowledgeView === "edit" ? " is-editing" : ""}`}>
+          {!selected && knowledgeView !== "edit" ? <p className="empty">Select a knowledge entry to inspect its saved content.</p> : <>
+            <PanelTitle icon={Building2} title={knowledgeView === "edit" ? (editingDocument?.title || importTitle || "Add knowledge") : (detail?.documents?.[0]?.title || selected.display_name)} action={knowledgeView === "content" && isAdmin && canFetchSelectedSource && <button className="ghost" onClick={fetchSource} disabled={Boolean(busy)}><RefreshCcw size={15} /> {busy === "fetch" ? "Fetching" : "Fetch"}</button>} />
+            {selected?.last_error && knowledgeView === "content" && <p className="knowledge-error">{selected.last_error}</p>}
             {isAdmin && knowledgeView === "edit" && <section className="knowledge-add-panel" aria-labelledby="knowledge-add-title">
-              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "A changed save creates a pending revision. The current approved revision remains available until a reviewer approves the new one." : "New content stays pending and is not available to REFAL until reviewed."}</p></div><button type="button" className="ghost" onClick={() => setKnowledgeView("content")}>Back to content</button></div>
-              <div className="knowledge-editor-actions">
-                <span>{editorMode === "update" ? `Editing revision v${editingDocument?.revision}` : "New entry"}</span>
-                {editorMode === "update" && <button type="button" className="ghost" onClick={startNewKnowledgeEntry}>Start a new entry</button>}
-              </div>
+              <div className="knowledge-add-heading"><div><span className="knowledge-add-kicker">KNOWLEDGE DATABASE</span><h3 id="knowledge-add-title">{editorMode === "update" ? `Edit ${editingDocument?.title || "saved knowledge"}` : "Add knowledge for REFAL"}</h3><p>{editorMode === "update" ? "A changed save creates a pending revision. The current approved revision remains available until a reviewer approves the new one." : "New content stays pending and is not available to REFAL until reviewed."}</p></div><button type="button" className="ghost" onClick={cancelKnowledgeEditor}>Cancel</button></div>
               <div className="knowledge-mode-switch" role="group" aria-label="Choose knowledge input type">
                 <button type="button" className={knowledgeMode === "text" ? "selected" : ""} aria-pressed={knowledgeMode === "text"} onClick={() => setKnowledgeMode("text")}>Paste text</button>
                 <button type="button" className={knowledgeMode === "file" ? "selected" : ""} aria-pressed={knowledgeMode === "file"} onClick={() => setKnowledgeMode("file")}>Upload a file</button>
+                {editorMode === "new" && <button type="button" className={knowledgeMode === "url" ? "selected" : ""} aria-pressed={knowledgeMode === "url"} onClick={() => setKnowledgeMode("url")}>Fetch a web page</button>}
               </div>
               {knowledgeMode === "text" ? <form className="knowledge-import" onSubmit={importText}>
                 <label htmlFor="knowledge-title">Title</label>
@@ -1459,47 +1576,55 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
                 <textarea id="knowledge-content" dir="auto" value={importContent} onChange={(event) => setImportContent(event.target.value)} placeholder="Paste company facts, service details, policies, or FAQs…" rows={7} />
                 <KnowledgeCommercialWarning content={importContent} onOpenCommercialData={() => onNavigate("commercial-data")} />
                 <div className="knowledge-submit-row"><small>At least 40 characters. Choose the language reviewers should use to assess this revision.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || importContent.trim().length < 40}><Save size={15} /> {busy === "import" ? "Saving for review…" : editorMode === "update" ? "Save pending revision" : "Submit for review"}</button></div>
-              </form> : <form className="knowledge-upload" onSubmit={uploadDocument}>
+              </form> : knowledgeMode === "file" ? <form className="knowledge-upload" onSubmit={uploadDocument}>
                 <label htmlFor="knowledge-file">Choose a text, PDF, or Word file</label>
                 <input id="knowledge-file" type="file" accept=".txt,.pdf,.docx" aria-label="Choose a TXT, PDF, or DOCX knowledge file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
                 <div className="knowledge-file-note"><BookOpenCheck size={18} /><span><strong>{uploadFile?.name || "Your file will be submitted for review"}</strong><small>REFAL can use its text after an administrator approves the revision.</small></span></div>
                 <label htmlFor="knowledge-file-language">Content language</label>
                 <select id="knowledge-file-language" value={importLanguage} onChange={(event) => setImportLanguage(event.target.value)}><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select>
                 <div className="knowledge-submit-row"><small>Supported formats: TXT, PDF, DOCX.</small><button className="primary" disabled={Boolean(busy) || !uploadFile}><Plus size={15} /> {busy === "upload" ? "Saving for review…" : "Submit file for review"}</button></div>
+              </form> : <form className="knowledge-import knowledge-fetch-form" onSubmit={fetchNewSource}>
+                <label htmlFor="knowledge-fetch-title">Source name</label><input id="knowledge-fetch-title" required maxLength={160} value={importTitle} onChange={(event) => setImportTitle(event.target.value)} placeholder="For example, REFALCO website" />
+                <label htmlFor="knowledge-fetch-url">HTTPS page URL</label><input id="knowledge-fetch-url" type="url" required value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="https://refalco.com/" />
+                <label htmlFor="knowledge-fetch-language">Content language</label><select id="knowledge-fetch-language" value={importLanguage} onChange={(event) => setImportLanguage(event.target.value)}><option value="en">English</option><option value="ar">Arabic</option><option value="el">Greek</option></select>
+                <div className="knowledge-fetch-policy" role="status">{fetchPolicyError ? <span className="inline-error">{fetchPolicyError}</span> : fetchPolicy.allowedHosts.length ? <>Approved websites: <strong>{fetchPolicy.allowedHosts.join(", ")}</strong>. Only HTTPS pages from these hosts can be fetched.</> : "No website is approved for fetching yet. Upload a file or paste text, or configure KNOWLEDGE_ALLOWED_HOSTS for the dashboard."}</div>
+                <div className="knowledge-submit-row"><small>Fetched content is saved as a pending revision and must be reviewed before REFAL can use it.</small><button className="primary" disabled={Boolean(busy) || !importTitle.trim() || !canFetchImportUrl}><RefreshCcw size={15} /> {busy === "fetch-url" ? "Fetching page…" : "Fetch for review"}</button></div>
               </form>}
             </section>}
             {knowledgeView === "content" && <div className="knowledge-revisions">
-              {(detail?.documents || []).map((doc) => <article className="knowledge-revision" key={doc.id}>
-                <div className="knowledge-revision-head"><div><strong>{doc.title}</strong><small>Revision v{doc.revision} · {doc.language_code || "language unspecified"} · Saved {formatDate(doc.fetched_at)} · {doc.chunks.length} chunks{doc.metadata?.sourceFileType ? ` · ${doc.metadata.sourceFileType.toUpperCase()}` : ""}</small><small>Approved by {doc.approved_by || "Not recorded"} · Approved on {formatDate(doc.approved_at)} · Expires {formatDate(doc.valid_until)}</small></div><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></div>
-                <small className="knowledge-review-source">Source: {selected.display_name}{selected.canonical_url && !selected.canonical_url.startsWith("manual:") ? ` · ${selected.canonical_url}` : " · operator supplied"}{doc.metadata?.sourceFileName ? ` · File: ${doc.metadata.sourceFileName}` : ""}</small>
-                {(doc.metadata?.evidence || doc.metadata?.supporting) && <div className="knowledge-review-evidence"><strong>Evidence / supporting references</strong><p>{typeof (doc.metadata.evidence || doc.metadata.supporting) === "string" ? (doc.metadata.evidence || doc.metadata.supporting) : JSON.stringify(doc.metadata.evidence || doc.metadata.supporting)}</p></div>}
-                <div className="knowledge-revision-content" dir="auto">{doc.canonical_content}</div>
-                {isAdmin && doc.reviewHistory?.length > 0 && <details className="knowledge-review-evidence"><summary>Review decision history ({doc.reviewHistory.length})</summary><ol>{doc.reviewHistory.map((entry) => <li key={entry.id}><strong>{entry.previous_status} → {entry.new_status}</strong><span> · {entry.reviewer} · {formatDate(entry.created_at)}</span><p>{entry.reason}</p></li>)}</ol></details>}
-                {isAdmin && <section className="knowledge-review-panel" aria-label={`Review revision ${doc.revision}`}>
-                  <div className="knowledge-review-heading"><div><strong>Review this revision</strong><small>Add a reason to enable a decision.</small></div></div>
-                  <label htmlFor={`knowledge-review-reason-${doc.id}`}>Decision reason<textarea id={`knowledge-review-reason-${doc.id}`} aria-label={`Reason for review decision on ${doc.title}`} placeholder="Explain why this revision is approved, returned, or rejected." value={reviewReasons[doc.id] || ""} onChange={(event) => setReviewReasons((current) => ({ ...current, [doc.id]: event.target.value }))} maxLength={500} rows={3} /></label>
-                  <div className="knowledge-review-actions">
-                    <button className="primary" onClick={() => reviewDocument(doc, "approved")} disabled={Boolean(busy) || doc.review_status === "approved" || !reviewReasons[doc.id]?.trim()}>{busy === `review-${doc.id}` ? "Saving review…" : "Approve and index"}</button>
-                    <button className="ghost" onClick={() => reviewDocument(doc, "pending")} disabled={Boolean(busy) || doc.review_status === "pending" || !reviewReasons[doc.id]?.trim()}>Return to pending</button>
-                    <button className="knowledge-delete-button" onClick={() => reviewDocument(doc, "rejected")} disabled={Boolean(busy) || doc.review_status === "rejected" || !reviewReasons[doc.id]?.trim()}>Reject</button>
-                  </div>
-                </section>}
-                {isAdmin && <div className="knowledge-entry-actions"><button className="ghost" onClick={() => openKnowledgeEditor(doc)}><Save size={14} /> Edit</button></div>}
-              </article>)}
-              {!detail?.documents?.length && <p className="empty">No knowledge saved yet. Select Add knowledge to paste text or upload a file.</p>}
+              {(() => {
+                const docs = detail?.documents || [];
+                const doc = docs.find((item) => item.review_status === "pending") || docs[0];
+                if (!doc) return <p className="empty">No knowledge saved yet. Select Add knowledge to paste text or upload a file.</p>;
+                const evidence = doc.metadata?.evidence || doc.metadata?.supporting;
+                const evidenceItems = Array.isArray(evidence) ? evidence : null;
+                const sourceLabel = selected.canonical_url?.startsWith("refal:") ? "REFAL knowledge base" : selected.canonical_url && !selected.canonical_url.startsWith("manual:") ? selected.canonical_url.replace(/^https?:\/\//, "").split("/")[0] : "Added in dashboard";
+                return <article className="knowledge-revision" key={doc.id}>
+                  <div className="knowledge-content-meta"><span>Updated {formatDate(doc.fetched_at)}</span><span>Source: {sourceLabel}</span><span className={`badge ${doc.review_status === "approved" ? "online" : doc.review_status === "rejected" ? "rejected" : "pending"}`}>{doc.review_status || "unknown"}</span></div>
+                  <div className="knowledge-revision-content" dir="auto">{doc.canonical_content}</div>
+                  {isAdmin && doc.review_status === "pending" && evidence && <details className="knowledge-review-evidence"><summary>Evidence for review</summary>{evidenceItems ? <ul>{evidenceItems.map((item, index) => <li key={`${item?.label || item?.type || "reference"}-${index}`}><strong>{item?.label || item?.document || item?.type || `Reference ${index + 1}`}</strong>{item?.url && <span>{item.url}</span>}{item?.scope && <p>{item.scope}</p>}</li>)}</ul> : <p>{typeof evidence === "string" ? evidence : JSON.stringify(evidence)}</p>}</details>}
+                  {isAdmin && doc.review_status === "pending" && <details className="knowledge-review-panel" aria-label="Review pending knowledge" open={false}>
+                    <summary><div className="knowledge-review-heading"><div><strong>Review this update</strong><small>Pending approval</small></div><ChevronDown size={15} /></div></summary>
+                    <label htmlFor={`knowledge-review-reason-${doc.id}`}>Decision reason<textarea id={`knowledge-review-reason-${doc.id}`} aria-label={`Reason for review decision on ${doc.title}`} placeholder="Add a short reason for your decision." value={reviewReasons[doc.id] || ""} onChange={(event) => setReviewReasons((current) => ({ ...current, [doc.id]: event.target.value }))} maxLength={500} rows={3} /></label>
+                    <div className="knowledge-review-actions">
+                      <button className="primary" onClick={() => reviewDocument(doc, "approved")} disabled={Boolean(busy) || !reviewReasons[doc.id]?.trim()}>{busy === `review-${doc.id}` ? "Saving…" : "Approve"}</button>
+                      <button className="ghost" onClick={() => reviewDocument(doc, "pending")} disabled={Boolean(busy) || !reviewReasons[doc.id]?.trim()}>Return to pending</button>
+                      <button className="knowledge-delete-button" onClick={() => reviewDocument(doc, "rejected")} disabled={Boolean(busy) || !reviewReasons[doc.id]?.trim()}>Reject</button>
+                    </div>
+                  </details>}
+                </article>;
+              })()}
             </div>}
           </>}
         </section>
       </div>
-      {isAdmin && selected && <div className="knowledge-archive-actions">
-        {selected.enabled ? <button type="button" className="ghost" onClick={() => { setArchiveTarget(selected); setArchiveReason(""); }}>Archive source</button> : <button type="button" className="ghost" onClick={() => archiveSource(selected, false, "Restored by administrator from the knowledge archive.")} disabled={Boolean(busy)}>Restore source</button>}
-      </div>}
       {archiveUndo?.archived && <p className="notice knowledge-message" role="status">Source archived. <button type="button" className="ghost" onClick={() => archiveSource(archiveUndo.source, false, "Undo archive action.")} disabled={Boolean(busy)}>Undo</button></p>}
       {archiveTarget && <div className="knowledge-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setArchiveTarget(null); }}>
-        <section className="knowledge-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-archive-title" aria-describedby="knowledge-archive-description">
-          <h2 id="knowledge-archive-title">Archive this source?</h2><p className="knowledge-delete-dialog-entry">{archiveTarget.display_name}</p>
-          <p id="knowledge-archive-description">REFAL will stop retrieving every revision from this source. The content and review history remain saved. You can restore it later.</p>
-          <label htmlFor="knowledge-archive-reason">Reason for archive</label><textarea id="knowledge-archive-reason" value={archiveReason} onChange={(event) => setArchiveReason(event.target.value)} maxLength={500} rows={3} />
+        <section className="knowledge-delete-dialog knowledge-archive-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-archive-title" aria-describedby="knowledge-archive-description">
+          <div className="knowledge-archive-dialog-heading"><span className="knowledge-archive-dialog-icon"><Archive size={19} /></span><div><span className="knowledge-archive-dialog-eyebrow">KNOWLEDGE LIBRARY</span><h2 id="knowledge-archive-title">Archive this source?</h2></div><button type="button" className="knowledge-archive-close" aria-label="Close archive dialog" onClick={() => setArchiveTarget(null)} disabled={Boolean(busy)}><X size={17} /></button></div>
+          <div className="knowledge-archive-source"><span>Source</span><strong>{archiveTarget.display_name}</strong></div>
+          <p id="knowledge-archive-description">REFAL will stop using this source in customer answers. Its content and review history stay saved, and you can restore it later.</p>
+          <label className="knowledge-archive-reason" htmlFor="knowledge-archive-reason"><span>Reason for archive <small>Required for the audit history</small></span><textarea id="knowledge-archive-reason" placeholder="Briefly explain why this source is being archived…" value={archiveReason} onChange={(event) => setArchiveReason(event.target.value)} maxLength={500} rows={3} /></label>
           <div className="knowledge-delete-dialog-actions"><button type="button" onClick={() => setArchiveTarget(null)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="knowledge-delete-confirm-button" onClick={() => archiveSource(archiveTarget, true, archiveReason)} disabled={Boolean(busy) || !archiveReason.trim()}>{busy === `archive-${archiveTarget.id}` ? "Archiving…" : "Archive source"}</button></div>
         </section>
       </div>}
@@ -1508,7 +1633,7 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
 }
 
 function Overview({ onNavigate, isAdmin }) {
-  const { data, loading, reload } = useApi("/api/overview", [], { pollMs: 15000 });
+  const { data, loading, reload } = useApi("/api/overview", [], { pollMs: 30000 });
   const [downloading, setDownloading] = useState(false);
   if (loading) return <Loading />;
 
@@ -1602,7 +1727,7 @@ function Overview({ onNavigate, isAdmin }) {
 }
 
 function AgentStatus({ isAdmin }) {
-  const { data: overviewData, loading: overviewLoading, reload: reloadOverview, error: overviewError } = useApi("/api/overview", [], { pollMs: 15000 });
+  const { data: overviewData, loading: overviewLoading, reload: reloadOverview, error: overviewError } = useApi("/api/overview", [], { pollMs: 30000 });
   const [controlRefresh, setControlRefresh] = useState(0);
   const [credits, setCredits] = useState(null);
   const [creditsRefresh, setCreditsRefresh] = useState(0);
@@ -2093,6 +2218,10 @@ function Bookings({ isAdmin }) {
   const [hasLoaded, setHasLoaded] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [reviewing, setReviewing] = useState("");
+  const [reviewDialog, setReviewDialog] = useState(null);
+  const [reviewMessage, setReviewMessage] = useState("");
+  const [reviewReason, setReviewReason] = useState("");
+  const [showBookingSettings, setShowBookingSettings] = useState(false);
 
   useEffect(() => () => calendarOAuthFormRef.current?.reset(), []);
 
@@ -2142,14 +2271,24 @@ function Bookings({ isAdmin }) {
     finally { setCalendarOAuthBusy(false); }
   };
 
-  const reviewAppointment = async (booking, action) => {
-    const reason = ["reject", "cancel", "reschedule"].includes(action) ? (window.prompt(action === "reject" ? "Short reason for rejecting this appointment (customer will be notified):" : "Optional admin note:") || "").trim() : "";
-    if (action === "reject" && !reason) return;
+  const openReviewDialog = (booking, action) => {
+    setReviewDialog({ booking, action });
+    setReviewMessage(bookingMessageDraft(booking, action));
+    setReviewReason("");
+  };
+
+  const reviewAppointment = async () => {
+    if (!reviewDialog) return;
+    const { booking, action } = reviewDialog;
+    const message = reviewMessage.trim();
+    const reason = reviewReason.trim();
+    if (!message || (action === "reject" && !reason)) return;
     setReviewing(booking.id);
     try {
-      const result = await api(`/api/bookings/${encodeURIComponent(booking.id)}/review`, { method: "POST", body: JSON.stringify({ action, reason }) });
+      const result = await api(`/api/bookings/${encodeURIComponent(booking.id)}/review`, { method: "POST", body: JSON.stringify({ action, reason, customerMessage: message }) });
       const completedMessage = { approve: "Appointment confirmed and customer notified.", reject: "Appointment rejected and customer notified.", cancel: "Appointment cancelled and customer notified.", reschedule: "Appointment marked for rescheduling; the customer was asked for a new time." }[action];
       setPolicyMessage(result.notificationError ? `Status updated, but WhatsApp notice failed: ${result.notificationError}` : completedMessage);
+      setReviewDialog(null);
       setRefreshKey((value) => value + 1);
     } catch (cause) { setError(cause.message || "Could not review appointment."); }
     finally { setReviewing(""); }
@@ -2192,14 +2331,19 @@ function Bookings({ isAdmin }) {
   const confirmedCount = bookings.filter((booking) => booking.status === "confirmed" || booking.status === "booked").length;
   const pendingReviewCount = bookings.filter((booking) => booking.status === "pending_review").length;
   const deliveryProblems = (notificationData.notifications || []).filter((job) => ["failed", "dead"].includes(job.status));
-  const upcomingBookings = bookings
-    .filter((booking) => ["confirmed", "booked"].includes(booking.status) && new Date(booking.start || 0).getTime() >= Date.now())
-    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
-    .slice(0, 5);
   return (
     <div className="page-stack bookings-page">
-      {isAdmin && pendingReviewCount > 0 && <div className="booking-error" role="status"><Clock3 size={16} /><span>{pendingReviewCount} appointment{pendingReviewCount === 1 ? "" : "s"} need admin review.</span></div>}
-      {isAdmin && deliveryProblems.length > 0 && <section className="panel"><PanelTitle icon={Bell} title="Notification delivery issues" /><div className="simple-list">{deliveryProblems.slice(0, 10).map((job) => <div key={job.id}><strong>{notificationJobLabel(job)} · {job.status}</strong><small>{job.last_error || "Delivery failed."} · {job.attempts} attempt(s)</small>{job.status === "dead" && <button className="ghost" disabled={reviewing === job.id} onClick={() => retryNotification(job)}>{reviewing === job.id ? "Queueing…" : "Retry"}</button>}</div>)}</div></section>}
+      <section className="company-brain-intro booking-page-intro">
+        <div><span className="eyebrow"><CalendarClock size={14} /> APPOINTMENTS</span><h2>Bookings</h2><p>Review customer requests, confirm appointments, and manage the calendar rules REFAL uses.</p></div>
+        {isAdmin && <button type="button" className="ghost" aria-expanded={showBookingSettings} onClick={() => setShowBookingSettings((open) => !open)}><Settings size={14} />{showBookingSettings ? "Hide settings" : "Booking settings"}</button>}
+      </section>
+      <section className="lead-command booking-summary-strip" aria-label="Booking indicators">
+        <MiniStat icon={CalendarClock} label="Total bookings" value={bookings.length} />
+        <MiniStat icon={Clock3} label="Needs review" value={pendingReviewCount} />
+        <MiniStat icon={CheckCircle2} label="Confirmed" value={confirmedCount} />
+      </section>
+      {isAdmin && showBookingSettings && <div className="booking-settings-stack">
+      {deliveryProblems.length > 0 && <section className="panel"><PanelTitle icon={Bell} title="Notification delivery issues" /><div className="simple-list">{deliveryProblems.slice(0, 10).map((job) => <div key={job.id}><strong>{notificationJobLabel(job)} · {job.status}</strong><small>{job.last_error || "Delivery failed."} · {job.attempts} attempt(s)</small>{job.status === "dead" && <button className="ghost" disabled={reviewing === job.id} onClick={() => retryNotification(job)}>{reviewing === job.id ? "Queueing…" : "Retry"}</button>}</div>)}</div></section>}
       {readiness && <section className={`booking-readiness${readiness.active ? " is-ready" : " is-blocked"}`} role="status" aria-live="polite">
         <div className="booking-readiness-icon"><ShieldCheck size={19} /></div>
         <div className="booking-readiness-copy">
@@ -2250,44 +2394,14 @@ function Bookings({ isAdmin }) {
           {calendarTestMessage && <span className={calendarTestError ? "calendar-check-error" : "calendar-check-success"} role={calendarTestError ? "alert" : "status"}>{calendarTestMessage}</span>}
         </div>
       </section>}
-      {bookings.length > 0 && <section className="lead-command booking-summary-strip">
-        <MiniStat icon={CalendarClock} label="Bookings" value={bookings.length} />
-        <MiniStat icon={CheckCircle2} label="Confirmed" value={confirmedCount} />
-        <div className="lead-command-copy">
-          <strong>Booking overview</strong>
-          <span>{confirmedCount} confirmed · {bookings.filter((booking) => booking.status === "pending_review").length} awaiting admin review</span>
-        </div>
-      </section>}
-      {upcomingBookings.length > 0 && <section className="panel bookings-upcoming">
-        <PanelTitle icon={CalendarClock} title="Upcoming appointments" action={<span className="badge online">{upcomingBookings.length} next</span>} />
-        <ul className="booking-upcoming-list">{upcomingBookings.map((booking, index) => {
-          const safeMeetUrl = getSafeMeetUrl(booking.meetUrl);
-          return <li key={booking.id || `${booking.userId || booking.phone}-${booking.start}-${index}`}>
-          <span className="booking-upcoming-icon"><Clock3 size={15} /></span>
-          <span className="booking-upcoming-contact"><strong>{booking.name || booking.phone || booking.userId || "REFAL contact"}</strong><small>{booking.purpose || "Appointment"}</small></span>
-          <span className="booking-upcoming-meta"><time dateTime={booking.start}>{formatAppointmentTime(booking.start, booking.timezone)}</time>{safeMeetUrl && <a href={safeMeetUrl} target="_blank" rel="noopener noreferrer">Meet</a>}</span>
-        </li>;})}</ul>
-      </section>}
-      {loading && !hasLoaded ? <section className="panel booking-loading"><Loading label="Loading appointments" /></section> : bookings.length === 0 && !error ? (
-        <section className="booking-empty-state">
-          <span className="booking-empty-icon"><CalendarClock size={24} /></span>
-          <div className="booking-empty-copy">
-            <span className={readiness?.active ? "booking-state ready" : "booking-state paused"}>{readiness?.active ? "READY FOR BOOKINGS" : "BOOKING SETUP INCOMPLETE"}</span>
-            <h2>No appointments yet</h2>
-            <p>{readiness?.active
-              ? "New appointments will appear here after a customer confirms a time with REFAL."
-              : "REFAL will accept appointment requests once calendar access and the required booking rules are configured."}</p>
-          </div>
-          <button className="booking-empty-action" type="button" onClick={() => document.getElementById("booking-policy")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-            Review setup <ArrowUpRight size={15} />
-          </button>
-        </section>
-      ) : <section className="panel bookings-records">
+      </div>}
+      {loading && !hasLoaded ? <section className="panel booking-loading"><Loading label="Loading appointments" /></section> : <section className="panel bookings-records">
         <PanelTitle icon={CalendarClock} title="Calendar bookings" />
         {error && <div className="booking-error" role="alert">
           <span>{hasLoaded ? `Could not refresh bookings: ${error}` : `Could not load bookings: ${error}`}</span>
           <button className="icon-button" onClick={() => setRefreshKey((value) => value + 1)} aria-label="Retry loading bookings" title="Retry"><RefreshCcw size={16} /></button>
         </div>}
+        {bookings.length === 0 && !error && <p className="booking-no-records">No appointments yet. New customer requests will appear here for review.</p>}
         {bookings.length > 0 && <div className="booking-record-list">
           {bookings.map((booking, index) => {
             const start = formatAppointmentTime(booking.start, booking.timezone);
@@ -2301,18 +2415,18 @@ function Bookings({ isAdmin }) {
             const identityDetail = booking.phone === "Number hidden by WhatsApp"
               ? `Number hidden by WhatsApp · ${booking.userId || "WhatsApp contact ID unavailable"}`
               : booking.phone;
-            return <article className={`booking-record${pending ? " is-pending" : ""}`} key={booking.id || `${booking.userId || booking.phone || "booking"}-${booking.eventId || booking.bookedAt || index}`}>
+            return <article className={`booking-record${pending ? " is-pending" : ""}${booking.status === "pending_review" ? " is-review-request" : ""}`} key={booking.id || `${booking.userId || booking.phone || "booking"}-${booking.eventId || booking.bookedAt || index}`}>
               <header className="booking-record-head">
                 <div className="booking-record-person"><span className="booking-record-avatar"><UserRound size={17} /></span><span><strong>{contactName}</strong>{booking.name && identityDetail && <small>{identityDetail}</small>}{!booking.name && booking.phone === "Number hidden by WhatsApp" && <small>{identityDetail}</small>}</span></div>
               <LeadBadge tier={bookingStatusTone(booking.status)} label={booking.status === "pending_review" ? "Pending review" : pending ? "Awaiting calendar" : bookingStatusLabel(booking.status)} />
               </header>
               <div className="booking-record-main">
-                <div className="booking-record-when"><CalendarClock size={17} /><span><strong>{start || formatDate(booking.bookedAt)}</strong>{end && <small>{end} · {booking.timezone}</small>}</span></div>
+                <div className="booking-record-when"><span className="booking-detail-icon"><CalendarClock size={17} /></span><span><small className="booking-detail-label">REQUESTED TIME</small><strong>{start || formatDate(booking.bookedAt)}</strong>{end && <small>{end} · {booking.timezone}</small>}</span></div>
                 <div className={`booking-record-purpose${purposeMissing ? " is-missing" : ""}`}><small>MEETING PURPOSE</small><p>{purposeMissing ? "Purpose not provided" : purpose}</p>{purposeMissing && <span>Ask the customer before confirming.</span>}</div>
               </div>
               {pending && <div className="booking-pending-note"><Clock3 size={16} /><span><strong>{booking.status === "pending_review" ? "Waiting for Refalco Group review" : "Waiting for Google Calendar"}</strong><small>{booking.status === "pending_review" ? "The customer requested this time. Availability is not verified, and the appointment is not confirmed." : "The booking is saved, but Google has not confirmed it yet."}</small></span></div>}
-              {isAdmin && booking.status === "pending_review" && <div className="booking-policy-actions"><button className="primary" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "approve")}>{reviewing === booking.id ? "Saving…" : "Approve and confirm"}</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "reject")}>Reject and request another time</button></div>}
-              {isAdmin && booking.status === "confirmed" && <div className="booking-policy-actions"><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "reschedule")}>Reschedule</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => reviewAppointment(booking, "cancel")}>Cancel appointment</button></div>}
+              {isAdmin && booking.status === "pending_review" && <div className="booking-policy-actions booking-review-actions"><button className="primary" disabled={reviewing === booking.id} onClick={() => openReviewDialog(booking, "approve")}>Approve & confirm</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => openReviewDialog(booking, "reschedule")}>Reschedule</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => openReviewDialog(booking, "reject")}>Reject</button><button className="booking-ignore-action" disabled={reviewing === booking.id} onClick={() => { setReviewDialog({ booking, action: "ignore" }); setReviewMessage(""); setReviewReason(""); }}>Ignore for now</button></div>}
+              {isAdmin && booking.status === "confirmed" && <div className="booking-policy-actions"><button className="ghost" disabled={reviewing === booking.id} onClick={() => openReviewDialog(booking, "reschedule")}>Reschedule</button><button className="ghost" disabled={reviewing === booking.id} onClick={() => openReviewDialog(booking, "cancel")}>Cancel appointment</button></div>}
               {booking.status === "rejected" && booking.reviewReason && <p className="booking-muted">Admin review note: {booking.reviewReason}</p>}
               <footer className="booking-record-meta">
                 <span><small>CALENDAR</small>{safeEventUrl ? <a className="booking-event-link" href={safeEventUrl} target="_blank" rel="noopener noreferrer">Open event <ArrowUpRight size={13} /></a> : <span className="booking-muted">{pending ? "Not added yet" : "Not linked"}</span>}</span>
@@ -2323,8 +2437,69 @@ function Bookings({ isAdmin }) {
           })}
         </div>}
       </section>}
+      {reviewDialog && <BookingReviewDialog
+        booking={reviewDialog.booking}
+        action={reviewDialog.action}
+        message={reviewMessage}
+        reason={reviewReason}
+        busy={reviewing === reviewDialog.booking.id}
+        onMessageChange={setReviewMessage}
+        onReasonChange={setReviewReason}
+        onClose={() => { if (!reviewing) setReviewDialog(null); }}
+        onSubmit={reviewAppointment}
+      />}
     </div>
   );
+}
+
+function bookingMessageDraft(booking, action) {
+  const name = String(booking.name || "").trim();
+  const when = formatAppointmentTime(booking.start, booking.timezone) || "the requested time";
+  const arabic = /[\u0600-\u06ff]/.test(`${name} ${booking.purpose || ""}`);
+  const greek = /[\u0370-\u03ff]/.test(`${name} ${booking.purpose || ""}`);
+  const hello = name ? `${name}, ` : "";
+  if (action === "approve") {
+    if (arabic) return `${hello}تم تأكيد موعدك مع فريق Refalco Group في ${when}${booking.timezone ? ` (${booking.timezone})` : ""}. نتطلع إلى لقائك.`;
+    if (greek) return `${hello}το ραντεβού σας με την ομάδα Refalco Group επιβεβαιώθηκε για ${when}${booking.timezone ? ` (${booking.timezone})` : ""}. Ανυπομονούμε να σας συναντήσουμε.`;
+    return `${hello}your appointment with Refalco Group is confirmed for ${when}${booking.timezone ? ` (${booking.timezone})` : ""}. We look forward to meeting you.`;
+  }
+  if (action === "reject") {
+    if (arabic) return `${hello}نعتذر، لا يمكننا تأكيد الوقت المطلوب. أرسل لنا يومًا ووقتًا بديلين، وسنطلب من الفريق مراجعتهما.`;
+    if (greek) return `${hello}λυπούμαστε, δεν μπορούμε να επιβεβαιώσουμε την ώρα που ζητήσατε. Στείλτε μας μια άλλη ημέρα και ώρα για να τη θέσουμε υπόψη της ομάδας.`;
+    return `${hello}sorry, we can’t confirm the requested time. Please send another day and time, and we’ll ask the team to review it.`;
+  }
+  if (action === "reschedule") {
+    if (arabic) return `${hello}يرغب فريق Refalco Group في تغيير موعد الاجتماع. أرسل لنا يومًا ووقتًا مناسبين لك، وسنرسلهما للمراجعة.`;
+    if (greek) return `${hello}η ομάδα Refalco Group χρειάζεται να αλλάξει την ώρα της συνάντησης. Στείλτε μας μια ημέρα και ώρα που σας εξυπηρετεί για να τις ελέγξουμε.`;
+    return `${hello}the Refalco Group team needs to reschedule the meeting. Please send a day and time that work for you, and we’ll review them.`;
+  }
+  if (action === "cancel") {
+    if (arabic) return `${hello}تم إلغاء موعدك مع Refalco Group. نعتذر عن أي إزعاج.`;
+    if (greek) return `${hello}το ραντεβού σας με τη Refalco Group ακυρώθηκε. Ζητούμε συγγνώμη για την αναστάτωση.`;
+    return `${hello}your appointment with Refalco Group has been cancelled. We’re sorry for the inconvenience.`;
+  }
+  return "";
+}
+
+function BookingReviewDialog({ booking, action, message, reason, busy, onMessageChange, onReasonChange, onClose, onSubmit }) {
+  const titles = { approve: "Confirm this appointment?", reject: "Decline this request?", reschedule: "Request a new time?", cancel: "Cancel this appointment?", ignore: "Leave this request for later?" };
+  const buttons = { approve: "Confirm & send message", reject: "Reject & send message", reschedule: "Request new time & send", cancel: "Cancel & send message" };
+  const name = booking.name || booking.phone || "WhatsApp customer";
+  const when = formatAppointmentTime(booking.start, booking.timezone) || "Time unavailable";
+  const ignore = action === "ignore";
+  return <div className="booking-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section className="booking-review-dialog" role="dialog" aria-modal="true" aria-labelledby="booking-review-title">
+      <header className="booking-dialog-heading"><span className="booking-dialog-mark"><CalendarClock size={18} /></span><div><span className="eyebrow">BOOKING REVIEW</span><h2 id="booking-review-title">{titles[action]}</h2></div><button type="button" className="icon-button" aria-label="Close dialog" disabled={busy} onClick={onClose}><X size={18} /></button></header>
+      <div className="booking-dialog-customer"><strong>{name}</strong><span>{when}{booking.timezone ? ` · ${booking.timezone}` : ""}</span></div>
+      {ignore ? <><p className="booking-dialog-note">No changes will be made and no message will be sent. This request will stay in the review list until you approve or reject it.</p><div className="booking-dialog-actions"><button type="button" className="ghost" onClick={onClose}>Keep pending</button><button type="button" className="primary" onClick={onClose}>Close</button></div></> : <>
+        <p className="booking-dialog-note">Edit the message before sending it to the customer on WhatsApp.</p>
+        <label className="booking-dialog-field">Message to customer<textarea autoFocus required rows={5} maxLength={1200} value={message} onChange={(event) => onMessageChange(event.target.value)} /></label>
+        {action === "reject" && <label className="booking-dialog-field">Internal review reason<textarea required rows={2} maxLength={500} value={reason} onChange={(event) => onReasonChange(event.target.value)} placeholder="Visible to admins only" /></label>}
+        {action === "reschedule" && <label className="booking-dialog-field">Internal note (optional)<textarea rows={2} maxLength={500} value={reason} onChange={(event) => onReasonChange(event.target.value)} placeholder="Visible to admins only" /></label>}
+        <div className="booking-dialog-actions"><button type="button" className="ghost" disabled={busy} onClick={onClose}>Cancel</button><button type="button" className={action === "reject" || action === "cancel" ? "booking-dialog-danger" : "primary"} disabled={busy || !message.trim() || (action === "reject" && !reason.trim())} onClick={onSubmit}>{busy ? "Updating…" : buttons[action]}</button></div>
+      </>}
+    </section>
+  </div>;
 }
 
 function ReminderSummary({ reminders, pending = false }) {
@@ -2429,7 +2604,8 @@ function Loading({ label = "Loading" }) {
 
 const apiGetCache = new Map();
 const apiGetInFlight = new Map();
-const API_GET_CACHE_MS = 12000;
+const API_GET_CACHE_MS = 30000;
+const FAST_REFRESH_API_CACHE_MS = 5000;
 
 function clearApiCache() {
   apiGetCache.clear();
@@ -2501,7 +2677,12 @@ async function api(url, options = {}) {
       error.code = body.code;
       throw error;
     }
-    if (method === "GET") apiGetCache.set(url, { data: body, expiresAt: Date.now() + API_GET_CACHE_MS });
+    if (method === "GET") {
+      const cacheMs = /^\/api\/(?:bookings(?:\/readiness)?|notifications|handovers\/summary|whatsapp\/status|whatsapp\/control)(?:\?|$)/.test(url)
+        ? FAST_REFRESH_API_CACHE_MS
+        : API_GET_CACHE_MS;
+      apiGetCache.set(url, { data: body, expiresAt: Date.now() + cacheMs });
+    }
     else apiGetCache.clear();
     return body;
   })();

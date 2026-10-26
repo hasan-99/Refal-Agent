@@ -42,7 +42,7 @@ test("administrator response preferences reach the decision prompt with bounded 
   const context = buildAgentContext({ responseStyle: { paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "helpful_next_step", allowRelevantServiceSuggestions: false } });
   let prompt;
   await composeOffline(context, "Answer.", (messages) => { prompt = messages; });
-  assert.match(prompt[0].content, /Keep paragraphs especially concise, while retaining every useful condition/u);
+  assert.match(prompt[0].content, /Keep replies especially concise, while retaining every useful condition/u);
   assert.match(prompt[0].content, /use a numbered list with each item on its own line/u);
   assert.match(prompt[0].content, /Do not use bold styling/u);
   assert.match(prompt[0].content, /add one concise, specific next action or relevant information after the answer/u);

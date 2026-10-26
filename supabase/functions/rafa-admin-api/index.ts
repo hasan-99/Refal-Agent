@@ -40,6 +40,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "list-users") return await listUsers();
     if (action === "invite-user") return await inviteUser(caller, body.email);
+    if (action === "create-admin-user") return await createAdminUser(caller, body.email, body.password);
     if (action === "update-user") return await updateUser(caller, body);
     return json({ error: "Unknown account operation." }, 400);
   } catch (error) {
@@ -105,6 +106,30 @@ async function inviteUser(caller: User, input: unknown) {
     throw roleError;
   }
   return json({ ok: true, user: { id: data.user.id, email, role: "user", is_active: true } }, 201);
+}
+
+async function createAdminUser(caller: User, inputEmail: unknown, inputPassword: unknown) {
+  const email = typeof inputEmail === "string" ? inputEmail.trim().toLowerCase() : "";
+  const password = typeof inputPassword === "string" ? inputPassword : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 320) {
+    throw new HttpError("Enter a valid email address.", 400);
+  }
+  if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+    throw new HttpError("Use at least 12 characters with uppercase, lowercase, and a number.", 400);
+  }
+  const { data, error } = await service.auth.admin.createUser({ email, password, email_confirm: true });
+  if (error || !data.user) throw new HttpError("Could not create the account. The email may already be registered.", 409);
+  const { error: roleError } = await service.from("rafa_dashboard_users").insert({
+    user_id: data.user.id,
+    role: "admin",
+    is_active: true,
+    created_by: caller.id
+  });
+  if (roleError) {
+    await service.auth.admin.deleteUser(data.user.id);
+    throw new HttpError("Could not grant dashboard access; the account creation was rolled back.", 409);
+  }
+  return json({ ok: true, user: { id: data.user.id, email, role: "admin", is_active: true } }, 201);
 }
 
 async function updateUser(caller: User, body: Record<string, unknown>) {
