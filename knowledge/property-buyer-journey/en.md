@@ -3,7 +3,7 @@ topic: property-buyer-journey
 lang: en
 title: Buying property in Cyprus, the ten stages of the buyer journey
 facts: MB-F45, MB-F50
-aliases: steps to buy property in cyprus | how to buy a house in cyprus | property buying process cyprus | can a foreigner buy property in cyprus | do i need a lawyer to buy property in cyprus | what fees apply when buying property in cyprus | sale contract and its registration cyprus | how long does title transfer take | is there a reservation deposit | how much is the reservation deposit | buy property in the company name | property buyer journey cyprus
+aliases: steps to buy property in cyprus | how to buy a house in cyprus | property buying process cyprus | can a foreigner buy property in cyprus | do i need a lawyer to buy property in cyprus | what fees apply when buying property in cyprus | sale contract and its registration cyprus | how long does title transfer take | is there a reservation deposit | how much is the reservation deposit | buy property in the company name | property buyer journey cyprus | My budget is around , what would you suggest
 ---
 
 ## The ten stages of the buyer journey

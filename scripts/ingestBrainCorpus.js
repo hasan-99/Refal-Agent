@@ -15,11 +15,13 @@
 //   node scripts/ingestBrainCorpus.js --json
 //   node scripts/ingestBrainCorpus.js --apply          # writes
 //   node scripts/ingestBrainCorpus.js --apply --embed  # writes + indexes
+//   node scripts/ingestBrainCorpus.js --check-live    # read-only hash/status comparison
 //
 // DRY RUN IS THE DEFAULT, AND IT IS NOT A COURTESY.
 // It needs no credentials, no network and no database, it produces the whole
 // per-topic plan, and it returns a real exit code. --apply is the only way to
-// write anything, and it is never implied by another flag.
+// write anything, and it queues changed document revisions as pending. It
+// never approves customer-facing content; a reviewer must approve separately.
 //
 // THE RLS TRAP, AND WHY THIS SCRIPT READS BACK WHAT IT WROTE
 // ----------------------------------------------------------
@@ -47,18 +49,19 @@ const { loadProjectEnv } = require("../src/env");
 const { TOPICS, LANGUAGES } = require("../src/brainTaxonomy");
 const { TOPIC_PHASE } = require("../src/brainFactMap");
 const { seedRegister } = require("../src/factRegister");
-const { planCorpus, PRICE_EXPIRY_DAYS } = require("../src/corpusIngest");
+const { planCorpus, PRICE_EXPIRY_DAYS, readbackReviewStatusMatches } = require("../src/corpusIngest");
 
 const ROOT = path.resolve(__dirname, "..");
 const EXPECTED_FILES = TOPICS.length * LANGUAGES.length;
 
 // ------------------------------------------------------------------- args
 function parseArgs(argv) {
-  const args = { topic: null, phase: null, lang: null, json: false, apply: false, allowPartial: false, embed: false };
+  const args = { topic: null, phase: null, lang: null, json: false, apply: false, checkLive: false, allowPartial: false, embed: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--json") args.json = true;
     else if (a === "--apply") args.apply = true;
+    else if (a === "--check-live") args.checkLive = true;
     else if (a === "--allow-partial") args.allowPartial = true;
     else if (a === "--embed") args.embed = true;
     else if (a === "--topic") args.topic = argv[++i];
@@ -121,7 +124,7 @@ function reportPlan(plan, args) {
   if (s.willAutoExpire) console.log(`      re-ingestion is therefore a MONTHLY operation for those topics`);
   if (!args.apply) {
     console.log("");
-    console.log("DRY RUN — nothing was written. Re-run with --apply to write.");
+    console.log("DRY RUN — nothing was written. Re-run with --apply to queue changed revisions as pending.");
   }
 }
 
@@ -159,6 +162,95 @@ function supabaseClient() {
 async function readSources(rest) {
   const rows = await rest("rafa_knowledge_sources?select=id,canonical_url,display_name&limit=2000");
   return new Map((rows || []).map((row) => [row.canonical_url, row]));
+}
+
+function checkLiveOptionError(args) {
+  if (args.apply && args.checkLive) return "--check-live is read-only and cannot be combined with --apply";
+  if (args.checkLive && (args.topic || args.phase || args.lang || args.allowPartial)) return "--check-live requires the complete corpus; filters and --allow-partial are not supported";
+  return null;
+}
+
+// Read-only operational parity check. It compares only hashes and review
+// metadata; corpus text and customer data are never printed.
+async function checkLive(plan) {
+  const rest = supabaseClient();
+  const sources = await readSources(rest);
+  // Include suppressed files in the readback set. Omitting a locally
+  // suppressed topic used to let --check-live report success for a partial
+  // corpus, even though an older approved live revision could still answer.
+  const files = plan.files.filter((f) => f.ok && !f.missing);
+  const matched = files.map((file) => ({
+    file,
+    source: sources.get(file.source?.canonical_url || file.canonicalUrl),
+  }));
+  const sourceIds = matched.filter((x) => x.source).map((x) => x.source.id);
+  const documents = [];
+  for (const batch of batched(sourceIds, 40)) {
+    const got = await rest(`rafa_knowledge_documents?source_id=in.(${batch.join(",")})&select=source_id,revision,content_sha256,review_status,valid_until,language_code&order=revision.desc&limit=2000`);
+    documents.push(...(got || []));
+  }
+  const bySource = new Map();
+  for (const document of documents) {
+    const rows = bySource.get(document.source_id) || [];
+    rows.push(document);
+    bySource.set(document.source_id, rows);
+  }
+  const rows = matched.map(({ file, source }) => {
+    const revisions = source ? (bySource.get(source.id) || []) : [];
+    const approved = revisions.filter((d) => d.review_status === "approved");
+    const pending = revisions.filter((d) => d.review_status === "pending");
+    const active = approved[0] || null;
+    const hasExpiry = active?.valid_until !== null && active?.valid_until !== undefined;
+    const expiryTime = hasExpiry ? Date.parse(active.valid_until) : null;
+    const locallySuppressed = Boolean(file.skipped || file.suppressed);
+    return {
+      topic: file.topic, lang: file.lang,
+      state: locallySuppressed ? "local_suppressed" : !source ? "missing_source" : !active ? "missing_approved" : active.content_sha256 === file.document.p_content_sha256 ? "match" : "hash_mismatch",
+      localHash: file.document?.p_content_sha256 || null,
+      liveHash: active?.content_sha256 || null,
+      approvedRevision: active?.revision ?? null,
+      approvedRevisions: approved.length,
+      locallySuppressed,
+      pendingRevisions: pending.length,
+      pendingMatchesLocal: pending.some((d) => d.content_sha256 === file.document.p_content_sha256),
+      validUntil: active?.valid_until || null,
+      expired: hasExpiry && (!Number.isFinite(expiryTime) || expiryTime <= Date.now()),
+    };
+  });
+  const counts = Object.fromEntries(["match", "hash_mismatch", "missing_source", "missing_approved", "local_suppressed"].map((key) => [key, rows.filter((r) => r.state === key).length]));
+  counts.expired = rows.filter((r) => r.expired).length;
+  counts.multipleApproved = rows.filter((r) => r.approvedRevisions > 1).length;
+  counts.pendingRevisions = rows.reduce((sum, row) => sum + row.pendingRevisions, 0);
+  counts.pendingNotLocal = rows.filter((row) => row.pendingRevisions > 0 && !row.pendingMatchesLocal).length;
+  return { rows, counts, documentsRead: documents.length };
+}
+
+function liveParityNeedsReview(result) {
+  const counts = result?.counts || {};
+  return Boolean(counts.hash_mismatch || counts.missing_source || counts.missing_approved || counts.local_suppressed || counts.multipleApproved || counts.expired || counts.pendingRevisions);
+}
+
+function applyExitCode(outcome) {
+  // `--embed` is an explicit request to finish indexing as part of the apply.
+  // A document may already have been stored when its embedding call fails, so
+  // reporting that run as successful would leave a partially indexed corpus
+  // while the CLI exits 0. Make warnings from that required step actionable to
+  // automation and operators; rerunning is safe because the revision RPC is
+  // content-idempotent.
+  // A full apply that silently omits locally suppressed/blocked topics is a
+  // partial synchronization. Existing live approved revisions for those
+  // topics may remain answerable, so automation must not treat it as green.
+  return outcome?.mismatches?.length || outcome?.embedWarnings?.length || outcome?.skippedFiles?.length ? 1 : 0;
+}
+
+function reportLiveParity(result, json) {
+  if (json) { console.log(JSON.stringify(result, null, 2)); return; }
+  console.log("\nLive approved corpus parity (read-only; hashes and metadata only)");
+  console.log(`  matching: ${result.counts.match} · hash mismatch: ${result.counts.hash_mismatch} · missing source: ${result.counts.missing_source} · missing approved: ${result.counts.missing_approved} · locally suppressed: ${result.counts.local_suppressed} · multiple approved: ${result.counts.multipleApproved} · expired: ${result.counts.expired} · pending revisions: ${result.counts.pendingRevisions} (${result.counts.pendingNotLocal} differ from local)`);
+  console.log("  topic                          lang  state             approved rev  pending  pending=local  expiry");
+  for (const row of result.rows) {
+    console.log(`  ${row.topic.padEnd(30)} ${row.lang}    ${row.state.padEnd(16)} ${String(row.approvedRevision ?? "-").padStart(11)}  ${String(row.pendingRevisions).padStart(7)}  ${String(row.pendingMatchesLocal).padStart(13)}  ${row.validUntil || "-"}`);
+  }
 }
 
 function batched(items, size) {
@@ -249,8 +341,8 @@ async function apply(plan, args) {
     if (document.content_sha256 !== result.file.document.p_content_sha256) {
       mismatches.push(`${result.file.path}: stored hash does not match the content that was sent`);
     }
-    if (document.review_status !== "approved") {
-      mismatches.push(`${result.file.path}: review_status is ${document.review_status}, not approved`);
+    if (!readbackReviewStatusMatches(document.review_status, result.file.document.p_review_status, result.unchanged)) {
+      mismatches.push(`${result.file.path}: review_status is ${document.review_status}, expected ${result.file.document.p_review_status}`);
     }
     const stored = chunkCounts.get(result.documentId) || 0;
     if (stored !== result.file.chunks.length) {
@@ -317,7 +409,8 @@ function reportApply(outcome, args) {
 
   const expiring = results.filter((r) => r.validUntil);
   console.log("");
-  console.log(`applied: ${results.length} documents · ${results.filter((r) => r.created).length} created · ${results.filter((r) => !r.created && !r.unchanged).length} updated · ${results.filter((r) => r.unchanged).length} unchanged`);
+  console.log(`queued: ${results.length} documents · ${results.filter((r) => r.created).length} created · ${results.filter((r) => !r.created && !r.unchanged).length} updated · ${results.filter((r) => r.unchanged).length} unchanged`);
+  console.log("         changed revisions remain pending until an independent dashboard review approves them; the prior approved revision remains active meanwhile");
   console.log(`         ${expiring.length} documents came back with a valid_until (the ${PRICE_EXPIRY_DAYS} day price expiry)`);
   if (args.embed) console.log(`         ${embedded} chunk embeddings stored`);
   for (const warning of embedWarnings) console.log(`WARN  ${warning}`);
@@ -329,6 +422,8 @@ function reportApply(outcome, args) {
 // -------------------------------------------------------------------- main
 async function run(argv) {
   const args = parseArgs(argv);
+  const optionError = checkLiveOptionError(args);
+  if (optionError) { console.error(optionError); return 2; }
   const topics = selectTopics(args);
   const langs = args.lang ? [args.lang] : LANGUAGES;
 
@@ -345,8 +440,10 @@ async function run(argv) {
     join: (...parts) => parts.join("/"),
   });
 
-  if (args.json) console.log(JSON.stringify({ summary: plan.summary, files: plan.files.map((f) => ({ ...f, warnings: f.warnings })) }, null, 2));
-  else reportPlan(plan, args);
+  if (!args.checkLive) {
+    if (args.json) console.log(JSON.stringify({ summary: plan.summary, files: plan.files.map((f) => ({ ...f, warnings: f.warnings })) }, null, 2));
+    else reportPlan(plan, args);
+  }
 
   // A file that fails the authoring gate must never reach the database, and
   // there is no flag that overrides this.
@@ -364,12 +461,18 @@ async function run(argv) {
     return 2;
   }
 
+  if (args.checkLive) {
+    if (plan.summary.expected !== EXPECTED_FILES || plan.summary.missing || plan.summary.broken) { console.error("--check-live requires a complete, valid local corpus"); return 2; }
+    const parity = await checkLive(plan);
+    reportLiveParity(parity, args.json);
+    return liveParityNeedsReview(parity) ? 1 : 0;
+  }
   if (!args.apply) return 0;
 
   const outcome = await apply(plan, args);
   outcome.skippedFiles = plan.files.filter((f) => f.skipped);
   reportApply(outcome, args);
-  return outcome.mismatches.length ? 1 : 0;
+  return applyExitCode(outcome);
 }
 
 if (require.main === module) {
@@ -382,4 +485,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, parseArgs, selectTopics };
+module.exports = { run, parseArgs, selectTopics, checkLive, checkLiveOptionError, liveParityNeedsReview, applyExitCode };

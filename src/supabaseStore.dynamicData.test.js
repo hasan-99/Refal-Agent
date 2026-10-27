@@ -22,22 +22,51 @@ test("CRM writes use the dedicated durable profile route with linked source turn
   const instance = store();
   let request;
   instance.request = async (...args) => { request = args; return { status: "saved", field: "businessactivity" }; };
-  const result = await instance.saveCrmProfile({ userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-1" });
+  const result = await instance.saveCrmProfile({ userId: "123@s.whatsapp.net", field: "businessActivity", rawValue: "Accounting", normalizedValue: "Accounting", sourceTurnId: "turn-1" });
   assert.deepEqual(request, ["/crm/profile", {
     method: "POST", timeoutMs: 8000,
-    body: JSON.stringify({ userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-1" })
+    body: JSON.stringify({ userId: "123@s.whatsapp.net", field: "businessActivity", rawValue: "Accounting", normalizedValue: "Accounting", sourceTurnId: "turn-1" })
   }]);
   assert.equal(result.status, "saved");
+});
+
+test("CRM profile retries reuse the exact idempotent source-turn payload after ambiguous failure", async () => {
+  const instance = new EdgeApiStore({ apiUrl: "https://example.test", key: "key", apiSecret: "secret" });
+  const calls = [];
+  instance.request = async (path, options) => {
+    calls.push([path, options]);
+    if (calls.length === 1) throw new TypeError("connection reset after request");
+    return { status: "saved" };
+  };
+
+  const result = await instance.saveCrmProfile({
+    userId: "123@s.whatsapp.net", field: "businessActivity", rawValue: "Accounting", normalizedValue: "Accounting", sourceTurnId: "turn-1"
+  });
+
+  assert.deepEqual(result, { status: "saved" });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], "/crm/profile");
+  assert.deepEqual(calls[1], calls[0], "retry must retain the same source turn, field, and candidate values");
+});
+
+test("CRM profile does not retry definitive client rejection", async () => {
+  const instance = new EdgeApiStore({ apiUrl: "https://example.test", key: "key", apiSecret: "secret" });
+  let calls = 0;
+  instance.request = async () => { calls += 1; const error = new Error("invalid source turn"); error.status = 400; throw error; };
+  await assert.rejects(instance.saveCrmProfile({
+    userId: "123@s.whatsapp.net", field: "businessActivity", rawValue: "Accounting", normalizedValue: "Accounting", sourceTurnId: "turn-1"
+  }), /invalid source turn/);
+  assert.equal(calls, 1);
 });
 
 test("durable CRM result updates the active contact projection for the current agent turn", async () => {
   const instance = store();
   const user = { id: "123@s.whatsapp.net", profile: { agentFacts: { businessactivity: { value: "accounting" } } } };
   instance.data.users[user.id] = user;
-  instance.request = async () => ({ status: "correction_needed", field: "businessactivity", correctionField: "businessactivity" });
-  const result = await instance.saveCrmProfile({ userId: user.id, field: "businessActivity", value: "construction", sourceTurnId: "turn-2" });
+  instance.request = async () => ({ status: "correction_needed", field: "businessactivity", correctionFields: ["businessactivity", "targetservice"] });
+  const result = await instance.saveCrmProfile({ userId: user.id, field: "businessActivity", rawValue: "construction", normalizedValue: "construction", sourceTurnId: "turn-2" });
   assert.equal(result.status, "correction_needed");
-  assert.deepEqual(user.profile.crmCorrectionNeeded, { field: "businessactivity" });
+  assert.deepEqual(user.profile.crmCorrectionNeeded, { field: "businessactivity", fields: ["businessactivity", "targetservice"] });
   assert.equal(user.profile.agentFacts.businessactivity.value, "accounting", "the old value is retained until clarification");
   assert.equal(user.profile.agentFacts.businessactivity.correctionNeeded, true);
 });

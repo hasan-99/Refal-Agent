@@ -20,7 +20,7 @@
 // reach a real customer, a real Google Calendar, or real Supabase data.
 
 const { runAgentTurn } = require("./agentLoop");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { __resetBookingToolState } = require("./agentBookingTools");
 const { summarizeAgentTurn, languageSignalsFrom } = require("./agentObservability");
@@ -194,7 +194,7 @@ SCENARIOS.push({
     // REFAL-AGENT-028: real matching content (not a bare placeholder) — the
     // new factual-grounding gate in agentLoop.js checks the scripted
     // "respond" text's claimed services against this evidence.
-    extra: { store: { searchKnowledge: async () => [{ heading: "Services", content: "Refalco Group provides company formation, accounting, and tax filing services in Cyprus." }] } }
+    extra: { store: { searchKnowledge: async () => [{ chunk_id: "scenario-services", heading: "Services", content: "Refalco Group provides company formation, accounting, and tax filing services in Cyprus.", review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["proposeHandover", "requestBookingAction"], ragUsed: true, maxQuestions: 0, fallbackUsed: false, languageMismatch: false }
 });
@@ -210,7 +210,7 @@ SCENARIOS.push({
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation price" } },
       { type: "respond", text: "تأسيس الشركة في قبرص بسعر معلن 1500 يورو." }
     ],
-    extra: { store: { searchKnowledge: async () => [{ heading: "Pricing", content: "EUR 1500" }] } }
+    extra: { store: { searchKnowledge: async () => [{ chunk_id: "scenario-arabic-price", heading: "Pricing", content: "تأسيس الشركة في قبرص بسعر معلن 1500 يورو.", review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["saveCustomerFact", "proposeHandover"], ragUsed: true, maxQuestions: 0, languageMismatch: false }
 });
@@ -243,7 +243,7 @@ SCENARIOS.push({
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation price and timeline" } },
       { type: "respond", text: "Company formation is EUR 1500 and takes about five business days." }
     ],
-    extra: { store: { searchKnowledge: async () => [{ heading: "Pricing & timeline", content: "EUR 1500, 5 days" }] } }
+    extra: { store: { searchKnowledge: async () => [{ chunk_id: "scenario-price-timeline", heading: "Pricing & timeline", content: "Company formation is EUR 1500 and takes about five business days.", review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["saveCustomerFact"], maxQuestions: 0,
     custom: ({ result }) => { const failures = []; if (!/1500/.test(result.response)) failures.push("response missing price"); if (!/five|5/.test(result.response)) failures.push("response missing timeline"); return failures; } }
@@ -260,7 +260,7 @@ SCENARIOS.push({
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price and working hours" } },
       { type: "respond", text: "تأسيس الشركة بسعر 1500 يورو، ودوامنا من الاثنين للجمعة." }
     ],
-    extra: { store: { searchKnowledge: async () => [{ heading: "Pricing & hours", content: "EUR 1500, Mon-Fri" }] } }
+    extra: { store: { searchKnowledge: async () => [{ chunk_id: "scenario-arabic-price-hours", heading: "Pricing & hours", content: "تأسيس الشركة بسعر 1500 يورو، ودوامنا من الاثنين للجمعة.", review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], toolsExclude: ["proposeHandover", "requestBookingAction"], maxQuestions: 0 }
 });
@@ -384,25 +384,25 @@ SCENARIOS.push({
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation e-commerce price" } },
       { type: "respond", text: "For e-commerce company formation around that budget, the published price is EUR 1500 — I can walk you through next steps." }
     ],
-    extra: { store: { searchKnowledge: async () => [{ heading: "Pricing", content: "EUR 1500" }] } }
+    extra: { store: { searchKnowledge: async () => [{ chunk_id: "scenario-c02-price", heading: "Pricing", content: "For e-commerce company formation around that budget, the published price is EUR 1500.", review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }] } }
   }),
   expected: { outcome: "responded", clarificationRequested: false }
 });
 
 SCENARIOS.push({
   id: "C03", category: "clarification", locale: "english",
-  description: "A two-question draft is deterministically corrected to one question (Ticket 005 behavior).",
+  description: "A two-question draft is regenerated from actionable validation feedback.",
   featureTags: ["clarification"],
   run: () => runInfo({
     message: "I want to set up a company.",
     locale: "english",
-    decisions: [{ type: "respond", text: "What is your budget? When would you like to start?" }]
+    decisions: [{ type: "respond", text: "What is your budget? When would you like to start?" }, { type: "clarify", text: "What business activity are you considering?" }]
   }),
   expected: { maxQuestions: 1,
     custom: ({ result, telemetry }) => {
       const failures = [];
       if (!(result.outcome === "responded" || result.outcome === "clarified")) failures.push(`expected a successful correction, got outcome "${result.outcome}"`);
-      if (!result.corrected) failures.push("expected result.corrected to be true (deterministic truncation applied)");
+      if (result.stepCount !== 2) failures.push("expected one rejection followed by a corrected model decision");
       if (telemetry.questionCount !== 1) failures.push(`expected exactly 1 question after correction, got ${telemetry.questionCount}`);
       return failures;
     } }
@@ -636,7 +636,7 @@ SCENARIOS.push({
 
 SCENARIOS.push({
   id: "F01", category: "safety", locale: "english",
-  description: "A password-reset question gets a safe, normal answer at the Agent-turn boundary. NOTE: safetyPolicy.js's classifySafety (REFAL-AGENT-022's bare-keyword bug) is never called anywhere in the Agent runtime chain (agentContext/agentLoop/agentTools/agentDecision/responsePolicy) — confirmed by source inspection — so that bug does not reach this boundary; it only affects the legacy messageRouter.js routing layer. This scenario therefore passes here even though REFAL-AGENT-022 remains open.",
+  description: "A password-reset question gets a safe, normal answer at the Agent-turn boundary. The separate inbound-router regression in safetyPolicy.test.js verifies this ordinary support request is not blocked by the privacy classifier.",
   featureTags: ["safety"],
   run: () => runInfo({
     message: "How do I reset my password?",
@@ -707,7 +707,7 @@ SCENARIOS.push({
       { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price" } },
       { type: "respond", text: "The published company formation price is EUR 1500." }
     ],
-    extra: { store: { searchKnowledge: async () => [{ heading: "Pricing", content: "EUR 1500" }] } }
+    extra: { store: { searchKnowledge: async () => [{ chunk_id: "scenario-g01-price", heading: "Pricing", content: "The published company formation price is EUR 1500.", review_status: "approved", valid_until: "2099-01-01T00:00:00.000Z" }] } }
   }),
   expected: { outcome: "responded", toolsInclude: ["searchApprovedKnowledge"], languageMismatch: false }
 });
@@ -770,7 +770,7 @@ SCENARIOS.push({
 
 SCENARIOS.push({
   id: "G06", category: "language", locale: "greek",
-  description: "A Greek farewell gets a brief reply with zero questions at the Agent-turn boundary. NOTE: REFAL-AGENT-023's goodbye-detection bug lives in followUp.js's 24h re-engagement CRON path, which this scenario does not exercise (runAgentTurnForContact never calls followUp.js) — so this passes at this boundary even though 023 remains open for the cron path.",
+  description: "A Greek farewell gets a brief reply with zero questions at the Agent-turn boundary. The follow-up scheduler separately verifies that Greek thanks and farewells suppress automated re-engagement.",
   featureTags: ["language"],
   run: () => runInfo({
     message: "Ευχαριστώ, αντίο.",

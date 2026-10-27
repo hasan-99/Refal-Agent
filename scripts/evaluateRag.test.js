@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { cases, scoreResult, wilsonInterval, languageParity } = require("./evaluateRag");
+const { cases, scoreResult, candidateAuditSummary, candidateRetrievalSummary, wilsonInterval, languageParity } = require("./evaluateRag");
 
 const validEvidence = {
   source_name: "Refalco Group Services",
@@ -69,6 +69,47 @@ test("Arabic expected facts are compared without corrupting Unicode", () => {
   assert.equal(result.targetChunkId, "chunk-1");
 });
 
+test("stable topic IDs keep retrieval scoring valid when a live document title changed", () => {
+  const liveVersion = {
+    ...validEvidence,
+    source_name: "Banking and payment gateways for a Cyprus company, and who actually decides",
+    document_title: "Banking and payment gateways for a Cyprus company, and who actually decides",
+    heading: "No one can promise approval",
+    content: "No one can promise that a bank account will be opened. The final decision belongs to the financial institution.",
+    policyMetadata: { topic: "banking-and-payment-gateways" }
+  };
+  const result = scoreResult({
+    id: "banking-en",
+    query: "Can you help me open a business bank account?",
+    expectedTopic: "banking-and-payment-gateways",
+    expectedSource: "Bank accounts and payment gateways: who decides",
+    expectedDocumentTitle: "Bank accounts and payment gateways: who decides",
+    expectedFacts: ["No one can promise that a bank account will be opened", "The final decision belongs to the financial institution"]
+  }, [liveVersion]);
+  assert.equal(result.status, "PASS");
+  assert.equal(result.targetSourceName, liveVersion.source_name);
+});
+
+test("stable-topic scoring falls back to exact titles when enrichment omitted the topic", () => {
+  const row = { ...validEvidence, policyMetadata: {} };
+  const result = scoreResult({
+    id: "profile-en", expectedTopic: "company-profile", expectedSource: validEvidence.source_name,
+    expectedDocumentTitle: validEvidence.document_title, expectedFacts: ["incorporation documents"]
+  }, [row]);
+  assert.equal(result.targetDocumentFound, true);
+  assert.equal(result.status, "PASS");
+});
+
+test("stable-topic scoring reports missing enrichment as indeterminate instead of a retrieval miss", () => {
+  const testCase = { id: "profile-en", expectedTopic: "company-profile", expectedSource: "Old approved title",
+    expectedDocumentTitle: "Old approved title", expectedFacts: ["an expected fact"] };
+  const renamedWithoutMetadata = { ...validEvidence, source_name: "Revised live title", document_title: "Revised live title", policyMetadata: null };
+  const audit = candidateAuditSummary(testCase, ["query"], [[renamedWithoutMetadata]], []);
+  assert.equal(audit.targetCandidateCount, 0);
+  assert.equal(audit.unclassifiedCandidateCount, 1);
+  assert.equal(audit.statability, "target_classification_incomplete");
+});
+
 test("retrieval reports multilingual pass rates per language and domain with Wilson intervals", () => {
   const result = languageParity([
     { expectedSource: "source", language: "english", domain: "services", status: "PASS" },
@@ -103,6 +144,62 @@ test("real-data smoke cases use current corpus titles and never expect live pric
   assert.ok(cases.some((item) => item.id === "services_el" && item.language === "greek"));
   assert.equal(cases.some((item) => (item.expectedFacts || []).some((fact) => /€\s?\d|\d+\s*يورو/u.test(fact))), false);
   assert.equal(cases.some((item) => item.id.startsWith("former_services_")), false, "missing approved transition evidence is tracked as a knowledge gap, not asserted as present");
+});
+
+test("realistic bank-account questions in all supported languages require the no-guarantee boundary", () => {
+  const bankingCases = cases.filter((item) => item.domain === "banking");
+  assert.deepEqual(bankingCases.map((item) => item.language).sort(), ["arabic", "english", "greek"]);
+  assert.ok(bankingCases.every((item) => item.expectedSource && item.expectedHeading && item.expectedFacts.length >= 2));
+  assert.ok(bankingCases.every((item) => item.expectedFacts.some((fact) => /promise|guarantee|يضمن|يوعد|εγγυηθεί|υποσχεθεί/iu.test(fact))));
+  assert.ok(bankingCases.every((item) => item.intents.includes("corporate_services")));
+});
+
+test("RAG diagnostics distinguish a retrieved but unapproved fact from a retrieval miss", () => {
+  const item = {
+    id: "formation-en",
+    expectedSource: "Formation package",
+    expectedDocumentTitle: "Formation package",
+    expectedFacts: ["Company secretary is included"]
+  };
+  const candidate = {
+    source_name: "Formation package",
+    document_title: "Formation package",
+    chunk_id: "formation-chunk-1",
+    heading: "Company secretary",
+    content: "Company secretary is included for four months.",
+    policyMetadata: {
+      facts: ["MB-F6"],
+      factRegisterRows: [{ id: "MB-F6", status: "pending" }]
+    }
+  };
+  const audit = candidateAuditSummary(item, ["formation query"], [[candidate]], []);
+  assert.equal(audit.targetCandidateCount, 1);
+  assert.equal(audit.rawExpectedFactsFound, 1);
+  assert.equal(audit.eligibleTargetCandidateCount, 0);
+  assert.equal(audit.factStatuses["MB-F6"], "pending");
+  assert.equal(audit.statability, "withheld_by_fact_register_or_language_policy");
+  assert.equal("content" in audit, false, "diagnostic summary never stores retrieved claim text");
+});
+
+test("RAG diagnostics record eligible evidence separately from pending candidate facts", () => {
+  const item = { expectedSource: "Formation package", expectedFacts: [] };
+  const candidate = { source_name: "Formation package", chunk_id: "chunk-1", policyMetadata: { factRegisterRows: [] } };
+  const audit = candidateAuditSummary(item, ["formation query"], [[candidate]], [candidate]);
+  assert.equal(audit.eligibleTargetCandidateCount, 1);
+  assert.equal(audit.statability, "eligible_evidence_found");
+});
+
+test("raw retrieval coverage is reported separately from the approved-evidence gate", () => {
+  const summary = candidateRetrievalSummary([
+    { expectedSource: "source", language: "english", domain: "services", candidateAudit: { rawSearchErrorCount: 0, targetCandidateCount: 2, expectedFactCount: 2, rawExpectedFactsFound: 2 }, status: "FAIL" },
+    { expectedSource: "source", language: "arabic", domain: "services", candidateAudit: { rawSearchErrorCount: 0, targetCandidateCount: 1, expectedFactCount: 2, rawExpectedFactsFound: 1 }, status: "FAIL" },
+    { expectedSource: "source", language: "greek", domain: "services", candidateAudit: { rawSearchErrorCount: 1, targetCandidateCount: 1, expectedFactCount: 2, rawExpectedFactsFound: 2 }, status: "ERROR" }
+  ]);
+  assert.equal(summary.targetRetrieved, 2);
+  assert.equal(summary.targetCoverageRate, 2 / 3);
+  assert.equal(summary.rawExpectedFactRecallAtK, 5 / 6);
+  assert.equal(summary.byLanguage.english.passRate, 1);
+  assert.equal(summary.byLanguage.greek.passRate, 0);
 });
 
 test("Wilson intervals are unavailable for an empty sample and bounded for finite samples", () => {

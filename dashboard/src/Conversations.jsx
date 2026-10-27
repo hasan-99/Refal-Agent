@@ -11,6 +11,27 @@ import { fetchConversationLists, watchForConversationListChanges } from "./conve
 import { LeadTemperatureSummary } from "./leadTemperatureSummary.js";
 
 const EMPTY = [];
+const DIAGNOSTIC_REASON_COPY = {
+  no_approved_evidence: "The approved information available for this reply did not support this statement.",
+  entities_not_in_evidence: "A name, place, number, or other specific detail was missing from the approved information.",
+  prohibited_claim: "A reply rule blocks this kind of claim. Check the flagged part and the evidence before changing anything.",
+  unconditional_prohibition: "The wording made a broad statement where the rule requires a limit or condition.",
+  personalized_marker: "The draft made a conclusion about this customer’s personal eligibility or situation without enough support.",
+  context_mismatch: "The draft did not fit something the customer said earlier, such as a preference or limit.",
+  service_not_established: "The available approved information did not establish that Refalco provides this as a service.",
+  unsupported_relation: "The information did not support the connection or conclusion made in the draft.",
+  question_not_answered: "The draft did not clearly answer every part of the customer’s question."
+};
+
+function diagnosticReasonText(code) {
+  return DIAGNOSTIC_REASON_COPY[code] || "A reply check flagged this draft. Review the exact span and evidence below.";
+}
+
+function diagnosticReasons(record) {
+  const explicit = record.inspection?.reasonCodes || record.inspection?.reasons || [];
+  const fromClaims = (record.inspection?.claims || []).flatMap((claim) => claim.reasons || []);
+  return [...new Set([...explicit, ...fromClaims].filter((reason) => typeof reason === "string"))];
+}
 
 export default function Conversations({ isAdmin, onNavigate, view: initialView = "inbox", onViewChange, selectedConversationId = "", onSelectedConversationChange }) {
   const [rows, setRows] = useState(EMPTY);
@@ -185,6 +206,14 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
       setDeleteTarget(null);
       setRows((current) => current.filter((item) => String(item.userId || item.user?.id || item.id || "") !== userId));
       setLeads((current) => current.map((lead) => String(lead.id || "") === userId ? { ...lead, conversationCount: 0, lastMessagePreview: "", lastMessageAt: "" } : lead));
+      listRefreshController.current?.abort();
+      const controller = new AbortController();
+      listRefreshController.current = controller;
+      try {
+        await loadRows(controller.signal);
+      } finally {
+        if (listRefreshController.current === controller) listRefreshController.current = null;
+      }
     } catch (cause) {
       setDeleteError(cause.message || "Could not delete this conversation.");
     } finally {
@@ -261,12 +290,12 @@ export default function Conversations({ isAdmin, onNavigate, view: initialView =
     {deleteTarget && <div className="conversation-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingId) setDeleteTarget(null); }}>
       <section className="conversation-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="conversation-delete-title" aria-describedby="conversation-delete-description">
         <span className="conversation-delete-dialog-icon"><Trash2 size={19} /></span>
-        <h2 id="conversation-delete-title">Delete conversation history?</h2>
+        <h2 id="conversation-delete-title">Reset conversation?</h2>
         <p className="conversation-delete-dialog-contact">{deleteTarget.user?.name || deleteTarget.user?.pushName || deleteTarget.user?.phone || deleteTarget.userId || deleteTarget.id}</p>
-        <p id="conversation-delete-description">This permanently removes the customer's messages and REFAL's replies from Supabase. The contact/lead record, appointments, and related workflow or audit records will remain. This cannot be undone.</p>
+        <p id="conversation-delete-description">This permanently removes the messages, REFAL's replies, and conversation-derived memory. The next message starts a fresh conversation. The contact record, appointments, handovers, complaints, audit records, and contact restrictions remain. This cannot be undone.</p>
         <div className="conversation-delete-dialog-actions">
           <button type="button" className="conversation-subtle-button" onClick={() => setDeleteTarget(null)} disabled={Boolean(deletingId)}>Cancel</button>
-          <button type="button" className="conversation-delete-confirm-button" onClick={() => deleteConversation(deleteTarget)} disabled={Boolean(deletingId)}>{deletingId ? <><span className="conversation-spinner small" /> Deleting…</> : <><Trash2 size={14} /> Delete history</>}</button>
+          <button type="button" className="conversation-delete-confirm-button" onClick={() => deleteConversation(deleteTarget)} disabled={Boolean(deletingId)}>{deletingId ? <><span className="conversation-spinner small" /> Resetting…</> : <><Trash2 size={14} /> Reset conversation</>}</button>
         </div>
       </section>
     </div>}
@@ -339,7 +368,7 @@ function ConversationRow({ row, isAdmin, deleting, onOpen, onDelete }) {
     <td data-label="Reply status"><span className={`conversation-status ${statusClass(status, row.needsReply)}`}>{statusLabel(status)}</span></td>
     <td data-label="Updated"><time className="conversation-time" dateTime={when || undefined}>{formatDate(when)}</time></td>
     <td className="conversation-row-action"><span className="conversation-row-actions">
-      {isAdmin && <button type="button" className="conversation-delete-button" disabled={deleting} aria-label={`Delete ${name} conversation history`} title="Delete conversation history" onClick={(event) => { event.stopPropagation(); onDelete(); }}>{deleting ? <span className="conversation-spinner" aria-label="Deleting" /> : <Trash2 size={15} />}</button>}
+      {isAdmin && <button type="button" className="conversation-delete-button" disabled={deleting} aria-label={`Reset ${name} conversation`} title="Reset conversation" onClick={(event) => { event.stopPropagation(); onDelete(); }}>{deleting ? <span className="conversation-spinner" aria-label="Resetting" /> : <Trash2 size={15} />}</button>}
       <button type="button" className="conversation-open-button" aria-label={`Open ${name} conversation`} onClick={(event) => { event.stopPropagation(); onOpen(); }}><MoreHorizontal size={16} /></button>
     </span></td>
   </tr>;
@@ -364,6 +393,17 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
   const [contactDraft, setContactDraft] = useState({ nameOverride: "", phoneOverride: "" });
   const [contactSaving, setContactSaving] = useState(false);
   const [contactNotice, setContactNotice] = useState("");
+  const [inspections, setInspections] = useState(null);
+  const [inspectionError, setInspectionError] = useState("");
+  const loadInspections = async () => {
+    setInspectionError("");
+    try {
+      const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/diagnostics`, { credentials: "include" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Controlled diagnostics unavailable.");
+      setInspections(payload.inspections || []);
+    } catch (cause) { setInspectionError(cause.message); }
+  };
   const contactName = detail?.user?.name || detail?.user?.pushName || detail?.user?.phone || id;
   const contactPhone = detail?.user?.phone || "WhatsApp conversation";
 
@@ -426,6 +466,68 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
     </form>}
     {contactNotice && <p className="conversation-contact-notice" role="status">{contactNotice}</p>}
     {detail && <WorkflowSummary workflow={detail.user?.workflow} isAdmin={isAdmin} />}
+    {isAdmin && detail && <section className="conversation-diagnostics" aria-labelledby="conversation-diagnostics-title">
+      <div className="conversation-diagnostics-heading">
+        <div>
+          <span className="conversation-diagnostics-kicker">TEST REPLY REVIEW</span>
+          <h2 id="conversation-diagnostics-title">Understand and improve a flagged reply</h2>
+          <p>See what REFAL drafted, which check flagged it, and what information REFAL had available.</p>
+        </div>
+        <button type="button" className="conversation-diagnostics-load" onClick={loadInspections}>
+          {inspections === null ? "Show flagged drafts" : "Refresh flagged drafts"}
+        </button>
+      </div>
+      <div className="conversation-diagnostics-guide">
+        <strong>How this helps</strong>
+        <ol>
+          <li>Read the flagged part and why the check stopped it.</li>
+          <li>Open the evidence and compare it with that statement.</li>
+          <li>If the information is missing, improve approved knowledge. If the evidence supports the draft, use the trace details to review the rule.</li>
+        </ol>
+      </div>
+      <p className="conversation-diagnostics-note">This is an internal review; nothing here is sent to the customer. A flagged draft may differ from the delivered reply, which appears in the transcript above.</p>
+      {inspectionError && <p className="conversation-diagnostics-error" role="alert">Could not load the review details: {inspectionError}</p>}
+      {inspections && inspections.length === 0 && <p className="conversation-diagnostics-empty">No rejected drafts were saved for this controlled test conversation.</p>}
+      {inspections && [...inspections].reverse().map((record, index) => {
+        const reasons = diagnosticReasons(record);
+        const claims = record.inspection?.claims || [];
+        const evidence = record.inspection?.evidence || [];
+        return <details className="conversation-diagnostic-record" key={record.id}>
+          <summary>
+            <span><strong>Flagged draft {inspections.length - index}</strong><small>{formatDate(record.at)} · reply step {record.inspection?.step ?? "unknown"}</small></span>
+            <span className="conversation-diagnostic-count">{reasons.length} {reasons.length === 1 ? "check" : "checks"}</span>
+          </summary>
+          <div className="conversation-diagnostic-body">
+            <h3>Why it was flagged</h3>
+            {reasons.length ? <ul className="conversation-diagnostic-reasons">{reasons.map((reason) => <li key={reason}>
+              <span>{diagnosticReasonText(reason)}</span><code>{reason}</code>
+            </li>)}</ul> : <p>The reason was not included in this saved record.</p>}
+            {claims.length > 0 && <div className="conversation-diagnostic-claims">
+              <h3>Part that needs review</h3>
+              {claims.map((claim, claimIndex) => <blockquote key={claimIndex} dir="auto">{claim.sentence || claim.claim}</blockquote>)}
+            </div>}
+            <div className="conversation-diagnostic-draft">
+              <h3>What REFAL drafted</h3>
+              <p dir="auto">{record.inspection?.draft || "Draft text was not saved."}</p>
+            </div>
+            <div className="conversation-diagnostic-evidence">
+              <h3>Information available to REFAL <span>{evidence.length} {evidence.length === 1 ? "passage" : "passages"}</span></h3>
+              {evidence.length ? evidence.map((item, evidenceIndex) => <details key={`${item.sourceRef || item.title || "source"}-${evidenceIndex}`}>
+                <summary><span>{item.title || "Approved knowledge"}</span><small>{item.section || "Section not named"}</small></summary>
+                <pre dir="auto">{item.content || "No passage text was saved."}</pre>
+                {item.sourceRef && <code className="conversation-diagnostic-source">Source reference: {item.sourceRef}</code>}
+              </details>) : <p>No evidence passages were saved with this draft.</p>}
+            </div>
+            <details className="conversation-diagnostic-technical">
+              <summary>Technical details for a developer</summary>
+              <dl><dt>Trace ID</dt><dd><code>{record.inspection?.traceId || "Not recorded"}</code></dd>
+                <dt>Step</dt><dd>{record.inspection?.step ?? "Not recorded"}</dd>
+                <dt>Rule codes</dt><dd><code>{reasons.join(", ") || "Not recorded"}</code></dd></dl>
+            </details>
+          </div>
+        </details>;
+      })}
+    </section>}
     {loading && <div className="conversation-detail-state"><span className="conversation-spinner" />Loading conversation</div>}
     {error && <div className="conversation-alert" role="alert"><span>{error}</span><button type="button" onClick={onBack}>Back to inbox</button></div>}
     {detail && !loading && <div className="conversation-thread-wrap">

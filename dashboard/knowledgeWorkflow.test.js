@@ -30,21 +30,42 @@ test("knowledge saves queue revisions without embedding them", () => {
 
 test("admin review queue sees all statuses while non-admin API reads stay approved-only", () => {
   const list = route("get", "/api/knowledge");
+  assert.match(list, /isAdmin\s*\?\s*readAllSupabaseRows\(withStableIdOrder\(documentQuery,\s*"fetched_at"\)\)\s*:\s*supabaseRest\(`\$\{documentQuery\}&limit=200`\)/);
+  assert.match(list, /order=fetched_at\.desc,id\.desc/);
   assert.match(list, /isAdmin\s*\?\s*""\s*:\s*"&review_status=eq\.approved"/);
   const detail = route("get", "/api/knowledge/:id");
+  assert.match(detail, /isAdmin\s*\?\s*readAllSupabaseRows\(withStableIdOrder\(documentQuery,\s*"revision"\)\)\s*:\s*supabaseRest\(`\$\{documentQuery\}&limit=1`\)/);
+  assert.match(detail, /order=revision\.desc,id\.desc/);
+  assert.match(detail, /for\s*\(let index = 0; index < documents\.length; index \+= 50\)/);
+  assert.match(detail, /mapWithConcurrency\(documentIdBatches,[\s\S]*?readAllSupabaseRows\(/);
+  assert.match(detail, /order=chunk_index\.asc,id\.asc/);
   assert.match(detail, /isAdmin\s*\?\s*""\s*:\s*"&review_status=eq\.approved"/);
-  assert.match(detail, /isAdmin\s*\?\s*"20"\s*:\s*"1"/);
+  assert.match(detail, /isAdmin \? \(await mapWithConcurrency\(reviewAuditBatches[\s\S]*?rafa_knowledge_review_audit/);
+  assert.match(detail, /isAdmin \? \{ reviewHistory: reviewAuditByDocument\.get\(doc\.id\) \|\| \[\] \} : \{\}/);
+  assert.match(detail, /rafa_knowledge_review_audit\?document_id=in\.\(\$\{batch\.join\(","\)\}\).*previous_status,new_status,reviewer,reason,created_at/);
+  assert.match(detail, /isAdmin \? \(await mapWithConcurrency\(reviewAuditBatches/);
 });
 
-test("only an approved decision indexes chunks, and the UI offers all review states", () => {
+test("approval reindexes the pending revision before the audited decision publishes it", () => {
   const review = route("patch", "/api/knowledge/documents/:id/review");
   assert.match(review, /\["approved",\s*"rejected",\s*"pending"\]/);
-  assert.match(review, /if\s*\(status\s*===\s*"approved"\)\s*\{[\s\S]*?rafa_store_knowledge_embeddings/);
+  assert.match(review, /if\s*\(status\s*===\s*"approved"\)\s*\{[\s\S]*?approveKnowledgeDocumentAfterIndex/);
+  assert.doesNotMatch(review, /embeddingWarning/u);
+  assert.match(review, /reason:\s*req\.body\?\.reason/);
+  assert.match(review, /review:\s*\{ previous:\s*decision\.previous,\s*status:\s*decision\.review_status,\s*reviewer:\s*decision\.reviewer,\s*reason:\s*decision\.reason \}/);
+  const helper = readFileSync(new URL("./knowledgeReview.js", import.meta.url), "utf8");
+  assert.match(helper, /rafa_store_knowledge_embeddings[\s\S]*?reviewKnowledgeDocument\(rest, \{ documentId: id, status: "approved"/);
   assert.match(ui, /reviewDocument\(doc, "approved"\)/);
   assert.match(ui, /reviewDocument\(doc, "rejected"\)/);
   assert.match(ui, /reviewDocument\(doc, "pending"\)/);
   assert.match(ui, /Revision v\{doc\.revision\}[^<]*\{doc\.language_code/);
   assert.match(ui, /Source: \{selected\.display_name\}/);
+  assert.match(ui, /Decision reason/);
+  assert.match(ui, /Review decision history/);
+  assert.match(ui, /reviewHistory\?\.length/);
+  assert.match(ui, /JSON\.stringify\(\{ status, reason \}\)/);
+  assert.match(ui, /Approved by \{doc\.approved_by \|\| "Not recorded"\} · Approved on \{formatDate\(doc\.approved_at\)\}/);
+  assert.doesNotMatch(ui, /Effective \{formatDate\(doc\.approved_at\)\}/);
 });
 
 test("archive and restore are admin-only, reversible source disable actions with actor/reason audit events", () => {
@@ -65,17 +86,20 @@ test("archive and restore are admin-only, reversible source disable actions with
   assert.doesNotMatch(server, /app\.delete\("\/api\/knowledge\/:id"/);
 });
 
-test("side-by-side EN/AR/EL preview uses retrieval RPCs and exposes only the existing approved-search path", () => {
+test("approved retrieval admin preview remains available while Knowledge shows the Add knowledge action", () => {
   const preview = route("post", "/api/knowledge/search/preview");
   assert.match(preview, /requireAdmin/);
   assert.match(preview, /previewKnowledgeAcrossLanguages/);
   assert.match(preview, /rafa_hybrid_search_knowledge/);
   assert.match(preview, /rafa_search_knowledge/);
-  assert.match(ui, /Preview approved retrieval in all customer languages/);
-  assert.match(ui, /English retrieval preview query/);
-  assert.match(ui, /Arabic retrieval preview query/);
-  assert.match(ui, /Greek retrieval preview query/);
-  assert.match(ui, /Trilingual approved retrieval preview/);
+  assert.match(ui, /knowledge-add-button/);
+  assert.match(ui, /className="knowledge-stat approved"/);
+  assert.match(ui, /className="knowledge-stat pending"/);
+  assert.match(ui, /knowledge-library-search/);
+  assert.match(ui, /Search titles or content in any language/);
+  assert.match(ui, /Add knowledge/);
+  assert.doesNotMatch(ui, /Search approved knowledge in any language/);
+  assert.doesNotMatch(ui, /Preview approved retrieval in all customer languages/);
   const helper = readFileSync(new URL("./knowledgeReview.js", import.meta.url), "utf8");
   assert.match(helper, /\["en", "ar", "el"\]/);
 });

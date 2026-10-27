@@ -1,210 +1,140 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { runAgentTurnForContact, buildToolContext } = require("./agentRuntime");
-const { INTENTS } = require("./intent");
+const { buildToolContext } = require("./agentRuntime");
+const { runAgentTurnForContact } = require("../scripts/helpers/scriptedGrounding");
+const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 
 function scriptedDecider(decisions) {
   let index = 0;
   return async () => decisions[Math.min(index++, decisions.length - 1)];
 }
 
-test("buildToolContext binds the real embedText/embeddingModel defaults when the caller doesn't override them", () => {
-  const ctx = buildToolContext({ store: {}, user: {}, userId: "u1" });
-  assert.equal(typeof ctx.embedText, "function");
-  assert.equal(typeof ctx.embeddingModel, "string");
-  assert.equal(ctx.matchCount, 6);
+test("tool context binds trusted identity, current turn, consent, capabilities, and embedding defaults", () => {
+  const context = buildToolContext({ store: {}, user: {}, userId: "contact-1", sourceTurnId: "turn-1", currentMessage: "I live in Jordan.", consentState: "denied", allowedCapabilities: ["upsertLead"] });
+  assert.equal(typeof context.embedText, "function");
+  assert.equal(context.sourceTurnId, "turn-1");
+  assert.equal(context.currentMessage, "I live in Jordan.");
+  assert.equal(context.consentState, "denied");
+  assert.deepEqual(context.allowedCapabilities, ["upsertLead"]);
+  assert.equal(Object.isFrozen(context.allowedCapabilities), true);
 });
 
-test("buildToolContext passes trusted M4 contact, source-turn, consent, language, and capability context", () => {
-  const ctx = buildToolContext({
-    store: {}, user: {}, userId: "contact-1", inboundMessageId: "wa-provider-turn-9", sourceTurnId: "persisted-turn-uuid",
-    language: "arabic", consentState: "granted", allowedCapabilities: ["upsertLead", "scheduleFollowUp"]
-  });
-  assert.equal(ctx.sourceTurnId, "persisted-turn-uuid");
-  assert.equal(ctx.inboundMessageId, "wa-provider-turn-9");
-  assert.equal(ctx.userId, "contact-1");
-  assert.equal(ctx.consentState, "granted");
-  assert.equal(ctx.language, "arabic");
-  assert.deepEqual(ctx.allowedCapabilities, ["upsertLead", "scheduleFollowUp"]);
-  assert.equal(Object.isFrozen(ctx.allowedCapabilities), true);
-});
-
-test("RAG is never invoked when the Agent's decision never asks for it (e.g. a simple acknowledgement)", async () => {
-  let searchCalls = 0;
-  const store = { searchKnowledge: async () => { searchCalls += 1; return []; } };
-  const decide = scriptedDecider([{ type: "respond", text: "You're welcome, happy to help anytime." }]);
-
-  const result = await runAgentTurnForContact(
-    { currentMessage: "thank you", locale: "english", store, user: { id: "u1" }, userId: "u1" },
-    { decideNextStep: decide }
-  );
-
-  assert.equal(result.outcome, "responded");
-  assert.equal(searchCalls, 0, "a plain acknowledgement must never trigger a knowledge search");
-});
-
-test("buildToolContext supplies the trusted current message for CRM statement verification", () => {
-  const ctx = buildToolContext({ store: {}, user: {}, userId: "contact-1", currentMessage: "I live in Jordan.", sourceTurnId: "turn-1" });
-  assert.equal(ctx.currentMessage, "I live in Jordan.");
-  assert.equal(ctx.sourceTurnId, "turn-1");
-});
-
-test("broad services intents retrieve overview, scope, and current-conditions evidence before the model decides", async () => {
-  let searchCalls = 0;
-  let observationsSeenByModel = null;
-  const store = {
-    searchKnowledge: async (query) => {
-      searchCalls += 1;
-      assert.match(query, /^What services do you offer\?/);
-      if (searchCalls === 1) {
-        assert.match(query, /company formation and structuring/);
-        assert.match(query, /العقار والتطوير/u);
-      }
-      if (searchCalls === 2) assert.match(query, /business tax and operations/);
-      if (searchCalls === 3) assert.match(query, /company banking and payment gateways/);
-      if (searchCalls === 4) assert.match(query, /residency and relocation/);
-      if (searchCalls === 5) assert.match(query, /property purchase/);
-      if (searchCalls === 6) assert.match(query, /landowners, development and construction/);
-      if (searchCalls === 7) assert.match(query, /legal and intellectual property/);
-      if (searchCalls === 8) assert.match(query, /Jurisdiction comparison/);
-      if (searchCalls === 9) assert.match(query, /Refalco Group company profile/);
-      return [{ heading: "Company formation", content: "We provide company formation support." }];
-    }
-  };
-  const decide = async ({ observations }) => {
-    observationsSeenByModel = observations;
-    return { type: "respond", text: "We provide company formation support." };
-  };
-
+test("the model decides when and how to search; there is no intent-triggered prefetch", async () => {
+  let searches = 0;
   const result = await runAgentTurnForContact({
-    currentMessage: "What services do you offer?",
-    locale: "english",
-    store,
-    user: { id: "u1" },
-    userId: "u1",
-    intents: [INTENTS.SERVICES],
-    embedText: async () => [1]
-  }, { decideNextStep: decide });
-
-  assert.equal(searchCalls, 9);
-  assert.equal(observationsSeenByModel.length, 9);
-  assert.equal(observationsSeenByModel[0].tool, "searchApprovedKnowledge");
-  assert.equal(observationsSeenByModel[0].result.modelObservation.status, "found");
+    currentMessage: "thank you", locale: "english", store: { searchKnowledge: async () => { searches += 1; return []; } }, user: {}, userId: "u1"
+  }, { decideNextStep: scriptedDecider([{ type: "respond", text: "You're welcome, happy to help anytime." }]) });
   assert.equal(result.outcome, "responded");
-  assert.equal(result.response, "We provide company formation support. Which area would you like to hear more about?");
-  assert.deepEqual(result.toolsUsed, ["searchApprovedKnowledge"]);
+  assert.equal(searches, 0);
+  assert.equal(result.steps.length, 0);
 });
 
-test("broad Arabic service answers get one neutral next question, while focused requests keep their answer", async () => {
-  const { appendBroadServiceFollowup } = require("./agentRuntime");
-  const broad = appendBroadServiceFollowup(
-    { outcome: "responded", response: "خدماتنا تشمل تأسيس الشركات والعقار." },
-    { intents: [INTENTS.SERVICES], locale: "arabic", currentMessage: "شو هي خدماتكم؟" }
-  );
-  assert.equal(broad.response, "خدماتنا تشمل تأسيس الشركات والعقار. أي مجال حابب تعرف عنه أكثر؟");
-  const alreadyInteractive = appendBroadServiceFollowup(
-    { outcome: "responded", response: "خدماتنا تشمل تأسيس الشركات. أي مجال يهمك؟" },
-    { intents: [INTENTS.SERVICES], locale: "arabic", currentMessage: "شو هي خدماتكم؟" }
-  );
-  assert.equal(alreadyInteractive.response, "خدماتنا تشمل تأسيس الشركات. أي مجال يهمك؟");
-  const focused = appendBroadServiceFollowup(
-    { outcome: "responded", response: "Company formation is one of our services." },
-    { intents: [INTENTS.SERVICES, INTENTS.COMPANY_FORMATION], locale: "english", currentMessage: "Do you offer company formation?" }
-  );
-  assert.equal(focused.response, "Company formation is one of our services.");
+test("validated turn intent is retained in the trusted conversation context", async () => {
+  let turnContext;
+  await runAgentTurnForContact({
+    currentMessage: "Who are you?", locale: "english", intents: ["agent_identity", "customer_supplied_value"], user: {}, userId: "u1"
+  }, { decideNextStep: async ({ context }) => {
+    turnContext = context;
+    return { type: "respond", text: "I am REFAL, Refalco Group's digital business agent." };
+  } });
+  assert.deepEqual(turnContext.intents, ["agent_identity"]);
 });
 
-test("an ambiguous follow-up searches using recent conversation context without canned query terms", async () => {
-  let searchedQuery = "";
-  const store = {
-    searchKnowledge: async (query) => {
-      searchedQuery = query;
-      return [{
-        heading: "بداية التأسيس",
-        content: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
-      }];
-    }
-  };
+test("a broad colloquial services request can retrieve and answer from approved evidence", async () => {
+  const searches = [];
+  const store = { searchKnowledge: async (query) => {
+    searches.push(query);
+    return [{ document_id: "doc-1", section_index: "0", chunk_id: "chunk-1", document_title: "Approved profile", heading: "Service portfolio", content: "المجموعة تقدم دعماً بتأسيس الشركات والمحاسبة.", review_status: "approved" }];
+  } };
+  let modelEvidence;
   const result = await runAgentTurnForContact({
-    currentMessage: "طيب كيف فينا نبلش",
-    locale: "arabic",
-    store,
-    user: { id: "u1" },
-    userId: "u1",
-    intents: [INTENTS.UNKNOWN],
-    recentConversation: [
-      { role: "user", content: "انا بدي اسجل شركة بقبرص" },
-      { role: "assistant", content: "أكيد، فينا نساعدك بتأسيس شركة بقبرص. عادةً بتمر العملية بتحديد نشاط الشركة، حجز الاسم، وتجهيز وتقديم مستندات التأسيس لسجل الشركات." }
-    ],
-    embedText: async () => [1]
-  }, {
-    decideNextStep: async ({ observations }) => {
-      assert.equal(observations[0].tool, "searchApprovedKnowledge");
-      return {
-        type: "respond",
-        text: "للبدء، نحدد نشاط الشركة ونحجز الاسم، ثم نجهز مستندات التأسيس ونقدمها لسجل الشركات."
-      };
+    currentMessage: "ممكم اعرف شو بتقدمو خدمات؟", locale: "arabic", recentConversation: [], store, user: {}, userId: "u1", embedText: async () => null
+  }, { decideNextStep: async ({ observations, step }) => {
+    if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "مجالات الخدمات التي تقدمها المجموعة" } };
+    modelEvidence = observations[0].result.modelObservation.evidence;
+    return { type: "respond", text: "المجموعة تقدم دعماً بتأسيس الشركات والمحاسبة." };
+  } });
+  assert.deepEqual(searches, ["مجالات الخدمات التي تقدمها المجموعة", "ممكم اعرف شو بتقدمو خدمات؟"]);
+  assert.match(modelEvidence[0].content, /تأسيس الشركات والمحاسبة/u);
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /تأسيس الشركات والمحاسبة/u);
+});
+
+test("conversation history is available for model-selected contextual searches", async () => {
+  const queries = [];
+  const result = await runAgentTurnForContact({
+    currentMessage: "and what does that include?", locale: "english", recentConversation: [
+      { role: "user", content: "I want to form a company in Cyprus" },
+      { role: "assistant", content: "What structure are you considering?" }
+    ], store: { searchKnowledge: async (value) => { queries.push(value); return []; } }, user: {}, userId: "u1", embedText: async () => null
+  }, { decideNextStep: async ({ context, step }) => {
+    if (step === 1) {
+      assert.match(context.recentConversation.map((turn) => turn.content).join(" "), /form a company in Cyprus/u);
+      return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation inclusions in Cyprus" } };
+    }
+    return { type: "respond", text: "I do not have approved details for that yet." };
+  } });
+  assert.deepEqual(queries, ["company formation inclusions in Cyprus", "and what does that include?"]);
+  assert.equal(result.outcome, "responded");
+});
+
+test("the last bounded model call has no tools and is reserved for the final answer", async () => {
+  const seenTools = [];
+  const result = await runAgentTurnForContact({ currentMessage: "Tell me about your services", locale: "english", store: {}, user: {}, userId: "u1" }, {
+    maxSteps: 2,
+    decideNextStep: async ({ tools, step }) => {
+      seenTools.push(Object.keys(tools || {}));
+      return step === 1
+        ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "approved service overview" } }
+        : { type: "respond", text: "I can help with the areas supported by current approved information." };
     }
   });
-
-  assert.match(searchedQuery, /انا بدي اسجل شركة بقبرص/u);
-  assert.match(searchedQuery, /طيب كيف فينا نبلش/u);
-  assert.match(searchedQuery, /حجز الاسم/u);
-  assert.doesNotMatch(searchedQuery, /Cyprus company formation incorporation first steps name reservation/i);
+  assert.ok(seenTools[0].includes("searchApprovedKnowledge"));
+  assert.deepEqual(seenTools[1], []);
   assert.equal(result.outcome, "responded");
-  assert.match(result.response, /نحجز الاسم/u);
 });
 
-test("a real end-to-end turn: decide calls searchApprovedKnowledge, the real tool reaches the injected embedText and store, and the answer is grounded in the returned evidence", async () => {
-  let searchArgs = null;
-  const store = {
-    searchKnowledge: async (query, embedding, embeddingModel, matchCount) => {
-      searchArgs = { query, embedding, embeddingModel, matchCount };
-      return [{ heading: "Company formation price", content: "The published company formation price is EUR 1500." }];
+test("an identical search is skipped without another retrieval call", async () => {
+  let searches = 0;
+  const store = { searchKnowledge: async () => { searches += 1; return []; } };
+  const result = await runAgentTurnForContact({ currentMessage: "What services are supported?", locale: "english", store, user: {}, userId: "u1", embedText: async () => null }, {
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "supported services" } },
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: " SUPPORTED   SERVICES! " } },
+      { type: "respond", text: "I do not have an approved answer for that yet." }
+    ])
+  });
+  assert.equal(searches, 2, "one logical search searches both the model's interpretation and the original turn");
+  assert.equal(result.steps[1].result.reasonCode, "REPEATED_SEARCH_NO_ADDITIONAL_VALUE");
+  assert.equal(result.outcome, "responded");
+});
+
+test("knowledge observations assemble ordered chunks into complete parent sections within a bounded budget", async () => {
+  const result = await runAgentTurnForContact({ currentMessage: "What are the conditions?", locale: "english", user: {}, userId: "u1", embedText: async () => null,
+    store: { searchKnowledge: async () => [
+      { document_id: "doc-a", section_index: "2", chunk_index: 3, chunk_id: "chunk-a", document_title: "Approved source", heading: "Conditions", content: "The general rule applies first.", review_status: "approved" },
+      { document_id: "doc-a", section_index: "2", chunk_index: 4, chunk_id: "chunk-b", document_title: "Approved source", heading: "Conditions", content: "The exception applies when the condition is met.", review_status: "approved" }
+    ] } }, {
+    decideNextStep: async ({ observations, step }) => {
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "approved conditions" } };
+      const evidence = observations[0].result.modelObservation.evidence[0].content;
+      assert.ok(evidence.indexOf("general rule") < evidence.indexOf("exception"));
+      return { type: "respond", text: "The general rule applies first, with an exception when its condition is met." };
     }
-  };
-  const fakeEmbedText = async (text) => [text.length]; // deterministic stand-in, no real transformer pipeline in a unit test
-
-  const decide = scriptedDecider([
-    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation price" } },
-    { type: "respond", text: "The published company formation price is EUR 1500." }
-  ]);
-
-  const result = await runAgentTurnForContact(
-    {
-      currentMessage: "What is the price to create a Cyprus company?",
-      locale: "english",
-      store,
-      user: { id: "u1" },
-      userId: "u1",
-      embedText: fakeEmbedText,
-      embeddingModel: "test-model"
-    },
-    { decideNextStep: decide }
-  );
-
+  });
   assert.equal(result.outcome, "responded");
-  assert.match(result.response, /EUR 1500/);
-  assert.equal(result.toolsUsed[0], "searchApprovedKnowledge");
-  assert.deepEqual(searchArgs.embedding, [String("company formation price").length]);
-  assert.equal(searchArgs.embeddingModel, "test-model");
-  assert.equal(searchArgs.matchCount, 6);
 });
 
-test("a knowledge-search failure becomes a structured observation, not a crash, and the Agent can still respond from the recent conversation", async () => {
-  const store = { searchKnowledge: async () => { throw new Error("edge function unreachable"); } };
-  const decide = scriptedDecider([
-    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price" } },
-    { type: "respond", text: "I can't confirm the current price right now, but I can help with anything else." }
-  ]);
-
-  const result = await runAgentTurnForContact(
-    { currentMessage: "What is the price?", locale: "english", store, user: { id: "u1" }, userId: "u1", embedText: async () => null },
-    { decideNextStep: decide }
-  );
-
-  assert.equal(result.outcome, "responded");
-  assert.equal(result.steps[0].result.ok, false);
-  assert.equal(result.steps[0].result.status, "error");
-  assert.equal(result.steps[0].result.reasonCode, "RETRIEVAL_FAILED");
+test("model-call telemetry includes timing and evidence passed to the decision", async (t) => {
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
+  t.after(() => { if (originalApiKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = originalApiKey; });
+  let metric;
+  await runAgentTurnForContact({ currentMessage: "thank you", locale: "english", store: {}, user: {}, userId: "test-contact" }, {
+    decideNextStep: defaultDecideNextStep, onModelCall: (value) => { metric = value; }
+  });
+  assert.ok(Number.isSafeInteger(metric.durationMs));
+  assert.equal(metric.outcome, "provider_error");
+  assert.equal(metric.errorCode, "MODEL_CALL_FAILED");
+  assert.equal(metric.evidenceCount, 0);
 });

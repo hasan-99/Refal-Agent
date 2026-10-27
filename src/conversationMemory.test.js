@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { buildConversationContext, buildCustomerTopicSummary, refreshCustomerTopicSummary } = require("./conversationMemory");
+const { buildConversationContext, buildCustomerTopicSummary, refreshCustomerTopicSummary, refreshCustomerTopicSummaryFromStore, safeMemoryText } = require("./conversationMemory");
 
 test("conversation context uses only the supplied contact and bounds recent turns", () => {
   const turns = Array.from({ length: 9 }, (_, index) => ({ message: `Customer question ${index}`, response: `Reply ${index}` }));
@@ -62,11 +62,69 @@ test("conversation memory update preserves other contact profile fields", async 
     store: { updateUser: async (_id, update) => { update(user); persisted = structuredClone(user.profile); } },
     userId: "customer-a",
     user,
-    currentMessage: "Can we discuss the portfolio?"
+    currentMessage: "Can we discuss the portfolio?",
+    sourceTurnId: "11111111-1111-4111-8111-111111111111"
   });
 
   assert.equal(persisted.name, "Maya");
   assert.equal(persisted.serviceInterest, "projects");
   assert.match(persisted.conversationSummary, /portfolio/);
   assert.ok(persisted.conversationSummaryUpdatedAt);
+  assert.equal(persisted.conversationSummarySourceTurnId, "11111111-1111-4111-8111-111111111111");
+});
+
+test("conversation memory removes residential addresses before summary and prompt context", () => {
+  const history = [
+    { message: "I have 3 children and we live at 18 Akrotiri Street." },
+    { message: "عنوان منزلي هو شارع الزيتون 18، وأحتاج معلومات عن تأسيس شركة." },
+    { message: "Μένω στην οδό Κύπρου 12 και θέλω να μάθω για σύσταση εταιρείας." }
+  ];
+  const summary = buildCustomerTopicSummary(history);
+  const context = buildConversationContext({ profile: {}, history });
+  assert.doesNotMatch(JSON.stringify({ summary, context }), /Akrotiri Street|شارع الزيتون 18|Κύπρου 12/u);
+  assert.doesNotMatch(summary, /\[\[\[/u, "multilingual redaction markers should not nest");
+  assert.match(summary, /children/iu);
+  assert.match(summary, /εταιρεία/u);
+});
+
+test("address redaction preserves place names and non-residential Arabic address wording", () => {
+  const ordinary = [
+    "We work on Wall Street.",
+    "عنوان المقال هو كيف نبدأ شركة في قبرص.",
+    "عنوان المشروع: خطة التوسع في أوروبا."
+  ];
+  for (const text of ordinary) assert.equal(safeMemoryText(text), text);
+});
+
+test("address redaction still removes numbered residential addresses in English, Arabic and Greek", () => {
+  const addresses = [
+    ["I live at 18 Akrotiri Street.", /18 Akrotiri Street/u],
+    ["عنوان السكن: شارع الزيتون 18، وأحتاج معلومات عن تأسيس شركة.", /شارع الزيتون 18/u],
+    ["Μένω στην οδό Κύπρου 12 και θέλω να μάθω για σύσταση εταιρείας.", /Κύπρου 12/u]
+  ];
+  for (const [text, address] of addresses) {
+    assert.doesNotMatch(safeMemoryText(text), address);
+  }
+});
+
+test("post-turn summary refresh reads the persisted turn before writing its summary", async () => {
+  const user = {
+    profile: { name: "Maya" },
+    history: [{ message: "Tell me about company formation." }]
+  };
+  let reads = 0;
+  await refreshCustomerTopicSummaryFromStore({
+    store: {
+      getUser: async (id) => { assert.equal(id, "customer-a"); reads += 1; return user; },
+      updateUser: async (id, update) => { assert.equal(id, "customer-a"); update(user); }
+    },
+    userId: "customer-a",
+    currentMessage: "Can you explain the buying process?",
+    sourceTurnId: "11111111-1111-4111-8111-111111111112"
+  });
+
+  assert.equal(reads, 1);
+  assert.match(user.profile.conversationSummary, /company formation/);
+  assert.match(user.profile.conversationSummary, /buying process/);
+  assert.equal(user.profile.conversationSummarySourceTurnId, "11111111-1111-4111-8111-111111111112");
 });

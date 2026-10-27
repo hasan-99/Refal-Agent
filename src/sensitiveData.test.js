@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { redactSensitiveData, passesLuhn } = require("./sensitiveData");
+const { redactSensitiveData, redactAuditEventFields, passesLuhn } = require("./sensitiveData");
 
 test("redacts labeled credentials and leaves unrelated prose intact", () => {
   const input = "My password is SecretPhrase-81. Please explain company setup.";
@@ -37,4 +37,62 @@ test("redacts IBAN and labeled OTP, CVV, passport, ID, and account values", () =
   assert.match(output, /IBAN: \[redacted\]/);
   assert.match(redactSensitiveData("رقم الحساب: 123456789"), /\[redacted\]/);
   assert.match(redactSensitiveData("Αριθμός διαβατηρίου: AB123456"), /\[redacted\]/);
+});
+
+test("audit sanitizer redacts unknown short text while retaining validated operational metadata", () => {
+  const result = redactAuditEventFields({
+    action: "appointment_admin_rejected", status: "failed", reportDate: "2026-10-11", appointmentId: "a-1",
+    details: { note: "Hasan", freeform: "Omar", nested: ["Rami", "safe"], trace: "123456789@s.whatsapp.net" },
+    fields: ["status", "budget"]
+  });
+  assert.deepEqual(result, {
+    action: "appointment_admin_rejected", status: "failed", reportDate: "2026-10-11", appointmentId: "a-1",
+    details: { note: "[redacted]", freeform: "[redacted]", nested: ["[redacted]", "[redacted]"], trace: "[redacted]" },
+    fields: ["status", "budget"]
+  });
+  assert.deepEqual(redactAuditEventFields({ id: "Hasan", reportDate: "Hasan" }), { id: "[redacted]", reportDate: "[redacted]" });
+});
+
+test("audit sanitizer keeps validated trace IDs, stages and reason codes for event correlation", () => {
+  const traceId = "c1d8809c-b04d-4b63-a6f8-2a552d643aa2";
+  assert.deepEqual(redactAuditEventFields({ traceId, stage: "response_total", reasonCode: "prohibited_claim", durationMs: 123 }), {
+    traceId, stage: "response_total", reasonCode: "prohibited_claim", durationMs: 123
+  });
+  assert.equal(redactAuditEventFields({ traceId: "customer@example.test" }).traceId, "[redacted]");
+});
+
+test("audit sanitizer preserves only nonnegative integer provider usage counts from token-named fields", () => {
+  assert.deepEqual(redactAuditEventFields({
+    promptTokens: 120,
+    completionTokens: 30,
+    totalTokens: 150,
+    accessToken: "sk-secret-value-123456",
+    apiToken: 42,
+    promptTokensInvalid: 2,
+    unsafe: "provider/model-a"
+  }), {
+    promptTokens: 120,
+    completionTokens: 30,
+    totalTokens: 150,
+    accessToken: "[redacted]",
+    apiToken: "[redacted]",
+    promptTokensInvalid: "[redacted]",
+    unsafe: "[redacted]"
+  });
+  for (const value of [-1, 1.5, "120", Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(redactAuditEventFields({ promptTokens: value }).promptTokens, "[redacted]");
+  }
+});
+
+test("audit sanitizer preserves validated error diagnostics without exposing error messages", () => {
+  assert.deepEqual(redactAuditEventFields({
+    errorName: "TypeError", errorCode: "ERR_PROVIDER_TIMEOUT", statusCode: 504,
+    errorMessage: "customer Hasan@example.com timed out", errorCodeUnsafe: "customer-data"
+  }), {
+    errorName: "TypeError", errorCode: "ERR_PROVIDER_TIMEOUT", statusCode: 504,
+    errorMessage: "[redacted]", errorCodeUnsafe: "[redacted]"
+  });
+  assert.deepEqual(redactAuditEventFields({ errorName: "Customer Hasan", errorCode: "private message", statusCode: 999 }), {
+    errorName: "[redacted]", errorCode: "[redacted]", statusCode: "[redacted]"
+  });
 });

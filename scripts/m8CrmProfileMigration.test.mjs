@@ -93,7 +93,7 @@ test("MIG-07: enforces RLS and service-role-only table privileges", async () => 
         has_table_privilege($1,'public.refal_lead_profile','insert') as can_insert,
         has_table_privilege($1,'public.refal_lead_profile','update') as can_update,
         has_table_privilege($1,'public.refal_lead_profile','delete') as can_delete,
-        has_function_privilege($1,'public.refal_save_lead_profile_field(uuid,text,text,uuid,timestamp with time zone,boolean)','execute') as can_save_crm`, [role]);
+        has_function_privilege($1,'public.refal_save_lead_profile_field(uuid,text,text,text,uuid,timestamp with time zone,boolean)','execute') as can_save_crm`, [role]);
       assert.deepEqual(privileges, role === "service_role"
         ? { can_select: true, can_insert: true, can_update: true, can_delete: true, can_save_crm: true }
         : { can_select: false, can_insert: false, can_update: false, can_delete: false, can_save_crm: false });
@@ -111,30 +111,33 @@ test("MIG-07: atomic CRM RPC preserves parallel fields and requires contact-owne
     const { rows: [contactB] } = await db.query("insert into public.rafa_contacts default values returning id");
     const { rows: [turnA] } = await db.query("insert into public.rafa_conversation_turns(contact_id) values ($1) returning id", [contactA.id]);
     const { rows: [turnB] } = await db.query("insert into public.rafa_conversation_turns(contact_id) values ($1) returning id", [contactB.id]);
-    const call = (field, value, turnId, correction = false) => db.query(
-      "select public.refal_save_lead_profile_field($1,$2,$3,$4,now(),$5) as result",
-      [contactA.id, field, value, turnId, correction]
+    const call = (field, rawValue, normalizedValue, turnId, correction = false) => db.query(
+      "select public.refal_save_lead_profile_field($1,$2,$3,$4,$5,now(),$6) as result",
+      [contactA.id, field, rawValue, normalizedValue, turnId, correction]
     );
-    assert.deepEqual((await call("businessActivity", "accounting", turnA.id)).rows[0].result, { status: "saved", field: "businessactivity", correction_field: null });
-    await call("targetService", "company formation", turnA.id);
+    assert.deepEqual((await call("businessActivity", "accounting", "accounting", turnA.id)).rows[0].result, { status: "saved", field: "businessactivity", correction_fields: [] });
+    await call("targetService", "Company   formation", "Company formation", turnA.id);
     let { rows: [row] } = await db.query("select opportunity_fields,field_provenance from public.refal_lead_profile where contact_id=$1", [contactA.id]);
-    assert.deepEqual(row.opportunity_fields, { businessActivity: "accounting", targetService: "company formation" });
+    assert.deepEqual(row.opportunity_fields, { businessActivity: { rawValue: "accounting", normalizedValue: "accounting" }, targetService: { rawValue: "Company   formation", normalizedValue: "Company formation" } });
     assert.equal(row.field_provenance.businessActivity.source_turn_id, turnA.id);
+    assert.equal(row.field_provenance.businessActivity.confidence, 1);
 
-    assert.deepEqual((await call("businessActivity", "construction", turnA.id)).rows[0].result, { status: "correction_needed", field: "businessactivity", correction_field: "businessactivity" });
+    assert.deepEqual((await call("businessActivity", "construction", "construction", turnA.id)).rows[0].result, { status: "correction_needed", field: "businessactivity", correction_fields: ["businessactivity"] });
+    await call("targetService", "immigration", "immigration", turnA.id);
     ({ rows: [row] } = await db.query("select opportunity_fields,crm_correction_needed from public.refal_lead_profile where contact_id=$1", [contactA.id]));
-    assert.equal(row.opportunity_fields.businessActivity, "accounting", "conflict does not overwrite the prior fact");
-    assert.equal(row.crm_correction_needed.field, "businessActivity");
-    await call("mainMotivation", "new market", turnA.id, true);
+    assert.equal(row.opportunity_fields.businessActivity.normalizedValue, "accounting", "conflict does not overwrite the prior fact");
+    assert.deepEqual(Object.keys(row.crm_correction_needed).sort(), ["businessactivity", "targetservice"]);
+    await call("mainMotivation", "new market", "new market", turnA.id, true);
     ({ rows: [row] } = await db.query("select qualification_fields,crm_correction_needed from public.refal_lead_profile where contact_id=$1", [contactA.id]));
-    assert.equal(row.qualification_fields.mainMotivation, "new market");
-    assert.equal(row.crm_correction_needed.field, "businessActivity", "an unrelated explicit correction cannot clear the outstanding field");
-    await call("businessActivity", "construction", turnA.id, true);
+    assert.equal(row.qualification_fields.mainMotivation.normalizedValue, "new market");
+    assert.deepEqual(Object.keys(row.crm_correction_needed).sort(), ["businessactivity", "targetservice"], "an unrelated explicit correction cannot clear outstanding fields");
+    await call("businessActivity", "construction", "construction", turnA.id, true);
     ({ rows: [row] } = await db.query("select opportunity_fields,crm_correction_needed from public.refal_lead_profile where contact_id=$1", [contactA.id]));
-    assert.equal(row.opportunity_fields.businessActivity, "construction");
-    assert.deepEqual(row.crm_correction_needed, {});
-    await assert.rejects(call("targetService", "company formation", turnB.id), /does not belong to contact/i);
-    await assert.rejects(call("privateSecret", "hidden", turnA.id), /Invalid CRM field update/i);
+    assert.equal(row.opportunity_fields.businessActivity.normalizedValue, "construction");
+    assert.deepEqual(row.crm_correction_needed, { targetservice: row.crm_correction_needed.targetservice });
+    assert.deepEqual((await call("targetService", "immigration", "immigration", turnA.id, true)).rows[0].result.correction_fields, []);
+    await assert.rejects(call("targetService", "Company formation", "Company formation", turnB.id), /does not belong to contact/i);
+    await assert.rejects(call("privateSecret", "hidden", "hidden", turnA.id), /Invalid CRM field update/i);
   } finally {
     await db.close();
   }

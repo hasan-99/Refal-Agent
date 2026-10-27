@@ -66,7 +66,14 @@ function isCorporateProxyTransportEnabled(targetUrl) {
 }
 
 function quoteConfigValue(value) {
-  return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const text = String(value);
+  // curl's line-oriented config parser treats a raw line break as a new
+  // directive, even when it appears inside a quoted value. Reject controls
+  // before writing any URL, proxy, method, or header into the temporary file.
+  if (/[\u0000-\u001f\u007f]/u.test(text)) {
+    throw new Error("OpenRouter proxy config values cannot contain control characters.");
+  }
+  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 // curl's `-K` config-file form (one directive per line, no leading `--`) is
@@ -160,7 +167,51 @@ async function defaultCurlRunner({ url, method, headers, body, proxyUrl, timeout
 
 async function fetchOpenRouter(url, options = {}, { curlRunner = defaultCurlRunner } = {}) {
   const { timeoutMs, ...fetchOptions } = options;
-  if (!isCorporateProxyTransportEnabled(url)) return fetch(url, fetchOptions);
+  if (!isCorporateProxyTransportEnabled(url)) {
+    const boundedTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
+    const controller = new AbortController();
+    const callerSignal = fetchOptions.signal;
+    const abortFromCaller = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) abortFromCaller();
+    else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+
+    let timeoutId;
+    let rejectTimeout;
+    const timeout = new Promise((_, reject) => { rejectTimeout = reject; });
+    timeoutId = setTimeout(() => {
+      const error = new Error(`OpenRouter request exceeded ${boundedTimeout}ms.`);
+      error.name = "TimeoutError";
+      controller.abort(error);
+      rejectTimeout(error);
+    }, boundedTimeout);
+    // Do not keep a short-lived CLI/test process alive solely for an unused
+    // response body; the timeout still bounds all actual request work.
+    timeoutId.unref?.();
+    const clear = () => {
+      clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    };
+    try {
+      const response = await Promise.race([
+        fetch(url, { ...fetchOptions, signal: controller.signal }),
+        timeout
+      ]);
+      return {
+        ok: response.ok,
+        status: response.status,
+        json: async () => {
+          try {
+            return await Promise.race([response.json(), timeout]);
+          } finally {
+            clear();
+          }
+        }
+      };
+    } catch (error) {
+      clear();
+      throw error;
+    }
+  }
   const proxyUrl = resolveProxyUrl(url);
   return curlRunner({
     url,

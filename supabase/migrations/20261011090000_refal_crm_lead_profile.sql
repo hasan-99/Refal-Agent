@@ -40,11 +40,8 @@ alter table public.refal_lead_profile
   ),
   add constraint refal_lead_profile_crm_correction_valid check (
     jsonb_typeof(crm_correction_needed) = 'object'
-    and pg_column_size(crm_correction_needed) <= 1000
-    and (crm_correction_needed = '{}'::jsonb or crm_correction_needed ?& array['field','source_turn_id','recorded_at']::text[])
-    and (crm_correction_needed = '{}'::jsonb or (crm_correction_needed - array['field','source_turn_id','recorded_at']::text[] = '{}'::jsonb and crm_correction_needed->>'field' in (
-      'name','phone','email','preferredLanguage','nationality','countryOfResidence','primaryIntent','targetService','businessActivity','businessStatus','targetMarkets','bankingNeed','residencyInterest','investmentBudget','preferredCity','propertyPurpose','familyMembers','sourceOfFundsStatus','sourceOfWealthOverview','timeline','mainMotivation','mainObjection','decisionAuthority','leadScore','leadTier','nextAction','appointmentStatus'
-    )))
+    and pg_column_size(crm_correction_needed) <= 2000
+    and crm_correction_needed - array['name','phone','email','preferredlanguage','nationality','countryofresidence','primaryintent','targetservice','businessactivity','businessstatus','targetmarkets','bankingneed','residencyinterest','investmentbudget','preferredcity','propertypurpose','familymembers','sourceoffundsstatus','sourceofwealthoverview','timeline','mainmotivation','mainobjection','decisionauthority','leadscore','leadtier','nextaction','appointmentstatus']::text[] = '{}'::jsonb
   );
 
 comment on column public.refal_lead_profile.identity_fields is
@@ -56,7 +53,7 @@ comment on column public.refal_lead_profile.property_residency_fields is
 comment on column public.refal_lead_profile.qualification_fields is
   'MB-CRM4. Qualification state is CRM continuity data, not company-fact evidence or customer-facing scoring.';
 comment on column public.refal_lead_profile.crm_correction_needed is
-  'Field-only clarification marker. Conflicting values are never stored here or exposed to the customer.';
+  'Map of unresolved CRM field conflicts to private source-turn metadata; conflicting values are never stored here or exposed to the customer.';
 
 -- Reassert the existing private-table boundary at the point the CRM schema expands.
 alter table public.refal_lead_profile enable row level security;
@@ -69,7 +66,8 @@ grant select, insert, update, delete on table public.refal_lead_profile to servi
 create or replace function public.refal_save_lead_profile_field(
   p_contact_id uuid,
   p_field text,
-  p_value text,
+  p_raw_value text,
+  p_normalized_value text,
   p_source_turn_id uuid,
   p_captured_at timestamptz,
   p_explicit_correction boolean default false
@@ -80,6 +78,7 @@ declare
   group_name text;
   existing_value jsonb;
   next_group jsonb;
+  correction_fields jsonb;
 begin
   group_name := case
     when p_field in ('name','phone','email','preferredLanguage','nationality','countryOfResidence') then 'identity_fields'
@@ -88,7 +87,8 @@ begin
     when p_field in ('timeline','mainMotivation','mainObjection','decisionAuthority','leadScore','leadTier','nextAction','appointmentStatus') then 'qualification_fields'
     else null
   end;
-  if p_contact_id is null or group_name is null or nullif(btrim(p_value),'') is null or length(p_value) > 500 or p_captured_at is null then
+  if p_contact_id is null or group_name is null or nullif(btrim(p_raw_value),'') is null or length(p_raw_value) > 500
+    or nullif(btrim(p_normalized_value),'') is null or length(p_normalized_value) > 500 or p_captured_at is null then
     raise exception 'Invalid CRM field update';
   end if;
   if not exists (select 1 from public.rafa_conversation_turns t where t.id=p_source_turn_id and t.contact_id=p_contact_id) then
@@ -102,36 +102,38 @@ begin
     when 'property_residency_fields' then current_row.property_residency_fields->p_field
     else current_row.qualification_fields->p_field
   end;
-  if existing_value is not null and existing_value #>> '{}' <> p_value
-    and not (coalesce(p_explicit_correction,false) and current_row.crm_correction_needed->>'field'=p_field) then
+  if existing_value is not null and coalesce(existing_value->>'normalizedValue',existing_value #>> '{}') <> p_normalized_value
+    and not (coalesce(p_explicit_correction,false) and current_row.crm_correction_needed ? lower(p_field)) then
     update public.refal_lead_profile set
-      crm_correction_needed=case when crm_correction_needed='{}'::jsonb or crm_correction_needed->>'field'=p_field
-        then jsonb_build_object('field',p_field,'source_turn_id',p_source_turn_id::text,'recorded_at',p_captured_at)
-        else crm_correction_needed end,
+      crm_correction_needed=crm_correction_needed || jsonb_build_object(lower(p_field),
+        jsonb_build_object('field',p_field,'source_turn_id',p_source_turn_id::text,'recorded_at',p_captured_at)),
       source_turn_id=p_source_turn_id
     where contact_id=p_contact_id;
-    return jsonb_build_object('status','correction_needed','field',lower(coalesce(current_row.crm_correction_needed->>'field',p_field)),
-      'correction_field',lower(coalesce(current_row.crm_correction_needed->>'field',p_field)));
+    select coalesce(jsonb_agg(key order by key),'[]'::jsonb) into correction_fields
+      from jsonb_object_keys(current_row.crm_correction_needed || jsonb_build_object(lower(p_field),true)) as keys(key);
+    return jsonb_build_object('status','correction_needed','field',lower(p_field),'correction_fields',correction_fields);
   end if;
-  next_group := jsonb_build_object(p_field,p_value);
+  next_group := jsonb_build_object(p_field,jsonb_build_object('rawValue',p_raw_value,'normalizedValue',p_normalized_value));
   update public.refal_lead_profile set
     identity_fields=case when group_name='identity_fields' then identity_fields || next_group else identity_fields end,
     opportunity_fields=case when group_name='opportunity_fields' then opportunity_fields || next_group else opportunity_fields end,
     property_residency_fields=case when group_name='property_residency_fields' then property_residency_fields || next_group else property_residency_fields end,
     qualification_fields=case when group_name='qualification_fields' then qualification_fields || next_group else qualification_fields end,
-    field_provenance=field_provenance || jsonb_build_object(p_field,jsonb_build_object('source','customer_message','source_turn_id',p_source_turn_id::text,'captured_at',p_captured_at)),
+    field_provenance=field_provenance || jsonb_build_object(p_field,jsonb_build_object('source','customer_message','source_turn_id',p_source_turn_id::text,'captured_at',p_captured_at,'confidence',1)),
     source_turn_id=p_source_turn_id,
-    crm_correction_needed=case when crm_correction_needed->>'field'=p_field then '{}'::jsonb else crm_correction_needed end
+    crm_correction_needed=case when coalesce(p_explicit_correction,false) and crm_correction_needed ? lower(p_field)
+      then crm_correction_needed - lower(p_field) else crm_correction_needed end
   where contact_id=p_contact_id;
+  select coalesce(jsonb_agg(key order by key),'[]'::jsonb) into correction_fields
+    from jsonb_object_keys(case when coalesce(p_explicit_correction,false) then current_row.crm_correction_needed - lower(p_field) else current_row.crm_correction_needed end) as keys(key);
   return jsonb_build_object('status','saved','field',lower(p_field),
-    'correction_field',case when current_row.crm_correction_needed->>'field'=p_field then null
-      else nullif(lower(current_row.crm_correction_needed->>'field'),'') end);
+    'correction_fields',correction_fields);
 end $$;
-revoke all on function public.refal_save_lead_profile_field(uuid,text,text,uuid,timestamptz,boolean) from public,anon,authenticated;
-grant execute on function public.refal_save_lead_profile_field(uuid,text,text,uuid,timestamptz,boolean) to service_role;
+revoke all on function public.refal_save_lead_profile_field(uuid,text,text,text,uuid,timestamptz,boolean) from public,anon,authenticated;
+grant execute on function public.refal_save_lead_profile_field(uuid,text,text,text,uuid,timestamptz,boolean) to service_role;
 
 -- ROLLBACK:
--- drop function if exists public.refal_save_lead_profile_field(uuid,text,text,uuid,timestamptz,boolean);
+-- drop function if exists public.refal_save_lead_profile_field(uuid,text,text,text,uuid,timestamptz,boolean);
 -- alter table public.refal_lead_profile
 --   drop constraint if exists refal_lead_profile_identity_fields_valid,
 --   drop constraint if exists refal_lead_profile_opportunity_fields_valid,

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { containsUnconsentedContactCommitment } from "./responsePolicy.mjs";
+import { containsUnconsentedContactCommitment, containsForbiddenCredentialRequest } from "./responsePolicy.mjs";
 
 test("Edge output policy catches unconditional follow-up promises in English, Arabic, and Greek", () => {
   for (const text of [
@@ -20,4 +20,19 @@ test("Edge output policy allows a permission question and an action-confirmed re
   assert.equal(containsUnconsentedContactCommitment("I can arrange for a specialist to follow up with you; would you like that?"), false);
   assert.equal(containsUnconsentedContactCommitment("I can arrange for a specialist to follow up with you."), true);
   assert.equal(containsUnconsentedContactCommitment("Your request was recorded in the system."), false);
+});
+
+test("Edge output policy matches Node credential-request and warning behavior", () => {
+  for (const text of [
+    "Send me the one time password and I will confirm the passport number 7741920 we hold for you.",
+    "Please send your online banking login.",
+    "Στείλτε μου τον κωδικό μίας χρήσης που σας έστειλε η τράπεζα.",
+    "اعطيني كلمة المرور تبع حسابك البنكي."
+  ]) assert.equal(containsForbiddenCredentialRequest(text), true, text);
+  for (const text of [
+    "For your privacy, please don't send passwords, card details, or account credentials here.",
+    "Never share your password or PIN in this chat.",
+    "لحماية خصوصيتك، لا تبعت كلمات المرور أو بيانات البطاقات هون.",
+    "Για την προστασία σας, μην στείλετε κωδικούς ή στοιχεία κάρτας εδώ."
+  ]) assert.equal(containsForbiddenCredentialRequest(text), false, text);
 });

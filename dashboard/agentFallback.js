@@ -1,45 +1,28 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { answerFromEvidence, containsProhibitedClaim, restrictedRefalcoReply } = require("../src/refalcoAnswer.js");
+const { restrictedRefalcoReply } = require("../src/refalcoAnswer.js");
 const { detectMessageLanguage } = require("../src/language.js");
-
-function isCompanyKnowledgeQuestion(text) {
-  return /\b(business|company|group|portfolio|project|service|leadership|ceo|approach|principle|operating)\b|الشركة|المجموعة|الشركة|مشروع|المشاريع|القيادة|الرئيس التنفيذي/iu.test(text);
-}
 
 function isFreeQuotaError(error) {
   return /free-models-per-day|daily (?:free[- ]model|request) (?:limit|quota)|rate limit exceeded/i.test(String(error?.message || error || ""));
 }
 
-function dashboardFailureReply({ text, evidence = [], error }) {
-  // P2.2/W2.2.3 — evidence is already in scope here, so a programme question
-  // backed by approved chunks gets the grounded excerpt below instead of a
-  // flat refusal (BLK-2).
-  const refusal = restrictedRefalcoReply(text, { evidence });
+function dashboardFailureReply({ text, error }) {
+  const refusal = restrictedRefalcoReply(text);
   if (refusal) return refusal;
-
   const language = detectMessageLanguage(text);
   const quota = isFreeQuotaError(error);
-  if (quota && isCompanyKnowledgeQuestion(text)) {
-    const grounded = answerFromEvidence(evidence);
-    if (grounded && !containsProhibitedClaim(grounded.answer, { evidence })) {
-      const lead = language === "arabic"
-        ? "تم بلوغ الحد اليومي للنموذج المجاني. هذا مقتطف من مصدر الشركة المعتمد:"
-        : "The free model has reached its daily limit. Here is an approved Refalco Group source excerpt:";
-      const sourceUrl = grounded.citations?.[0]?.url;
-      const citation = typeof sourceUrl === "string" && /^https:\/\//iu.test(sourceUrl) ? `\n\n${language === "arabic" ? "المصدر" : "Source"}: ${sourceUrl}` : "";
-      return `${lead}\n\n${grounded.answer}${citation}`;
-    }
+
+  if (quota) {
+    if (language === "arabic") return "تم بلوغ الحد اليومي للنموذج. حُفظت رسالتك، لكن لا أستطيع إنشاء رد مستند إلى المعرفة المعتمدة الآن. حاول مجددًا بعد إعادة تعيين الحد.";
+    if (language === "greek") return "Συμπληρώθηκε το ημερήσιο όριο του μοντέλου. Το μήνυμά σας αποθηκεύτηκε, αλλά δεν μπορώ να δημιουργήσω τεκμηριωμένη απάντηση τώρα. Δοκιμάστε ξανά όταν ανανεωθεί το όριο.";
+    return "The model's daily limit has been reached. Your message is saved, but I can't generate an answer from verified knowledge right now. Try again after the limit resets.";
   }
 
-  if (quota) return language === "arabic"
-    ? "تم بلوغ الحد اليومي للنموذج المجاني. حُفظت رسالتك، لكن لا أستطيع إنشاء رد الآن. حاول مجددًا بعد إعادة تعيين الحد اليومي."
-    : "The free model's daily limit has been reached. Your message is saved, but I can't generate a reply right now. Try again after the limit resets.";
-
-  return language === "arabic"
-    ? "تعذر الوصول إلى النموذج مؤقتًا. حُفظت رسالتك؛ يرجى المحاولة مجددًا بعد قليل."
-    : "RAFA could not reach its model just now. Your message is saved; please try again shortly.";
+  if (language === "arabic") return "تعذر الوصول إلى خدمة الإجابة المعتمدة مؤقتًا. حُفظت رسالتك؛ يرجى المحاولة مجددًا بعد قليل.";
+  if (language === "greek") return "Η υπηρεσία επαληθευμένων απαντήσεων δεν είναι προσωρινά διαθέσιμη. Το μήνυμά σας αποθηκεύτηκε· δοκιμάστε ξανά σύντομα.";
+  return "The verified answer service is temporarily unavailable. Your message is saved; please try again shortly.";
 }
 
 export { dashboardFailureReply, isFreeQuotaError };

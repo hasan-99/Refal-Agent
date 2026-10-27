@@ -72,10 +72,34 @@ const COMMON_FIELDS = [
 ];
 
 function field(name, label, type, options = {}) { return { name, label, type, ...options }; }
+
+function buildPayload(kind, form) {
+  const fields = fieldsFor(kind);
+  const payload = {};
+  for (const item of fields) {
+    const value = form[item.name];
+    if (item.name === "deposit_mode" || item.name === "deposit_value") continue;
+    if (item.type === "datetime-local") payload[item.name] = value ? new Date(value).toISOString() : "";
+    else if (item.type === "lines") payload[item.name] = String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    else if (item.type === "json") payload[item.name] = JSON.parse(value || "{}");
+    else if (item.type === "number") payload[item.name] = value === "" && item.nullable ? null : value === "" ? "" : Number(value);
+    else if (item.type === "checkbox") payload[item.name] = Boolean(value);
+    else if (item.type === "selectNullable") payload[item.name] = value === "" ? null : value === "true";
+    else if (item.type === "text" || item.type === "textarea") payload[item.name] = String(value ?? "");
+    else if (value !== "") payload[item.name] = value;
+  }
+  if (kind === "reservations") {
+    const amountMode = form.deposit_mode === "amount";
+    payload.deposit_amount = amountMode ? Number(form.deposit_value) : null;
+    payload.deposit_percent = amountMode ? null : Number(form.deposit_value);
+  }
+  return payload;
+}
+
 function fieldsFor(kind) {
   const shapeFields = SHAPES[kind];
   if (!shapeFields) throw new Error(`Unknown commercial data kind: ${kind}`);
   return [...shapeFields, ...COMMON_FIELDS.filter((item) => !shapeFields.some((shape) => shape.name === item.name))];
 }
 
-export { COMMON_FIELDS, fieldsFor, KINDS, SHAPES };
+export { buildPayload, COMMON_FIELDS, fieldsFor, KINDS, SHAPES };

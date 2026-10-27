@@ -7,6 +7,15 @@ const FINANCIAL_ID_LABEL_UNICODE = /(رقم\s*(?:الحساب|الآيبان|ا�
 const IBAN_LIKE = /(?<![\p{L}\p{N}])[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?![\p{L}\p{N}])/giu;
 const TOKEN_SECRET = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16})\b/gu;
 const CARD_LIKE = /(?<![\p{L}\p{N}])(?:[0-9٠-٩۰-۹][ -]?){13,19}(?![\p{L}\p{N}])/gu;
+const { containsLabeledSensitiveValue } = require("./sensitiveOutputPolicy");
+const AUDIT_PRIVATE_KEY = /(?:email|phone|whatsapp|contact|customer|user|actor|reviewer|reason|message|response|content|error|name|address|iban|passport|token|secret|credential|account)/iu;
+const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
+const AUDIT_ENUM_KEY = /^(?:action|state|status|category|channel|source|level|trigger|department|intent|workflow|field|fields|operation|reasonCode|code|reportDate|type|upsertType|stage|appointmentId|blockId|notificationId|handoverId|sourceTurnId|traceId|id)$/iu;
+const AUDIT_ENUM_VALUE = /^[a-z][a-z0-9_-]{0,60}$/iu;
+const AUDIT_DATE_VALUE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/u;
+const AUDIT_ID_VALUE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[a-z][a-z0-9_-]{0,30}-[a-z0-9_-]{1,30})$/iu;
+const AUDIT_SAFE_USAGE_COUNTS = new Set(["promptTokens", "completionTokens", "totalTokens"]);
+const AUDIT_SAFE_ERROR_DIAGNOSTICS = new Set(["errorName", "errorCode", "statusCode"]);
 
 const NON_DISCLOSURE = /(?:\b(?:(?:i|we|you)\s+)?(?:please\s+)?(?:will not|won't|do not|don't|cannot|can't|never)\s+(?:send|share|give|provide|disclose)\s+(?:a|an|any|my|the)?\s*|(?:ما\s*رح|لن|لا\s+أريد|ما\s+بدي|مو\s+رح|مش\s+رح)\s*(?:أرسل|ارسل|أشارك|شارك|أعطي|اعطي|أبعث|ابعث)\s*(?:أي|رمز|بيانات)?\s*|(?:δεν\s+θα|δεν\s+θέλω\s+να|μην)\s*(?:στείλω|μοιραστώ|δώσω|κοινοποιήσω)\s*(?:κανένα|στοιχεία)?\s*)$/iu;
 
@@ -65,4 +74,33 @@ function redactSensitiveData(value) {
   return text;
 }
 
-module.exports = { REDACTED, redactSensitiveData, passesLuhn, containsRawSecretValue };
+// Audit events describe operations without retaining chat, identity, or
+// provider-error payloads. Apply this recursively before any event is stored.
+function redactAuditEventFields(value, parentKey = "") {
+  if (Array.isArray(value)) return value.map((item) => redactAuditEventFields(item, parentKey));
+  if (!value || typeof value !== "object") {
+    if (typeof value !== "string") return value;
+    if (AUDIT_ENUM_KEY.test(parentKey)) {
+      if (/^(?:reportDate)$/iu.test(parentKey)) return AUDIT_DATE_VALUE.test(value) ? value : REDACTED;
+      if (/^(?:appointmentId|blockId|notificationId|handoverId|sourceTurnId|traceId|id)$/iu.test(parentKey)) return AUDIT_ID_VALUE.test(value) ? value : REDACTED;
+      if (AUDIT_ENUM_VALUE.test(value)) return redactSensitiveData(value).replace(EMAIL_LIKE, REDACTED);
+    }
+    return REDACTED;
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    AUDIT_SAFE_USAGE_COUNTS.has(key) && Number.isSafeInteger(item) && item >= 0
+      ? item
+      : AUDIT_SAFE_ERROR_DIAGNOSTICS.has(key) ? sanitizeErrorDiagnostic(key, item)
+      : AUDIT_PRIVATE_KEY.test(key) && key !== "reasonCode" ? REDACTED : redactAuditEventFields(item, key)
+  ]));
+}
+
+function sanitizeErrorDiagnostic(key, value) {
+  if (key === "statusCode") return Number.isInteger(value) && value >= 100 && value <= 599 ? value : REDACTED;
+  if (typeof value !== "string") return REDACTED;
+  const pattern = key === "errorName" ? /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/u : /^[A-Z][A-Z0-9_.-]{0,39}$/u;
+  return pattern.test(value) ? value : REDACTED;
+}
+
+module.exports = { REDACTED, redactSensitiveData, redactAuditEventFields, passesLuhn, containsRawSecretValue, containsLabeledSensitiveValue };

@@ -319,6 +319,10 @@ function containsUnsupportedPriceValueClaim(text, evidenceItems = []) {
 // checked separately above) doesn't get misread as one of the listed items.
 const PRICE_CLAUSE_RE = /\b(?:for|at)\s+(?:[$€£]\s?[\d٠-٩][\d٠-٩,.]*|(?:EUR|USD|GBP)\s?[\d٠-٩][\d٠-٩,.]*|[\d٠-٩][\d٠-٩,.]*\s?(?:EUR|USD|GBP|euros?|dollars?|pounds?))(?![\p{L}\p{N}])/giu;
 const OFFER_LIST_VERB_RE = /\b(?:offers?|provides?)\b\s+([^.!?؟]+)/giu;
+const LOCALIZED_OFFER_LIST_PATTERNS = [
+  /(?:تقدم|تقدّم|نوفر|نقدم|توفر|توفّر)\s+(?:ل(?:كم|ك)?\s*)?(?:خدمات\s+)?([^.!?؟]+)/giu,
+  /(?:προσφέρει|παρέχει|προσφέρουμε|παρέχουμε)\s+(?:υπηρεσίες\s+)?([^.!?;；]+)/giu
+];
 const LIST_SPLIT_RE = /,|\band\b|&/giu;
 // Deliberately English-only (see the ticket's "avoid universal semantic
 // matching" guidance and this file's module-level comment): the specific
@@ -332,7 +336,23 @@ const GENERIC_LIST_STOPWORDS = new Set(["in", "a", "an", "the", "to", "of", "for
 function extractOfferedServiceItems(sentenceFragment) {
   const withoutPrice = String(sentenceFragment || "").replace(PRICE_CLAUSE_RE, " ");
   return withoutPrice.split(LIST_SPLIT_RE)
-    .map((item) => item.trim())
+    .map((item) => item.replace(/^\s*[-*•]\s*/u, "").trim())
+    .filter((item) => item.length >= 3);
+}
+
+function extractLocalizedOfferedServiceItems(fragment, language) {
+  const text = String(fragment || "");
+  // Greek uses a separate word for "and". Arabic commonly attaches و to the
+  // following item, so split only before known service nouns to avoid breaking
+  // ordinary words that happen to contain و.
+  const separators = language === "greek"
+    ? /[,،;；]|(?<![\p{L}\p{N}])και(?![\p{L}\p{N}])/giu
+    : /[,،;；]|و(?=(?:ال)?(?:المحاسب|الضرائب|الرواتب|التدقيق|التأسيس|التسجيل|الإقامة|العقارات|الاستشارات))/giu;
+  const locationOrPurpose = language === "greek"
+    ? /\s+(?:σε|στη|στην|στο|στον|για)\s+.+$/iu
+    : /\s+في\s+.+$/u;
+  return text.split(separators)
+    .map((item) => item.replace(/^\s*[-*•]\s*/u, "").replace(locationOrPurpose, "").trim())
     .filter((item) => item.length >= 3);
 }
 
@@ -354,6 +374,18 @@ function containsUnsupportedServiceListClaim(text, evidenceItems = []) {
       const normalized = item.toLowerCase();
       if (!normalized || GENERIC_LIST_STOPWORDS.has(normalized)) continue;
       if (!evidenceText.includes(normalized)) return true;
+    }
+  }
+  for (const [index, pattern] of LOCALIZED_OFFER_LIST_PATTERNS.entries()) {
+    const language = index === 0 ? "arabic" : "greek";
+    const localizedRe = new RegExp(pattern.source, pattern.flags);
+    while ((match = localizedRe.exec(value))) {
+      const items = extractLocalizedOfferedServiceItems(match[1], language);
+      for (const item of items) {
+        const normalized = item.toLocaleLowerCase().replace(/^(?:و|και)\s*/u, "").trim();
+        if (normalized.length < 3) continue;
+        if (!evidenceText.includes(normalized)) return true;
+      }
     }
   }
   return false;
@@ -466,7 +498,7 @@ function containsUnsupportedNumericClaim(text, evidenceItems = []) {
 // ingestion"), a claim that happens to reuse the same digits would read as
 // "supported" by this check. The approval workflow, not this validator, is
 // the control for that.
-function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [] } = {}) {
+function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [], semanticGrounding = false } = {}) {
   const boundedDynamic = (Array.isArray(dynamicEvidenceItems) ? dynamicEvidenceItems : [])
     .filter((item) => item?.trustedDynamic === true && item?.sourceLevel === SOURCE_LEVELS.LIVE_DATA)
     .slice(0, 20);
@@ -475,9 +507,9 @@ function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceIte
   const add = (code, triggered) => { if (triggered && !reasons.includes(code)) reasons.push(code); };
 
   add("unsupported_price_claim", containsUnsupportedPriceValueClaim(text, allEvidence));
-  add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, allEvidence) || containsUnsupportedServiceListClaim(text, allEvidence) || containsUnsupportedNamedPackageInclusion(text, allEvidence));
+  if (!semanticGrounding) add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, allEvidence) || containsUnsupportedServiceListClaim(text, allEvidence) || containsUnsupportedNamedPackageInclusion(text, allEvidence));
   add("unsupported_url_claim", containsUnsupportedUrlClaim(text, allEvidence));
-  add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, allEvidence));
+  if (!semanticGrounding) add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, allEvidence));
   add("unsupported_numeric_claim", containsUnsupportedNumericClaim(text, allEvidence));
 
   return { valid: reasons.length === 0, reasons };

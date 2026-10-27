@@ -3,30 +3,30 @@ topic: dividends-vs-salary
 lang: en
 title: Salary or dividends from a Cyprus company, and what the answer really depends on
 facts: MB-F22, MB-F23
-aliases: is it better to take a salary or dividends | dividends vs salary cyprus | tax difference between salary and dividends | do dividends depend on my own tax residency | what is a double tax treaty exactly | is there personal income tax in cyprus | do i have to take a salary as a director | does social insurance apply to the salary | can i take both a salary and dividends | how often can i distribute dividends | taking money out of a cyprus company | non-dom status cyprus dividends | dtt cyprus
+aliases: is it better to take a salary or dividends | dividends vs salary cyprus | tax difference between salary and dividends | do dividends depend on my own tax residency | what is a double tax treaty exactly | is there personal income tax in cyprus | do i have to take a salary as a director | does social insurance apply to the salary | can i take both a salary and dividends | how often can i distribute dividends | taking money out of a cyprus company | non-dom status cyprus dividends | dtt cyprus | In my specific case, what is best? Just decide for me.
 ---
 
 ## Two different routes out of the company
 <!-- facts: MB-F22 -->
-Money leaves a company in two main ways, and the two are taxed on different tracks.
+Salary and dividends are different ways an owner may receive money from a company, and their treatment is not interchangeable.
 
-A salary is personal employment income. The company pays it to a person, it is normally a deductible expense for the company, and it carries payroll obligations with it, including social insurance contributions on the employment relationship.
+A salary relates to work performed for the company. Whether it is appropriate and what payroll, tax or social-insurance obligations apply depend on the employment relationship and current rules.
 
-A dividend is a distribution of profit the company has already earned and already been taxed on. It is not a company expense, and it does not reach the recipient as employment income.
+A dividend is a company distribution. Whether and when it may be declared, and how it is treated for the company and recipient, depend on the company's position, applicable law and each person's circumstances.
 
-That difference is why the two are never interchangeable. Drawing everything as salary and drawing everything as dividends produce different totals, different obligations and different paperwork, and which total comes out lower is not a fixed answer.
+Do not assume either route is available or preferable based on a general rule. A qualified accountant or tax adviser should review the company's records and the people involved.
 
-You can normally use both, and many owner directors do. Holding the title of director does not by itself oblige you to draw a salary. Distributions are made out of distributable profit when the company resolves to make them, so the question of how often is answered by the available profit and the company's own decisions rather than by a fixed calendar.
+Some situations may involve both, but that depends on the company's structure, actual work, records, approvals and applicable rules. The timing and conditions for either route should be confirmed for the specific company.
 
-## Why your residency and the treaty decide the outcome
+## Why personal circumstances and applicable rules matter
 <!-- facts: MB-F22 -->
-Whether dividends are the better route depends on two things that sit outside the company.
+The personal treatment of salary and dividends depends on the person's circumstances and the applicable rules. Tax residency and any relevant treaty are factors, not the whole analysis.
 
-The first is your own tax residency. The company is taxed in Cyprus. You are taxed where you are resident, and that country decides how it treats a dividend arriving from abroad. Cyprus also has personal income tax and its own rules for individuals who are tax resident here, non-dom status among them, which shifts the picture again.
+Your own tax residency is one relevant factor. The treatment of personal income and dividends can also depend on applicable domestic rules, domicile or other status, the income type and the details of the case.
 
-The second is the Double Tax Treaty, the DTT. A treaty between two countries sets out which of them may tax a given type of income and what relief the other side gives, so that the same income is not taxed twice over in full. Treaties are not identical. One may limit withholding on dividends, another may treat dividends differently from interest or royalties, and some countries have no treaty with Cyprus at all.
+Where relevant, a Double Tax Treaty may affect the analysis, but its application depends on the countries, the income and the person's circumstances. It is only one part of a case-specific tax review.
 
-So the same company paying the same dividend produces a different personal result for a resident of one country than for a resident of another. That is not a loophole. It is simply what happens where two tax systems meet.
+For a specific salary or dividend decision, ask a qualified tax specialist to review the applicable rules and facts rather than relying on a general treaty description.
 
 ## Why we do not choose for you
 <!-- kind: boundary; facts: MB-F23 -->
@@ -48,6 +48,6 @@ How much do you need to draw in a year, and do you need it monthly or in larger 
 
 Do you have other income in your country of residence that the drawings would sit on top of?
 
-Is anyone else a shareholder, because a distribution goes to every share in the class and not only to you.
+Are there other shareholders or company arrangements that may affect a distribution?
 
 With those, the salary route and the dividend route can be compared side by side on real figures instead of on generalities.

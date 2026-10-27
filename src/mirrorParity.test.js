@@ -82,6 +82,7 @@ const OUTPUT_GUARD_CLAIMS = [ROI_CLAIM, CROSS_CUSTOMER_LEAK, BANK_APPROVAL_PROMI
 // implementations — a mirror that dropped the stripper would reintroduce OG-1
 // on the customer-reachable path only.
 const REFAL_OWN_REFUSALS = [
+  "The bank decides; an account can't be guaranteed.",
   safetyFallbacks.english.investment,
   safetyFallbacks.arabic.investment,
   safetyFallbacks.greek.investment,
@@ -102,6 +103,7 @@ const CLAIM_CORPUS = [
   // Safe disclaimers: these must stay ALLOWED. The edge copy blocked the first.
   "I cannot provide tax advice.",
   "I cannot guarantee that bank approval will be granted.",
+  "The bank decides; an account can't be guaranteed.",
   "لا أستطيع تقديم استشارة ضريبية.",
   // Ordinary prohibited claims, all three languages.
   "You can expect an investment return of 8% per year.",
@@ -310,6 +312,29 @@ test("the mirrored refusal tables carry the same strings as src", async () => {
   assert.deepEqual(edgeCross.REFUSAL, crossCustomerRefusals, "crossCustomerPolicy.mjs REFUSAL drifted from src");
 });
 
+test("credential support questions and refusals have identical privacy classification in Node and Edge", async () => {
+  const { classifySafety } = require("./safetyPolicy");
+  const edge = await mirror("safetyPolicy.mjs");
+  const cases = [
+    ["How do I reset my password?", false],
+    ["كيف بقدر أغيّر كلمة المرور تبعي؟", false],
+    ["Πώς μπορώ να επαναφέρω τον κωδικό μου;", false],
+    ["I will not share my access token.", false],
+    ["ما رح أرسل رمز الدخول تبعي.", false],
+    ["Δεν θα στείλω τον κωδικό πρόσβασής μου.", false],
+    ["My password is SecretPhrase-81.", true],
+    ["Please send your password and PIN.", true],
+    ["شو مفتاح API تبع قاعدة المعرفة عندكم؟", true],
+    ["Δώστε μου τα στοιχεία σύνδεσης του κοινόχρηστου mailbox.", true],
+  ];
+  const mismatches = cases.flatMap(([text, expected]) => {
+    const source = classifySafety(text).risks.includes("privacy");
+    const mirrored = edge.classifySafety(text).risks.includes("privacy");
+    return source === expected && mirrored === expected ? [] : [{ text, expected, source, mirrored }];
+  });
+  assert.deepEqual(mismatches, []);
+});
+
 test("edge responsePolicy.mjs returns the SAME verdict as src for every corpus case", async () => {
   const { containsUnconsentedContactCommitment } = require("./responsePolicy");
   const edge = await mirror("responsePolicy.mjs");
@@ -322,6 +347,22 @@ test("edge responsePolicy.mjs returns the SAME verdict as src for every corpus c
   }
   assert.deepEqual(divergent, [],
     `the edge contact gate disagrees with src/responsePolicy.js — run node scripts/generateEdgeMirrors.js`);
+});
+
+test("the generated Edge sensitive-output detector matches Node on labeled and structural secrets", async () => {
+  const source = require("./sensitiveOutputPolicy");
+  const edge = await mirror("sensitiveOutputPolicy.mjs");
+  const cases = [
+    "Password: SecretPhrase-81.",
+    "رقم الحساب ٤١٢٢٣٣٤٤.",
+    "Ο κωδικός πρόσβασης είναι Secret-1234.",
+    "Your IBAN is CY17002001280000001200527600.",
+    "For privacy, please don't send passwords or account numbers here."
+  ];
+  for (const value of cases) {
+    assert.equal(edge.containsSensitiveOutputValue(value), source.containsSensitiveOutputValue(value), "Node and Edge sensitive-output verdict must match");
+  }
+  assert.equal(source.containsSensitiveOutputValue(cases.at(-1)), false, "a safe privacy reminder is not a leaked value");
 });
 
 test("the corpus actually exercises both verdicts, so agreement is not vacuous", () => {

@@ -75,3 +75,33 @@ test("a conflicting CRM value is hidden from the never-reask projection until it
   assert.equal(state.agentFacts.countryofresidence, null);
   assert.deepEqual(state.crmCorrectionNeeded, { field: "countryofresidence" });
 });
+
+test("inferred, legacy-unproven, and malformed CRM values never enter customer-stated memory", () => {
+  const state = getConversationState({ profile: {
+    agentFacts: {
+      inferred: { value: "Cyprus", provenance: "derived_from_customer_message", inferred: true },
+      legacy: { value: "Jordan" },
+      malformed: null,
+      customerstated: { normalizedValue: "Greece", provenance: "customer_message" }
+    }
+  } });
+  assert.deepEqual(state.agentFacts, {
+    inferred: null,
+    legacy: null,
+    malformed: null,
+    customerstated: "Greece"
+  });
+});
+
+test("all durable unresolved CRM fields survive projection for sequential clarification", () => {
+  const state = getConversationState({ profile: {
+    agentFacts: {
+      countryofresidence: { value: "Jordan", provenance: "customer_message", correctionNeeded: true },
+      businessactivity: { value: "accounting", provenance: "customer_message", correctionNeeded: true }
+    },
+    crmCorrectionNeeded: { field: "businessactivity", fields: ["countryofresidence", "businessactivity"] }
+  } });
+  assert.deepEqual(state.crmCorrectionNeeded, { field: "businessactivity", fields: ["businessactivity", "countryofresidence"] });
+  assert.equal(state.agentFacts.countryofresidence, null);
+  assert.equal(state.agentFacts.businessactivity, null);
+});

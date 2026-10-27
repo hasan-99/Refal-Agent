@@ -11,13 +11,12 @@ const evidence = [{
   content: "Refalco Group describes an integrated operating platform spanning development, operations, technology systems, and strategic assets."
 }];
 
-test("free-provider quota errors return a cited approved excerpt for company questions", () => {
+test("free-provider quota errors fail closed without quoting unchecked search evidence", () => {
   const error = new Error("Rate limit exceeded: free-models-per-day");
   assert.equal(isFreeQuotaError(error), true);
   const reply = dashboardFailureReply({ text: "What does Refalco Group Group do?", evidence, error });
-  assert.match(reply, /approved Refalco Group source excerpt/);
-  assert.match(reply, /integrated operating platform/);
-  assert.match(reply, /https:\/\/example\.invalid\//);
+  assert.match(reply, /verified knowledge/i);
+  assert.doesNotMatch(reply, /integrated operating platform|example\.invalid/);
   assert.doesNotMatch(reply, /free-models-per-day/);
 });
 
@@ -72,6 +71,16 @@ test("ordinary model failures return a language-matched retry message without pr
     evidence,
     error: new Error("secret internal upstream detail")
   });
-  assert.match(reply, /تعذر الوصول إلى النموذج/);
+  assert.match(reply, /تعذر الوصول إلى خدمة الإجابة المعتمدة/);
   assert.doesNotMatch(reply, /secret internal/);
+});
+
+test("verified-answer outages return a Greek retry message without quoting evidence", () => {
+  const reply = dashboardFailureReply({
+    text: "Τι υπηρεσίες προσφέρει η εταιρεία;",
+    evidence,
+    error: new Error("upstream timeout")
+  });
+  assert.match(reply, /υπηρεσία επαληθευμένων απαντήσεων/);
+  assert.doesNotMatch(reply, /integrated operating platform|example\.invalid/);
 });

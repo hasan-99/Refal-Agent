@@ -21,31 +21,18 @@ const { startMonthlyReportSchedule } = require("./reportScheduler");
 const { startFollowUpSchedule } = require("./followUp");
 const { startReminderSchedule } = require("./reminderScheduler");
 const { startNotificationSchedule } = require("./notificationScheduler");
-const { isPhoneJid, resolvePhoneJid } = require("./whatsappContact");
+const { isPhoneJid, resolvePhoneJid, needsWhatsAppContactRefresh } = require("./whatsappContact");
 const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
-const { answerFromEvidence, knowledgeEvidenceMetadata, noApprovedEvidenceReply } = require("./refalcoAnswer");
-const { detectMessageLanguage } = require("./language");
+const { detectMessageLanguage, inboundRetryMessage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
 const { isPairingOnly } = require("./runtimePolicy");
 const { classifyLeadTemperature } = require("./leadTemperature");
+const { refreshCustomerTopicSummary } = require("./conversationMemory");
 const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = require("./whatsappPairing");
-const { buildConversationContext, refreshCustomerTopicSummary } = require("./conversationMemory");
-const { buildLocalConversationRecap } = require("./conversationRecap");
 const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTelemetry");
-const { runShadowAgentTurn, recordShadowComparison, buildRecentConversation } = require("./agentShadow");
-const { runRoutedTurn } = require("./turnRouting");
-const { runAgentTurnForContact } = require("./agentRuntime");
-const { TOOL_REGISTRY } = require("./agentTools");
-const { getConversationState } = require("./conversationState");
-const { getConsentState } = require("./leadQualification");
-const { createCommitState, buildCommitTrackingToolRegistry, decideAgentTurnOutcome } = require("./agentCommitTracking");
-const { retrieveKnowledgeForTurn } = require("./knowledgeQuery");
-const { collectDynamicFallback, isDynamicQuestion, applyDynamicPrecedence } = require("./dynamicDataFallback");
-const { detectIntent, INTENTS } = require("./intent");
-const { runAgentAfterPreflight } = require("./agentWhatsAppAdapter");
-const { appendGroundedHook, guardJurisdictionAnswer, observationPolicyRows, hasInformationalIntent } = require("./salesIntelligence");
-const { selectOfferForTurn } = require("./offerOrchestration");
-const { shouldEnterBookingPath, shouldDeferBookingHandler } = require("./buyingSignals");
+const { createMessageExecutor, parseMessageQueueLimit } = require("./messageConcurrency");
+const { claimInboundReceipt } = require("./inboundMessageReceipt");
+const { runAgentLiveAnswerTurn: runAgentLiveAnswerTurnComposition } = require("./agentLiveAnswerTurn");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -57,6 +44,10 @@ const selfTestPrefix = process.env.SELF_TEST_PREFIX || "!rafa";
 
 const store = createStore();
 const processedMessageIds = new Set();
+const inboundMessageExecutor = createMessageExecutor({
+  concurrency: Number(process.env.RAFA_INBOUND_CONCURRENCY) || 8,
+  maxQueue: parseMessageQueueLimit(process.env.RAFA_INBOUND_QUEUE_LIMIT)
+});
 let followUpTask = null;
 let reminderTask = null;
 let notificationTask = null;
@@ -180,11 +171,12 @@ function isSupportedChatId(chatId) {
 async function rememberWhatsAppContact(userId, message, socket) {
   const pushName = String(message.pushName || "").trim();
   const phoneJid = await resolvePhoneJid(userId, message, socket?.signalRepository?.lidMapping);
+  const current = store.data?.users?.[userId];
+  if (!needsWhatsAppContactRefresh(userId, current, pushName, phoneJid)) return false;
   await store.updateUser(userId, (user) => {
     user.whatsapp = {
       ...(user.whatsapp || {}),
-      jid: userId,
-      lastSeenAt: new Date().toISOString()
+      jid: userId
     };
     if (phoneJid) user.whatsapp.phoneJid = phoneJid;
 
@@ -193,6 +185,7 @@ async function rememberWhatsAppContact(userId, message, socket) {
       if (!user.profile.whatsappName) user.profile.whatsappName = pushName;
     }
   });
+  return true;
 }
 
 async function backfillKnownWhatsAppPhoneNumbers(socket) {
@@ -274,57 +267,17 @@ function extractText(message) {
 // off (the default), and also the one invoked as the pre-side-effect
 // fallback when the Agent path is selected but fails during turn setup
 // (before any Agent tool call could have run) — see src/turnRouting.js.
-async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = {}) {
-  const requestStartedAt = requestTrace.startedAt || performance.now();
-  const traceId = requestTrace.traceId || randomUUID();
-  const stage = (name, startedAt, fields = {}) => logEvent("response_stage", {
-    traceId,
-    stage: name,
-    durationMs: Math.round(performance.now() - startedAt),
-    ...fields
-  });
-  let stageStartedAt = performance.now();
-  await setTyping(socket, chatId, true);
-  stage("typing_start", stageStartedAt);
+// Booking state transitions remain deterministic after contextual classification.
+async function runOperationalBookingTurn(socket, chatId, userId, text, requestTrace, prepared) {
+  const requestStartedAt = performance.now();
+  const user = await store.getUser(userId);
+  if (prepared.safety?.restricted || prepared.complianceTriggers?.length) throw Object.assign(new Error("Booking restricted by policy."), { code: "BOOKING_POLICY_RESTRICTED" });
+  if (user.profile?.qaControlledDiagnostics === true) throw Object.assign(new Error("Controlled test cannot create bookings."), { code: "TEST_ACTION_FORBIDDEN" });
+  const traceId = requestTrace.traceId;
+  const stage = (name, startedAt, fields = {}) => logEvent("response_stage", { traceId, stage: name, durationMs: Math.round(performance.now() - startedAt), ...fields });
+  let stageStartedAt;
   let response;
-  let routed;
-  // REFAL-AGENT-013: captured (not discarded) so the comparison below can
-  // join it with the legacy outcome once both are known; still never
-  // awaited by the live reply path — see the `finally` block.
-  let shadowTurnPromise = Promise.resolve(null);
-  // REFAL-AGENT-013: a safe, bounded-shape summary of what the LEGACY path
-  // did this turn (never the response text itself beyond its length), set
-  // once per branch right before that branch's own response becomes final.
-  // Read only in the `finally` block below, after this function's single
-  // customer-visible response has already been decided.
-  let legacySummary = null;
-
-  try {
-  stageStartedAt = performance.now();
-  const user = await store.ensureUser(userId);
-  stage("contact_load", stageStartedAt);
-  stageStartedAt = performance.now();
-  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
-  stage("normalize_classify_prepare", stageStartedAt, { intentCount: prepared.classification.intents.length, language: prepared.classification.language });
-  // REFAL-AGENT-010 — shadow-only: off by default (REFAL_AGENT_SHADOW_ENABLED),
-  // fire-and-forget, never awaited by the live reply path, and never allowed
-  // to change `response`/`routed` below. See src/agentShadow.js.
-  shadowTurnPromise = runShadowAgentTurn({ userId, text, user, store, classification: prepared.classification, traceId, logEvent }).catch(() => null);
-  const bookingStartedAt = performance.now();
-  // Regulated and privacy-risk messages must reach the safety router first;
-  // the booking parser can otherwise persist raw sensitive details.
-  // Owner-approved MB-B1..B5 signals enter the existing guarded booking
-  // conversation even when the intent classifier misses their phrasing. The
-  // booking handler still requires a date/time and never confirms availability
-  // or creates an appointment from a signal alone.
-  const explicitBookingRequest = shouldEnterBookingPath(prepared);
-  const bookingSelection = explicitBookingRequest ? selectOfferForTurn({
-    candidates: [{ type: "booking", id: "explicit-appointment-request", mode: "action", validated: true }],
-    context: { answerComplete: true, explicitBookingRequest: true, explicitBookingConsent: true }
-  }) : null;
-  const booking = shouldDeferBookingHandler(prepared, bookingSelection)
-    ? null : await handleBookingMessage({ userId, text, store, user });
-  stage("booking_gate", bookingStartedAt, { entered: Boolean(booking) });
+  const booking = await handleBookingMessage({ userId, text, store, user });
   if (booking) {
     response = booking.response;
     stageStartedAt = performance.now();
@@ -386,347 +339,36 @@ async function runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace = 
     await sendStoredTextReply(socket, chatId, response, userId, turn);
     stage("whatsapp_delivery", stageStartedAt);
     stage("request_total", requestStartedAt);
-    legacySummary = { primaryIntentCategory: prepared.classification.primary, usedBookingPath: true, usedHandoverPath: false, responseLength: response.length };
     return;
   }
 
-  stageStartedAt = performance.now();
-  routed = await routeMessageResult({
-    userId,
-    text,
-    store,
-    existingUser: user,
-    preparedInbound: prepared
-  });
-  stage("route_and_deterministic_persistence", stageStartedAt, { aiRequired: routed.shouldUseAi });
-
-  response = routed.response;
-  if (routed.shouldUseAi) {
-    const customerText = routed.metadata?.privacySafeQuestion || String(text || "").trim();
-    let evidence = [];
-    let stageAt = performance.now();
-    const retrieval = await retrieveKnowledgeForTurn(customerText, {
-      user: routed.user,
-      intents: routed.metadata?.intent?.intents || [],
-      language: routed.metadata?.intent?.language || "english",
-      store,
-      embedQueryTexts,
-      embeddingModel: DEFAULT_EMBEDDING_MODEL,
-      matchCount: 6
-    });
-    // A broad answer must not look complete after one of its targeted searches
-    // failed. Keep the existing localized abstention path for an incomplete
-    // retrieval instead of handing the model a partial view as if it were all.
-    evidence = retrieval.complete ? retrieval.evidence : [];
-    for (const error of retrieval.failures) {
-      console.error("Refalco Group knowledge search failed:", safeErrorDiagnostics(error));
-      logEvent("knowledge_search_error", safeErrorDiagnostics(error));
-    }
-    stage("knowledge_retrieval", stageAt, { evidenceCount: evidence.length, facetCount: retrieval.queryCount, complete: retrieval.complete });
-
-    let dynamicResult = { requested: [], live: [], statuses: [] };
-    try {
-      dynamicResult = await collectDynamicFallback(store, customerText);
-    } catch (error) {
-      logEvent("dynamic_data_lookup_error", safeErrorDiagnostics(error));
-    }
-    const precedence = applyDynamicPrecedence(evidence, dynamicResult.live, dynamicResult.requested.map((item) => item.kind), {
-      failClosed: isDynamicQuestion(customerText) && dynamicResult.requested.length === 0
-    });
-    evidence = precedence.evidence;
-    const grounded = answerFromEvidence(evidence, { allowPricing: routed.metadata?.intent?.intents?.includes("pricing") === true, customerQuestion: redactPersonalData(customerText) });
-    let modelRequestMade = false;
-    let modelResponseUsed = false;
-    const localRecap = buildLocalConversationRecap({ history: routed.user?.history || [], evidence, currentMessage: customerText, language: detectMessageLanguage(customerText), workflowState: { handover: routed.user?.profile?.handover, specialistFollowUp: routed.user?.profile?.specialistFollowUp } });
-    const citations = localRecap?.citations || grounded?.citations || [];
-    response = localRecap?.response || grounded?.answer || noApprovedEvidenceReply(detectMessageLanguage(customerText), { pricing: routed.metadata?.intent?.intents?.includes("pricing") });
-
-    const aiRateLimit = !localRecap && evidence.length && process.env.OPENROUTER_API_KEY
-      ? await checkAiMessage(userId, { store }) : { allowed: true, source: "not_checked" };
-    if (aiRateLimit.source === "local_fallback") logEvent("shared_rate_limit_fallback", { scope: "ai_daily" });
-    if (!aiRateLimit.allowed) {
-      stageAt = performance.now();
-      const knowledgeEvidence = knowledgeEvidenceMetadata(evidence);
-      const turn = (await recordHistory(store, userId, text, AI_LIMIT_MESSAGE, {
-        metadata: { ...routed.metadata, retrieval: "approved_knowledge", knowledgeEvidence, abstained: !grounded }
-      })).turn;
-      stage("turn_and_workflow_persistence", stageAt, { route: "ai_quota_limit" });
-      stageStartedAt = performance.now();
-      await refreshLeadTemperature(userId);
-      stage("lead_temperature", stageStartedAt);
-      await setTyping(socket, chatId, false);
-      stageStartedAt = performance.now();
-      await sendStoredTextReply(socket, chatId, AI_LIMIT_MESSAGE, userId, turn);
-      stage("whatsapp_delivery", stageStartedAt);
-      stage("request_total", requestStartedAt);
-      logEvent("rate_limited_ai_daily", {});
-      legacySummary = { primaryIntentCategory: prepared.classification.primary, usedBookingPath: false, usedHandoverPath: Boolean(routed.handover), responseLength: AI_LIMIT_MESSAGE.length };
-      return;
-    }
-
-    // Give the model the approved evidence bundle even when no deterministic
-    // excerpt is safe to send. The model can answer from history or clearly
-    // abstain; relevance controls only the local fallback, not helpfulness.
-    if (!localRecap && evidence.length && process.env.OPENROUTER_API_KEY) {
-      stageAt = performance.now();
-      try {
-        const conversation = buildConversationContext(routed.user, { currentMessage: customerText });
-        modelRequestMade = true;
-        const aiResponse = await askOpenRouter({
-          text: customerText,
-          evidence,
-          includeSources: false,
-          conversationSummary: conversation.summary,
-          conversationTurns: conversation.turns,
-          // W1.7.7 — without this the booking rule could never be tier-aware:
-          // the prompt builder always received an empty tier and therefore
-          // always emitted the "do not offer a call at this stage" default,
-          // which is BLK-6's behaviour under a new name. The classification is
-          // internal and never shown to the customer.
-          leadTier: routed.metadata?.leadTier || classifyLeadTemperature({ history: routed.user?.history || [], booking: routed.user?.booking }).status,
-          buyingSignals: routed.metadata?.buyingSignals || [],
-          onUsage: async (usage) => {
-            try {
-              await logEvent(usage.providerReported ? "ai_usage" : "ai_usage_missing", {
-                source: "whatsapp",
-                userId,
-                model: usage.model,
-                promptTokens: usage.promptTokens,
-                completionTokens: usage.completionTokens,
-                totalTokens: usage.totalTokens,
-                costUsd: usage.costUsd,
-                // W1.7.8 — so a bad answer in the logs can be traced to the
-                // exact prompt version that produced it. M14 rolls the prompt
-                // back independently of the code; that needs this field.
-                promptVersion: usage.promptVersion
-              });
-            } catch (error) {
-              console.error("OpenRouter usage log failed:", safeErrorDiagnostics(error));
-            }
-          }
-        });
-        if (aiResponse) {
-          response = aiResponse;
-          modelResponseUsed = true;
-        }
-        stage("model_generation", stageAt, { modelUsed: Boolean(aiResponse) });
-        logEvent("ai", { enabled: Boolean(aiResponse), sourceCount: citations.length });
-      } catch (error) {
-        console.error("OpenRouter failed; using a localized safe reply:", safeErrorDiagnostics(error));
-        // Keep the answer selected above: it is either a relevant, validated
-        // excerpt from approved evidence or a precise no-approved-evidence
-        // reply. Replacing it with a generic prompt loses the customer's ask.
-        stage("model_generation", stageAt, { modelUsed: false });
-        logEvent("ai_error", { ...safeErrorDiagnostics(error), sourceCount: citations.length });
-      }
-    }
-
-    response = removeCustomerCitations(response);
-    const m5Safety = guardJurisdictionAnswer({
-      message: customerText, response, rows: evidence, language: detectMessageLanguage(customerText)
-    });
-    response = m5Safety.response;
-    const hookResult = appendGroundedHook({
-      message: customerText, response, language: detectMessageLanguage(customerText),
-      history: routed.user?.history || [], user: routed.user, rows: evidence,
-      specialistEligible: routed.metadata?.priority?.handoverRequired === true,
-      answerComplete: Boolean(grounded?.answer || modelResponseUsed),
-      suppressed: {
-        informational: hasInformationalIntent(routed.metadata?.intent?.intents),
-        complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
-        sensitive: Boolean(routed.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
-        declined: false,
-        optOut: ["denied", "revoked"].includes(getConsentState({ user: routed.user || {}, history: routed.user?.history || [] })),
-        pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(routed.user?.booking?.status),
-        handoverActive: Boolean(routed.user?.profile?.handover?.status === "active"),
-        complianceLock: Boolean(routed.metadata?.complianceLock?.active)
-      }
-    });
-    response = hookResult.response;
-    if (hookResult.salesOffer) routed.metadata.salesOffer = hookResult.salesOffer;
-    if (hookResult.specialistOffer) routed.metadata.specialistOffer = hookResult.specialistOffer;
-    if (routed.metadata?.privacySafeQuestion) {
-      const reminder = {
-        arabic: "ولحماية خصوصيتك، لا تبعت كلمات مرور أو بيانات بطاقات أو دخول هون.",
-        greek: "Για την προστασία του απορρήτου σας, μην στέλνετε κωδικούς πρόσβασης, στοιχεία κάρτας ή τραπεζικά στοιχεία εδώ.",
-        english: "For your privacy, please don’t send passwords, card details, or account credentials here."
-      }[detectMessageLanguage(customerText)] || "For your privacy, please don’t send passwords, card details, or account credentials here.";
-      response = `${response} ${reminder}`.trim();
-    }
-
-    stageAt = performance.now();
-    const knowledgeEvidence = knowledgeEvidenceMetadata(evidence, {
-      modelRequestMade,
-      modelResponseUsed,
-      fallbackCitations: citations
-    });
-    routed.turn = (await recordHistory(store, userId, text, response, {
-      metadata: { ...routed.metadata, retrieval: dynamicResult.requested.length ? "approved_knowledge_and_live_data" : "approved_knowledge", dynamicData: dynamicResult.statuses, dynamicConflictDecisions: precedence.decisions, citations, knowledgeEvidence, abstained: !grounded }
-    })).turn;
-    stage("turn_and_workflow_persistence", stageAt, { route: "knowledge_answer" });
-  }
-
-  stageStartedAt = performance.now();
-  if (!routed.shouldUseAi || routed.turn) await refreshLeadTemperature(userId);
-  stage("lead_temperature", stageStartedAt);
-  if (routed.turn) {
-    stageStartedAt = performance.now();
-    try {
-      if (!routed.metadata?.privacySafeQuestion) await refreshCustomerTopicSummary({ store, userId, user: routed.user, currentMessage: text });
-    } catch (error) {
-      logEvent("conversation_summary_error", safeErrorDiagnostics(error));
-    }
-    stage("topic_summary", stageStartedAt);
-  }
-
-  legacySummary = { primaryIntentCategory: prepared.classification.primary, usedBookingPath: false, usedHandoverPath: Boolean(routed.handover), responseLength: typeof response === "string" ? response.length : 0 };
-
-  } finally {
-    stageStartedAt = performance.now();
-    await setTyping(socket, chatId, false);
-    stage("typing_stop", stageStartedAt);
-    // REFAL-AGENT-013: fire-and-forget, after the customer has already been
-    // replied to on every path above — never awaited, never allowed to
-    // affect `response`/`routed`. No-ops entirely when shadow mode is
-    // disabled (`shadowTurnPromise` resolves to null) or legacySummary was
-    // never set (an exception before any branch completed).
-    void recordShadowComparison({ shadowTurnPromise, legacySummary, traceId, logEvent }).catch(() => {});
-  }
-
-  stageStartedAt = performance.now();
-  await sendStoredTextReply(socket, chatId, response, userId, routed.turn);
-  stage("whatsapp_delivery", stageStartedAt);
-  stage("request_total", requestStartedAt);
+  throw Object.assign(new Error("Booking request could not be processed."), { code: "BOOKING_NOT_PROCESSED" });
 }
 
-// REFAL-AGENT-030 — the Agent live turn. Only ever invoked when
-// REFAL_AGENT_LIVE_ENABLED is explicitly "true" (default off; not enabled by
-// this ticket — see src/turnRouting.js). Deliberately minimal: it proves the
-// routing/fallback/rollback contract this ticket requires, not full
-// production parity with the legacy turn (richer classification-aware
-// context and response-history persistence parity are REFAL-AGENT-017's
-// job). Everything that can throw here (store/user load, Agent context
-// build) happens BEFORE any customer-visible send, so a thrown error always
-// leaves this turn pre-side-effect-safe for turnRouting.js's legacy
-// fallback — runAgentTurn itself never throws for an ordinary bad
-// decision/tool/policy outcome (see agentLoop.js), it only ever resolves
-// with a safe response text, which is sent exactly once below.
+// One contextual composition owns customer answers and correlated telemetry.
 async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
-  await setTyping(socket, chatId, true);
-  const user = await store.ensureUser(userId);
-  const bookingState = user?.booking?.status;
-  // Booking has a deterministic state machine and remains its sole owner.
-  // Route it to legacy before preflight can persist or trigger anything.
-  if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || detectIntent(text).intents.includes(INTENTS.APPOINTMENT)) {
-    throw new Error("Appointment turn remains owned by the deterministic booking workflow.");
-  }
-  const prepared = await prepareInboundMessage({ userId, incoming: String(text || "").trim(), user, store });
-  const routed = await routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared });
-  const language = prepared.classification?.language || user?.profile?.language || "english";
-  let selectedSalesOffer = null;
-  let selectedSpecialistOffer = null;
-  const result = await runAgentAfterPreflight({
-    prepared,
-    routed,
-    userId,
-    sourceMessage: String(text || ""),
-    locale: language,
-    metadata: prepared.metadata || {},
-    pendingResponse: "Your message is being processed."
-  }, {
-    persistTurn: async ({ message, response, metadata }) => (await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true })).turn,
-    runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
-      const currentUser = await store.getUser(userId);
-      const history = Array.isArray(currentUser?.history) ? currentUser.history : [];
-      const conversationState = getConversationState(currentUser || {});
-      const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
-      const commitState = createCommitState();
-      const agentResult = await runAgentTurnForContact({
-        currentMessage: String(text || ""),
-        locale: language,
-        contact: { id: userId, name: currentUser?.profile?.name || null },
-        recentConversation: buildRecentConversation(history.filter((turn) => turn.id !== sourceTurnId)),
-        conversationState,
-        knownCustomerFacts: conversationState.agentFacts,
-        currentOpenQuestion: null,
-        consentState,
-        allowedCapabilities,
-        sourceTurnId,
-        store,
-        user: currentUser,
-        userId,
-        intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
-        language,
-        inboundMessageId: providerMessageId || null,
-        leadTier: routed.metadata?.leadTier || "",
-        buyingSignals: routed.metadata?.buyingSignals || []
-      }, { tools: buildCommitTrackingToolRegistry(TOOL_REGISTRY, commitState) });
-      const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
-      if (!decision.send) {
-        const failedStep = Array.isArray(agentResult.steps)
-          ? agentResult.steps.find((step) => step?.result?.ok === false)
-          : null;
-        const knowledgeStep = Array.isArray(agentResult.steps)
-          ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge")
-          : null;
-        await logEvent("agent_turn_not_clean", {
-          outcome: String(agentResult.outcome || "unknown").slice(0, 40),
-          reasonCode: /^[A-Za-z0-9_:,-]{1,100}$/u.test(String(agentResult.reason || ""))
-            ? String(agentResult.reason).slice(0, 100)
-            : String(failedStep?.result?.reasonCode || "not_clean").slice(0, 80),
-          stepCount: Number.isInteger(agentResult.stepCount) ? agentResult.stepCount : 0,
-          knowledgeStatus: String(knowledgeStep?.result?.modelObservation?.status || "not_retrieved").slice(0, 30),
-          toolsUsed: Array.isArray(agentResult.toolsUsed) ? agentResult.toolsUsed.filter((tool) => typeof tool === "string").slice(0, 12) : []
-        });
-      }
-      if (!decision.send || agentResult.outcome !== "responded") return decision.send ? decision.responseText : null;
-      const policyRows = observationPolicyRows(agentResult.steps);
-      const jurisdiction = guardJurisdictionAnswer({ message: text, response: decision.responseText, rows: policyRows, language });
-      let response = jurisdiction.response;
-      const hook = appendGroundedHook({
-        message: text, response, language, history: history.filter((turn) => turn.id !== sourceTurnId),
-        user: currentUser, rows: policyRows,
-        specialistEligible: routed.metadata?.priority?.handoverRequired === true,
-        answerComplete: true,
-        suppressed: {
-          informational: hasInformationalIntent(routed.metadata?.intent?.intents),
-          complaint: (routed.metadata?.intent?.intents || []).includes(INTENTS.COMPLAINT),
-          sensitive: Boolean(prepared.metadata?.privacySafeQuestion || prepared.metadata?.safety?.restricted),
-          optOut: ["denied", "revoked"].includes(consentState),
-          pendingBooking: ["awaiting_details", "awaiting_confirmation"].includes(currentUser?.booking?.status),
-          handoverActive: Boolean(currentUser?.profile?.handover?.status === "active"),
-          complianceLock: Boolean(routed.metadata?.complianceLock?.active)
-        }
-      });
-      response = hook.response;
-      selectedSalesOffer = hook.salesOffer;
-      selectedSpecialistOffer = hook.specialistOffer;
-      return response;
-    },
-    updateTurn: ({ turnId, patch }) => store.updateHistoryTurn(userId, turnId,
-      selectedSalesOffer || selectedSpecialistOffer ? { ...patch, metadata: { ...(selectedSalesOffer ? { salesOffer: selectedSalesOffer } : {}), ...(selectedSpecialistOffer ? { specialistOffer: selectedSpecialistOffer } : {}) } } : patch),
-    send: async (response, turn) => {
-      await setTyping(socket, chatId, false);
-      await sendStoredTextReply(socket, chatId, response, userId, turn);
-    }
-  });
-  return { outcome: result.route, responseLength: result.response.length, sourceTurnId: result.sourceTurnId || null };
-}
-
-// REFAL-AGENT-030 — the one live decision point: legacy vs. Agent, exactly
-// once per inbound turn. Thin by design — all the actual turn behavior lives
-// in runLegacyAnswerTurn/runAgentLiveAnswerTurn above; this function only
-// ever decides which of them owns this turn and sends for it (never both —
-// see src/turnRouting.js's runRoutedTurn and its dedicated tests, which
-// cover this decision point without needing a live Baileys socket).
-async function answerMessage(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
-  return runRoutedTurn(
-    { socket, chatId, userId, text, requestTrace, providerMessageId },
+  return runAgentLiveAnswerTurnComposition(
+    { socket, chatId, userId, text, providerMessageId, traceId: requestTrace.traceId },
     {
-      runLegacyTurn: () => runLegacyAnswerTurn(socket, chatId, userId, text, requestTrace),
-      runAgentTurn: () => runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace, providerMessageId)
+      store,
+      logEvent,
+      setTyping,
+      sendStoredTextReply,
+      embedText
     }
   );
+}
+
+// Booking actions retain their deterministic authorization and confirmation path.
+async function answerMessage(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
+  try {
+    return await runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace, providerMessageId);
+  } catch (error) {
+    if (error.code === "BOOKING_WORKFLOW_REQUIRED") {
+      return runOperationalBookingTurn(socket, chatId, userId, text, requestTrace, error.preparedInbound);
+    }
+    throw error;
+  }
 }
 
 async function refreshLeadTemperature(userId) {
@@ -914,6 +556,7 @@ async function handleMessage(socket, message, upsertType) {
   const id = `${remoteJid || "unknown"}:${message.key?.id || "no-id"}:${fromMe}`;
   const providerMessageId = String(message.key?.id || "");
   let persistentReceipt = false;
+  let receiptLeaseToken = null;
   let receiptShouldComplete = false;
 
   if (processedMessageIds.has(id)) return;
@@ -938,24 +581,29 @@ async function handleMessage(socket, message, upsertType) {
       return;
     }
 
-    if (!fromMe && providerMessageId && typeof store.claimInboundMessage === "function") {
+    if (!fromMe) {
       try {
         const stageStartedAt = performance.now();
-        const receipt = await store.claimInboundMessage(remoteJid, providerMessageId);
-        stage("inbound_receipt_claim", stageStartedAt, { duplicate: Boolean(receipt.duplicate) });
-        if (receipt.duplicate || receipt.claimed === false) {
+        const receipt = await claimInboundReceipt(store, remoteJid, providerMessageId);
+        stage("inbound_receipt_claim", stageStartedAt, { duplicate: receipt.duplicate });
+        if (receipt.duplicate) {
           logEvent("duplicate_inbound_message_ignored", { duplicate: true });
           return;
         }
         persistentReceipt = true;
+        receiptLeaseToken = receipt.leaseToken;
       } catch (error) {
         logEvent("inbound_message_dedupe_error", safeErrorDiagnostics(error));
+        // The durable receipt is the cross-worker duplicate guard. Processing
+        // when it cannot be verified could repeat a handover or other action.
+        try {
+          await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
+        } catch (sendError) {
+          logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
+        }
+        return;
       }
     }
-
-    let stageStartedAt = performance.now();
-    await rememberWhatsAppContact(remoteJid, message, socket);
-    stage("whatsapp_contact_refresh", stageStartedAt);
 
     if (typeof store.isContactBlocked === "function") {
       try {
@@ -997,6 +645,16 @@ async function handleMessage(socket, message, upsertType) {
 
     stage("inbound_preprocess", inboundStartedAt, { messageType: messageType(message) });
     await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt }, providerMessageId);
+    // Contact labels are useful metadata but not a prerequisite for answering.
+    // Refresh them after delivery so slow profile persistence cannot hold the
+    // customer's reply; unchanged cached metadata avoids a needless write.
+    const contactRefreshStartedAt = performance.now();
+    void rememberWhatsAppContact(remoteJid, message, socket)
+      .then(() => stage("whatsapp_contact_refresh", contactRefreshStartedAt))
+      .catch((error) => {
+        stage("whatsapp_contact_refresh", contactRefreshStartedAt, { failed: true });
+        logEvent("whatsapp_contact_refresh_error", safeErrorDiagnostics(error));
+      });
     receiptShouldComplete = true;
     logEvent("replied", { mode: "customer" });
   } catch (error) {
@@ -1004,7 +662,7 @@ async function handleMessage(socket, message, upsertType) {
     logEvent("error", { mode: "customer", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
       try {
-        await sendTextReplyWithPresence(socket, remoteJid, "Sorry, something went wrong. Please try again.");
+        await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
         receiptShouldComplete = true;
       } catch (sendError) {
         logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
@@ -1012,7 +670,10 @@ async function handleMessage(socket, message, upsertType) {
     }
   } finally {
     if (persistentReceipt && receiptShouldComplete) {
-      try { await store.completeInboundMessage(remoteJid, providerMessageId); }
+      try {
+        const completion = await store.completeInboundMessage(remoteJid, providerMessageId, receiptLeaseToken);
+        if (completion?.processed !== true) logEvent("inbound_message_receipt_fence_lost", {});
+      }
       catch (error) { logEvent("inbound_message_receipt_complete_error", safeErrorDiagnostics(error)); }
     } else if (!receiptShouldComplete && !fromMe) {
       processedMessageIds.delete(id);
@@ -1069,7 +730,7 @@ async function handleSelfTestMessage(socket, message) {
     console.error("Failed to handle self-test message:", safeErrorDiagnostics(error));
     logEvent("error", { mode: "self-test", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
-      await sendTextReplyWithPresence(socket, remoteJid, "Sorry, something went wrong. Please try again.");
+      await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
     }
   }
 }
@@ -1204,9 +865,26 @@ async function startBaileysClient() {
       if (messages?.length) logEvent("pairing_only_messages_ignored", { count: messages.length });
       return;
     }
-    for (const message of messages || []) {
-      await handleMessage(socket, message, type);
-    }
+    await Promise.all((messages || []).map(async (message) => {
+      const userId = message.key?.remoteJid;
+      try {
+        await inboundMessageExecutor.run(userId, () => handleMessage(socket, message, type));
+      } catch (error) {
+        if (error?.code !== "MESSAGE_QUEUE_FULL") {
+          logEvent("inbound_message_executor_error", safeErrorDiagnostics(error));
+          return;
+        }
+        const stats = inboundMessageExecutor.getStats();
+        logEvent("inbound_message_queue_full", { active: stats.active, queued: stats.queued });
+        if (!message.key?.fromMe && isSupportedChatId(userId)) {
+          try {
+            await sendTextReplyWithPresence(socket, userId, inboundRetryMessage(detectMessageLanguage(extractText(message)), "busy"));
+          } catch (sendError) {
+            logEvent("whatsapp_overload_reply_failed", safeErrorDiagnostics(sendError));
+          }
+        }
+      }
+    }));
   });
 }
 

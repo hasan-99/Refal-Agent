@@ -133,6 +133,16 @@ test("getBookingAvailability reports a free slot as available and never writes",
   assert.equal(calendar.insertCalls, 0);
 });
 
+test("availability stays usable when optional Meet-link creation is disabled", async (t) => {
+  resetCalendarEnv(t);
+  freshToolState(t);
+  const calendar = installCalendarDouble(t, { delayTicks: 0 });
+  const result = await getBookingAvailability(SLOT, { policy: { ...completePolicy, createMeetLink: false }, now: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "available");
+  assert.equal(calendar.freebusyCalls, 1);
+});
+
 test("getBookingAvailability rejects an out-of-window slot deterministically, without asking the calendar", async (t) => {
   resetCalendarEnv(t);
   freshToolState(t);
@@ -229,6 +239,23 @@ test("two simultaneous requests for DIFFERENT slots are not serialized against e
   assert.equal(first.status, "confirmed");
   assert.equal(second.status, "confirmed");
   assert.equal(calendar.insertCalls, 2);
+});
+
+test("a booking can be confirmed without a Meet link when its creation is disabled", async (t) => {
+  resetCalendarEnv(t);
+  freshToolState(t);
+  const calendar = installCalendarDouble(t, { delayTicks: 0 });
+  const store = makeConfirmingStore();
+  store.getBookingPolicy = async () => ({ ...completePolicy, createMeetLink: false });
+  const user = makeUser();
+  const result = await requestBookingAction({ ...SLOT, purpose: "Company formation" }, {
+    store, user, userId: user.id, inboundMessageId: "wa-no-meet-link", policy: { ...completePolicy, createMeetLink: false }, now: NOW
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "confirmed");
+  assert.equal(calendar.insertCalls, 1);
+  assert.equal("conferenceData" in calendar.events[0], false);
+  assert.doesNotMatch(result.userSafeSummary, /meet\.google\.com/u);
 });
 
 test("a duplicate WhatsApp delivery of the same message never produces a second appointment", async (t) => {

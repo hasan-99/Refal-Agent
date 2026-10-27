@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { conversationDeleteConfirmation, requestConversationDeletion } from "./src/conversationActions.js";
 
-test("conversation deletion asks for confirmation and explains exactly what remains", () => {
+test("conversation reset asks for confirmation and explains memory and operational retention", () => {
   const message = conversationDeleteConfirmation("مش");
-  assert.match(message, /permanently removes the customer's messages and REFAL's replies from Supabase/);
-  assert.match(message, /contact\/lead record, appointments, and related workflow or audit records will remain/);
+  assert.match(message, /messages, REFAL's replies, and conversation-derived memory/);
+  assert.match(message, /next message starts a fresh conversation/);
+  assert.match(message, /contact record, appointments, handovers, complaints, audit records, and contact restrictions will remain/);
   assert.match(message, /cannot be undone/i);
 });
 

@@ -31,11 +31,26 @@ test("durable CRM contract verifies source turns, self-identifies names, and pre
 
   const first = mergeCrmProfileRow(null, { field: "businessActivity", value: "accounting", sourceTurnId: "turn-a", capturedAt: "2026-10-11T10:00:00Z" });
   const conflict = mergeCrmProfileRow(first, { field: "businessActivity", value: "construction", sourceTurnId: "turn-b", capturedAt: "2026-10-11T10:01:00Z" });
-  assert.equal(conflict.opportunity_fields.businessActivity, "accounting");
-  assert.equal(conflict.crm_correction_needed.field, "businessActivity");
+  assert.equal(conflict.opportunity_fields.businessActivity.normalizedValue, "accounting");
+  assert.deepEqual(Object.keys(conflict.crm_correction_needed), ["businessactivity"]);
   const corrected = mergeCrmProfileRow(conflict, { field: "businessActivity", value: "construction", sourceTurnId: "turn-c", capturedAt: "2026-10-11T10:02:00Z", correction: isExplicitCrmCorrection("Actually, I meant construction.") });
   const facts = crmRowToAgentFacts(corrected);
   assert.equal(facts.agentFacts.businessactivity.value, "construction");
   assert.equal(facts.agentFacts.businessactivity.sourceTurnId, "turn-c");
   assert.equal(facts.crmCorrectionNeeded, null);
+});
+
+test("CRM row rehydration preserves raw/normalized names, provenance, and multiple conflicts", () => {
+  let row = mergeCrmProfileRow(null, { field: "name", rawValue: "MAYA  HADDAD", normalizedValue: "MAYA HADDAD", sourceTurnId: "turn-name", capturedAt: "2026-10-11T10:00:00Z" });
+  row = mergeCrmProfileRow(row, { field: "businessActivity", value: "accounting", sourceTurnId: "turn-1", capturedAt: "2026-10-11T10:01:00Z" });
+  row = mergeCrmProfileRow(row, { field: "businessActivity", value: "construction", sourceTurnId: "turn-2", capturedAt: "2026-10-11T10:02:00Z" });
+  row = mergeCrmProfileRow(row, { field: "targetService", value: "formation", sourceTurnId: "turn-3", capturedAt: "2026-10-11T10:03:00Z" });
+  row = mergeCrmProfileRow(row, { field: "targetService", value: "banking", sourceTurnId: "turn-4", capturedAt: "2026-10-11T10:04:00Z" });
+  const restored = crmRowToAgentFacts(row);
+  assert.equal(restored.agentFacts.name.rawValue, "MAYA  HADDAD");
+  assert.equal(restored.agentFacts.name.normalizedValue, "MAYA HADDAD");
+  assert.equal(restored.agentFacts.name.sourceTurnId, "turn-name");
+  assert.deepEqual(restored.crmCorrectionNeeded.fields, ["businessactivity", "targetservice"]);
+  assert.equal(restored.agentFacts.businessactivity.correctionNeeded, true);
+  assert.equal(restored.agentFacts.targetservice.correctionNeeded, true);
 });

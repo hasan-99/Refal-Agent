@@ -4,7 +4,7 @@ lang: en
 title: VAT on property in Cyprus, the 19% base rate and the conditional 5%
 facts: MB-F48, MB-F49
 supporting: MB-F30
-aliases: is there vat on buying property in cyprus | vat rate on property cyprus | reduced vat rate for a first home | conditions for the reduced vat rate | vat when buying in the company name | does resale property carry vat | is there vat on land in cyprus | will i qualify for the reduced vat rate | transfer fees on top of vat | property vat cyprus | 19 percent vat new property | 5 percent reduced vat cyprus
+aliases: is there vat on buying property in cyprus | vat rate on property cyprus | reduced vat rate for a first home | conditions for the reduced vat rate | vat when buying in the company name | does resale property carry vat | is there vat on land in cyprus | will i qualify for the reduced vat rate | transfer fees on top of vat | property vat cyprus | 19 percent vat new property | 5 percent reduced vat cyprus | If I buy in the company's name, what changes for VAT | Are there transfer fees on top of VAT | Is the for residency inclusive of VAT
 ---
 
 ## The two rates on new property
@@ -13,17 +13,17 @@ There are two VAT rates in play on new property in Cyprus.
 
 The base rate is **19%**. That is the standard rate applied to a new property.
 
-A reduced rate of **5%** exists, but only under special conditions and only where the property is for the buyer's direct personal use. The reduced rate is not a general discount and it is not automatic. It is a conditional relief, claimed and assessed for the specific buyer and the specific property.
+A reduced rate of **5%** may apply to a qualifying purchase or construction of a primary residence, subject to statutory conditions and residence-use obligations. It is not a general discount or automatic; eligibility is assessed for the specific buyer and property.
 
 So the correct way to read the two numbers is this: 19% is the starting point, and 5% is a conditional outcome that has to be established rather than assumed.
 
 ## What the reduced rate actually depends on
 <!-- facts: MB-F48 -->
-The reduced rate hangs on one idea: direct personal use by the buyer.
+The reduced rate depends on the statutory conditions for a qualifying primary residence, including the buyer's eligibility and the required use of the residence.
 
-That is why the questions asked are about the buyer and the use, not only about the property. Who is buying. Whether this is the residence they will genuinely use themselves. Whether the property counts as new. And whether the conditions will continue to be met after the purchase, because the relief carries obligations that outlive the signature.
+That is why the questions concern the buyer and intended use as well as the property. The law includes conditions for purchase or construction of a qualifying primary residence and obligations on residence use after the transaction. A specialist must verify the conditions and continuing obligations for the case.
 
-It also means some arrangements sit outside the relief by design. A purchase made in a company's name is not a purchase for an individual's direct personal use. A property bought to let is not a property for the buyer's own use. Neither of those is a mistake. They are simply a different VAT position, and knowing it before the contract is what lets a purchase be structured properly instead of corrected afterwards.
+Whether a company purchase, letting plan or other arrangement meets the statutory conditions cannot be decided from a generic description. Have the specific buyer, property and intended use reviewed before relying on the reduced rate.
 
 The relief is applied for and assessed. Until that assessment is done on a specific file, the accurate statement is that the reduced rate may apply, not that it will.
 

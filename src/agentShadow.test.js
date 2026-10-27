@@ -1,10 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  runShadowAgentTurn,
+  runShadowAgentTurn: realRunShadowAgentTurn,
   recordShadowComparison,
   isShadowEnabled,
   buildShadowToolRegistry,
+  buildRecentConversation,
   maxConcurrency,
   __resetShadowConcurrency
 } = require("./agentShadow");
@@ -16,6 +17,21 @@ function scriptedDecider(decisions) {
 }
 
 test.beforeEach(() => __resetShadowConcurrency());
+
+test("buildRecentConversation preserves customer context and introduction while trimming older assistant prose", () => {
+  const history = Array.from({ length: 8 }, (_, index) => ({
+    message: `customer turn ${index + 1}${index === 2 ? " — no investment or property services" : ""}`,
+    response: index === 0 ? "Hello, I am REFAL, Refalco Group's digital business agent." : `assistant reply ${index + 1} ${"detail ".repeat(30)}`
+  }));
+  const conversation = buildRecentConversation(history);
+
+  assert.equal(conversation.filter((turn) => turn.role === "user").length, 8);
+  assert.ok(conversation.some((turn) => turn.content.includes("no investment or property services")));
+  assert.ok(conversation.some((turn) => turn.content.includes("I am REFAL")));
+  assert.ok(conversation.some((turn) => turn.content.startsWith("assistant reply 8")));
+  assert.equal(conversation.some((turn) => turn.content.startsWith("assistant reply 2")), false);
+  assert.equal(conversation.filter((turn) => turn.role === "assistant").length, 4);
+});
 
 test("isShadowEnabled defaults to false and only true for the literal 'true' string", () => {
   assert.equal(isShadowEnabled({}), false);
@@ -75,9 +91,9 @@ test("runShadowAgentTurn is a complete no-op when the flag is unset — no model
 });
 
 test("runShadowAgentTurn, when enabled, reaches the real tool/store through a scripted decision and logs outcome metadata only (no response text)", async () => {
-  let searchArgs = null;
+  const searchArgs = [];
   const store = {
-    searchKnowledge: async (query) => { searchArgs = query; return [{ heading: "Pricing", content: "EUR 1500" }]; }
+    searchKnowledge: async (query) => { searchArgs.push(query); return [{ chunk_id: `price-${searchArgs.length}`, heading: "Pricing", content: "EUR 1500", review_status: "approved" }]; }
   };
   const decide = scriptedDecider([
     { type: "tool", tool: "searchApprovedKnowledge", args: { query: "price" } },
@@ -98,7 +114,7 @@ test("runShadowAgentTurn, when enabled, reaches the real tool/store through a sc
     { env: { REFAL_AGENT_SHADOW_ENABLED: "true" }, decideNextStep: decide, tools: TOOL_REGISTRY }
   );
 
-  assert.equal(searchArgs, "price");
+  assert.deepEqual(searchArgs, ["price", "what is the price?"]);
   assert.equal(result.outcome, "responded");
   assert.equal(result.toolsUsed[0], "searchApprovedKnowledge");
   assert.match(result.response, /EUR 1500/);
@@ -112,7 +128,6 @@ test("runShadowAgentTurn, when enabled, reaches the real tool/store through a sc
   assert.equal(events[0].fields.responseLength, "The price is EUR 1500.".length);
   assert.equal(events[0].fields.response, undefined, "the logged event must never carry the free-text response");
   assert.deepEqual(events[0].fields.toolCalls, [
-    { tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null },
     { tool: "searchApprovedKnowledge", status: "found", ok: true, reasonCode: null }
   ]);
   assert.equal(events[0].fields.toolCalls[0].args, undefined, "a tool-call observation must never carry raw args");
@@ -213,8 +228,9 @@ test("runShadowAgentTurn catches a thrown decision/tool error and logs agent_tur
 
 test("runShadowAgentTurn catches an unexpected throw from its own setup (e.g. a broken user object) and logs agent_shadow_turn_error without throwing", async () => {
   const events = [];
+  const secret = "sk-ABCDEFGHIJKLMNOPQRSTUVWX";
   const brokenUser = {
-    get history() { throw new Error("profile store corrupted"); }
+    get history() { throw new Error(`provider diagnostic echoed ${secret}`); }
   };
 
   const result = await runShadowAgentTurn(
@@ -233,7 +249,47 @@ test("runShadowAgentTurn catches an unexpected throw from its own setup (e.g. a 
   assert.equal(events.length, 1);
   assert.equal(events[0].event, "agent_turn_failed");
   assert.equal(events[0].fields.shadowMode, true);
-  assert.match(events[0].fields.message, /profile store corrupted/);
+  assert.equal(events[0].fields.reasonCode, "SHADOW_AGENT_TURN_FAILED");
+  assert.equal(events[0].fields.message, undefined, "exception text may contain customer data or provider secrets");
+  assert.equal(JSON.stringify(events).includes(secret), false, "shadow error telemetry must not leak exception text");
+});
+
+test("runShadowAgentTurn remains a non-rejecting no-op when concurrency-skip telemetry throws or rejects", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const first = runShadowAgentTurn({
+    userId: "u1", text: "hello", user: { id: "u1", history: [] }, store: {},
+    classification: { language: "english", intents: [] }
+  }, {
+    env: { REFAL_AGENT_SHADOW_ENABLED: "true", REFAL_AGENT_SHADOW_MAX_CONCURRENCY: "1" },
+    decideNextStep: async () => { await gate; return { type: "respond", text: "done" }; }
+  });
+  await Promise.resolve();
+
+  const second = await runShadowAgentTurn({
+    userId: "u2", text: "hello", user: { id: "u2", history: [] }, store: {},
+    classification: { language: "english", intents: [] },
+    logEvent: () => { throw new Error("telemetry sink failed"); }
+  }, {
+    env: { REFAL_AGENT_SHADOW_ENABLED: "true", REFAL_AGENT_SHADOW_MAX_CONCURRENCY: "1" },
+    decideNextStep: async () => ({ type: "respond", text: "must not run" })
+  });
+  assert.equal(second, null, "a capped shadow turn stays a resolved skip even if synchronous logging throws");
+
+  let logged = false;
+  const third = await runShadowAgentTurn({
+    userId: "u3", text: "hello", user: { id: "u3", history: [] }, store: {},
+    classification: { language: "english", intents: [] },
+    logEvent: () => { logged = true; return Promise.reject(new Error("async telemetry sink failed")); }
+  }, {
+    env: { REFAL_AGENT_SHADOW_ENABLED: "true", REFAL_AGENT_SHADOW_MAX_CONCURRENCY: "1" },
+    decideNextStep: async () => ({ type: "respond", text: "must not run" })
+  });
+  assert.equal(third, null);
+  assert.equal(logged, true);
+
+  release();
+  assert.equal((await first).outcome, "responded");
 });
 
 test("REFAL-AGENT-013: a throwing logEvent on the success path does not discard an otherwise-successful turn result (test 10)", async () => {
@@ -369,3 +425,5 @@ test("recordShadowComparison never throws even when the shadow promise rejects o
     logEvent: () => Promise.reject(new Error("sink down"))
   }));
 });
+
+async function runShadowAgentTurn(input, options = {}) { return realRunShadowAgentTurn(input, { assessDraft: require("../scripts/helpers/scriptedGrounding").scriptedGrounding, ...options }); }

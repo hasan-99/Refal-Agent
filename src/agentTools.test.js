@@ -3,6 +3,150 @@ const assert = require("node:assert/strict");
 const { TOOL_REGISTRY, searchApprovedKnowledge, getCustomerContext, saveCustomerFact, proposeHandover, buildApprovedKnowledgeObservation, MAX_RAG_EVIDENCE_ITEMS, MAX_RAG_EVIDENCE_TOTAL_CHARS } = require("./agentTools");
 const { formatApprovedKnowledgeEvidence } = require("./agentDecision");
 const { collectApprovedKnowledgeEvidence, collectFactRegisterRows } = require("./groundingPolicy");
+test("multi-query ranking promotes sections repeatedly relevant across complementary searches", async () => {
+  const calls = [];
+  const row = (id, query, rank) => ({ source_id: "source", document_id: id, section_index: "0", chunk_id: `${id}-chunk`,
+    chunk_index: 0, document_title: id, heading: id, content: `${query} approved support section`, review_status: "approved", rank });
+  const results = {
+    "broad scope": [row("single-query-topic", "broad scope", 1)],
+    "residency conditions": [row("supported-residency-route", "residency conditions", 1)],
+    "separate eligibility": [row("supported-residency-route", "separate eligibility", 1)],
+    "customer wording": [row("supported-residency-route", "customer wording", 1)]
+  };
+  const result = await searchApprovedKnowledge({ query: "broad scope", relatedQueries: ["residency conditions", "separate eligibility"] }, {
+    currentMessage: "customer wording", matchCount: 8, embedText: async () => null,
+    store: { searchKnowledge: async (query) => { calls.push(query); return results[query] || []; } }
+  });
+  assert.equal(calls.length, 4);
+  assert.equal(result.modelObservation.evidence[0].title, "supported-residency-route");
+});
+
+test("current-message retrieval focuses on the first substantive question across supported scripts", async () => {
+  const examples = [
+    ["Does company registration grant residence? I am not interested in property; what conditions apply?", "Does company registration grant residence?"],
+    ["إذا تسجيل الشركة بيعطيني إقامة؟ أنا ما بدي عقار أو استثمار، شو الشروط؟", "إذا تسجيل الشركة بيعطيني إقامة؟"],
+    ["Η εγγραφή εταιρείας δίνει διαμονή; Δεν ενδιαφέρομαι για ακίνητα, ποιες είναι οι προϋποθέσεις;", "Η εγγραφή εταιρείας δίνει διαμονή;"]
+  ];
+  for (const [message, focusedQuestion] of examples) {
+    const queries = [];
+    await searchApprovedKnowledge({ query: "resolved direct relationship" }, {
+      currentMessage: message, embedText: async () => null,
+      store: { searchKnowledge: async (query) => { queries.push(query); return []; } }
+    });
+    assert.equal(queries.at(-1), focusedQuestion);
+    assert.equal(queries.length, 2, "focusing the direct question reuses the existing bounded search call");
+  }
+});
+
+test("a strong overview result survives repeated low-value matches from secondary searches", async () => {
+  const row = (id, title = id) => ({ source_id: "approved-source", document_id: id, section_index: "0",
+    chunk_id: `${id}-chunk`, chunk_index: 0, document_title: title, heading: title,
+    content: `Approved information about ${title}.`, review_status: "approved" });
+  const pad = (prefix, length, entries) => Array.from({ length }, (_, index) => entries[index] || row(`${prefix}-${index}`));
+  const overview = row("company-overview", "Company services overview");
+  const dormant = row("dormant-company", "Dormant company obligations");
+  const repeated = Array.from({ length: 6 }, (_, index) => row(`secondary-topic-${index}`, `Secondary topic ${index}`));
+  const primary = pad("primary-noise", 20, { 0: dormant, 1: overview });
+  const translated = pad("translated-noise", 20, Object.fromEntries(repeated.map((item, index) => [index, item])));
+  const originalWording = pad("wording-noise", 20, Object.fromEntries(repeated.map((item, index) => [7 + index, item])));
+
+  const result = await searchApprovedKnowledge({ query: "Refalco Group services overview",
+    relatedQueries: ["Refalco Group services in Arabic"] }, {
+    currentMessage: "شو بتقدّموا خدمات بقبرص؟", matchCount: 6, embedText: async () => null,
+    store: { searchKnowledge: async (query) => query === "Refalco Group services overview" ? primary
+      : query === "Refalco Group services in Arabic" ? translated : originalWording }
+  });
+
+  assert.ok(result.data.some((item) => item.chunk_id === overview.chunk_id),
+    "repeated low-value hits must not crowd the approved overview out of the bounded evidence");
+  assert.ok(result.data.length <= 6);
+  const rankedEvidence = result.modelObservation.candidateEvidence;
+  assert.equal(rankedEvidence[0].relevance, 1);
+  assert.equal(rankedEvidence[1].relevance, 0.5,
+    "scores passed between rounds should represent rank, not the number of queries fused in that round");
+});
+
+test("current overview and original-language follow-up both survive noisy complementary retrieval", async () => {
+  const makeRows = (prefix, count) => Array.from({ length: count }, (_, index) => ({
+    document_id: `${prefix}-doc-${index}`, section_index: 0, chunk_index: 0, chunk_id: `${prefix}-${index}`,
+    document_title: `${prefix} ${index}`, heading: "Approved section", content: `Approved content ${prefix} ${index}.`, review_status: "approved"
+  }));
+  const store = { searchKnowledge: async (query) => {
+    if (query.startsWith("هل تأسيس الشركة")) {
+      return [...makeRows("history-distractor", 7), {
+        ...makeRows("residency-support", 1)[0], chunk_id: "historical-residency"
+      }];
+    }
+    if (query === "Refalco company service overview") return [
+      { ...makeRows("current-overview", 1)[0], document_title: "Approved company service overview", chunk_id: "current-overview" },
+      ...makeRows("overview-remainder", 19)
+    ];
+    return makeRows(`secondary-${query.length}-${query.slice(0, 5)}`, 20);
+  } };
+  const result = await searchApprovedKnowledge({ query: "Refalco company service overview",
+    relatedQueries: ["Company formation scope", "Additional service areas"] }, {
+    store, currentMessage: "Summarize in English", language: "english", embedText: async () => null,
+    user: { history: [{ message: "هل تأسيس الشركة وحده يمنحني إقامة أم للإقامة شروط منفصلة؟" }] }
+  });
+  assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "current-overview"),
+    "the current broad service overview should survive secondary-query hits");
+  assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "historical-residency"),
+    "the relevant original-language follow-up should survive within the same bounded context");
+});
+test("complementary model queries retain ranked capability and procedure sections without a second model call", async () => {
+  const queries = [];
+  const makeRows = prefix => Array.from({length:20}, (_, i)=>({chunk_id:`${prefix}-${i}`,content:`${prefix} approved section ${i}`,heading:`${prefix} ${i}`}));
+  const result = await searchApprovedKnowledge({query:"procedures",relatedQueries:["company scope","conditions"]}, {
+    currentMessage:"a contextual follow-up", matchCount:8, embedText:async()=>null,
+    store:{searchKnowledge:async(query)=>{queries.push(query);return makeRows(query);}},
+  });
+  assert.deepEqual(queries,["procedures","company scope","conditions","a contextual follow-up"]);
+  assert.equal(result.trace.candidateCount,80);
+  assert.equal(result.trace.catalogueOmittedIds.length,40);
+  assert.ok(Number.isFinite(result.trace.evidenceAssemblyDurationMs));
+  assert.ok(result.modelObservation.evidence.some(x=>x.content.includes("company scope")));
+  assert.ok(result.modelObservation.evidence.some(x=>x.content.includes("procedures")));
+  assert.equal(result.trace.selectionStatus, "retrieval_ranked_bounded");
+  assert.ok(result.trace.catalogueOmittedIds.every(id=>!result.trace.excludedIds.includes(id)));
+});
+
+test("ranked lower results remain available with complete conditions and no selector-provider round trip", async () => {
+  const source = [
+    { chunk_id: "weak", content: "Dividend tax outcomes depend on residence.", heading: "Dividend tax", rank: 0.03 },
+    { chunk_id: "useful", content: "The team assists with ongoing accounts and statutory filings. Additional regulated work requires specialist review.", heading: "Operating support", rank: 0.02 }
+  ];
+  const history = [{ message: "I have already incorporated my software studio.", response: "A previous request failed technically." }];
+  let selectorCalled = false;
+  const result = await searchApprovedKnowledge({ query: "support after incorporation" }, {
+    currentMessage: "Και μετά; Πώς συνεχίζετε να μας υποστηρίζετε;", user: { history },
+    store: { searchKnowledge: async () => source }, embedText: async () => null,
+    selectKnowledgeEvidence: async () => { selectorCalled = true; throw new Error("should not call a selector model"); }
+  });
+  assert.equal(selectorCalled, false);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["weak", "useful"]);
+  assert.match(result.modelObservation.evidence[1].content, /requires specialist review/);
+  assert.deepEqual(result.trace.excludedIds, []);
+});
+
+test("evidence selection validates opaque references and never exposes forged model evidence", async () => {
+  const { selectKnowledgeSections } = require("./knowledgeSelection");
+  for (const currentMessage of ["بدنا نغيّر الملكية بعد فترة، كيف؟", "Could our ownership change down the road?", "Μπορούμε να αλλάξουμε τους μετόχους αργότερα;"]) {
+    const result = await selectKnowledgeSections({ currentMessage, candidates: [{ title: "Ownership", section: "Changes", content: "Changes require documents and review." }] }, {
+      callModel: async (messages) => { assert.match(messages[1].content, /Ownership/); assert.match(messages[1].content, /"retrievalRank":1/); assert.match(messages[0].content, /preserve a highly ranked section when its content supports the current need/); return { selections: [{ id: "0", relevance: 3 }, { id: "999", relevance: 3 }, { id: "0", relevance: 2 }] }; }
+    });
+    assert.deepEqual(result.selections, [{ id: "0", relevance: 3 }]);
+  }
+});
+
+test("approved search remains usable without an additional selector provider", async () => {
+  const result = await searchApprovedKnowledge({ query: "current assistance" }, {
+    store: { searchKnowledge: async () => [{ chunk_id: "supported", content: "Approved information." }] }, embedText: async () => null,
+    selectKnowledgeEvidence: async () => { throw Object.assign(new Error("provider unavailable"), { code: "PROVIDER_TIMEOUT" }); }
+  });
+  assert.equal(result.status, "found");
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["supported"]);
+  assert.equal(result.trace.selectionStatus, "retrieval_ranked_bounded");
+});
 
 test("searchApprovedKnowledge rejects an empty query without calling the store", async () => {
   let called = false;
@@ -72,7 +216,184 @@ test("searchApprovedKnowledge found result exposes approved chunk content throug
   assert.equal(item.sourceRef, "chunk-123");
   // Internal approval-workflow metadata must never leak into the model-safe
   // surface, even though it is present on the raw row.
-  assert.deepEqual(Object.keys(item).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
+  assert.deepEqual(Object.keys(item).sort(), ["content", "contentTruncated", "language", "relevance", "retrievalRank", "section", "selectionOrder", "sourceRef", "sourceRefs", "title"]);
+});
+
+test("searchApprovedKnowledge rank-fuses model interpretation with the original client wording", async () => {
+  const calls = [];
+  const store = { searchKnowledge: async (query) => {
+    calls.push(query);
+    return [{
+      document_id: "doc-1", section_index: query.startsWith("ممكم") ? "ar-services" : "en-services",
+      chunk_id: query.startsWith("ممكم") ? "ar-chunk" : "en-chunk", chunk_index: 1,
+      document_title: "Approved service overview", heading: "Services", content: query.startsWith("ممكم") ? "خدمات تأسيس الشركات" : "Company formation services",
+      review_status: "approved"
+    }];
+  } };
+  const result = await searchApprovedKnowledge({ query: "Refalco Group service overview" }, {
+    store, currentMessage: "ممكم اعرف شو بتقدمو خدمات؟", embedText: async () => [0.1], language: "arabic"
+  });
+  assert.deepEqual(calls, ["Refalco Group service overview", "ممكم اعرف شو بتقدمو خدمات؟"]);
+  assert.equal(result.modelObservation.evidence.length, 2);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.content), ["Company formation services", "خدمات تأسيس الشركات"]);
+  assert.ok(result.modelObservation.primarySearchRefs.includes("ar-chunk"),
+    "the customer's exact wording must receive primary evidence priority alongside the model-resolved query");
+});
+
+test("a directly relevant customer-wording section survives the model and validator context budget", async () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const currentMessage = "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟ أنا مش ناوي أشتري عقار أو أستثمر، فشو فيكم تأكدولي عن الموضوع؟";
+  const section = (id, heading, content) => ({ document_id: id, section_index: 0, chunk_id: id,
+    document_title: heading, heading, content, review_status: "approved" });
+  const store = { searchKnowledge: async (query) => query === "resolved company context"
+    ? [section("overview", "Company overview", "o".repeat(1000)), section("broad", "General company notes", "b".repeat(1000))]
+    : query === "company investment and residence conditions"
+      ? [section("residence-conditions", "Permanent residence conditions", "The company-investment category requires a qualifying investment and actual operations. " + "r".repeat(240)),
+        section("residence-adjacent", "Company and residence", "a".repeat(1000))]
+      : query === "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟"
+        ? [section("residency-current-rank-1", "Residence overview", "v".repeat(800)),
+          section("residency-relationship", "Company and residence", "Living in Cyprus is a documented path, not a side effect of company registration.")]
+      : [section("generic-wording-hit", "General information", "g".repeat(1000))] };
+  const result = await searchApprovedKnowledge({ query: "resolved company context", relatedQueries: ["company investment and residence conditions"] }, {
+    store, currentMessage, embedText: async () => null, matchCount: 6
+  });
+  const observations = [{ result: { modelObservation: result.modelObservation } }];
+  const budget = boundAccumulatedKnowledgeEvidence(observations, 2800);
+  const modelEvidence = result.modelObservation.evidence;
+  const validatorEvidence = result.modelObservation.policyEvidence;
+  assert.deepEqual(result.trace.searchQueries.at(-1), "إذا سجلت شركة بقبرص، هل بيعطوني إقامة تلقائيًا؟");
+  assert.ok(result.modelObservation.primarySearchRefs.includes("residency-relationship"),
+    "the concise customer question remains a primary retrieval anchor despite later exclusions");
+  assert.ok(result.modelObservation.primarySearchRefs.includes("residency-current-rank-1"),
+    "the first exact-question result remains a primary retrieval anchor");
+  assert.ok(budget.retainedIds.includes("residency-relationship"));
+  assert.ok(modelEvidence.some((item) => item.sourceRef === "residency-relationship"));
+  assert.ok(validatorEvidence.some((item) => item.sourceRef === "residency-relationship"));
+});
+
+test("a second-ranked section from the primary contextual search survives when it contains needed conditions", async () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const currentMessage = "Does opening a company automatically grant residence, and what conditions apply?";
+  const section = (id, heading, content) => ({ document_id: id, section_index: 0, chunk_id: id,
+    document_title: heading, heading, content, review_status: "approved" });
+  const store = { searchKnowledge: async (query) => query === "company and residence requirements"
+    ? [section("broad-context", "Company and residence overview", "Company formation and residence are separate matters. " + "b".repeat(500)),
+      section("rank-two-conditions", "Residence eligibility conditions", "This route requires qualifying investment, actual operations, employees, and physical presence. " + "c".repeat(240)),
+      section("rank-three-detail", "Other residence detail", "d".repeat(1000))]
+    : query === "company residence context"
+      ? [section("complementary-context", "Company context", "e".repeat(500))]
+      : [section("exact-wording", "General information", "g".repeat(1000))] };
+  const result = await searchApprovedKnowledge({ query: "company and residence requirements", relatedQueries: ["company residence context"] }, {
+    store, currentMessage, embedText: async () => null, matchCount: 6
+  });
+  const budget = boundAccumulatedKnowledgeEvidence([{ result: { modelObservation: result.modelObservation } }], 3000);
+  assert.ok(result.modelObservation.primarySearchRefs.includes("rank-two-conditions"));
+  assert.ok(budget.retainedIds.includes("rank-two-conditions"), JSON.stringify({
+    primary: result.modelObservation.primarySearchRefs,
+    candidates: result.modelObservation.candidateEvidence.map(({ sourceRef, relevance, selectionOrder }) => ({ sourceRef, relevance, selectionOrder })),
+    retained: budget.retainedIds
+  }));
+  assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "rank-two-conditions"));
+  assert.ok(result.modelObservation.policyEvidence.some((item) => item.sourceRef === "rank-two-conditions"));
+});
+
+test("searchApprovedKnowledge also retrieves the immediately prior customer wording after a language switch, with personal data redacted", async () => {
+  const calls = [];
+  const priorArabic = "هل تأسيس الشركة وحده يعطيني إقامة؟ تواصلوا معي على test@example.com أو +357 99123456";
+  const store = { searchKnowledge: async (query) => {
+    calls.push(query);
+    return query.startsWith("هل تأسيس الشركة") ? [{
+      document_id: "residency-doc", section_index: 0, chunk_id: "residency-ar",
+      document_title: "Approved Cyprus residency information", heading: "Company and residence",
+      content: "تأسيس الشركة لا يمنح الإقامة تلقائيًا؛ للإقامة مسار منفصل وشروطه الخاصة.", review_status: "approved"
+    }] : [];
+  } };
+  const result = await searchApprovedKnowledge({ query: "Cyprus company formation and residence relationship" }, {
+    store, currentMessage: "Can you summarize my situation in English?", language: "english", embedText: async () => null,
+    user: { history: [{ message: priorArabic, response: "previous answer is not evidence" }] }
+  });
+
+  assert.ok(calls.some((query) => query.startsWith("هل تأسيس الشركة")));
+  assert.ok(calls.every((query) => !query.includes("test@example.com") && !query.includes("99123456")));
+  assert.ok(result.modelObservation.candidateEvidence.some((item) => item.sourceRef === "residency-ar"));
+});
+
+test("cross-language history search is skipped when it is less relevant than the resolved current question", async () => {
+  const calls = [];
+  const vectors = {
+    "resolved current relationship": [1, 0],
+    "Can you show me another client's company file?": [0, 1],
+    "Η ίδρυση εταιρείας στην Κύπρο δίνει άδεια διαμονής;": [0.9, 0.1]
+  };
+  const result = await searchApprovedKnowledge({ query: "resolved current relationship" }, {
+    store: { searchKnowledge: async (query) => { calls.push(query); return []; } },
+    currentMessage: "Η ίδρυση εταιρείας στην Κύπρο δίνει άδεια διαμονής;", language: "greek",
+    user: { history: [{ message: "Can you show me another client's company file?" }] },
+    embedText: async (query) => vectors[query]
+  });
+  assert.deepEqual(calls, ["resolved current relationship", "Η ίδρυση εταιρείας στην Κύπρο δίνει άδεια διαμονής;"]);
+  assert.deepEqual(result.trace.searchQueries, calls);
+});
+
+test("cross-language history search remains available when it best matches the resolved follow-up", async () => {
+  const calls = [];
+  const vectors = {
+    "resolved company follow-up": [1, 0],
+    "هل تأسيس الشركة وحده يمنحني إقامة؟": [0.99, 0.1],
+    "Και μετά;": [0, 1]
+  };
+  await searchApprovedKnowledge({ query: "resolved company follow-up" }, {
+    store: { searchKnowledge: async (query) => { calls.push(query); return []; } },
+    currentMessage: "Και μετά;", language: "greek",
+    user: { history: [{ message: "هل تأسيس الشركة وحده يمنحني إقامة؟" }] },
+    embedText: async (query) => vectors[query]
+  });
+  assert.ok(calls.includes("هل تأسيس الشركة وحده يمنحني إقامة؟"));
+});
+
+test("cross-language customer wording keeps its retrieval relevance when weaker sections compete for prompt space", async () => {
+  const store = { searchKnowledge: async (query) => {
+    if (query.startsWith("ما إذا كان تأسيس")) return Array.from({ length: 7 }, (_, index) => ({
+      document_id: `historic-${index}`, section_index: index, chunk_id: index === 6 ? "residency-separate" : `historic-distractor-${index}`,
+      document_title: index === 6 ? "Approved residence information" : `Historic result ${index}`,
+      heading: index === 6 ? "Residence is separate from registration" : "General context",
+      content: index === 6 ? "تسجيل الشركة لا يمنح الإقامة تلقائيًا، فالإقامة مسار منفصل." : `unrelated historical content ${index}`,
+      review_status: "approved"
+    }));
+    return [
+      { document_id: "overview", section_index: 0, chunk_id: "repeated-overview", document_title: "Overview", heading: "General business services", content: "x".repeat(1800), review_status: "approved" },
+      { document_id: "tax", section_index: 0, chunk_id: `tax-${query.length}`, document_title: "Tax", heading: "General tax content", content: "y".repeat(1800), review_status: "approved" }
+    ];
+  } };
+  const result = await searchApprovedKnowledge({
+    query: "Refalco services for a company founder",
+    relatedQueries: ["Company formation scope", "Residence conditions"]
+  }, {
+    store, currentMessage: "Summarize my options in English", language: "english", embedText: async () => null,
+    user: { history: [{ message: "ما إذا كان تأسيس الشركة يمنح الإقامة أو أن الإقامة لها مسار منفصل" }] }
+  });
+
+  const residence = result.modelObservation.candidateEvidence.find((item) => item.sourceRef === "residency-separate");
+  assert.ok(residence, "the lower-ranked original-language section must remain in the candidate evidence");
+  assert.ok(residence.relevance > 1, "its historical-context relevance must survive evidence assembly");
+});
+
+test("the lower-ranked original-language result remains in the bounded answer evidence", async () => {
+  const historicalQueryPrefix = "هل تأسيس الشركة وحده";
+  const makeRows = (prefix, count) => Array.from({ length: count }, (_, index) => ({
+    document_id: `${prefix}-doc-${index}`, section_index: 0, chunk_index: 0, chunk_id: `${prefix}-${index}`,
+    document_title: `${prefix} ${index}`, heading: "Approved section", content: `Approved content ${prefix} ${index}.`, review_status: "approved"
+  }));
+  const store = { searchKnowledge: async (query) => query.startsWith(historicalQueryPrefix)
+    ? [...makeRows("historic", 7), { ...makeRows("historic-residency", 1)[0], chunk_id: "historic-residency" }]
+    : makeRows(`broad-${query.length}`, 20) };
+  const result = await searchApprovedKnowledge({ query: "Summarize the company services relevant to my situation",
+    relatedQueries: ["Company formation and post-formation support", "Residency and company formation relationship"] }, {
+    store, currentMessage: "Summarize in English", language: "english", embedText: async () => null,
+    user: { history: [{ message: "هل تأسيس الشركة وحده يمنحني إقامة أم للإقامة شروط منفصلة؟" }] }
+  });
+  assert.ok(result.modelObservation.evidence.some((item) => item.sourceRef === "historic-residency"),
+    "the relevant prior-language result within the returned candidate window must survive fusion and the evidence cap");
 });
 
 test("searchApprovedKnowledge no_evidence produces no fabricated evidence payload", async () => {
@@ -82,6 +403,20 @@ test("searchApprovedKnowledge no_evidence produces no fabricated evidence payloa
   assert.equal(result.modelObservation.type, "approved_knowledge");
   assert.equal(result.modelObservation.status, "no_evidence");
   assert.deepEqual(result.modelObservation.evidence, []);
+});
+
+test("retrieval errors preserve safe provider status without exposing error text", async () => {
+  const failure = new Error("private upstream response body");
+  failure.status = 503;
+  failure.code = "UPSTREAM_UNAVAILABLE";
+  const result = await searchApprovedKnowledge({ query: "company formation" }, {
+    currentMessage: "company formation", embedText: async () => null,
+    store: { searchKnowledge: async () => { throw failure; } }
+  });
+  assert.equal(result.reasonCode, "RETRIEVAL_FAILED");
+  assert.equal(result.trace.providerStatus, 503);
+  assert.equal(result.trace.providerErrorCode, "UPSTREAM_UNAVAILABLE");
+  assert.equal(JSON.stringify(result.trace).includes("private upstream"), false);
 });
 
 test("searchApprovedKnowledge error result is distinguishable from no_evidence in the model-safe observation", async () => {
@@ -95,14 +430,15 @@ test("searchApprovedKnowledge error result is distinguishable from no_evidence i
 });
 
 test("searchApprovedKnowledge bounds the number of evidence items", async () => {
-  const rows = Array.from({ length: 10 }, (_, index) => ({ heading: `Doc ${index}`, content: `Content ${index}` }));
+  const rows = Array.from({ length: 20 }, (_, index) => ({ heading: `Doc ${index}`, content: `Content ${index}` }));
   const store = { searchKnowledge: async () => rows };
   const result = await searchApprovedKnowledge({ query: "many docs" }, { store, embedText: async () => null, matchCount: 10 });
   assert.ok(result.modelObservation.evidence.length <= MAX_RAG_EVIDENCE_ITEMS);
+  assert.ok(result.data.length <= result.modelObservation.evidence.length, "the model may receive bounded full-section expansion beyond the anchor rows");
   assert.equal(result.modelObservation.truncated, true);
 });
 
-test("searchApprovedKnowledge bounds total evidence content size and marks per-item truncation", async () => {
+test("searchApprovedKnowledge bounds rendered evidence while preserving complete omitted sections in its candidate pool", async () => {
   const longContent = "A".repeat(5000);
   const rows = [
     { heading: "Doc 1", content: longContent },
@@ -114,7 +450,9 @@ test("searchApprovedKnowledge bounds total evidence content size and marks per-i
   const result = await searchApprovedKnowledge({ query: "long docs" }, { store, embedText: async () => null });
   const totalContentChars = result.modelObservation.evidence.reduce((sum, item) => sum + item.content.length, 0);
   assert.ok(totalContentChars <= MAX_RAG_EVIDENCE_TOTAL_CHARS, `expected total content chars (${totalContentChars}) to stay within the bound`);
-  assert.ok(result.modelObservation.evidence.some((item) => item.contentTruncated === true));
+  assert.equal(result.modelObservation.evidence.length, 3);
+  assert.ok(result.modelObservation.evidence.every((item) => !item.contentTruncated && item.content === longContent));
+  assert.equal(result.modelObservation.candidateEvidence.length, 4);
 });
 
 test("searchApprovedKnowledge preserves Arabic and Greek evidence content unchanged (within bounds)", async () => {
@@ -216,6 +554,19 @@ test("saveCustomerFact normalizes field-name casing so the same fact can't fragm
   assert.equal(draft.profile.agentFacts.companyactivity.correctionNeeded, true);
 });
 
+test("legacy profile fallback uses CRM Unicode normalization before raising a correction", async () => {
+  const draft = { profile: { agentFacts: {
+    countryofresidence: { value: "Ｄｕｂａｉ", normalizedValue: "Ｄｕｂａｉ", provenance: "customer_message", sourceTurnId: "turn-old" }
+  } } };
+  const store = { updateUser: async (_id, updater) => { await updater(draft); } };
+  const result = await saveCustomerFact({ field: "countryOfResidence", value: "Dubai", provenance: "customer_message" }, {
+    store, userId: "u1", currentMessage: "I live in Dubai", sourceTurnId: "turn-new"
+  });
+  assert.equal(result.status, "saved");
+  assert.equal(draft.profile.crmCorrectionNeeded, undefined);
+  assert.equal(draft.profile.agentFacts.countryofresidence.value, "Dubai");
+});
+
 test("saveCustomerFact uses durable CRM sync when the store exposes it", async () => {
   let saved;
   const store = {
@@ -226,7 +577,18 @@ test("saveCustomerFact uses durable CRM sync when the store exposes it", async (
     store, userId: "123@s.whatsapp.net", currentMessage: "My business activity is accounting", sourceTurnId: "turn-verified"
   });
   assert.equal(result.status, "saved");
-  assert.deepEqual(saved, { userId: "123@s.whatsapp.net", field: "businessActivity", value: "accounting", sourceTurnId: "turn-verified" });
+  assert.deepEqual(saved, { userId: "123@s.whatsapp.net", field: "businessActivity", rawValue: "accounting", normalizedValue: "accounting", sourceTurnId: "turn-verified" });
+});
+
+test("saveCustomerFact persists a literal self-identified name span and normalized form", async () => {
+  let saved;
+  const result = await saveCustomerFact({ field: "name", value: "Maya Haddad", provenance: "customer_message" }, {
+    store: { saveCrmProfile: async (payload) => { saved = payload; return { status: "saved" }; } },
+    userId: "123@s.whatsapp.net", currentMessage: "My name is MAYA   HADDAD.", sourceTurnId: "turn-verified"
+  });
+  assert.equal(result.status, "saved");
+  assert.equal(saved.rawValue, "MAYA   HADDAD");
+  assert.equal(saved.normalizedValue, "MAYA HADDAD");
 });
 
 test("a CRM conflict is only resolved by an explicit correction in a later customer turn", async () => {
@@ -252,6 +614,26 @@ test("a customer can explicitly confirm the previously saved value to clear a CR
   const confirmed = await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: Jordan is still my country of residence", sourceTurnId: "turn-3" });
   assert.equal(confirmed.status, "saved");
   assert.equal(draft.profile.agentFacts.countryofresidence.value, "Jordan");
+  assert.equal(draft.profile.crmCorrectionNeeded, undefined);
+});
+
+test("resolving one CRM conflict keeps other field correction markers pending", async () => {
+  const draft = { profile: {} };
+  const store = { updateUser: async (_id, updater) => { await updater(draft); } };
+  await saveCustomerFact({ field: "countryOfResidence", value: "Jordan", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Jordan", sourceTurnId: "turn-1" });
+  await saveCustomerFact({ field: "businessActivity", value: "accounting", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My business activity is accounting", sourceTurnId: "turn-2" });
+  await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "I live in Lebanon", sourceTurnId: "turn-3" });
+  await saveCustomerFact({ field: "businessActivity", value: "construction", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "My business activity is construction", sourceTurnId: "turn-4" });
+  assert.deepEqual(draft.profile.crmCorrectionNeeded.fields, ["businessactivity", "countryofresidence"]);
+
+  const resolved = await saveCustomerFact({ field: "countryOfResidence", value: "Lebanon", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: I live in Lebanon", sourceTurnId: "turn-5" });
+  assert.equal(resolved.status, "saved");
+  assert.deepEqual(draft.profile.crmCorrectionNeeded.fields, ["businessactivity"]);
+  assert.equal(draft.profile.agentFacts.countryofresidence.correctionNeeded, false);
+  assert.equal(draft.profile.agentFacts.businessactivity.correctionNeeded, true);
+
+  const resolvedSecond = await saveCustomerFact({ field: "businessActivity", value: "construction", provenance: "customer_message" }, { store, userId: "u1", currentMessage: "Correction: My business activity is construction", sourceTurnId: "turn-6" });
+  assert.equal(resolvedSecond.status, "saved");
   assert.equal(draft.profile.crmCorrectionNeeded, undefined);
 });
 
@@ -393,7 +775,7 @@ test("M5 governance metadata remains separate from model prompt text and joins o
   }] };
   const result = await searchApprovedKnowledge({ query: "Cyprus Dubai comparison" }, { store, embedText: async () => null, language: "english" });
   const [modelEvidence] = result.modelObservation.evidence;
-  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "section", "sourceRef", "title"]);
+  assert.deepEqual(Object.keys(modelEvidence).sort(), ["content", "contentTruncated", "language", "relevance", "retrievalRank", "section", "selectionOrder", "sourceRef", "sourceRefs", "title"]);
   assert.doesNotMatch(formatApprovedKnowledgeEvidence(result.modelObservation), /jurisdiction-dubai|MB-J1|BOSS|reviewer/i);
   const observations = [{ result }];
   const [policyEvidence] = collectApprovedKnowledgeEvidence(observations);
@@ -402,41 +784,61 @@ test("M5 governance metadata remains separate from model prompt text and joins o
   assert.deepEqual(collectFactRegisterRows(observations).map((row) => row.id), ["MB-J0", "MB-J1"]);
 });
 
-test("fact-linked evidence is withheld unless every register row is approved, current, effective, and approved for the customer language", async () => {
-  const now = new Date();
-  const future = new Date(now.getTime() + 10 * 86400000).toISOString().slice(0, 10);
-  const past = new Date(now.getTime() - 10 * 86400000).toISOString().slice(0, 10);
-  const baseFact = { id: "MB-J1", status: "approved", verifiedAt: past, effectiveFrom: past, expiryOrReviewAt: future, approvedLanguages: ["en"] };
-  const makeRow = (fact, extra = {}) => ({
-    document_title: "Jurisdiction facts", heading: "Cyprus", content: "Fact-linked content must be gated.",
-    chunk_id: "chunk-fact", review_status: "approved", valid_until: future,
-    policyMetadata: { facts: ["MB-J1"], factRegisterRows: [fact], reviewStatus: "approved", validUntil: future },
-    ...extra
-  });
-  const cases = [
-    ["blocked status", { ...baseFact, status: "blocked" }, "english"],
-    ["pending status", { ...baseFact, status: "pending" }, "english"],
-    ["review date elapsed", { ...baseFact, expiryOrReviewAt: past }, "english"],
-    ["review date missing", { ...baseFact, expiryOrReviewAt: null }, "english"],
-    ["not yet effective", { ...baseFact, effectiveFrom: future }, "english"],
-    ["malformed effective date", { ...baseFact, effectiveFrom: "not-a-date" }, "english"],
-    ["customer language not approved", baseFact, "arabic"],
-    ["register row missing", null, "english"]
+test("approved indexed fact-linked content is retrievable without a second Fact Register approval", async () => {
+  const invalidOrMissingRegisterRows = [
+    [{ id: "MB-J1", status: "pending", expiryOrReviewAt: "2020-01-01", approvedLanguages: ["en"] }],
+    [],
+    null
   ];
-
-  for (const [label, fact, language] of cases) {
-    const store = { searchKnowledge: async () => [makeRow(fact)] };
-    const result = await searchApprovedKnowledge({ query: "Cyprus" }, { store, embedText: async () => null, language });
-    assert.deepEqual(result.modelObservation.evidence, [], label);
-    assert.equal(result.status, "no_evidence", label);
+  for (const [index, factRegisterRows] of invalidOrMissingRegisterRows.entries()) {
+    const store = { searchKnowledge: async () => [{
+      document_title: "Approved jurisdiction facts",
+      heading: "Cyprus",
+      content: "Approved indexed content about Cyprus.",
+      chunk_id: `chunk-fact-${index}`,
+      review_status: "approved",
+      valid_until: null,
+      policyMetadata: { facts: ["MB-J1"], factRegisterRows }
+    }] };
+    const result = await searchApprovedKnowledge({ query: "Cyprus" }, { store, embedText: async () => null, language: "arabic" });
+    assert.equal(result.status, "found", `Fact Register case ${index}`);
+    assert.equal(result.modelObservation.evidence[0]?.content, "Approved indexed content about Cyprus.", `Fact Register case ${index}`);
   }
-
-  const approvedStore = { searchKnowledge: async () => [makeRow(baseFact)] };
-  const approved = await searchApprovedKnowledge({ query: "Cyprus" }, { store: approvedStore, embedText: async () => null, language: "english" });
-  assert.equal(approved.modelObservation.evidence.length, 1);
 });
 
-test("knowledge search filters finding aids and fact-linked chunks without changing unlinked approved evidence", async () => {
+test("an explicit Fact Register block still withholds its linked content", async () => {
+  const result = await searchApprovedKnowledge({ query: "restricted fact" }, {
+    store: { searchKnowledge: async () => [{
+      chunk_id: "blocked-fact",
+      heading: "Restricted fact",
+      content: "An explicitly blocked claim.",
+      review_status: "approved",
+      policyMetadata: { facts: ["MB-J1"], factRegisterRows: [{ id: "MB-J1", status: "blocked" }] }
+    }] },
+    embedText: async () => null,
+    language: "english"
+  });
+  assert.equal(result.status, "no_evidence");
+});
+
+test("supporting references do not block approved text and remain separate from its customer-facing evidence", async () => {
+  const past = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);
+  const fact = { id: "MB-J1", status: "pending", reviewer: "BOSS", verifiedAt: past,
+    effectiveFrom: past, expiryOrReviewAt: past, approvedLanguages: [] };
+  const makeRow = () => ({
+    document_title: "Jurisdiction facts", heading: "Dubai", content: "The supporting claim content.",
+    chunk_id: "chunk-supporting-fact", review_status: "approved", valid_until: null,
+    policyMetadata: { facts: [], supporting: ["MB-J1"], factRegisterRows: [fact], reviewStatus: "approved", validUntil: null }
+  });
+  const approved = await searchApprovedKnowledge({ query: "Dubai" }, { store: { searchKnowledge: async () => [makeRow()] }, embedText: async () => null, language: "english" });
+  assert.equal(approved.modelObservation.evidence.length, 1);
+  const observations = [{ result: approved }];
+  const [policy] = collectApprovedKnowledgeEvidence(observations);
+  assert.deepEqual(policy.metadata.facts, ["MB-J1"]);
+  assert.equal(collectFactRegisterRows(observations)[0].id, "MB-J1");
+});
+
+test("knowledge search filters finding aids while keeping approved unlinked evidence", async () => {
   const store = { searchKnowledge: async () => [
     { chunk_kind: "aliases", heading: "Finding aid", content: "Customer question aliases.", chunk_id: "aid-1", review_status: "approved" },
     { metadata: { kind: "aliases" }, heading: "Legacy finding aid", content: "More aliases.", chunk_id: "aid-2", review_status: "approved" },
@@ -444,6 +846,51 @@ test("knowledge search filters finding aids and fact-linked chunks without chang
   ] };
   const result = await searchApprovedKnowledge({ query: "services" }, { store, embedText: async () => null, language: "english" });
   assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["free-1"]);
+});
+
+test("search excludes explicitly inactive, pending, expired, blocked, unrelated finding-aid rows while accepting approved content without register metadata", async () => {
+  const past = new Date(Date.now() - 86400000).toISOString();
+  const result = await searchApprovedKnowledge({ query: "company setup" }, {
+    store: { searchKnowledge: async () => [
+      { chunk_id: "approved", heading: "Setup", content: "Approved setup information.", review_status: "approved" },
+      { chunk_id: "pending", heading: "Pending", content: "Pending information.", review_status: "pending" },
+      { chunk_id: "expired", heading: "Expired", content: "Expired information.", review_status: "approved", valid_until: past },
+      { chunk_id: "inactive", heading: "Inactive", content: "Inactive information.", review_status: "approved", enabled: false },
+      { chunk_id: "blocked", heading: "Blocked", content: "Blocked information.", review_status: "approved", policyMetadata: { factRegisterRows: [{ id: "MB-J1", status: "blocked" }] } },
+      { chunk_id: "finding-aid", heading: "Alias", content: "Unrelated aliases.", review_status: "approved", chunk_kind: "aliases" }
+    ] },
+    embedText: async () => null
+  });
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["approved"]);
+  assert.equal(result.modelObservation.evidence[0].content, "Approved setup information.");
+  assert.deepEqual(result.modelObservation.policyEvidence[0].metadata.facts, []);
+});
+
+test("knowledge search overfetches within a hard bound so filtered rows do not crowd out eligible evidence", async () => {
+  let requested = null;
+  const future = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const store = { searchKnowledge: async (_query, _embedding, _model, matchCount) => {
+    requested = matchCount;
+    return [
+      { chunk_kind: "aliases", heading: "Finding aid", content: "Question aliases", chunk_id: "aid-1" },
+      { chunk_id: "pending-1", heading: "Linked claim", content: "Approved revision content remains eligible.", review_status: "approved",
+        policyMetadata: { facts: ["MB-J1"], factRegisterRows: [{ id: "MB-J1", status: "pending", expiryOrReviewAt: future, approvedLanguages: ["en"] }] } },
+      { chunk_kind: "aliases", heading: "Legacy finding aid", content: "More aliases", chunk_id: "aid-2" },
+      { chunk_id: "answer-1", heading: "Eligible answer", content: "Current approved content.", review_status: "approved" },
+      { chunk_id: "answer-2", heading: "Second eligible answer", content: "More current approved content.", review_status: "approved" }
+    ];
+  } };
+  const result = await searchApprovedKnowledge({ query: "Dubai" }, { store, embedText: async () => null, matchCount: 2, language: "english" });
+  assert.equal(requested, 6, "three-times overfetch is applied before filtering");
+  assert.deepEqual(result.data.map((row) => row.chunk_id), ["pending-1", "answer-1"]);
+  assert.deepEqual(result.modelObservation.evidence.map((item) => item.sourceRef), ["pending-1", "answer-1", "answer-2"]);
+});
+
+test("knowledge search caps retrieval overfetch at the search endpoint maximum", async () => {
+  let requested = null;
+  const store = { searchKnowledge: async (_query, _embedding, _model, matchCount) => { requested = matchCount; return []; } };
+  await searchApprovedKnowledge({ query: "broad" }, { store, embedText: async () => null, matchCount: 20 });
+  assert.equal(requested, 20);
 });
 
 test("raw row metadata cannot authorize M5 evidence when server enrichment is absent", async () => {

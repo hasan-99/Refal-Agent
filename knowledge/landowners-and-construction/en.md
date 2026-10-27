@@ -3,7 +3,7 @@ topic: landowners-and-construction
 lang: en
 title: Landowner partnerships and major construction tenders, and how those files are handled
 facts: MB-F56, MB-F57, MB-F58, MB-F59, MB-F60, MB-F61, MB-F62
-aliases: i own land in cyprus what are my development options | can i partner with a developer using my land | what is a joint development agreement | landowner joint venture cyprus | building density of my plot | planning permission cyprus | what building permits are required | how long do building permits take | we need a contractor for a large project | we have a construction tender | construction tender cyprus | do i need a cyprus company to develop land | is there tax on developing land | can you guarantee the building permit | land development partnership with a developer | BOQ and architectural plans
+aliases: i own land in cyprus what are my development options | can i partner with a developer using my land | what is a joint development agreement | landowner joint venture cyprus | building density of my plot | planning permission cyprus | what building permits are required | how long do building permits take | we need a contractor for a large project | we have a construction tender | construction tender cyprus | do i need a cyprus company to develop land | is there tax on developing land | can you guarantee the building permit | land development partnership with a developer | BOQ and architectural plans | I own land in Cyprus, what are my development options | What does planning permission mean | Do I need a Cyprus company to develop
 ---
 
 ## Why a land file and a tender file are not ordinary property enquiries

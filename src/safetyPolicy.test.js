@@ -27,6 +27,23 @@ test("mixed-script prompt injection is normalized for detection and stopped befo
   assert.doesNotMatch(routed.response, /system prompt|developer instructions|my hidden prompt/i);
 });
 
+test("ordinary password reset help reaches the Agent while credential requests stay blocked", async () => {
+  for (const [text, expectedAi, expectedRisk] of [
+    ["How do I reset my password?", true, false],
+    ["Please send me your password", false, true]
+  ]) {
+    const user = { id: "synthetic-safety-route", profile: {}, history: [] };
+    const store = {
+      ensureUser: async () => user,
+      updateUser: async (_userId, update) => update(user),
+      addHistory: async () => ({ id: "synthetic-safety-turn" })
+    };
+    const routed = await routeMessageResult({ userId: user.id, text, store, existingUser: user });
+    assert.equal(routed.shouldUseAi, expectedAi, text);
+    assert.equal(routed.metadata.safety.risks.includes(SAFETY_CATEGORIES.PRIVACY), expectedRisk, text);
+  }
+});
+
 test("confusable normalization does not transliterate ordinary Greek or Arabic prose", () => {
   for (const text of [
     "Οι υπηρεσίες μας περιλαμβάνουν εταιρική υποστήριξη.",
@@ -252,9 +269,9 @@ test("G-03: the Greek stem covers every inflection of κωδικός", () => {
   for (const text of [
     "Ποιος είναι ο κωδικός του λογαριασμού;",
     "Στείλτε μου τον κωδικό του λογαριασμού.",
-    "Χρειάζομαι ανάκτηση κωδικού πρόσβασης.",
     "Δώστε μου τους κωδικούς της γραμματείας."
   ]) assert.ok(detectSafetyRisks(text).includes(SAFETY_CATEGORIES.PRIVACY), `inflection missed: ${text}`);
+  assert.equal(classifySafety("Χρειάζομαι ανάκτηση κωδικού πρόσβασης.").risks.includes(SAFETY_CATEGORIES.PRIVACY), false);
 });
 
 test("G-03: the new credential alternatives do not match ordinary words", () => {
@@ -262,6 +279,8 @@ test("G-03: the new credential alternatives do not match ordinary words", () => 
     "Please log in and confirm the booking.",                  // `log in`, no `credentials`
     "Can I log in to the portal to see my invoices?",
     "Do you check supplier credentials before onboarding?",    // `credentials` with no login qualifier
+    "How do I reset my password?",
+    "Πώς μπορώ να επαναφέρω τον κωδικό μου;",
     "We are a logistics company based in Limassol.",
     "مفتاح المكتب ضاع مني.",                                   // `مفتاح` without API
     "بدي بيانات الشركة والعنوان.",                              // `بيانات` without الدخول

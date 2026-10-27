@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fieldsFor, KINDS } from "./DynamicDataFields.js";
+import { buildPayload, fieldsFor, KINDS } from "./DynamicDataFields.js";
 
 const requiredByKind = {
   offers: ["code", "title_en", "amount", "valid_from", "effective_from", "valid_until", "review_status", "source_note"],
@@ -19,4 +19,18 @@ test("commercial forms have unique field names and preserve every required field
       assert.equal(fields.find((item) => item.name === name)?.required, true, `${id}.${name} must stay required`);
     }
   }
+});
+
+test("editing a commercial record sends empty optional text so old values can be cleared", () => {
+  const payload = buildPayload("offers", {
+    code: "FORMATION-2026", title_en: "Formation package", title_ar: "", title_el: "",
+    amount: "999", currency: "EUR", vat_note: "", inclusions: "",
+    valid_from: "2026-10-10T12:00", effective_from: "2026-10-10T12:00",
+    valid_until: "2026-10-25T12:00", source_note: "Verified current terms",
+    review_status: "draft", active: false, location: "CY", eligibility: "{}"
+  });
+  assert.equal(payload.vat_note, "");
+  assert.equal(payload.title_ar, "");
+  assert.equal(payload.title_el, "");
+  assert.deepEqual(payload.inclusions, []);
 });

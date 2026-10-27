@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { hasConfirmationEventId, isAllowedAppointmentTransition, updateAppointmentIfStatusMatches } from "./appointmentStateMachine.mjs";
 import { areAdjacentConsentTurns, buildSafeHistoryInsert, hasPurposeBoundAutomatedReminderConsent, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
-import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate } from "./responsePolicy.mjs";
+import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate, containsForbiddenCredentialRequest } from "./responsePolicy.mjs";
 // Was a hand-copied regex in this file that had drifted into a fail-open:
 // it let "100% success rate", "موافقة مضمونة" and "Σίγουρη έγκριση" through,
 // and wrongly blocked "I cannot provide tax advice". Now a generated,
@@ -12,11 +12,21 @@ import { listDynamicData, mutateDynamicData, performDynamicAction } from "./dyna
 import { validateCustomerLeadFields } from "./dynamicActionValidation.mjs";
 import { persistDynamicActionAlert } from "./dynamicActionAlert.mjs";
 import { attachKnowledgePolicyMetadata } from "./knowledgePolicyMetadata.mjs";
+import { resolveTrustedKnowledgeEvidence } from "./trustedKnowledgeEvidence.mjs";
 import { validateSalesOfferMetadata, validateSpecialistOfferMetadata } from "./salesOfferMetadata.mjs";
 import { canRetryHandoverReview, closeHandoverDeliverySafely, ledgerPatchForClosedHandover, ledgerPatchForExistingNotification, ledgerPatchForNotificationResult, ledgerPatchForRetryMismatch } from "./handoverDeliveryState.mjs";
 import { canClaimP65TestNotification, canCreateP65TestNotification, controlledP65Recipient, isSyntheticP65Handover } from "./p65TestRouting.mjs";
 import { consumeSharedRateLimit } from "./rateLimit.mjs";
-import { CRM_PROFILE_GROUPS, crmRowToAgentFacts, isExplicitCrmCorrection, isSelfIdentifiedCrmName, validateCrmValueAgainstMessage } from "./crmLeadProfile.mjs";
+import { isPromptWithinTokenCeiling } from "./promptBudget.mjs";
+import { CRM_PROFILE_GROUPS, crmRowToAgentFacts, isExplicitCrmCorrection, isSelfIdentifiedCrmName, normalizeCrmStoredValue, validateCrmValueAgainstMessage } from "./crmLeadProfile.mjs";
+import { claimInboundMessage, completeInboundMessage } from "./inboundMessageReceipts.mjs";
+import { isAllowedReminderTransition, reminderPatchForState } from "./reminderDeliveryState.mjs";
+import { redactAuditEventFields, sanitizeAgentOperationalFields } from "./auditEventPrivacy.mjs";
+import { sanitizeControlledInspection } from "./controlledDiagnostics.mjs";
+import { containsSensitiveOutputValue } from "./sensitiveOutputPolicy.mjs";
+import { fetchJsonWithTimeout, ProviderTimeoutError } from "./providerTransport.mjs";
+import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
+import { detectMessageLanguage, languageInstruction } from "./language.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -127,9 +137,11 @@ Deno.serve(async (req: Request) => {
       const body = await req.json().catch(() => ({}));
       const userId = String(body.userId || "").trim().slice(0, 200);
       const field = String(body.field || "");
-      const value = typeof body.value === "string" ? body.value.trim() : "";
+      const rawValue = typeof body.rawValue === "string" ? body.rawValue : "";
+      const normalizedValue = typeof body.normalizedValue === "string" ? body.normalizedValue : "";
       const sourceTurnId = String(body.sourceTurnId || "");
-      if (!userId || !Object.hasOwn(CRM_PROFILE_GROUPS, field) || !value || value.length > 500 || !isUuid(sourceTurnId)) {
+      if (!userId || !Object.hasOwn(CRM_PROFILE_GROUPS, field) || !rawValue || rawValue.length > 500
+        || !normalizedValue || normalizedValue.length > 500 || normalizeCrmStoredValue(rawValue) !== normalizedValue || !isUuid(sourceTurnId)) {
         throw new HttpError("A supported CRM field and verified source turn are required.", 400);
       }
       const { data: contact, error: contactError } = await supabase.from("rafa_contacts").select("id").eq("whatsapp_jid", userId).maybeSingle();
@@ -138,22 +150,23 @@ Deno.serve(async (req: Request) => {
       const { data: sourceTurn, error: sourceError } = await supabase.from("rafa_conversation_turns").select("id,message")
         .eq("id", sourceTurnId).eq("contact_id", contact.id).maybeSingle();
       if (sourceError) throw sourceError;
-      if (!sourceTurn || !validateCrmValueAgainstMessage(field, value, sourceTurn.message)
-        || (field === "name" && !isSelfIdentifiedCrmName(sourceTurn.message, value))) {
+      if (!sourceTurn || !validateCrmValueAgainstMessage(field, rawValue, sourceTurn.message)
+        || (field === "name" && !isSelfIdentifiedCrmName(sourceTurn.message, rawValue))) {
         throw new HttpError("CRM value must be stated affirmatively in the linked customer turn.", 400);
       }
       const correction = isExplicitCrmCorrection(sourceTurn.message);
       const { data: saved, error: writeError } = await supabase.rpc("refal_save_lead_profile_field", {
         p_contact_id: contact.id,
         p_field: field,
-        p_value: value,
+        p_raw_value: rawValue,
+        p_normalized_value: normalizedValue,
         p_source_turn_id: sourceTurnId,
         p_captured_at: new Date().toISOString(),
         p_explicit_correction: correction
       });
       if (writeError) throw writeError;
       if (!saved || !["saved", "correction_needed"].includes(saved.status)) throw new Error("CRM profile persistence was not confirmed.");
-      return json({ status: saved.status, field: saved.field || field.toLowerCase(), correctionField: saved.correction_field || null });
+      return json({ status: saved.status, field: saved.field || field.toLowerCase(), correctionFields: Array.isArray(saved.correction_fields) ? saved.correction_fields : [] });
     }
 
     if (parts[0] === "settings" && parts[1] === "booking-policy" && parts.length === 2) {
@@ -194,9 +207,16 @@ Deno.serve(async (req: Request) => {
           p_match_count: matchCount
         });
       if (error) throw error;
+      const candidateRows = data || [];
+      const candidateIds = candidateRows.map((row: { chunk_id?: string }) => row.chunk_id).filter((id: unknown): id is string => typeof id === "string");
+      const { data: expanded, error: expansionError } = await supabase.rpc("rafa_expand_knowledge_sections", {
+        p_chunk_ids: candidateIds,
+        p_max_chunks: 80
+      });
+      if (expansionError) throw expansionError;
       // Governance metadata is fetched server-side for deterministic M5 policy
       // checks. It is carried separately from the model-safe evidence block.
-      return json({ results: await attachKnowledgePolicyMetadata(supabase, data || []) });
+      return json({ results: await attachKnowledgePolicyMetadata(supabase, expanded || candidateRows) });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {
@@ -328,27 +348,17 @@ Deno.serve(async (req: Request) => {
       const userId = String(body.userId || "");
       const messageId = String(body.messageId || "").trim();
       if (!validWhatsAppJid(userId) || !messageId || messageId.length > 200) throw new HttpError("A valid WhatsApp message identity is required.", 400);
-      const { error } = await supabase.from("rafa_inbound_message_receipts").insert({ whatsapp_jid: userId, message_id: messageId });
-      if (!error) return json({ claimed: true, duplicate: false });
-      if (error.code !== "23505") throw error;
-      const { data: existing, error: lookupError } = await supabase.from("rafa_inbound_message_receipts").select("status,last_attempt_at").eq("whatsapp_jid", userId).eq("message_id", messageId).maybeSingle();
-      if (lookupError) throw lookupError;
-      if (!existing) throw new HttpError("Could not determine message processing state.", 503);
-      if (existing.status === "processed") return json({ claimed: false, duplicate: true });
-      const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-      const { data: reclaimed, error: reclaimError } = await supabase.from("rafa_inbound_message_receipts").update({ last_attempt_at: new Date().toISOString() }).eq("whatsapp_jid", userId).eq("message_id", messageId).eq("status", "processing").lt("last_attempt_at", staleBefore).select("message_id").maybeSingle();
-      if (reclaimError) throw reclaimError;
-      return json({ claimed: Boolean(reclaimed), duplicate: !reclaimed });
+      const leaseToken = crypto.randomUUID();
+      return json(await claimInboundMessage(supabase, { userId, messageId, leaseToken }));
     }
 
     if (parts[0] === "messages" && parts[1] === "complete" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const userId = String(body.userId || "");
       const messageId = String(body.messageId || "").trim();
-      if (!validWhatsAppJid(userId) || !messageId || messageId.length > 200) throw new HttpError("A valid WhatsApp message identity is required.", 400);
-      const { error } = await supabase.from("rafa_inbound_message_receipts").update({ status: "processed", processed_at: new Date().toISOString() }).eq("whatsapp_jid", userId).eq("message_id", messageId).eq("status", "processing");
-      if (error) throw error;
-      return json({ processed: true });
+      const leaseToken = String(body.leaseToken || "");
+      if (!validWhatsAppJid(userId) || !messageId || messageId.length > 200 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leaseToken)) throw new HttpError("A valid WhatsApp message identity and receipt lease are required.", 400);
+      return json(await completeInboundMessage(supabase, { userId, messageId, leaseToken }));
     }
 
     if (parts[0] === "blocks" && req.method === "GET" && parts.length === 1) {
@@ -519,7 +529,7 @@ Deno.serve(async (req: Request) => {
       const configuredRecipient = controlledP65Recipient(Deno.env.get("RAFA_P65_TEST_RECIPIENT"));
       if (!configuredRecipient) throw new HttpError("The controlled P6.5 recipient is not configured.", 503);
       const { data: candidate, error: candidateError } = await supabase.from("rafa_notification_jobs")
-        .select("id,handover_id,kind,recipient,payload,status")
+        .select("id,handover_id,kind,recipient,payload,status,idempotency_key")
         .eq("id", notificationId).maybeSingle();
       if (candidateError) throw candidateError;
       if (!candidate || !canClaimP65TestNotification({ ...candidate, requestedId: notificationId, testRunId, configuredRecipient })) {
@@ -774,11 +784,40 @@ Deno.serve(async (req: Request) => {
       return json(await deleteConversationData(decodeURIComponent(parts[1])));
     }
 
+    if (parts[0] === "controlled-diagnostics" && req.method === "POST") {
+      const body = await req.json();
+      if (!isUuid(String(body.sourceTurnId || ""))) throw new HttpError("Persisted source turn required.", 400);
+      const contact = await getUser(String(body.userId || ""), false);
+      if (!contact?.contactId || contact.profile?.qaControlledDiagnostics !== true || contact.profile?.followUpBlocked !== true) {
+        throw new HttpError("Contact is not enrolled for controlled diagnostics.", 403);
+      }
+      const { data: turn, error: turnError } = await supabase.from("rafa_conversation_turns").select("id")
+        .eq("id", body.sourceTurnId).eq("contact_id", contact.contactId).maybeSingle();
+      if (turnError) throw turnError;
+      if (!turn) throw new HttpError("Source turn not found.", 404);
+      if (JSON.stringify(body.inspection || {}).length > 100000) throw new HttpError("Inspection exceeds size limit.", 413);
+      const inspection = sanitizeControlledInspection(body.inspection, [contact.id, contact.phone, contact.profile?.name]);
+      if (!inspection) throw new HttpError("Invalid controlled inspection.", 400);
+      const { data, error } = await supabase.from("rafa_events").insert({ event: "agent_controlled_inspection",
+        fields: { sourceTurnId: turn.id, contactId: contact.contactId, inspection }, at: new Date().toISOString() }).select("id").single();
+      if (error) throw error;
+      return json({ inspectionId: data.id });
+    }
+    if (parts[0] === "controlled-diagnostics" && parts[1] && req.method === "GET") {
+      const contact = await getUser(decodeURIComponent(parts[1]), false);
+      if (!contact?.contactId || contact.profile?.qaControlledDiagnostics !== true) throw new HttpError("Controlled diagnostics unavailable.", 404);
+      const { data, error } = await supabase.from("rafa_events").select("id,at,fields")
+        .eq("event", "agent_controlled_inspection").contains("fields", { contactId: contact.contactId }).order("at", { ascending: true }).limit(100);
+      if (error) throw error;
+      return json({ inspections: (data || []).map((row) => ({ id: row.id, at: row.at, sourceTurnId: row.fields.sourceTurnId,
+        inspection: sanitizeControlledInspection(row.fields.inspection, [contact.id, contact.phone, contact.profile?.name]) })) });
+    }
     if (parts[0] === "events" && req.method === "POST") {
       const body = await req.json();
       const event = String(body.event || "unknown").trim();
       const fields = body.fields ?? {};
       if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(event)) throw new HttpError("Invalid event name.", 400);
+      if (event === "agent_controlled_inspection") throw new HttpError("Use controlled diagnostics endpoint.", 400);
       if (!fields || typeof fields !== "object" || Array.isArray(fields) || JSON.stringify(fields).length > 8192) {
         throw new HttpError("Event fields must be an object no larger than 8 KB.", 413);
       }
@@ -884,9 +923,20 @@ async function generateAgentReply(body: Record<string, any>) {
 
   const text = redactForModel(String(body.text || "").trim()).slice(0, 4000);
   if (!text) throw new HttpError("Message text is required.", 400);
+  const language = detectMessageLanguage(text);
 
   const model = resolveChatModel(body.model || Deno.env.get("OPENROUTER_MODEL"));
-  const evidence = Array.isArray(body.evidence) ? body.evidence.slice(0, 8) : [];
+  // Caller-provided evidence is only a list of requested chunk IDs. Rebuild
+  // content, revision approval, expiry, active-source state, and explicit fact
+  // blocks from the DB so a valid API caller cannot forge evidence or policy
+  // metadata in this payload.
+  let evidence: Record<string, any>[];
+  try {
+    evidence = await resolveTrustedKnowledgeEvidence(supabase, body.evidence);
+  } catch {
+    // A failed authoritative read must never fall back to caller-supplied text.
+    throw new HttpError("Approved knowledge could not be verified. Please retry shortly.", 503);
+  }
   const memories = Array.isArray(body.memories) ? body.memories.slice(0, 8) : [];
   const messages = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
   const payload = {
@@ -913,6 +963,7 @@ async function generateAgentReply(body: Record<string, any>) {
           // reads as if the tier were plumbed through when it is not. The
           // builder's default emits the protective instruction.
           ...buildOperatorPrompt({ variant: "operator" }),
+          languageInstruction(language),
           // Edge-specific operator instructions. These are NOT policy rules and
           // have no counterpart on the customer path: they describe this
           // surface's job (dashboard operations) and its data access.
@@ -942,23 +993,36 @@ async function generateAgentReply(body: Record<string, any>) {
       { role: "user", content: text }
     ]
   };
+  if (!isPromptWithinTokenCeiling(payload)) {
+    throw new HttpError("The model prompt exceeds the configured input limit. Shorten the conversation and retry.", 413);
+  }
 
-  const response = await fetch(openRouterUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://anhharmjtmqndhzenicb.supabase.co",
-      "X-OpenRouter-Title": "RAFA Dashboard"
-    },
-    body: JSON.stringify(payload)
-  });
-  const result = await response.json().catch(() => ({}));
+  let response: Response;
+  let result: Record<string, any>;
+  const providerStartedAt = performance.now();
+  try {
+    ({ response, body: result } = await fetchJsonWithTimeout(openRouterUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://anhharmjtmqndhzenicb.supabase.co",
+        "X-OpenRouter-Title": "RAFA Dashboard"
+      },
+      body: JSON.stringify(payload)
+    }));
+  } catch (error) {
+    if (error instanceof ProviderTimeoutError || (error && typeof error === "object" && (error as Error).name === "ProviderTimeoutError")) {
+      throw new HttpError("AI provider timed out. Please retry shortly.", 503);
+    }
+    throw new HttpError("AI provider is temporarily unavailable. Please retry shortly.", 503);
+  }
   if (!response.ok || result?.error) {
     throw new HttpError(result?.error?.message || `OpenRouter HTTP ${response.status}`, response.status >= 400 && response.status < 500 ? 502 : response.status);
   }
   const reply = String(result?.choices?.[0]?.message?.content || "").trim();
   if (!reply) throw new HttpError("OpenRouter returned an empty answer.", 502);
+  if (reply.length > 8 && detectMessageLanguage(reply) !== language) throw new HttpError("The model returned an answer in the wrong customer language.", 502);
   // P2.2 — the gate gets the SAME approved evidence the model was grounded on.
   // Passing none made this surface strictly stricter than src/refalcoAnswer.js,
   // which is the same class of divergence the generated mirrors exist to end:
@@ -966,10 +1030,10 @@ async function generateAgentReply(body: Record<string, any>) {
   // and allowed there. Unapproved and expired chunks are filtered by
   // isApprovedEvidence inside the gate, so this can only ever unlock a fact the
   // evidence actually carries.
-  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsUnconsentedContactCommitment(reply) || containsProhibitedConstructionEstimate(text, reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
+  if (reply.length > 10000 || containsProhibitedClaim(reply, { evidence }) || containsSensitiveOutputValue(reply) || containsForbiddenCredentialRequest(reply) || containsUnconsentedContactCommitment(reply) || containsProhibitedConstructionEstimate(text, reply)) throw new HttpError("The model returned an unsafe or invalid answer.", 502);
   return {
     reply: reply.slice(0, 10000),
-    usage: normalizeOpenRouterUsage(result, model)
+    usage: normalizeOpenRouterUsage(result, model, Math.max(0, Math.round(performance.now() - providerStartedAt)))
   };
 }
 
@@ -1443,23 +1507,13 @@ async function updateReminder(reminderId: string, body: Record<string, any>) {
   if (currentError) throw currentError;
   if (!current) throw new HttpError("Reminder not found.", 404);
   const next = String(body.status || "");
-  if (!(["sent", "failed", "dead", "cancelled"].includes(next))) throw new HttpError("Invalid reminder status.", 400);
-  if (current.status !== "processing" && current.status !== next) throw new HttpError(`Invalid reminder status transition: ${current.status} to ${next}.`, 409);
-  const patch: Record<string, unknown> = { status: next };
-  if (next === "sent") {
-    patch.sent_at = body.sentAt || new Date().toISOString();
-    patch.provider_message_id = String(body.providerMessageId || "").slice(0, 500) || null;
-    patch.last_error = null;
-  } else if (next === "failed") {
-    const retryAt = new Date(body.nextAttemptAt);
-    if (!Number.isFinite(retryAt.getTime()) || retryAt <= new Date()) throw new HttpError("A future retry time is required for failed reminders.", 400);
-    patch.next_attempt_at = retryAt.toISOString();
-    patch.last_error = String(body.lastError || "Delivery failed.").slice(0, 1000);
-  } else if (next === "dead") {
-    patch.last_error = String(body.lastError || "Retry limit reached.").slice(0, 1000);
-  }
+  if (!(["sending", "sent", "failed", "dead", "uncertain", "cancelled"].includes(next))) throw new HttpError("Invalid reminder status.", 400);
+  if (!isAllowedReminderTransition(current.status, next)) throw new HttpError(`Invalid reminder status transition: ${current.status} to ${next}.`, 409);
+  let patch: Record<string, unknown>;
+  try { patch = reminderPatchForState(next, body); }
+  catch (error) { throw new HttpError(error instanceof Error ? error.message : "Invalid reminder state.", 400); }
   const { data, error } = await supabase.from("rafa_reminder_jobs").update(patch)
-    .eq("id", reminderId).eq("status", "processing").select("*").maybeSingle();
+    .eq("id", reminderId).eq("status", current.status).select("*").maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError("Reminder claim expired or was already processed.", 409);
   return data;
@@ -1476,23 +1530,13 @@ async function deleteUser(userId: string) {
 
 async function deleteConversationData(userId: string) {
   if (!validWhatsAppJid(userId)) throw new HttpError("A valid WhatsApp contact is required.", 400);
-  const { data: contact, error: contactError } = await supabase
-    .from("rafa_contacts")
-    .select("id")
-    .eq("whatsapp_jid", userId)
-    .maybeSingle();
-  if (contactError) throw contactError;
-
-  let deletion = supabase.from("rafa_conversation_turns").delete({ count: "exact" });
-  deletion = contact
-    ? deletion.or(`contact_id.eq.${contact.id},user_id.eq.${userId}`)
-    : deletion.eq("user_id", userId);
-  const { count, error } = await deletion;
+  const { data, error } = await supabase.rpc("refal_reset_conversation_context", { p_whatsapp_jid: userId });
+  if (["55006", "55P03"].includes(error?.code || "")) throw new HttpError("A message or follow-up is still being processed. Retry when it finishes.", 409);
   if (error) throw error;
-  return { deleted: Boolean(contact) || Boolean(count), deletedTurns: count || 0 };
+  return { deleted: data?.deleted === true, deletedTurns: Number(data?.deletedTurns) || 0 };
 }
 
-const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk"]);
+const WORKFLOW_INTENTS = new Set(["real_estate", "development", "construction", "land", "investment", "partnership", "corporate_services", "customer_service", "appointment", "complaint", "existing_client", "prompt_injection", "unknown", "company_formation", "accounting", "vat", "cyprus_business_expansion", "business_relocation", "residency_enquiry", "real_estate_purchase", "real_estate_investment", "land_owner", "property_development", "construction_tender", "project_management", "investment_opportunity", "investment_partnership", "strategic_partnership", "infrastructure", "technology", "operations", "strategic_assets", "business_proposal", "supplier", "career", "media", "general_information", "company_info", "services", "contact", "legal", "tax", "immigration", "banking", "permit", "approval", "privacy", "unrelated", "greeting", "small_talk", "agent_identity", "language_capability", "business_areas", "project_enquiry", "land_development", "pricing"]);
 const WORKFLOW_DEPARTMENTS = new Set(["customer_service", "corporate_services", "tax", "residency", "real_estate", "development_construction", "investment", "partnerships", "complaints", "existing_client", "appointments", "general"]);
 const WORKFLOW_TRIGGERS = new Set(["major_development", "institutional_investment", "strategic_partnership", "complaint", "severe_complaint", "existing_client", "safety_or_threat", "material_business_opportunity"]);
 
@@ -1655,6 +1699,45 @@ function boundedScore(value: unknown) {
 
 async function persistWorkflow(kind: string, body: Record<string, unknown>) {
   const { contact, sourceTurnId } = await workflowContact(body);
+  if (kind === "follow-up-claim") {
+    const claimId = String(body.claimId || "");
+    const consentTurnId = String(body.consentSourceTurnId || "");
+    const triggerTurnId = String(body.triggerTurnId || "");
+    if (!isUuid(claimId) || !isUuid(consentTurnId) || !isUuid(triggerTurnId) || triggerTurnId !== sourceTurnId) {
+      throw new HttpError("A valid follow-up delivery claim is required.", 400);
+    }
+    const { data, error } = await supabase.rpc("rafa_claim_follow_up_send", {
+      p_contact_id: contact.contactId,
+      p_claim_id: claimId,
+      p_consent_turn_id: consentTurnId,
+      p_trigger_turn_id: triggerTurnId
+    });
+    if (error) throw error;
+    return { claimed: data === true };
+  }
+  if (kind === "follow-up-result") {
+    const claimId = String(body.claimId || "");
+    const outcome = String(body.outcome || "");
+    const triggerTurnId = String(body.triggerTurnId || "");
+    const finishedAt = body.finishedAt === undefined ? new Date().toISOString() : String(body.finishedAt);
+    const providerMessageId = body.providerMessageId === undefined ? null : String(body.providerMessageId).slice(0, 500);
+    if (!isUuid(claimId) || !isUuid(triggerTurnId) || triggerTurnId !== sourceTurnId
+      || !["sent", "retryable", "uncertain"].includes(outcome) || !Number.isFinite(Date.parse(finishedAt))) {
+      throw new HttpError("A valid follow-up delivery outcome is required.", 400);
+    }
+    const errorCode = outcome === "uncertain" ? "provider_outcome_ambiguous"
+      : outcome === "retryable" ? "provider_confirmed_not_sent" : null;
+    const { data, error } = await supabase.rpc("rafa_finish_follow_up_send", {
+      p_contact_id: contact.contactId,
+      p_claim_id: claimId,
+      p_outcome: outcome,
+      p_error: errorCode,
+      p_provider_message_id: providerMessageId,
+      p_finished_at: finishedAt
+    });
+    if (error) throw error;
+    return { finished: data === true };
+  }
   if (kind === "lead-score") {
     const dimensions = Object.fromEntries(["need", "value", "timing", "authority", "readiness", "fit"].map((name) => [name, boundedScore((body.dimensions as Record<string, unknown> || {})[name])]));
     const scoreFloor = Number(body.scoreFloor || 0);
@@ -2003,40 +2086,25 @@ function validateBookingPolicy(value: Record<string, any>) {
 async function logEvent(event: string, fields: Record<string, unknown>) {
   const { error } = await supabase.from("rafa_events").insert({
     event,
-    fields,
+    fields: event.startsWith("agent_") ? sanitizeAgentOperationalFields(fields) : redactAuditEventFields(fields),
     at: new Date().toISOString()
   });
   if (error) throw error;
-}
-
-function normalizeOpenRouterUsage(body: Record<string, any>, requestedModel: string) {
-  const usage = body?.usage && typeof body.usage === "object" ? body.usage : {};
-  const readInteger = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null;
-  const promptTokens = readInteger(usage.prompt_tokens);
-  const completionTokens = readInteger(usage.completion_tokens);
-  const totalTokens = readInteger(usage.total_tokens);
-  const costUsd = typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-  return {
-    model: String(body?.model || requestedModel || "Unknown model").slice(0, 160),
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    costUsd,
-    providerReported: promptTokens !== null || completionTokens !== null || totalTokens !== null || costUsd !== null
-  };
 }
 
 async function listEvents(limit: number) {
   const { data, error } = await supabase
     .from("rafa_events")
     .select("event,fields,at")
+    .neq("event", "agent_controlled_inspection")
     .order("at", { ascending: false })
     .limit(limit);
   if (error) throw error;
   return (data || []).map((row) => ({
     at: row.at,
+    ...(row.fields || {}),
     event: row.event,
-    ...(row.fields || {})
+    fields: row.fields || {}
   })).reverse();
 }
 
@@ -2056,6 +2124,7 @@ function rowToUser(row: Record<string, any>, history: unknown[]) {
     id: row.whatsapp_jid,
     phone: row.phone || String(row.whatsapp_jid || "").replace(/@.+$/, ""),
     profile: row.profile || {},
+    followUpBlocked: row.profile?.followUpBlocked === true,
     step: row.step,
     whatsapp: row.whatsapp || {},
     booking: row.booking || undefined,
@@ -2097,7 +2166,7 @@ async function attachWorkflowState(user: Record<string, any>) {
   const [consentResult, automatedReminderResult, followUpResult, qualificationResult, existingClientResult] = await Promise.all([
     supabase.from("rafa_contact_consents").select("state,observed_at").eq("contact_id", contactId).eq("consent_type", "follow_up").maybeSingle(),
     supabase.from("rafa_contact_consents").select("state,observed_at").eq("contact_id", contactId).eq("consent_type", "automated_reminder").maybeSingle(),
-    supabase.from("rafa_follow_up_states").select("consent_state,status,next_due_at,last_sent_at,updated_at").eq("contact_id", contactId).maybeSingle(),
+    supabase.from("rafa_follow_up_states").select("consent_state,status,next_due_at,last_sent_at,delivery_state,delivery_claimed_at,delivery_consent_turn_id,delivery_trigger_turn_id,delivery_error,provider_message_id,updated_at").eq("contact_id", contactId).maybeSingle(),
     supabase.from("rafa_lead_qualifications").select("need,value,timing,authority,readiness,fit,total,status,priority_reason,thresholds,assessed_at").eq("contact_id", contactId).maybeSingle(),
     supabase.from("rafa_existing_client_verifications").select("state,attempts,identifier_provided,verified,account_disclosure_allowed,verified_at,updated_at").eq("contact_id", contactId).maybeSingle()
   ]);

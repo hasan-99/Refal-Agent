@@ -96,6 +96,29 @@ test("[028-6] response adds payroll not present in evidence -> rejected", () => 
   assert.equal(containsUnsupportedServiceListClaim("Refalco Group offers Company Formation for EUR 1500, Accounting, and Payroll.", ev), true);
 });
 
+test("service list grounding rejects added Arabic and Greek services in the customer's language", () => {
+  const ev = evidence("تأسيس الشركات متاح في قبرص.", "Η σύσταση εταιρείας είναι διαθέσιμη στην Κύπρο.");
+  const arabic = "نقدم تأسيس الشركات والمحاسبة والضرائب في قبرص.";
+  const greek = "Προσφέρουμε σύσταση εταιρείας και λογιστικές υπηρεσίες στην Κύπρο.";
+
+  assert.equal(containsUnsupportedServiceListClaim(arabic, ev), true);
+  assert.equal(validateFactualGrounding(arabic, { evidenceItems: ev }).valid, false);
+  assert.equal(containsUnsupportedServiceListClaim(greek, ev), true);
+  assert.equal(validateFactualGrounding(greek, { evidenceItems: ev }).valid, false);
+  assert.equal(containsUnsupportedServiceListClaim("نقدم تأسيس الشركات في قبرص.", ev), false);
+  assert.equal(containsUnsupportedServiceListClaim("Προσφέρουμε σύσταση εταιρείας στην Κύπρο.", ev), false);
+});
+
+test("approved service lists remain grounded after presentation bullets are inserted", () => {
+  const ev = evidence("Refalco Group provides Company Formation, Accounting, VAT Registration and Payroll services.");
+  const formatted = "• Refalco Group provides Company Formation,\n• Accounting,\n• VAT Registration and Payroll services.";
+  assert.equal(containsUnsupportedServiceListClaim(formatted, ev), false);
+  assert.equal(validateFactualGrounding(formatted, { evidenceItems: ev }).valid, true);
+  const unsupported = "• Refalco Group provides Company Formation,\n• Legal Representation services.";
+  assert.equal(containsUnsupportedServiceListClaim(unsupported, ev), true);
+  assert.equal(validateFactualGrounding(unsupported, { evidenceItems: ev }).valid, false);
+});
+
 test("[028-7] similar package names do not leak inclusions across packages", () => {
   // The Standard package's evidence never connects it to document
   // preparation; a different (Premium) package's evidence does. Claiming the

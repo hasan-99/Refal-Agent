@@ -63,6 +63,16 @@ function normalizeClaimText(text) {
   );
 }
 
+// Arabic's explicitly pointed form-II verb "أضمّن" means "I include". The
+// general normalizer removes shadda, making it indistinguishable from "أضمن"
+// ("I guarantee") and causing a stated service exclusion to be misclassified.
+// Preserve this distinction only in guarantee scans; unpointed guarantees stay
+// guarded by the existing rule set.
+function maskPointedArabicInclusion(text) {
+  return String(text === null || text === undefined ? "" : text)
+    .replace(/(?<![\p{L}\p{N}])أضمّن(?![\p{L}\p{N}])/gu, " ");
+}
+
 // -------------------------------------------------------------------- numbers
 
 // Arabic-Indic (U+0660-0669) and Extended Arabic-Indic (U+06F0-06F9) digits are
@@ -165,16 +175,21 @@ function extractNumbers(text) {
 
 // ------------------------------------------------------------------- evidence
 
-// An unapproved chunk is not evidence. An expired chunk is not evidence. An
-// unparseable `valid_until` is treated as expired: fail closed, never open.
+// Only current text from an approved Knowledge revision is answer evidence.
+// Evidence references and per-fact register links are optional annotations;
+// they do not add a second approval step to an already approved revision.
 function isApprovedEvidence(item) {
   if (!item || typeof item !== "object") return false;
   if (item.review_status !== "approved") return false;
+  if (item.source_enabled === false || item.source_approved === false || item.current_revision === false || item.is_current_revision === false) return false;
   const validUntil = item.valid_until;
-  if (validUntil === undefined || validUntil === null || String(validUntil).trim() === "") return true;
-  const expiry = Date.parse(validUntil);
-  if (!Number.isFinite(expiry)) return false;
-  return expiry > Date.now();
+  if (validUntil !== undefined && validUntil !== null && String(validUntil).trim() !== "") {
+    const expiry = Date.parse(validUntil);
+    if (!Number.isFinite(expiry) || !(expiry > Date.now())) return false;
+  }
+  const factRows = item.policyMetadata?.factRegisterRows;
+  if (Array.isArray(factRows) && factRows.some((row) => row?.status === "blocked")) return false;
+  return true;
 }
 
 function evidenceContent(item) {
@@ -182,9 +197,9 @@ function evidenceContent(item) {
   return String(item.content ?? item.text ?? "");
 }
 
-function approvedEvidenceText(evidence) {
+function approvedEvidenceText(evidence, language) {
   if (!Array.isArray(evidence)) return "";
-  return normalizeClaimText(evidence.filter(isApprovedEvidence).map(evidenceContent).join("\n"));
+  return normalizeClaimText(evidence.filter((item) => isApprovedEvidence(item, { language })).map(evidenceContent).join("\n"));
 }
 
 // ------------------------------------------------------------- sentence split
@@ -249,7 +264,7 @@ function splitClaims(text) {
 // `[^.!?;,]{0,90}` wildcard the verb forms carry: they strip only the negated
 // phrase itself, so "النتيجة غير مضمونة ولكن نضمن الموافقة" still blocks on its
 // second clause.
-const rawNegatedGuarantee = /(?:\b(?:i|we|refal|refalco|business)\s+)?\b(?:can(?:not|['’]t)|cannot|could\s+not|couldn['’]t|do(?:es)?\s+not|don['’]t|will\s+not|won['’]t|never)\s+(?:guarantee|guarantees|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:لا\s+(?:أستطيع|يمكنني)|ما\s+(?:فيني|بقدر|منقدر))\s+(?:أضمن|ضمان|تأكيد|أؤكد|نضمن|أعد)[^.!?;,؟؛،]{0,90}|δεν\s+μπορ\p{L}+\s+να\s+(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}|\b(?:is|are|was|were|it['’]s)?\s*(?:not|no)\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b|\bcannot\s+be\s+guaranteed\b|\bwithout\s+(?:any\s+)?guarantee(?:s)?\b|(?:ليست|ليس|غير|مو|مش)(?:\s+\S+){0,3}\s*مضمون\p{L}*|δεν\s+είναι\s+εγγυημέν\p{L}*|χωρίς\s+(?:καμία\s+)?εγγύηση|\b(?:nobody|no\s*-?\s*one|none\s+of\s+us|no\s+adviser|no\s+agent)\s+(?:can|could|will|may|is\s+able\s+to)\s+(?:guarantee|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:ما\s+(?:حد|في\s+حدا)|محدا|لا\s+أحد|ولا\s+حد)(?:\s+\S+){0,2}\s*(?:يضمن|بيضمن|يقدر\s+يضمن|بيقدر\s+يضمن|يوعد|بيوعد|يؤكد)[^.!?;,؟؛،]{0,90}|κανείς\s+δεν\s+(?:μπορεί\s+να\s+)?(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}/giu;
+const rawNegatedGuarantee = /(?:\b(?:i|we|refal|refalco|business)\s+)?\b(?:can(?:not|['’]t)|cannot|could\s+not|couldn['’]t|do(?:es)?\s+not|don['’]t|will\s+not|won['’]t|never)\s+(?:guarantee|guarantees|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:لا\s+(?:أستطيع|نستطيع|يمكنني|يمكننا)|ما\s+(?:فيني|فينا|بقدر|منقدر|بنقدر))\s+(?:أضمن|ضمان|تأكيد|أؤكد|نضمن|أعد)[^.!?;,؟؛،]{0,90}|δεν\s+μπορ\p{L}+\s+να\s+(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}|\b(?:(?:is|are|was|were|it['’]s)?\s*(?:not|no)|(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t))\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b|\b(?:cannot|can['’]t|could\s+not|couldn['’]t|will\s+not|won['’]t)\s+be\s+guaranteed\b|\bwithout\s+(?:any\s+)?guarantee(?:s)?\b|(?:ليست|ليس|غير|مو|مش)(?:\s+\S+){0,3}\s*مضمون\p{L}*|ما\s+(?:في|فيه|فيها|إلها|إله|لها|له)\s+(?:موعد|تاريخ|وقت|مدة)(?:\s+\S+){0,2}\s+مضمون\p{L}*|δεν\s+είναι\s+εγγυημέν\p{L}*|χωρίς\s+(?:καμία\s+)?εγγύηση|\b(?:nobody|no\s*-?\s*one|none\s+of\s+us|no\s+adviser|no\s+agent)\s+(?:can|could|will|may|is\s+able\s+to)\s+(?:guarantee|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:ما\s+(?:حد|في\s+حدا)|محدا|لا\s+أحد|ولا\s+حد)(?:\s+\S+){0,2}\s*(?:يضمن|بيضمن|يقدر\s+يضمن|بيقدر\s+يضمن|يوعد|بيوعد|يؤكد)[^.!?;,؟؛،]{0,90}|κανείς\s+δεν\s+(?:μπορεί\s+να\s+)?(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}/giu;
 const [, NEGATED_GUARANTEE] = foldRulePatterns([["negated_guarantee", rawNegatedGuarantee]])[0];
 
 // P2.6 defect CLAIM-4 (High). `NEGATED_GUARANTEE` above only covers a refusal to
@@ -281,6 +296,12 @@ const rawRefusalToProvide = new RegExp(
   "giu"
 );
 const [, REFUSAL_TO_PROVIDE] = foldRulePatterns([["refusal_to_provide", rawRefusalToProvide]])[0];
+
+// A denial of a guaranteed return is not a promise. Keep these spans narrow:
+// stop at punctuation or the first guarantee word, leaving any later positive
+// promise in the sentence available to the guarantee gate.
+const rawNegatedReturnGuarantee = /(?:ما\s+في\s+(?:ربح|عائد)\s+مضمون\p{L}*|ما\s+عندي\s+(?:أساس|معلومات\s+موثوقة)(?:(?!لكن|بس)[^.!?;,؟؛،]){0,90}مضمون\p{L}*|ما\s+بقدر\s+(?:أذكر|أحدد)(?:(?!لكن|بس)[^.!?;,؟؛،]){0,90}مضمون\p{L}*)(?:(?!لكن|بس)[^.!?;,؟؛،]){0,90}/giu;
+const [, NEGATED_RETURN_GUARANTEE] = foldRulePatterns([["negated_return_guarantee", rawNegatedReturnGuarantee]])[0];
 
 const rawGuaranteeRules = [
   ["guarantee_marker", /\bguarantee(?:s|d|ing)?\b|\bwe\s+guarantee\b|\bcertain\s+approval\b|\bassured\b|\bassure\s+you\b|\bpromise\s+you\b|\bi\s+promise\b|\b100\s*(?:%|percent)\s*(?:approval|success|acceptance)|(?:approval|acceptance|success)\s+is\s+(?:certain|guaranteed|assured|100\s*%)/iu],
@@ -336,6 +357,12 @@ const rawEntityRules = [
 const guaranteeRules = foldRulePatterns(rawGuaranteeRules);
 const personalizedRules = foldRulePatterns(rawPersonalizedRules);
 const entityRules = foldRulePatterns(rawEntityRules);
+
+// A first-person refusal to decide eligibility is a limitation, not a claim
+// that the customer is eligible. Remove only the denied assessment span;
+// anything asserted after it (for example, "but you qualify") remains visible
+// to the ordinary personalized-conclusion rules.
+const NEGATED_PERSONALIZED_OUTCOME = /\b(?:i|we)\s+(?:cannot|can['’]t|can not|do not|don['’]t)\s+(?:confirm|determine|assess|establish|say)\b[^.!?;]{0,100}\b(?:your\s+(?:eligibility|suitability|qualification)|whether\s+you\s+(?:qualify|are\s+eligible|are\s+suitable))\b|(?:لا\s+(?:أستطيع|يمكنني)|ما\s+(?:فيني|بقدر))\s+(?:تأكيد|تحديد|تقييم)\s+[^.!؟؛]{0,100}(?:أهليتك|استحقاقك|إذا\s+كنت\s+مؤهل(?:اً|ة)?|إذا\s+كنت\s+مناسب(?:اً|ة)?)|δεν\s+μπορ\p{L}*\s+να\s+(?:επιβεβαιώσ\p{L}*|καθορίσ\p{L}*|αξιολογήσ\p{L}*)\s+[^.!?;]{0,100}(?:επιλεξιμότητ\p{L}*|αν\s+είστε\s+επιλέξιμ\p{L}*)/giu;
 
 // -------------------------------------------------------------- entity overlap
 
@@ -410,12 +437,23 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
   // the customer, nor a programme fact needing evidence. The strip stops at a
   // contrastive conjunction, so "I cannot advise, but your company qualifies"
   // keeps its second half and still blocks.
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
-  if (guaranteeRules.some(([, pattern]) => pattern.test(assertedText))) {
+  const assertedGuaranteeText = normalizeClaimText(maskPointedArabicInclusion(original))
+    .replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  if (guaranteeRules.some(([, pattern]) => pattern.test(assertedGuaranteeText))) {
     return { claimClass: CLAIM_CLASSES.GUARANTEE, allowed: false, reasons: ["guarantee_marker"], language: resolvedLanguage, unsupportedNumbers: [] };
+  }
+  // A sentence such as "A bank account isn't guaranteed" leaves its subject
+  // behind when the negated guarantee predicate is stripped above. That
+  // subject alone is not an affirmative company fact; retain this ordinary
+  // customer-facing safeguard as neutral. The positive-guarantee scan above
+  // still runs first, so a mixed or contradictory promise remains blocked.
+  const standaloneNegatedGuarantee = /^[\p{L}\p{N}][^.!?؟;،]{0,120}?\b(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t|is\s+not|are\s+not|was\s+not|were\s+not)\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b[^.!?؟;،]{0,90}[.!?؟]*$/iu;
+  if (standaloneNegatedGuarantee.test(normalized)) {
+    return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
 
   // P2.2 defect CLAIM-2 (High). A QUESTION asserts no fact, so it can be
@@ -442,7 +480,7 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["neutral"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
 
-  const evidenceText = approvedEvidenceText(evidence);
+  const evidenceText = approvedEvidenceText(evidence, resolvedLanguage);
   if (!evidenceText) {
     return { claimClass: CLAIM_CLASSES.PROGRAM_FACT, allowed: false, reasons: ["no_approved_evidence"], language: resolvedLanguage, unsupportedNumbers: numbers };
   }
@@ -483,7 +521,7 @@ function evaluateAnswerClaims(text, { evidence = [], language } = {}) {
 // register as a guarantee. That carve-out is why this is a function and not an
 // exported regex.
 function containsGuaranteeMarker(text) {
-  return assertedClaimText(text, guaranteeRules);
+  return assertedClaimText(maskPointedArabicInclusion(text), guaranteeRules);
 }
 
 // P2.6 finding G-01, second half. The two forbidden outputs that survived the
@@ -509,7 +547,7 @@ function containsPersonalizedConclusion(text) {
 function assertedClaimText(text, rules) {
   const normalized = normalizeClaimText(text);
   if (!hasContent(normalized)) return false;
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) return false;
   return rules.some(([, pattern]) => pattern.test(assertedText));
 }

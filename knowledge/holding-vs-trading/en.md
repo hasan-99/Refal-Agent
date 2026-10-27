@@ -3,7 +3,7 @@ topic: holding-vs-trading
 lang: en
 title: Holding company or trading company, and what each one commits you to
 facts: MB-F24, MB-F25, MB-F26, MB-F27
-aliases: difference between holding and trading company | holding vs trading cyprus | what is a holding company | what is a trading company | which company type should i choose in cyprus | company to own shares in other companies | i do import and export which company fits | does a trading company need a vat number | what does eori mean | substance requirements for a holding company | can a company be holding and trading at the same time | does a holding company need employees | accounting difference between holding and trading | customers inside and outside the eu
+aliases: difference between holding and trading company | holding vs trading cyprus | what is a holding company | what is a trading company | which company type should i choose in cyprus | company to own shares in other companies | i do import and export which company fits | does a trading company need a vat number | what does eori mean | substance requirements for a holding company | can a company be holding and trading at the same time | does a holding company need employees | accounting difference between holding and trading | customers inside and outside the eu | Which type suits me if I want to own shares in other companies | I have customers inside and outside the EU, what changes
 ---
 
 ## A company that owns and a company that operates
@@ -20,23 +20,23 @@ The same Cyprus Ltd can be set up either way. The difference is not the legal fo
 <!-- facts: MB-F26 -->
 The compliance load differs in kind, not only in size.
 
-**A holding company** is examined at the ownership level. The international ownership structure is reviewed, and the Substance requirements are confirmed: whether the company has enough real presence and real decision making in Cyprus to be treated as a Cyprus company by the authorities and by the parties it deals with.
+For a holding structure, ask whether the international ownership structure or any substance-related issue needs review. Whether such requirements apply depends on the company's activities, counterparties and circumstances; a specialist should assess the actual case.
 
-**A trading company** is registered at the transaction level:
+**A trading company** may have registrations depending on its transactions and applicable rules:
 
-- a **VAT** number, so the company can charge and account for VAT on its supplies
-- **EORI** registration, the identifier customs uses for a business moving goods in or out of the EU customs territory
+- **VAT** registration, where required under the applicable VAT rules
+- **EORI** registration for relevant customs activity; EORI is not a general requirement for every trading company
 - defined shipping and transport procedures, so it is clear who moves the goods, who clears them, and which documents travel with each shipment
 
-A holding company that never moves goods normally has no reason to hold an EORI number. A trading company importing from day one needs its EORI before the first shipment arrives, not after it is stuck at the border.
+Whether EORI is needed depends on the company's customs activity. Check the applicable VAT rules separately; the fact that a company trades does not by itself establish that it must register for VAT or EORI.
 
-Where the customers sit is the thing that changes the registration list. Customers inside the EU and customers outside it are treated differently at the VAT layer and at the customs layer, so a company selling on each side of the border carries the two sets of obligations rather than picking one. Selling to customers inside and outside the EU at the same time is an ordinary answer, and the changes it brings are to the paperwork rather than to the company type.
+Customer location can affect the applicable VAT and customs analysis. The required registrations depend on the specific transactions and should be checked with a tax/customs specialist.
 
 ## Who you can employ in each structure
 <!-- facts: MB-F27 -->
-**A holding company** is usually limited to senior management teams. It owns and it decides, and it rarely needs headcount beyond the people who direct it.
+The label "holding company" does not determine how many people it employs or which employment requirements apply.
 
-**A trading company** employs properly. That means Payroll, social insurance for the staff, and permits for non-EU labour where you hire outside the Union. Each of those is a registration plus a recurring monthly routine, not a one-off form.
+If a company employs staff, employer, payroll and social-insurance requirements depend on the employment arrangement. Hiring third-country nationals is subject to the applicable procedure and the worker's status. Check current government requirements for each case.
 
 So "does a holding company need employees" and "what does it cost to staff a trading company" are not the same question at all. If you expect to hire, say so early. Employment changes the monthly running of a company more than almost any other decision.
 
@@ -57,13 +57,13 @@ The questions differ by direction, and your answers decide which of the two desc
 - Where are your customers, EU or non-EU?
 - Are there physical goods and warehouses involved?
 
-Customers on both sides of the EU border is a completely normal answer. It is also the answer that makes the VAT and customs picture worth mapping before incorporation rather than after the first invoice.
+Customers on both sides of the EU border is a useful detail to map with a tax/customs specialist before incorporation; the applicable treatment depends on the actual transactions.
 
 ## When one company is both
 <!-- kind: example; facts: MB-F24, MB-F26 -->
 Plenty of real files are both at once. A company holds shares in a subsidiary and also sells goods itself.
 
-When that happens the purposes do not cancel out, the obligations stack. The trading side still needs its VAT number, its EORI registration and its shipping procedures. The holding side still has its international ownership structure reviewed and its Substance confirmed.
+When that happens, assess the actual transactions to determine whether VAT or EORI registration applies. The international ownership structure and any relevant substance questions also require case-specific review.
 
 The practical question then becomes whether to keep both activities inside one entity or to split them into a holding company with an operating subsidiary underneath it. That is a structuring decision with consequences for ownership, risk and reporting, so it is mapped with a specialist rather than guessed from a comparison table.
 
@@ -75,6 +75,6 @@ It does not say which structure suits your position. That depends on what you al
 
 It does not quote VAT rates, registration thresholds or filing frequencies. Those follow the specific supplies your company makes and are confirmed against your activity, never copied from a general description.
 
-It does not settle the accounting treatment either. Both are Cyprus companies carrying full reporting and audit obligations, so the accounting difference between the two is one of volume and of the nature of what passes through the books rather than one of regime.
+It does not settle the accounting or audit requirements. Both structures need case-specific review of the company's records and the rules that apply to it; requirements can depend on the company's circumstances.
 
-And it does not answer how profits reach you. Dividends depend on your own tax residency and on Double Tax Treaties (DTT), which is a tax advisory question rather than a structural one.
+And it does not answer how profits reach you. The tax treatment of a distribution depends on the applicable rules and the circumstances of the company and recipient. Tax residency and any relevant Double Tax Treaty (DTT) are factors for a tax specialist to review.

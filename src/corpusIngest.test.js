@@ -28,7 +28,7 @@ const {
   CONTRACT_VERSION, SOURCE_KIND, SOURCE_TRUST_TIER, ALIAS_CHUNK_KIND,
   MAX_CHUNKS, MAX_CHUNK_CHARS, MAX_DISPLAY_NAME_CHARS,
   PRICE_EXPIRY_PATTERN, PRICE_EXPIRY_DAYS, triggersPriceExpiry,
-  contentSha256, buildChunks, buildSourceRow, buildDocumentPayload,
+  contentSha256, buildChunks, buildSourceRow, buildDocumentPayload, readbackReviewStatusMatches,
   assertPayload, planFile, planCorpus, sectionFactIds,
 } = require("./corpusIngest");
 
@@ -49,6 +49,13 @@ function readCorpusFile(relative) {
 // sits after the seed's verifiedAt (2026-10-07) and inside every cadence.
 const NOW = "2026-10-09";
 const REGISTER = seedRegister();
+
+test("ingest read-back preserves an approved revision only for an exact-content no-op", () => {
+  assert.equal(readbackReviewStatusMatches("approved", "pending", true), true);
+  assert.equal(readbackReviewStatusMatches("pending", "pending", true), true);
+  assert.equal(readbackReviewStatusMatches("approved", "pending", false), false);
+  assert.equal(readbackReviewStatusMatches("pending", "pending", false), true);
+});
 
 const PLAN = planCorpus({
   root: "knowledge",
@@ -128,6 +135,8 @@ for (const { topic, lang, relative } of CASES) {
     assert.match(document.p_content_sha256, /^[0-9a-f]{64}$/u);
     assert.equal(document.p_language_code, lang);
     assert.equal(document.p_title, validated.parsed.meta.title);
+    assert.equal(document.p_review_status, "pending", "an authored corpus file is source material, not its own approval");
+    assert.equal(document.p_approved_by, null, "an automated ingest cannot claim to be a human reviewer");
     // The RPC writes display_name = left(trim(title),160) and compares
     // old title = left(trim(p_title),500). A title that needs truncating would
     // make `unchanged` impossible and the source name wrong.

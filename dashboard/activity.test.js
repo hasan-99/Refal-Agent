@@ -81,3 +81,19 @@ test("operator signals render structured handover summaries as readable text", (
   assert.match(signals.handover.summary, /Activity: Investment company/);
   assert.doesNotMatch(signals.handover.summary, /\[object Object\]/);
 });
+
+test("operator signals expose durable follow-up delivery state without provider error details", () => {
+  const signals = operatorSignals({
+    lastFollowUpSent: "2026-10-10T12:00:00.000Z",
+    followUpState: {
+      status: "uncertain",
+      delivery_state: "uncertain",
+      delivery_claimed_at: "2026-10-11T09:00:00.000Z",
+      delivery_error: "provider detail must stay out of the dashboard summary"
+    }
+  });
+
+  assert.equal(signals.followUp.status, "uncertain");
+  assert.equal(signals.followUp.deliveryClaimedAt, "2026-10-11T09:00:00.000Z");
+  assert.equal(JSON.stringify(signals.followUp).includes("provider detail"), false);
+});

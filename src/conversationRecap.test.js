@@ -224,7 +224,7 @@ test("complaint action-status recaps summarize safely without quoting first-pers
     currentMessage: "I'm not asking for new information — I just want a written summary of what I asked, what you actually recorded, and what action is confirmed. If nothing was sent, just say so.",
     language: "english"
   });
-  assert.match(english.response, /complaint about a company-setup case submitted last month/);
+  assert.match(english.response, /complaint about company setup last month/);
   assert.match(english.response, /case reference alone is enough for review remains unconfirmed/);
   assert.match(english.response, /written update only/);
   assert.match(english.response, /not agreed to a call or sharing details without consent/);

@@ -4,6 +4,7 @@
 // whatever the caller has lying around: it protects the Agent decision step
 // from ever seeing secrets, raw WhatsApp transport internals, or more
 // personal data than it needs to help with the current message.
+const { INTENTS } = require("./intent");
 
 function safeTrim(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -14,13 +15,18 @@ function buildAgentContext({
   locale,
   contact = {},
   recentConversation = [],
+  priorConfiguredIntroduction = false,
+  intents = [],
   conversationState = {},
   knownCustomerFacts = {},
   currentOpenQuestion = null,
+  socialOnlyTurn = false,
   consentState = "unknown",
   allowedCapabilities = [],
   leadTier = "",
-  buyingSignals = []
+  buyingSignals = [],
+  conversationPreferences = {},
+  contextualWorkflow = "none"
 } = {}) {
   const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
   const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
@@ -31,18 +37,35 @@ function buildAgentContext({
     locale: safeTrim(locale, 20) || "unknown",
     contact: Object.freeze({
       id: safeTrim(contact.id, 120),
-      name: safeTrim(contact.name, 120) || null
+      // Only names explicitly captured from customer wording are eligible for
+      // personalization. Transport/contact labels and inferred names stay out.
+      name: contact.nameSource === "customer_stated" ? safeTrim(contact.name, 80) || null : null,
+      nameSource: contact.nameSource === "customer_stated" ? "customer_stated" : null
     }),
     recentConversation: Object.freeze(
       (Array.isArray(recentConversation) ? recentConversation : [])
-        .slice(-12)
+        // buildRecentConversation supplies up to 12 transcript turns as
+        // role-tagged user/assistant messages. Keep both sides of those turns;
+        // truncating to 12 messages here silently cut that context in half.
+        .slice(-24)
         .filter((turn) => turn && ["user", "assistant"].includes(turn.role) && typeof turn.content === "string")
         .map((turn) => Object.freeze({ role: turn.role, content: safeTrim(turn.content, 1200) }))
     ),
+    // The transcript sent to the model is intentionally bounded. Preserve this
+    // small continuity fact from the already-loaded full history so an older
+    // introduction does not disappear when the prompt window advances.
+    priorConfiguredIntroduction: priorConfiguredIntroduction === true,
+    // This is the validated current-turn classification, used only to preserve
+    // the direct answer when the customer explicitly asks who the agent is.
+    intents: Object.freeze([...new Set((Array.isArray(intents) ? intents : [])
+      .filter((intent) => Object.values(INTENTS).includes(intent)))]),
     conversationState: Object.freeze({ ...conversationState }),
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,
+    socialOnlyTurn: socialOnlyTurn === true,
     consentState: safeTrim(consentState, 20) || "unknown",
+    conversationPreferences: Object.freeze({ noProactiveBookingOrContact: conversationPreferences.noProactiveBookingOrContact === true }),
+    contextualWorkflow: safeTrim(contextualWorkflow, 40),
     leadTier: safeLeadTier,
     buyingSignals: Object.freeze(safeBuyingSignals),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))])

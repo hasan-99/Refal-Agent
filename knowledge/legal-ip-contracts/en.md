@@ -3,7 +3,7 @@ topic: legal-ip-contracts
 lang: en
 title: Trademarks, shareholder agreements, contracts and GDPR for a Cyprus company
 facts: MB-F63, MB-F64, MB-F65, MB-F66
-aliases: how do i register a trademark in cyprus | does a trademark protect me across europe | eu trademark registration | difference between registering the company and the brand | how much does a trademark cost | i have a new brand what do you advise | do i need employment contracts for my staff | can you review a partnership agreement | shareholders agreement cyprus | is this contract legally binding | ip rights for software | protection for industrial design | website terms and conditions | gdpr compliance cyprus | service agreement drafting | privacy policy for my website
+aliases: how do i register a trademark in cyprus | does a trademark protect me across europe | eu trademark registration | difference between registering the company and the brand | how much does a trademark cost | i have a new brand what do you advise | do i need employment contracts for my staff | can you review a partnership agreement | shareholders agreement cyprus | is this contract legally binding | ip rights for software | protection for industrial design | website terms and conditions | gdpr compliance cyprus | service agreement drafting | privacy policy for my website | I have a new brand, what would you advise | Can you review a partnership agreement for me
 ---
 
 ## Registering a trademark in Cyprus and across the EU

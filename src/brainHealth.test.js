@@ -20,6 +20,14 @@ const {
   GOLDEN_QUESTIONS_PER_CELL, EXPECTED_CELLS,
 } = health;
 
+function approvedTestRegister() {
+  const register = seedRegister();
+  for (const [id, row] of register) {
+    register.set(id, { ...row, status: STATUS.APPROVED });
+  }
+  return register;
+}
+
 // ------------------------------------------------------------------ helpers
 
 function cell(overrides = {}) {
@@ -105,12 +113,12 @@ test("every validateCorpusFile error is a gap; its warnings are warnings", () =>
 // ------------------------------------------------------ check 3: the register
 
 test("a live document standing on an expired or blocked fact is a gap", () => {
-  const register = seedRegister();
+  const register = approvedTestRegister();
   const approved = health.assessRegister([cell()], { register, now: "2026-10-09" });
   assert.deepEqual(approved, []);
 
   for (const status of [STATUS.EXPIRED, STATUS.BLOCKED, STATUS.PENDING]) {
-    const broken = seedRegister();
+    const broken = approvedTestRegister();
     broken.set("MB-F1", { ...broken.get("MB-F1"), status });
     const found = health.assessRegister([cell()], { register: broken, now: "2026-10-09" });
     assert.deepEqual(codes(found), ["BH-FACT-NOT-APPROVED"], status);
@@ -119,13 +127,13 @@ test("a live document standing on an expired or blocked fact is a gap", () => {
 });
 
 test("a fact that has run past its review date is a gap even though its stored status is approved", () => {
-  const register = seedRegister();
+  const register = approvedTestRegister();
   const found = health.assessRegister([cell()], { register, now: "2099-01-01" });
   assert.deepEqual(codes(found), ["BH-FACT-NOT-APPROVED"]);
 });
 
 test("supporting facts are governed exactly like owned facts", () => {
-  const register = seedRegister();
+  const register = approvedTestRegister();
   register.set("MB-F19", { ...register.get("MB-F19"), status: STATUS.BLOCKED });
   const found = health.assessRegister([cell({ supporting: ["MB-F19"] })], { register, now: "2026-10-09" });
   assert.equal(found.length, 1);
@@ -133,7 +141,7 @@ test("supporting facts are governed exactly like owned facts", () => {
 });
 
 test("a fact with no register row at all is a gap", () => {
-  const register = seedRegister();
+  const register = approvedTestRegister();
   register.delete("MB-F1");
   const found = health.assessRegister([cell()], { register, now: "2026-10-09" });
   assert.deepEqual(codes(found), ["BH-FACT-NO-REGISTER-ROW"]);
@@ -257,7 +265,7 @@ test("a topic that is broken in English raises no parity finding, because that i
 test("with no database snapshot, all four db checks are PENDING and none of them fails the run", () => {
   const result = health.assessCorpus({
     cells: [cell()], entries: reachableQuestions("company-lifecycle", "en"),
-    negatives: NEGATIVE_QUERIES, register: seedRegister(), expiring: [], db: null, now: "2026-10-09",
+    negatives: NEGATIVE_QUERIES, register: approvedTestRegister(), expiring: [], db: null, now: "2026-10-09",
   });
   const pending = result.findings.filter((f) => f.severity === SEVERITY.PENDING);
   // The four --db checks, plus the unreachable live register. All five are
@@ -280,7 +288,7 @@ test("the unreachable live register is reported on every run, as PENDING and nev
   for (const db of [null, new Map()]) {
     const result = health.assessCorpus({
       cells: [cell()], entries: reachableQuestions("company-lifecycle", "en"),
-      negatives: [], register: seedRegister(), expiring: [], db, now: "2026-10-09",
+      negatives: [], register: approvedTestRegister(), expiring: [], db, now: "2026-10-09",
       expectedEmbeddingModel: "m",
     });
     const registerRows = result.findings.filter((f) => f.code === "BH-PENDING-REGISTER-UNREACHABLE");
@@ -408,7 +416,7 @@ test("assessCorpus summarises the cells, the golden questions and the four sever
   const cells = [cell({ lang: "en" }), cell({ lang: "ar" }), cell({ lang: "el" })];
   const entries = LANGUAGES.flatMap((lang) => reachableQuestions("company-lifecycle", lang));
   const result = health.assessCorpus({
-    cells, entries, negatives: NEGATIVE_QUERIES, register: seedRegister(), expiring: [],
+    cells, entries, negatives: NEGATIVE_QUERIES, register: approvedTestRegister(), expiring: [],
     db: null, now: "2026-10-09",
   });
   assert.equal(result.summary.selectedCells, 3);

@@ -11,6 +11,8 @@ const DEFAULT_MAX_SENTENCES = 5;
 const DEFAULT_MAX_QUESTIONS = 1;
 const { containsProhibitedClaim } = require("./refalcoAnswer");
 const { containsRawSecretValue } = require("./sensitiveData");
+const { containsLabeledSensitiveValue } = require("./sensitiveOutputPolicy");
+const { requestsForbiddenCredential } = require("./privacyHardRule");
 
 // REFAL-AGENT-011: named, reusable threshold presets — the single place all
 // three callers (ai.js's model-direct path, agentLoop.js's Agent respond
@@ -32,6 +34,7 @@ const { containsRawSecretValue } = require("./sensitiveData");
 // Deliberately NOT raised further: the point of the budget is brevity, and
 // EXPANDED (1800) already exists for an explicit request for detail.
 const MODEL_DRAFT_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 700 });
+const AGENT_SUMMARY_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 12, maxQuestions: 1, maxChars: 1800 });
 const AGENT_CLARIFY_THRESHOLDS = Object.freeze({ minSentences: 0, maxSentences: 2, maxQuestions: 1, maxChars: 300 });
 // Legacy deterministic replies (messageRouter.js) are allowed more room: many
 // are multi-part (e.g. an existing-client notice plus a follow-up question)
@@ -57,10 +60,10 @@ const INTERNAL_REASONING_PATTERNS = Object.freeze([
   // Arabic equivalents of the same concepts (hidden/internal instructions,
   // chain-of-thought, internal scoring/labels) — internal-reasoning leakage
   // is not an English-only failure mode.
-  /(?:تعليمات\s*(?:داخلية|النظام)|موجه\s*النظام|سلسلة\s*التفكير|التفكير\s*الداخلي|ملاحظات\s*داخلية)/iu,
+  /(?:تعليمات\s*(?:داخلية|النظام|سرية)|تعليماتك\s*(?:السرية|الخاصة)|الموجه\s*(?:الخفي|السري)|سلسلة\s*التفكير|التفكير\s*الداخلي|ملاحظات\s*داخلية)/iu,
   /(?:درجة\s*(?:التأهيل|الأولوية)|تصنيف\s*(?:العميل|الأولوية)|معرف\s*داخلي)\s*[:=]?/iu,
   // Greek equivalents.
-  /(?:εσωτερικ(?:ές|ή)\s*(?:οδηγίες|σημειώσεις)|οδηγίες\s*συστήματος|αλυσίδα\s*σκέψης|εσωτερική\s*σκέψη)/iu,
+  /(?:εσωτερικ(?:ές|ή)\s*(?:οδηγίες|σημειώσεις)|(?:κρυφ(?:ές|ή)|μυστικ(?:ές|ή))\s+οδηγί(?:ες|α)|οδηγίες\s*συστήματος|αλυσίδα\s*σκέψης|εσωτερική\s*σκέψη)/iu,
   /(?:βαθμολογία\s*(?:προτεραιότητας|αξιολόγησης)|ταξινόμηση\s*(?:πελάτη|προτεραιότητας)|εσωτερικό\s*αναγνωριστικό)\s*[:=]?/iu,
   /\b(?:your|lead|need|value|readiness)\s+(?:need\s+|value\s+|readiness\s+)?score\s*(?:is|:|=)?\s*[0-5](?:\s*(?:\/|out of)\s*5)?\b|\b(?:hot|warm|cold|strategic)\s+(?:lead|customer)\b/iu,
   /(?:أنت\s*(?:عميل\s*)?(?:ساخن|دافئ|بارد)|درجة\s*(?:الاحتياج|القيمة|الجاهزية)\s*(?:هي|:|=)?\s*[٠-٥0-5](?:\s*من\s*٥)?)/iu,
@@ -107,6 +110,13 @@ const HANDOVER_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)ll\s+(?:pass|forward|log|r
 // contractions ("it's confirmed") — the Ticket 008 lesson that a
 // first-person-only pattern is not enough.
 const BOOKING_ACTION_CLAIM = /\b(?:i|we)(?:'|’|’)(?:ll|ve)\s+(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arrange|arranged|set\s+up)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking|time)\b|\b(?:i|we)\s+(?:will|have|had)?\s*(?:book|booked|schedule|scheduled|confirm|confirmed|reserve|reserved|arranged)\b[^.?!؟]{0,60}\b(?:appointment|meeting|call|slot|booking)\b|\b(?:your|the|this|that)\s+(?:appointment|meeting|booking|slot|call|session)\b[^.?!؟]{0,40}?\b(?:is|are|was|has\s+been|have\s+been)\s+(?:now\s+)?(?:booked|confirmed|scheduled|reserved|arranged|set|locked\s+in)\b|\byou(?:'|’|’)re\s+(?:all\s+set|confirmed|booked|scheduled)\b|\byou\s+are\s+(?:all\s+set|confirmed|booked|scheduled)\b|\b(?:it|that|this)(?:'|’|’)s\s+(?:now\s+)?(?:confirmed|booked|scheduled|reserved)\b|\b(?:booked|confirmed|scheduled)\s+you\s+(?:in|for)\b|(?:تم|تمّ)\s*(?:تأكيد|حجز|تثبيت|ترتيب)\s*(?:ال)?(?:موعد|موعدك|اجتماع|اجتماعك|الموعد|الاجتماع)|(?:موعدك|الموعد|اجتماعك|الاجتماع)\s*(?:مؤكد|محجوز|مثبّت|مثبت|تأكد|انحجز)|(?:حجزت|حجزنا|أكدت|اكدت|ثبتت|ثبّت)\s*(?:لك|لكم)?\s*(?:ال)?(?:موعد|اجتماع)|(?:رح|سوف|سأ|سن)\s*(?:أحجز|احجز|نحجز|حجز|أؤكد|اؤكد|نؤكد|ؤكد|أثبت|اثبت)|(?:το\s+)?ραντεβού\s*(?:σας)?\s*(?:έχει\s+)?(?:επιβεβαιώθηκε|επιβεβαιωθεί|επιβεβαιωμένο|κλείστηκε|κλειστεί|κλεισμένο|προγραμματίστηκε|προγραμματιστεί|οριστικοποιήθηκε|οριστικοποιηθεί)|(?:έκλεισα|κλείσαμε|επιβεβαίωσα|επιβεβαιώσαμε|έχω κλείσει)\s+(?:το\s+)?ραντεβού|θα\s+(?:κλείσω|κλείσουμε|επιβεβαιώσω|επιβεβαιώσουμε)\s+(?:το\s+)?ραντεβού/iu;
+const NEGATED_ARABIC_BOOKING_SUGGESTION = /(?:ما|مش|مو)\s*(?:رح|سوف|سأ|سن)\s*(?:أقترح|اقترح|نقترح)\s+(?:ال)?(?:قيام\s+ب)?(?:حجز|ترتيب)(?:[ًٌٍ]?ا?)\s*(?:(?:ال)?(?:موعد|اجتماع)(?:\s+(?:حالياً|حاليًا|هلأ|الآن))?)?/giu;
+
+function containsUnverifiedBookingAction(text) {
+  const withoutNegatedSuggestion = String(text || "").replace(NEGATED_ARABIC_BOOKING_SUGGESTION, "");
+  return BOOKING_ACTION_CLAIM.test(withoutNegatedSuggestion);
+}
+
 const CONTACT_CAPABILITY_OFFER = /\b(?:i|we)\s+can\s+(?:pass|forward|send|share|arrange)\b.{0,100}\b(?:specialist|team|contact|follow.?up|call)\b/iu;
 const EXPLICIT_PERMISSION_QUESTION = /(?:\b(?:would you like|do you want|shall i|should i)\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|that|this)\b|\bif you(?:'d| would) like\b.{0,80}\b(?:contact|call|follow.?up|specialist|team|arrange)\b|(?:تحب|إذا بتحب|إذا بدك|هل ترغب|هل تود).{0,80}(?:تواصل|اتصال|موعد|المختص|فريق|رتب|رتّب)|(?:θα θέλατε|αν θέλετε|θέλετε).{0,80}(?:επικοινων|κλήση|ειδικό|ραντεβού|κανονίσ))/iu;
 
@@ -127,12 +137,12 @@ function containsUnconsentedContactCommitment(text) {
 function sentenceCount(text) {
   const value = String(text || "").trim();
   if (!value) return 0;
-  return value.split(/[.!?؟。！？]+(?:["'”»)]*)?(?=\s|$)|(?<=\p{Script=Greek});(?:["'”»)]*)?(?=\s|$)/u).map((part) => part.trim()).filter(Boolean).length;
+  return value.split(/[.!?؟。！？]+(?:["'”»)]*)?(?=\s|$)|(?<=\p{Script=Greek})[;;](?:["'”»)]*)?(?=\s|$)/u).map((part) => part.trim()).filter(Boolean).length;
 }
 
 function questionCount(text) {
   const value = String(text || "");
-  return (value.match(/[?؟]/gu) || []).length + (value.match(/(?<=\p{Script=Greek});/gu) || []).length;
+  return (value.match(/[?؟]/gu) || []).length + (value.match(/(?<=\p{Script=Greek})[;;]/gu) || []).length;
 }
 
 /**
@@ -147,7 +157,7 @@ function questionsAreCoupled(text) {
   if (!value) return false;
   if (questionCount(value) !== 2) return false;
 
-  const firstMark = value.search(/[?؟]|(?<=\p{Script=Greek});/u);
+  const firstMark = value.search(/[?؟]|(?<=\p{Script=Greek})[;;]/u);
   if (firstMark === -1) return false;
   const second = value.slice(firstMark + 1).trim();
   if (!second) return false;
@@ -184,6 +194,10 @@ function findPattern(text, patterns) {
   return patterns.find((pattern) => pattern.test(String(text || ""))) || null;
 }
 
+function containsForbiddenCredentialRequest(text) {
+  return requestsForbiddenCredential(text).violation;
+}
+
 function validateResponse(response, options = {}) {
   const text = String(response || "").trim();
   const minSentences = Number.isInteger(options.minSentences) ? options.minSentences : DEFAULT_MIN_SENTENCES;
@@ -196,11 +210,12 @@ function validateResponse(response, options = {}) {
   // P2.2 — `options.evidence` is optional and defaults to the pre-M2 blanket
   // behaviour, so every existing caller is unaffected. A caller that HAS the
   // approved chunks passes them and an approved programme fact survives.
-  const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
+  const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language, semanticGrounding: options.semanticGrounding }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
   const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
-  const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && BOOKING_ACTION_CLAIM.test(text);
-  const sensitiveValueEcho = containsRawSecretValue(text);
+  const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && containsUnverifiedBookingAction(text);
+  const sensitiveValueEcho = containsRawSecretValue(text) || containsLabeledSensitiveValue(text);
+  const forbiddenCredentialRequest = containsForbiddenCredentialRequest(text);
   const constructionPriceEstimate = options.customerMessage
     ? containsProhibitedConstructionEstimate(options.customerMessage, text)
     : false;
@@ -230,6 +245,7 @@ function validateResponse(response, options = {}) {
   if (unverifiedHandoverAction) reasons.push("unverified_handover_action");
   if (unverifiedBookingAction) reasons.push("unverified_booking_action");
   if (sensitiveValueEcho) reasons.push("sensitive_value_echo");
+  if (forbiddenCredentialRequest) reasons.push("forbidden_credential_request");
   if (constructionPriceEstimate) reasons.push("construction_pricing_prohibited");
   return {
     valid: reasons.length === 0,
@@ -244,6 +260,7 @@ function validateResponse(response, options = {}) {
     unverifiedHandoverAction,
     unverifiedBookingAction,
     sensitiveValueEcho,
+    forbiddenCredentialRequest,
     constructionPriceEstimate
   };
 }
@@ -276,7 +293,10 @@ function hasVerifiedBookingClaim(metadata = {}) {
 }
 
 function safeFallbackData({ language = "en", category = "uncertainty" } = {}) {
-  const key = String(language).toLowerCase().slice(0, 2);
+  // Callers usually pass a two-letter locale, but the language detector and
+  // several policies use the full name "greek". Slicing that value produced
+  // "gr", silently selecting English for Greek fallbacks.
+  const key = languagePackKey(language);
   const fallbacks = {
     en: {
       price: "I understand that cost matters. We can first clarify your needs and then arrange a review of the suitable options. What budget range should we keep in mind?",
@@ -408,6 +428,7 @@ module.exports = {
   DEFAULT_MAX_SENTENCES,
   DEFAULT_MAX_QUESTIONS,
   MODEL_DRAFT_THRESHOLDS,
+  AGENT_SUMMARY_THRESHOLDS,
   AGENT_CLARIFY_THRESHOLDS,
   LEGACY_RESPONSE_THRESHOLDS,
   INTERNAL_REASONING_PATTERNS,

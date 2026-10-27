@@ -1,47 +1,25 @@
 const { redactPersonalData } = require("./ai");
 const { detectExplicitLanguageRequest } = require("./language");
-const { filterRetrievableEvidence } = require("./factRegister");
 
 const CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION = /(?:\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and that|what about it)\b|(?:كم|قديش).{0,24}(?:تكلف|سعر|رسوم)|(?:بدي|بدّي|اعطيني|أعطيني).{0,20}تفاصيل|تفاصيل\s*(?:أكثر|اكتر)|شو\s*(?:بيشمل|بتشمل)|(?:πόσο|τιμή|κόστος|χρέωση|πες μου περισσότερα|περισσότερες πληροφορίες|τι περιλαμβάνει))/iu;
 const NON_CONTEXT_RESPONSES = /(?:ما عندي معلومة معتمدة|لا تتوفر لديّ حالياً|ما عندي سعر معتمد|I don['’]t have approved information|I don['’]t have an approved company formation fee|Δεν έχω εγκεκριμένη)/iu;
-const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services", "corporate_services"]);
-const PACKAGE_DETAIL_QUESTION = /(?:\b(?:package|formation package|setup package|what does .{0,20} include|what(?:'s| is) included)\b|باقة|شو\s*(?:بتشمل|بيشمل)|ماذا\s*تشمل|πακέτο|τι\s*περιλαμβάνει)/iu;
-// The corpus has separate approved topic documents. Retrieve each business
-// area before composing a broad answer so one high-ranking document cannot
-// crowd out every other area.
-const BROAD_SERVICE_FACETS = Object.freeze({
-  english: [
-    "Cyprus company formation package, company structures and lifecycle",
-    "corporate tax Cyprus 15% 2026, IP Box, accounting, VAT and payroll",
-    "banking and payment gateways for a Cyprus company, corporate bank account",
-    "permanent residency Cyprus investment requirements, family, relocation and Non Dom",
-    "buying property in Cyprus, buyer journey, off-plan and completed"
-  ],
-  arabic: [
-    "باقة تأسيس الشركة القبرصية، هياكل الشركات ودورة حياتها",
-    "ضريبة الشركات في قبرص، IP Box، المحاسبة، VAT والرواتب",
-    "الخدمات المصرفية وبوابات الدفع لشركة قبرصية",
-    "الإقامة الدائمة في قبرص بالاستثمار، العائلة والانتقال وNon Dom",
-    "شراء عقار في قبرص، عقار على الخارطة أو جاهز"
-  ],
-  greek: [
-    "πακέτο ίδρυσης κυπριακής εταιρείας, εταιρικές δομές και κύκλος ζωής",
-    "εταιρικός φόρος στην Κύπρο, IP Box, λογιστική, VAT και μισθοδοσία",
-    "τραπεζικές υπηρεσίες και πύλες πληρωμών για κυπριακή εταιρεία",
-    "μόνιμη διαμονή στην Κύπρο μέσω επένδυσης, οικογένεια και Non Dom",
-    "αγορά ακινήτου στην Κύπρο, υπό κατασκευή ή ολοκληρωμένο"
-  ]
-});
-const BROAD_PROFILE_INTRO = Object.freeze({
-  english: "Refalco Group business areas and services: company formation, corporate structuring, tax, accounting, investment, property, development, residency and relocation",
-  arabic: "مجالات وخدمات Refalco Group: تأسيس الشركات، الهيكلة، الضرائب، المحاسبة، الاستثمار، العقارات، التطوير، الإقامة والانتقال",
-  greek: "τομείς δραστηριότητας και υπηρεσίες του ομίλου Refalco: σύσταση εταιρειών, εταιρική δομή, φορολογία, λογιστική, επενδύσεις, ακίνητα, ανάπτυξη, διαμονή και μετεγκατάσταση"
-});
+const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services"]);
+const PACKAGE_DETAIL_QUESTION = /(?:\b(?:package|formation package|setup package|what does .{0,20} include|what(?:'s| is) included|what do i get(?:\s+with|\s+if)?|what will i get(?:\s+with|\s+if)?|what is part of)\b|باقة|شو\s*(?:بتشمل|بيشمل|باخد|باخد\s*اذا)|ماذا\s*تشمل|ماذا\s*احصل\s*(?:عليه|عليها)|πακέτο|τι\s*περιλαμβάνει|τι\s*παίρνω(?:\s+αν)?|τι\s+περιλαμβάνει\s+η\s+υπηρεσία)/iu;
 const PACKAGE_TITLE_QUERY = Object.freeze({
   english: "What the Cyprus company formation package includes",
   arabic: "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط",
   greek: "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας"
 });
+const COMPANY_PROFILE_QUERY = Object.freeze({
+  english: "Not a narrow company registration office",
+  arabic: "مو مكتب تسجيل شركات ضيق",
+  greek: "Όχι ένα στενό γραφείο εγγραφής εταιρειών"
+});
+// Give broad questions a small, balanced evidence bundle. Each facet's best
+// eligible hit is selected first; only then do we add second-best hits, so one
+// search cannot crowd every other service out of the model context.
+const MAX_TURN_EVIDENCE_CHUNKS = 8;
+const MAX_TURN_EVIDENCE_CHARS = 10000;
 function normalizedLanguage(language) {
   const value = String(language || "english").toLowerCase();
   if (["ar", "arabic"].includes(value)) return "arabic";
@@ -70,19 +48,15 @@ function buildKnowledgeSearchQuery(currentMessage, user, intents = []) {
 function buildKnowledgeSearchQueries(currentMessage, user, intents = [], language = "english") {
   const base = buildKnowledgeSearchQuery(currentMessage, user, intents);
   if (!Array.isArray(intents) || !intents.some((intent) => BROAD_KNOWLEDGE_INTENTS.has(intent))) return [base];
-  // Keep each query focused: the hybrid and lexical search both lose recall
-  // when the customer's whole question is combined with a long facet string.
   const key = normalizedLanguage(language);
-  const serviceFacets = BROAD_SERVICE_FACETS[key];
-  const facets = intents.includes("company_info")
-    ? [BROAD_PROFILE_INTRO[key], ...serviceFacets]
-    : intents.includes("business_areas")
-      ? [BROAD_PROFILE_INTRO[key], ...serviceFacets]
-      : serviceFacets;
-  // A specific package question must lead with its own wording so both the
-  // model and deterministic fallback see the matching approved package fact
-  // first. Broad service questions still fan out across all service facets.
-  return PACKAGE_DETAIL_QUESTION.test(base) ? [PACKAGE_TITLE_QUERY[key], base, ...facets] : [...facets];
+  // A focused question must not fan out over unrelated service domains merely
+  // because its classifier used a broad corporate-services label. This keeps
+  // banking, tax, property and other specifics tied to the customer's query.
+  if (PACKAGE_DETAIL_QUESTION.test(base)) return [PACKAGE_TITLE_QUERY[key], base];
+  // Overview answers need the approved company scope. The source itself defines
+  // the categories to summarize; do not enumerate service topics in code or
+  // imply that every knowledge document is an offered service.
+  return [COMPANY_PROFILE_QUERY[key], base];
 }
 
 async function retrieveKnowledgeForTurn(currentMessage, {
@@ -116,30 +90,48 @@ async function retrieveKnowledgeForTurn(currentMessage, {
       const rows = typeof store?.searchKnowledge === "function"
         ? await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount)
         : [];
-      const row = (Array.isArray(rows) ? rows : []).find((candidate) => {
+      const eligibleRows = (Array.isArray(rows) ? rows : []).filter((candidate) => {
         const kind = candidate?.chunk_kind ?? candidate?.chunkKind ?? candidate?.metadata?.kind;
-        if (kind && String(kind) !== "fact") return false;
-        if (filterRetrievableEvidence([candidate]).kept.length === 0) return false;
+        // The search RPC already limits results to active sources and approved,
+        // current revisions. All indexed section types are customer evidence;
+        // only catalogue/finding-aid chunks are not.
+        if (String(kind || "") === "aliases") return false;
+        if (candidate?.review_status && candidate.review_status !== "approved") return false;
         return true;
       });
-      return { row, error: null };
+      return { rows: eligibleRows, error: null };
     } catch (error) {
-      return { row: null, error };
+      return { rows: [], error };
     }
   }));
-  // Promise.all preserves query order. Deduplicate after all independent
-  // searches finish so concurrent workers never race on the shared Set.
+  // Merge candidates by the search service's relevance score across queries.
+  // Query order is not a relevance signal: a focused approved overview result
+  // must be able to outrank weak hits from the customer's broad wording.
+  // Stable query/rank tie-breaking keeps offline stores deterministic.
   for (const result of results) {
     if (result.error) failures.push(result.error);
-    if (!result.row) continue;
-    const row = result.row;
+  }
+  let evidenceChars = 0;
+  const candidates = results.flatMap((result, queryIndex) => result.rows.map((row, rankIndex) => ({ row, queryIndex, rankIndex,
+    score: Number(row?.rank ?? row?.score) }))).sort((left, right) => {
+    const leftScored = Number.isFinite(left.score);
+    const rightScored = Number.isFinite(right.score);
+    if (leftScored && rightScored && left.score !== right.score) return right.score - left.score;
+    if (leftScored !== rightScored) return leftScored ? -1 : 1;
+    return left.queryIndex - right.queryIndex || left.rankIndex - right.rankIndex;
+  });
+  for (const { row } of candidates) {
+    if (!row || evidence.length >= MAX_TURN_EVIDENCE_CHUNKS) break;
     const key = String(row?.chunk_id || row?.chunkId || [row?.document_id, row?.heading, row?.content].join("|"));
     if (seen.has(key)) continue;
+    const chars = String(row?.heading || "").length + String(row?.content || "").length;
+    if (evidenceChars + chars > MAX_TURN_EVIDENCE_CHARS) continue;
     seen.add(key);
     evidence.push(row);
+    evidenceChars += chars;
   }
-  return { evidence, queryCount: queries.length, failures, complete: failures.length === 0, embeddingMs, searchMs: Date.now() - searchStartedAt };
+  return { evidence, evidenceChars, queryCount: queries.length, failures, complete: failures.length === 0, embeddingMs, searchMs: Date.now() - searchStartedAt };
 }
 
 
-module.exports = { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn };
+module.exports = { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn, MAX_TURN_EVIDENCE_CHUNKS, MAX_TURN_EVIDENCE_CHARS };

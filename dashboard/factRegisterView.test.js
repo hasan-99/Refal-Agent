@@ -179,7 +179,7 @@ test("a fact already past its date sorts first and reports a negative daysLeft",
 // -------------------------------------------------------------- re-approval
 
 test("re-approval re-dates from today, not from the stale expiry", async () => {
-  const stale = registerRow({ fact_id: "MB-F19", verified_at: "2026-01-01", expiry_or_review_at: "2026-04-01", review_cadence_days: 90 });
+  const stale = registerRow({ fact_id: "MB-F19", source_type: "primary", source_url_or_document: "Cyprus Tax Department", source_ref: "Official 2026 tax circular, section 1", verified_at: "2026-01-01", expiry_or_review_at: "2026-04-01", review_cadence_days: 90 });
   const rest = fakeRest([stale]);
 
   // The authority. src/factRegister.js#reapprove re-dates from today so a row
@@ -209,6 +209,16 @@ test("re-approval re-dates from today, not from the stale expiry", async () => {
   assert.deepEqual(rpc.body, { p_fact_id: "MB-F19", p_reviewer: "Hasan", p_cadence_days: null, p_reason: "Checked against the 2026 tax circular." });
 });
 
+test("the owner manual alone cannot support re-approval", async () => {
+  const rest = fakeRest([registerRow()]);
+  const error = await rejection(reapproveFact(rest, {
+    factId: "MB-F19", reviewer: "Hasan", reason: "Reviewed the owner manual.", now: NOW
+  }));
+  assert.equal(error.code, 400);
+  assert.match(error.message, /owner manual is reference material/i);
+  assert.equal(rest.calls.filter((call) => call.pathname.startsWith("rpc/")).length, 0);
+});
+
 test("a re-approval without a named reviewer is rejected before it reaches the database", async () => {
   const rest = fakeRest([registerRow()]);
 
@@ -232,29 +242,30 @@ test("a re-approval without a named reviewer is rejected before it reaches the d
 
 test("a 365 day cadence on a high risk fact is rejected, mirroring the database constraint", async () => {
   const rest = fakeRest([
-    registerRow({ fact_id: "MB-F19", high_risk: true }),
+    registerRow({ fact_id: "MB-F19", source_type: "primary", source_url_or_document: "Cyprus Tax Department", source_ref: "Official tax circular, section 1", high_risk: true }),
     // MB-J1 is not in W3.9.2's high risk set, so a long cadence is its own call.
-    registerRow({ fact_id: "MB-J1", high_risk: false, review_cadence_days: 180, expiry_or_review_at: addDays(NOW, 120) })
+    registerRow({ fact_id: "MB-J1", source_type: "primary", source_url_or_document: "Cyprus Tax Department", source_ref: "Official tax circular, section 2", high_risk: false, review_cadence_days: 180, expiry_or_review_at: addDays(NOW, 120) })
   ]);
 
-  const error = await rejection(reapproveFact(rest, { factId: "MB-F19", reviewer: "Hasan", cadenceDays: 365, now: NOW }));
+  const reason = "Checked the official tax circular and confirmed the claim remains supported.";
+  const error = await rejection(reapproveFact(rest, { factId: "MB-F19", reviewer: "Hasan", cadenceDays: 365, reason, now: NOW }));
   assert.equal(error.code, 400);
   assert.match(error.message, /high risk/i);
   assert.equal(rest.calls.filter((call) => call.pathname.startsWith("rpc/")).length, 0);
 
   // The catalogue, not the row, decides what is high risk: a database row that
   // lost its high_risk flag still cannot buy itself a lazy cadence.
-  const flagless = fakeRest([registerRow({ fact_id: "MB-F19", high_risk: false })]);
-  const stillRejected = await rejection(reapproveFact(flagless, { factId: "MB-F19", reviewer: "Hasan", cadenceDays: 365, now: NOW }));
+  const flagless = fakeRest([registerRow({ fact_id: "MB-F19", source_type: "primary", source_url_or_document: "Cyprus Tax Department", source_ref: "Official tax circular, section 1", high_risk: false })]);
+  const stillRejected = await rejection(reapproveFact(flagless, { factId: "MB-F19", reviewer: "Hasan", cadenceDays: 365, reason, now: NOW }));
   assert.equal(stillRejected.code, 400);
   assert.match(stillRejected.message, /high risk/i);
 
   // 90 days is the cap, and it is allowed.
-  const capped = await reapproveFact(rest, { factId: "MB-F19", reviewer: "Hasan", cadenceDays: 90, now: NOW });
+  const capped = await reapproveFact(rest, { factId: "MB-F19", reviewer: "Hasan", cadenceDays: 90, reason, now: NOW });
   assert.equal(capped.result.expiry_or_review_at, addDays(NOW, 90));
 
   // A fact outside the high risk set may take the long cadence.
-  const long = await reapproveFact(rest, { factId: "MB-J1", reviewer: "Hasan", cadenceDays: 365, now: NOW });
+  const long = await reapproveFact(rest, { factId: "MB-J1", reviewer: "Hasan", cadenceDays: 365, reason, now: NOW });
   assert.equal(long.result.expiry_or_review_at, addDays(NOW, 365));
 });
 
@@ -275,7 +286,7 @@ test("a missing register table says the migration is not applied, never an empty
   for (const call of [
     dueFacts(rest, { now: NOW }),
     factAudit(rest, "MB-F19"),
-    reapproveFact(rest, { factId: "MB-F19", reviewer: "Hasan", now: NOW }),
+    reapproveFact(rest, { factId: "MB-F19", reviewer: "Hasan", reason: "Checked a current authority source.", now: NOW }),
     setFactStatus(rest, { factId: "MB-F19", status: "blocked", actor: "Hasan", reason: "Superseded." })
   ]) {
     const error = await rejection(call);

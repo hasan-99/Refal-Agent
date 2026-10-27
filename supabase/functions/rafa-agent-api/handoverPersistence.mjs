@@ -20,11 +20,13 @@ function redactFinancialSecrets(value) {
     .replace(/(?<![\p{L}\p{N}])[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?![\p{L}\p{N}])/giu, "[redacted]");
 }
 
-function sanitizeTree(value, depth = 0) {
+function sanitizeTree(value, depth = 0, field = "") {
   if (depth > 8 || value == null) return value ?? null;
+  // A typed correlation UUID is not an IBAN-like free-text financial value.
+  if (field === "traceId" && typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) return value;
   if (typeof value === "string") return redactFinancialSecrets(value).replace(/(?:password|passcode|pin|token|api[_ -]?key|secret)\s*[:=]?\s*\S+/giu, "[redacted]");
   if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeTree(item, depth + 1));
-  if (typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0, 100).map(([key, item]) => [key, /(?:iban|account|otp|verification|cvv|cvc|passport|national.?id|identity.?card|security.?code)/iu.test(key) ? "[redacted]" : sanitizeTree(item, depth + 1)]));
+  if (typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0, 100).map(([key, item]) => [key, /(?:iban|account|otp|verification|cvv|cvc|passport|national.?id|identity.?card|security.?code)/iu.test(key) ? "[redacted]" : sanitizeTree(item, depth + 1, key)]));
   return value;
 }
 

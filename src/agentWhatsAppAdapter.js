@@ -87,6 +87,16 @@ function normalizeAgentResponse(result) {
   return null;
 }
 
+// The deterministic router replaces credential-bearing text with a safe
+// question before it marks the turn AI-eligible. Preserve that boundary when
+// the live caller builds the Agent input and persisted source turn.
+function safeAgentSourceMessage(sourceMessage, prepared, routed) {
+  const safeQuestion = routed?.metadata?.privacySafeQuestion || prepared?.metadata?.privacySafeQuestion;
+  return typeof safeQuestion === "string" && safeQuestion.trim()
+    ? safeQuestion.trim()
+    : sourceMessage;
+}
+
 async function fallbackText(safeFallback, details) {
   if (typeof safeFallback === "function") {
     try {
@@ -121,6 +131,7 @@ async function runAgentAfterPreflight({
   persistTurn,
   runAgent,
   updateTurn,
+  afterTurnPersisted,
   send,
   safeFallback
 } = {}) {
@@ -205,37 +216,44 @@ async function runAgentAfterPreflight({
     response = await fallbackText(safeFallback, { stage: "update", error, locale, turn, userId });
   }
 
+  let sent = false;
+  let deliveryError;
   try {
     await send(response, updatedTurn);
-    return {
-      route: "agent",
-      response,
-      turn: updatedTurn,
-      sourceTurnId,
-      allowedCapabilities,
-      sent: true,
-      persistenceUpdated,
-      agentError: agentError || null
-    };
+    sent = true;
   } catch (error) {
     // Never throw after source-turn persistence: the outer router must not
     // retry and potentially duplicate a committed action or customer send.
-    return {
-      route: "agent",
-      response,
-      turn: updatedTurn,
-      sourceTurnId,
-      allowedCapabilities,
-      sent: false,
-      persistenceUpdated,
-      deliveryError: error,
-      agentError: agentError || null
-    };
+    deliveryError = error;
   }
+
+  // Refresh continuity after the send attempt so a slow profile write does
+  // not delay the reply. Await it before releasing the contact's turn, which
+  // keeps the next inbound message behind the completed summary update.
+  if (persistenceUpdated && typeof afterTurnPersisted === "function") {
+    try {
+      await afterTurnPersisted({ userId, turnId: sourceTurnId, message: sourceMessage, response, turn: updatedTurn });
+    } catch {
+      // The next turn can rebuild continuity from the durable history.
+    }
+  }
+
+  return {
+    route: "agent",
+    response,
+    turn: updatedTurn,
+    sourceTurnId,
+    allowedCapabilities,
+    sent,
+    persistenceUpdated,
+    ...(deliveryError ? { deliveryError } : {}),
+    agentError: agentError || null
+  };
 }
 
 module.exports = {
   deriveDynamicActionCapabilities,
+  safeAgentSourceMessage,
   runAgentAfterPreflight,
   FORBIDDEN_INTENTS,
   DYNAMIC_ACTION_CAPABILITIES

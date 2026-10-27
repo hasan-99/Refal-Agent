@@ -320,6 +320,44 @@
 .conversation-contact-editor input { width: 100%; min-height: 34px; padding: 7px 9px; border: 1px solid #d1e0e7; border-radius: 4px; color: #284656; background: #fff; font-size: 10px; }
 .conversation-contact-editor .conversation-save-button { min-height: 34px; padding: 6px 9px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .conversation-contact-notice { margin: -9px 0 0; color: #357a61; font-size: 10px; }
+.conversation-diagnostics { padding: 18px; border: 1px solid #cbdfe8; border-radius: 9px; color: #284656; background: linear-gradient(145deg, #fff 0%, #f5fafc 100%); box-shadow: 0 4px 14px rgb(35 69 87 / 5%); }
+.conversation-diagnostics-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.conversation-diagnostics-heading > div { min-width: 0; }
+.conversation-diagnostics-kicker { color: #397b98; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
+.conversation-diagnostics h2 { margin: 5px 0 0; color: #173a50; font-size: 17px; line-height: 1.3; }
+.conversation-diagnostics-heading p { margin: 5px 0 0; color: #627b87; font-size: 11px; line-height: 1.5; }
+.conversation-diagnostics-load { min-height: 38px; padding: 0 13px; flex: 0 0 auto; border: 1px solid #287da8; border-radius: 6px; color: #fff; background: #287da8; font-size: 10px; font-weight: 700; }
+.conversation-diagnostics-load:hover { border-color: #206b91; background: #206b91; }
+.conversation-diagnostics-guide { margin-top: 14px; padding: 12px 14px; border: 1px solid #d8e8ee; border-radius: 7px; background: #f4f9fb; }
+.conversation-diagnostics-guide > strong { color: #23485b; font-size: 10px; }
+.conversation-diagnostics-guide ol { margin: 7px 0 0; padding-left: 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; color: #55717e; font-size: 10px; line-height: 1.55; }
+.conversation-diagnostics-note { margin: 10px 0 0; color: #71838b; font-size: 9px; line-height: 1.5; }
+.conversation-diagnostics-error,.conversation-diagnostics-empty { margin: 12px 0 0; padding: 11px 12px; border-radius: 6px; color: #536e7b; background: #edf5f8; font-size: 10px; line-height: 1.5; }
+.conversation-diagnostics-error { color: #98473e; background: #fff3f1; }
+.conversation-diagnostic-record { margin-top: 12px; overflow: hidden; border: 1px solid #d5e3e9; border-radius: 7px; background: #fff; }
+.conversation-diagnostic-record > summary { min-height: 55px; padding: 9px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style-position: inside; }
+.conversation-diagnostic-record > summary > span:first-of-type { min-width: 0; display: grid; gap: 4px; }
+.conversation-diagnostic-record > summary strong { color: #294a5b; font-size: 10px; }
+.conversation-diagnostic-record > summary small { color: #7a8d96; font-size: 9px; }
+.conversation-diagnostic-count { padding: 4px 8px; flex: 0 0 auto; border-radius: 99px; color: #84591c; background: #fff4da; font-size: 9px; font-weight: 700; }
+.conversation-diagnostic-body { padding: 0 14px 14px; border-top: 1px solid #edf2f4; }
+.conversation-diagnostic-body h3 { margin: 14px 0 7px; color: #31566a; font-size: 10px; }
+.conversation-diagnostic-reasons { margin: 0; padding: 0; display: grid; gap: 6px; list-style: none; }
+.conversation-diagnostic-reasons li { padding: 9px 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border: 1px solid #f0e4c8; border-radius: 5px; color: #5f5140; background: #fffaf0; font-size: 10px; line-height: 1.5; }
+.conversation-diagnostic-reasons code,.conversation-diagnostic-technical code { flex: 0 0 auto; color: #806c4e; font-size: 9px; overflow-wrap: anywhere; }
+.conversation-diagnostic-claims blockquote,.conversation-diagnostic-draft p { margin: 0; padding: 10px 11px; border-left: 3px solid #e3bd70; border-radius: 3px; color: #3b515c; background: #faf8f3; font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.conversation-diagnostic-evidence > h3 { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+.conversation-diagnostic-evidence > h3 span { color: #71838b; font-size: 9px; font-weight: 500; }
+.conversation-diagnostic-evidence > details { margin-top: 6px; border: 1px solid #dce8ed; border-radius: 5px; background: #fbfdfe; }
+.conversation-diagnostic-evidence > details > summary { padding: 9px 10px; display: grid; gap: 3px; cursor: pointer; }
+.conversation-diagnostic-evidence > details > summary span { color: #31566a; font-size: 10px; font-weight: 700; }
+.conversation-diagnostic-evidence > details > summary small { color: #71838b; font-size: 9px; }
+.conversation-diagnostic-evidence pre { max-height: 260px; overflow: auto; margin: 0 10px 8px; padding: 9px; border-radius: 4px; color: #425b67; background: #f1f6f8; font-family: inherit; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.conversation-diagnostic-source { display: block; margin: 0 10px 9px; color: #75868e; font-size: 8px; overflow-wrap: anywhere; }
+.conversation-diagnostic-technical { margin-top: 12px; border-top: 1px solid #e8eef1; }
+.conversation-diagnostic-technical > summary { padding: 10px 0 0; color: #657b85; cursor: pointer; font-size: 9px; font-weight: 700; }
+.conversation-diagnostic-technical dl { margin: 8px 0 0; display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px 10px; color: #6c818b; font-size: 9px; }
+.conversation-diagnostic-technical dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .conversation-thread-wrap { min-width: 0; overflow: hidden; border: 1px solid #d4e1e8; border-radius: 7px; background: #f8fbfd; box-shadow: 0 3px 10px rgb(35 69 87 / 5%); }
 .conversation-thread { min-height: 260px; max-height: min(68vh, 760px); overflow-y: auto; padding: clamp(14px, 3vw, 28px); display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
 .conversation-message { width: fit-content; max-width: min(80%, 650px); display: flex; flex-direction: column; gap: 2px; }
@@ -349,6 +387,11 @@
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
 @media (max-width: 760px) {
+  .conversation-diagnostics { padding: 13px; }
+  .conversation-diagnostics-heading { align-items: flex-start; flex-direction: column; }
+  .conversation-diagnostics-load { min-height: 35px; }
+  .conversation-diagnostics-guide ol { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .conversation-diagnostic-reasons li { flex-direction: column; gap: 4px; }
   .conversation-temperature-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversations-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
   .conversations-toolbar > .conversation-search { grid-column: 1 / -1; }

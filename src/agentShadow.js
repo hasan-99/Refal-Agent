@@ -65,7 +65,7 @@ const { DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
-const { wasNameRequested } = require("./messageRouter");
+const { deriveOpenQuestion } = require("./openQuestion");
 const { buildAgentTurnEventFields, buildShadowComparisonFields } = require("./agentObservability");
 
 const DEFAULT_MAX_CONCURRENCY = 3;
@@ -117,21 +117,20 @@ let activeShadowTurns = 0;
 
 function buildRecentConversation(history = []) {
   const turns = [];
-  for (const entry of Array.isArray(history) ? history.slice(-12) : []) {
+  const entries = Array.isArray(history) ? history.slice(-12) : [];
+  for (const [index, entry] of entries.entries()) {
     if (typeof entry?.message === "string" && entry.message.trim()) turns.push({ role: "user", content: entry.message });
-    if (typeof entry?.response === "string" && entry.response.trim()) turns.push({ role: "assistant", content: entry.response });
+    // Customer wording carries the preferences and references needed to
+    // understand the thread. Older assistant replies are not factual evidence
+    // and can consume the prompt space needed for approved knowledge, so keep
+    // the opening reply (for introduction continuity) and the three latest
+    // replies in full.
+    const keepAssistantReply = index === 0 || index >= entries.length - 3;
+    if (keepAssistantReply && typeof entry?.response === "string" && entry.response.trim()) {
+      turns.push({ role: "assistant", content: entry.response });
+    }
   }
   return turns;
-}
-
-// Mirrors messageRouter.js's own open-question tracking (Phase 8 of the
-// trace): re-derived from the bot's last rendered reply, never a separate
-// stored flag. Only the one case already covered elsewhere (name request)
-// is surfaced here — good enough for a shadow comparison signal, not a new
-// source of truth.
-function deriveOpenQuestion(lastTurn) {
-  if (!lastTurn || !wasNameRequested(lastTurn)) return null;
-  return String(lastTurn.response || "").slice(0, 300) || null;
 }
 
 // REFAL-AGENT-013: the fields below (via agentObservability.js's
@@ -182,6 +181,7 @@ async function runShadowAgentTurn({
 } = {}, {
   tools = TOOL_REGISTRY,
   decideNextStep = defaultDecideNextStep,
+  assessDraft,
   maxSteps = DEFAULT_MAX_STEPS,
   env = process.env
 } = {}) {
@@ -192,7 +192,15 @@ async function runShadowAgentTurn({
 
   const limit = maxConcurrency(env);
   if (activeShadowTurns >= limit) {
-    if (emit) emit("agent_shadow_turn_skipped", { traceId: shadowTraceId, reasonCode: "CONCURRENCY_LIMIT", activeShadowTurns, limit });
+    if (emit) {
+      try {
+        const outcome = emit("agent_shadow_turn_skipped", { traceId: shadowTraceId, reasonCode: "CONCURRENCY_LIMIT", activeShadowTurns, limit });
+        if (outcome && typeof outcome.catch === "function") outcome.catch(() => {});
+      } catch {
+        // A telemetry failure on the early concurrency return must not make
+        // this fire-and-forget shadow call reject into its caller.
+      }
+    }
     return null;
   }
 
@@ -217,7 +225,7 @@ async function runShadowAgentTurn({
       {
         currentMessage: text,
         locale,
-        contact: { id: userId, name: user?.profile?.name || null },
+        contact: { id: userId, name: user?.profile?.name || null, nameSource: user?.profile?.nameSource || null },
         recentConversation: buildRecentConversation(history),
         conversationState,
         knownCustomerFacts: conversationState.agentFacts,
@@ -233,7 +241,7 @@ async function runShadowAgentTurn({
         embeddingModel,
         matchCount
       },
-      { tools: buildShadowToolRegistry(tools), decideNextStep, maxSteps }
+      { tools: buildShadowToolRegistry(tools), decideNextStep, maxSteps, ...(assessDraft ? { assessDraft } : {}) }
     );
 
     const durationMs = Math.round(performance.now() - startedAt);
@@ -245,7 +253,7 @@ async function runShadowAgentTurn({
         const outcome = emit("agent_turn_failed", {
           traceId: shadowTraceId,
           shadowMode: true,
-          message: String(error?.message || error).slice(0, 200)
+          reasonCode: "SHADOW_AGENT_TURN_FAILED"
         });
         if (outcome && typeof outcome.catch === "function") outcome.catch(() => {});
       } catch {
@@ -301,5 +309,6 @@ module.exports = {
   buildShadowToolRegistry,
   maxConcurrency,
   buildRecentConversation,
+  deriveOpenQuestion,
   __resetShadowConcurrency
 };

@@ -43,9 +43,17 @@ function evidenceForPolicy(rows = []) {
     review_status: row?.policyMetadata?.reviewStatus || row?.review_status || null,
     valid_until: row?.policyMetadata?.validUntil || row?.valid_until || null,
     topic: row?.policyMetadata?.topic || null,
+    policyMetadata: {
+      topic: row?.policyMetadata?.topic || null,
+      facts: Array.isArray(row?.policyMetadata?.facts) ? row.policyMetadata.facts : [],
+      governedFacts: Array.isArray(row?.policyMetadata?.governedFacts) ? row.policyMetadata.governedFacts : [],
+      factRegisterRows: Array.isArray(row?.policyMetadata?.factRegisterRows) ? row.policyMetadata.factRegisterRows : []
+    },
     metadata: {
       topic: row?.policyMetadata?.topic || null,
-      facts: Array.isArray(row?.policyMetadata?.facts) ? row.policyMetadata.facts : []
+      facts: Array.isArray(row?.policyMetadata?.facts) ? row.policyMetadata.facts : [],
+      governedFacts: Array.isArray(row?.policyMetadata?.governedFacts) ? row.policyMetadata.governedFacts : [],
+      factRegisterRows: Array.isArray(row?.policyMetadata?.factRegisterRows) ? row.policyMetadata.factRegisterRows : []
     }
   }));
 }

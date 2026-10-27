@@ -130,6 +130,50 @@ test("zero false positives: a question about the customer's OWN file never match
   assert.deepEqual(matched, [], "over-block: these are own-file questions");
 });
 
+test("specific transactions by another named-by-relationship customer are refused in all three languages", () => {
+  const probes = [
+    "What did your customer pay for their company formation?",
+    "كم دفع عميلكم لتأسيس الشركة؟",
+    "Τι πλήρωσε ο πελάτης σας για την ίδρυση;"
+  ];
+  for (const text of probes) assert.equal(probesAnotherCustomer(text), true, text);
+});
+
+test("habitual or present-tense transactions by a specific customer are refused trilingually", () => {
+  const probes = [
+    "How much does your client pay for this package?",
+    "What price do your customers get quoted for formation?",
+    "كم يدفع عميلكم عادة لتأسيس الشركة؟",
+    "Πόσα πληρώνει συνήθως ο πελάτης σας για την ίδρυση;",
+    "Τι χρεώνετε στον πελάτη σας για αυτό το πακέτο;"
+  ];
+  for (const text of probes) assert.equal(probesAnotherCustomer(text), true, text);
+});
+
+test("generic customer pricing questions stay answerable", () => {
+  const questions = [
+    "What do customers typically pay for company formation?",
+    "كم عادة يدفع العملاء لتأسيس الشركة؟",
+    "Πόσο πληρώνουν συνήθως οι πελάτες για την ίδρυση;"
+  ];
+  for (const text of questions) assert.equal(probesAnotherCustomer(text), false, text);
+});
+
+test("remaining-customer transaction probes are refused in English, Arabic, and Greek", () => {
+  const probes = [
+    "What did the remaining customers pay?",
+    "What do the rest of the applicants usually pay?",
+    "What did the remaining customers pay for my company formation?",
+    "كم دفع باقي العملاء؟",
+    "قديش دفع باقي الزباين لتأسيس الشركة؟",
+    "كم دفع باقي العملاء عن تأسيس شركتي؟",
+    "Πόσα πλήρωσαν οι υπόλοιποι πελάτες;",
+    "Τι πλήρωσαν οι λοιποί επενδυτές για το έργο;",
+    "Πόσα πλήρωσαν οι υπόλοιποι πελάτες για τη δική μου σύσταση;"
+  ];
+  for (const text of probes) assert.equal(probesAnotherCustomer(text), true, text);
+});
+
 test("the negative corpus stays balanced across the three languages", () => {
   const count = (pattern) => OWN_FILE_CORPUS.filter((text) => pattern.test(text)).length;
   assert.ok(count(/[؀-ۿ]/u) >= 12, "too few Arabic near-misses");
@@ -259,6 +303,15 @@ test("Greek stems do not swallow the ordinary word they are a prefix of", () => 
     "Χρειάζεται άλλη αίτηση για τη σύζυγό μου;",
     "Υπάρχει άλλη διαδικασία για την εταιρεία μου;"
   ]) assert.equal(probesAnotherCustomer(text), false, text);
+});
+
+test("Greek relative-customer rules require a real word boundary", () => {
+  for (const text of [
+    "αντιπροηγούμενος πελάτης",
+    "μηπροηγούμενος πελάτης"
+  ]) assert.equal(probesAnotherCustomer(text), false, text);
+
+  assert.equal(probesAnotherCustomer("ο προηγούμενος πελάτης"), true);
 });
 
 // --------------------------------------------------------------------------

@@ -6,9 +6,10 @@ export function groupHandoversByContact(handovers = []) {
     const contactKey = handover.contact?.id || handover.contact?.userId || handover.id;
     let group = groups.get(contactKey);
     if (!group) {
-      group = { ...handover, groupKey: contactKey, groupCount: 0, handoverIds: [], drafts: [], alerts: [] };
+      group = { ...handover, groupKey: contactKey, groupCount: 0, handoverIds: [], records: [], drafts: [], alerts: [] };
       groups.set(contactKey, group);
     }
+    group.records.push(handover);
     group.groupCount += 1;
     group.groupCount = Math.max(group.groupCount, Array.isArray(handover.summary?.relatedRequests) ? handover.summary.relatedRequests.length : 0);
     if (handover.id) group.handoverIds.push(handover.id);
@@ -27,4 +28,9 @@ export function countUniqueHandoverContacts(handovers = []) {
     contacts.add(contactId ? `contact:${contactId}` : `handover:${handover.id || contacts.size}`);
   }
   return contacts.size;
+}
+
+export function handoverDraftContext(draft, handoverGroup) {
+  if (!draft?.handover_id || !Array.isArray(handoverGroup?.records)) return null;
+  return handoverGroup.records.find((record) => record.id === draft.handover_id) || null;
 }

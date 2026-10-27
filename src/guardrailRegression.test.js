@@ -504,6 +504,12 @@ test("P2.6: no regression — with no evidence the gate is a strict SUPERSET of 
 
 // -------------------------------------------- zero guarantees / zero conclusions
 
+test("pointed Arabic inclusion does not trigger the unconditional guarantee guard", () => {
+  const reply = "أكيد، بنساعدك بتأسيس الشركة فقط، وما رح أضمّن الاستثمار أو العقارات.";
+  assert.equal(containsUnconditionalProhibition(reply, { language: "arabic" }), false);
+  assert.equal(containsUnconditionalProhibition("أنا أضمن لك موافقة البنك.", { language: "arabic" }), true);
+});
+
 test("P2.6: ZERO GUARANTEES and ZERO PERSONALIZED CONCLUSIONS on the M2 evidence path", () => {
   assert.equal(FORBIDDEN_ROWS.length, 63, "7 categories x 3 languages x 3 variants");
   for (const row of FORBIDDEN_ROWS) {

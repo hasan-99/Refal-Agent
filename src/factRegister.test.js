@@ -4,7 +4,7 @@ const {
   STATUS, SEED, HIGH_RISK_FACTS, HIGH_RISK_MAX_CADENCE_DAYS,
   addDays, cadenceForFact, seedRegister, applyOverrides,
   effectiveStatus, factBehaviour, isStatable,
-  chunkFactIds, filterRetrievableEvidence, classifyEvidence,
+  chunkFactIds, filterRetrievableEvidence, filterStatableEvidence, classifyEvidence,
   factsExpiringWithin, expiredFacts, reapprove, auditRegister,
 } = require("./factRegister");
 const { FACT_IDS, requiredFactsForTopic } = require("./brainFactMap");
@@ -33,20 +33,36 @@ test("the register seeds one row per catalogue fact, and the catalogue covers ev
   for (const id of FACT_IDS) assert.ok(register.has(id), `missing register row for ${id}`);
 });
 
-test("Rule 1: MB facts are seeded approved by BOSS, live from day one", () => {
+test("manual claims remain pending until explicitly approved, despite carrying provenance", () => {
   const register = seedRegister();
   for (const row of register.values()) {
-    assert.equal(row.status, STATUS.APPROVED, `${row.id} was not seeded approved`);
+    assert.equal(row.status, STATUS.PENDING, `${row.id} became speakable without explicit approval`);
     assert.equal(row.reviewer, SEED.reviewer);
-    assert.equal(row.verifiedAt, SEED.verifiedAt);
-    assert.ok(row.sourceDocument.includes("Master Brain"), `${row.id} has no source document`);
+    assert.ok(row.verifiedAt);
+    assert.ok(row.expiryOrReviewAt > row.verifiedAt);
+    assert.ok(row.sourceDocument, `${row.id} has no source document`);
+    assert.ok(
+      /^https?:\/\//u.test(row.sourceDocument) || row.sourceDocument.includes("Master Brain"),
+      `${row.id} should retain a primary-source URL or owner-source provenance for review`,
+    );
   }
 });
 
-test("Rule 2: every row carries an expiry that is after its verification date", () => {
+test("VAT/EORI and employer compliance facts use the volatile review cadence and remain pending", () => {
+  const register = seedRegister();
+  for (const id of ["MB-F26", "MB-F27"]) {
+    const row = register.get(id);
+    assert.equal(row.volatility, "VOLATILE", `${id} contains changing VAT, customs, or employment requirements`);
+    assert.equal(row.status, STATUS.PENDING, `${id} cannot become customer evidence without independent approval`);
+  }
+});
+
+test("only approved rows carry a review date after verification", () => {
   for (const row of seedRegister().values()) {
-    assert.ok(row.expiryOrReviewAt, `${row.id} has no review date, so Rule 2 can never fire`);
-    assert.ok(row.expiryOrReviewAt > row.verifiedAt, `${row.id} expires on or before it was verified`);
+    if (row.status === STATUS.APPROVED) {
+      assert.ok(row.expiryOrReviewAt, `${row.id} has no review date`);
+      assert.ok(row.expiryOrReviewAt > row.verifiedAt, `${row.id} expires on or before it was verified`);
+    }
   }
 });
 
@@ -68,7 +84,7 @@ test("the cadence is derived from the taxonomy, so a row cannot hand itself a fr
   const register = seedRegister();
   for (const row of register.values()) {
     assert.equal(row.reviewCadenceDays, cadenceForFact(row), `${row.id} drifted from the derived cadence`);
-    assert.equal(row.expiryOrReviewAt, addDays(row.verifiedAt, row.reviewCadenceDays));
+    if (row.status === STATUS.APPROVED) assert.equal(row.expiryOrReviewAt, addDays(row.verifiedAt, row.reviewCadenceDays));
   }
 });
 
@@ -84,7 +100,7 @@ test("every fact a topic is required to state has a register row", () => {
 // ------------------------------------------------------------- the four gates
 
 test("an APPROVED fact is statable, and says so with its evidence", () => {
-  const register = seedRegister();
+  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: addDays(DAY, 30) }]);
   const behaviour = factBehaviour("MB-F19", { register, now: DAY });
   assert.equal(behaviour.status, STATUS.APPROVED);
   assert.equal(behaviour.statable, true);
@@ -93,7 +109,7 @@ test("an APPROVED fact is statable, and says so with its evidence", () => {
 });
 
 test("an EXPIRED fact cannot be asserted, and REFAL offers a specialist instead of guessing", () => {
-  const register = seedRegister();
+  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: "2025-01-01", expiryOrReviewAt: "2026-01-01" }]);
   const row = register.get("MB-F19");
   // No code change, no redeploy. One date moved into the past.
   register.set("MB-F19", { ...row, expiryOrReviewAt: "2026-01-01" });
@@ -133,8 +149,23 @@ test("a blocked fact does not leak through a chunk that also carries an approved
   assert.deepEqual(dropped[0].blocked, ["MB-F19"]);
 });
 
+test("pending, expired, and unapproved-language facts never reach the answer model", () => {
+  const chunkWith = (status, language = "en", expiry = "2027-01-01") => ({
+    metadata: { facts: ["MB-F19"] },
+    policyMetadata: { facts: ["MB-F19"], factRegisterRows: [{
+      id: "MB-F19", status, reviewer: "reviewer", verifiedAt: "2026-01-01",
+      expiryOrReviewAt: expiry, effectiveFrom: null, approvedLanguages: [language]
+    }] }
+  });
+  assert.equal(filterStatableEvidence([chunkWith("pending")], { lang: "en", now: DAY }).kept.length, 0);
+  assert.equal(filterStatableEvidence([chunkWith("approved", "en", "2026-01-01")], { lang: "en", now: DAY }).kept.length, 0);
+  assert.equal(filterStatableEvidence([chunkWith("approved", "en")], { lang: "ar", now: DAY }).kept.length, 0);
+  assert.equal(filterStatableEvidence([chunkWith("approved")], { lang: "en", now: DAY }).kept.length, 1);
+  assert.equal(filterStatableEvidence([chunk(["MB-F19"])], { lang: "en", now: DAY }).kept.length, 0, "offline seed is pending by default");
+});
+
 test("changing a register row changes behaviour with no redeploy", () => {
-  const register = seedRegister();
+  const register = applyOverrides(seedRegister(), [{ id: "MB-F20", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: addDays(DAY, 30) }]);
   const call = () => factBehaviour("MB-F20", { register, now: DAY }).statable;
 
   assert.equal(call(), true);
@@ -148,7 +179,7 @@ test("changing a register row changes behaviour with no redeploy", () => {
 
 test("a fact that is not yet in force reads as pending, not as expired", () => {
   const register = seedRegister();
-  const row = register.get("MB-F19");
+  const row = { ...register.get("MB-F19"), status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY };
   register.set("MB-F19", { ...row, effectiveFrom: "2030-01-01", expiryOrReviewAt: "2031-01-01" });
   const behaviour = factBehaviour("MB-F19", { register, now: DAY });
   assert.equal(behaviour.status, STATUS.PENDING);
@@ -158,7 +189,7 @@ test("a fact that is not yet in force reads as pending, not as expired", () => {
 
 test("expiry is evaluated against the caller's clock, not the module load time", () => {
   const register = seedRegister();
-  const row = register.get("MB-F19");
+  const row = { ...register.get("MB-F19"), status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: addDays(DAY, 30) };
   const dayBefore = row.expiryOrReviewAt;
   const dayAfter = addDays(row.expiryOrReviewAt, 1);
   assert.equal(effectiveStatus(row, dayBefore), STATUS.APPROVED, "a fact is still good on its review date");
@@ -172,7 +203,7 @@ test("an unknown fact id is never statable and never silently treated as approve
 });
 
 test("a language that is not approved for a fact cannot state it", () => {
-  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", approvedLanguages: ["en"] }]);
+  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: addDays(DAY, 30), approvedLanguages: ["en"] }]);
   assert.equal(isStatable("MB-F19", { register, now: DAY, lang: "en" }), true);
   assert.equal(isStatable("MB-F19", { register, now: DAY, lang: "ar" }), false);
   assert.equal(factBehaviour("MB-F19", { register, now: DAY, lang: "el" }).reason, "language_not_approved");
@@ -190,8 +221,9 @@ test("every fact is approved in all three languages by default", () => {
 
 test("classifyEvidence separates what may be said from what must be deflected", () => {
   const register = applyOverrides(seedRegister(), [
+    { id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: addDays(DAY, 30) },
     { id: "MB-F20", status: STATUS.BLOCKED },
-    { id: "MB-F21", expiryOrReviewAt: "2020-01-01" },
+    { id: "MB-F21", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: "2025-01-01", expiryOrReviewAt: "2020-01-01" },
   ]);
   const result = classifyEvidence(
     [chunk(["MB-F19"]), chunk(["MB-F20"]), chunk(["MB-F21"])],
@@ -216,8 +248,8 @@ test("W3.9.7: the review soon list finds exactly the rows inside the horizon", (
   const soon = addDays(DAY, 3);
   const later = addDays(DAY, 90);
   applyOverrides(register, [
-    { id: "MB-F19", expiryOrReviewAt: soon },
-    { id: "MB-F20", expiryOrReviewAt: later },
+    { id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: soon },
+    { id: "MB-F20", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: DAY, expiryOrReviewAt: later },
   ]);
   const due = factsExpiringWithin(7, { register, now: DAY });
   const ids = due.map((r) => r.id);
@@ -228,7 +260,7 @@ test("W3.9.7: the review soon list finds exactly the rows inside the horizon", (
 
 test("one click re-approval re-dates from today, not from the stale expiry", () => {
   const register = seedRegister();
-  const stale = { ...register.get("MB-F19"), expiryOrReviewAt: "2026-01-01" };
+  const stale = { ...register.get("MB-F19"), status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: "2025-01-01", expiryOrReviewAt: "2026-01-01" };
   assert.equal(effectiveStatus(stale, DAY), STATUS.EXPIRED);
 
   const fresh = reapprove(stale, { reviewer: "BOSS", now: DAY });
@@ -259,7 +291,7 @@ test("re-approval refuses an anonymous reviewer and refuses to stretch a high ri
 });
 
 test("expiredFacts reports every row the clock has retired", () => {
-  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", expiryOrReviewAt: "2020-01-01" }]);
+  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: "2019-01-01", expiryOrReviewAt: "2020-01-01" }]);
   const ids = expiredFacts({ register, now: DAY }).map((r) => r.id);
   assert.deepEqual(ids, ["MB-F19"]);
 });
@@ -273,7 +305,7 @@ test("the seeded register passes its own audit on the day it was seeded", () => 
 });
 
 test("the audit catches a row whose review date has quietly passed", () => {
-  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", expiryOrReviewAt: "2020-01-01" }]);
+  const register = applyOverrides(seedRegister(), [{ id: "MB-F19", status: STATUS.APPROVED, reviewer: "reviewer", verifiedAt: "2019-01-01", expiryOrReviewAt: "2020-01-01" }]);
   const problems = auditRegister({ register, now: DAY });
   assert.ok(problems.some((p) => p.id === "MB-F19" && p.severity === "high"));
 });
@@ -291,14 +323,14 @@ test("applyOverrides rejects an unknown fact and an unknown status", () => {
 
 // --------------------------------------------- the W3.9.6 worked example
 
-test("W3.9.6: REFAL states 15% from day one, and the row carries the effective date and a short review", () => {
+test("unreviewed tax figures remain unstatable even when the catalogue records a candidate value", () => {
   const register = seedRegister();
   const row = register.get("MB-F19");
   assert.equal(row.effectiveFrom, "2026-01-01", "the 12.5% question is answered by the effective date, not by hedging");
   assert.ok(row.claimText.includes("15"), "the claim text must carry the rate it approves");
   assert.ok(row.highRisk, "the corporate tax rate is one of the twenty");
   assert.ok(row.reviewCadenceDays <= 90);
-  assert.equal(factBehaviour("MB-F19", { register, now: DAY }).statable, true);
+  assert.equal(factBehaviour("MB-F19", { register, now: DAY }).statable, false);
 });
 
 test("MB-F9 holds the package price row without holding the number", () => {

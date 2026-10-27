@@ -316,7 +316,7 @@ test("`supporting` lets a document cite a fact another topic owns", () => {
       "---", "",
     ].join("\n");
     const body = [
-      `## What it is\n<!-- facts: ${facts.join(", ")} -->\nThe effective rate reaches 2.5% to 3% against the base rate of 15% from 2026. ${"a".repeat(300)}\n`,
+      `## What it is\n<!-- facts: ${facts.join(", ")} -->\nThe IP Box exempts 80% of qualifying net profit and the remaining share can be taxed at 15% from 2026. ${"a".repeat(300)}\n`,
       `## Who it suits\n<!-- kind: example -->\n${"b".repeat(400)}\n`,
       `## What it does not do\n<!-- kind: boundary; facts: MB-F21 -->\n${"c".repeat(400)}\n`,
     ].join("\n");
@@ -442,4 +442,48 @@ test("every corpus file present on disk is valid", () => {
     }
   }
   assert.deepEqual(broken, [], `corpus files on disk have validation errors:\n${broken.join("\n")}`);
+});
+
+test("VAT and EORI guidance stays multilingual and avoids unsupported order, delay, and cost promises", () => {
+  const docs = Object.fromEntries(LANGUAGES.map((lang) => [lang,
+    fs.readFileSync(path.join(REPO, "knowledge", "vat-and-eori", `${lang}.md`), "utf8")]));
+  const requiredRateHeading = {
+    en: "## The VAT rate in Cyprus",
+    ar: "## نسبة الـ VAT بقبرص",
+    el: "## Οι συντελεστές ΦΠΑ στην Κύπρο",
+  };
+  const requiredOrderBoundary = {
+    en: "There is no fixed sequence",
+    ar: "ما في ترتيب واحد",
+    el: "Δεν υπάρχει μία σταθερή σειρά",
+  };
+  for (const lang of LANGUAGES) {
+    assert.ok(docs[lang].includes(requiredRateHeading[lang]), `${lang} needs the VAT rate and registration boundary section`);
+    assert.ok(docs[lang].includes(requiredOrderBoundary[lang]), `${lang} must make clear that the checklist is not a fixed universal order`);
+  }
+  assert.doesNotMatch(docs.en, /most often gets left|far cheaper|a shipment that arrives before them waits|typical trading file runs roughly in this order|border costs more/iu);
+  assert.doesNotMatch(docs.ar, /غالباً بيتأجل|أغلى طريقة للجواب|أرخص بكتير|الشحنة اللي بتوصل قبلهم بتستنى|الانتظار عالحدود بيكلف/u);
+  assert.doesNotMatch(docs.el, /συνήθως αφήνεται για αργότερα|ο ακριβός τρόπος|ένα φορτίο που φτάνει νωρίτερα περιμένει|κοστίζει περισσότερο από τον προγραμματισμό/iu);
+});
+
+test("salary and dividend corpus does not turn case-specific tax treatment into universal rules", () => {
+  const docs = Object.fromEntries(LANGUAGES.map((lang) => [lang,
+    fs.readFileSync(path.join(REPO, "knowledge", "dividends-vs-salary", `${lang}.md`), "utf8")]));
+  assert.doesNotMatch(docs.en, /normally a deductible expense|company has already earned and already been taxed|does not by itself oblige you to draw a salary|distribution goes to every share in the class/iu);
+  assert.doesNotMatch(docs.ar, /مصروف قابل للخصم|انحاسب عليه ضريبياً|ما بيلزمك لحاله تاخد راتب|بيروح لكل الأسهم بنفس الفئة/u);
+  assert.doesNotMatch(docs.el, /εκπιπτόμενη δαπάνη|έχει ήδη φορολογηθεί|δεν σας υποχρεώνει να λαμβάνετε μισθό|σε κάθε μετοχή της κατηγορίας/iu);
+  for (const lang of LANGUAGES) assert.match(docs[lang], /qualified tax specialist|مختص ضريبي|φορολογικό σύμβουλο/iu);
+});
+
+test("corporate-tax guidance avoids treating accounting profit or four intake answers as a tax calculation", () => {
+  const docs = Object.fromEntries(LANGUAGES.map((lang) => [lang,
+    fs.readFileSync(path.join(REPO, "knowledge", "corporate-tax", `${lang}.md`), "utf8")]));
+  assert.doesNotMatch(docs.en, /revenue minus allowable expenses gives the taxable result|reporting and accounting obligations continue|four short answers turn the headline rate into something you can plan with|with those four, the conversation stops being about a rate/iu);
+  assert.doesNotMatch(docs.ar, /الإيرادات ناقص المصاريف المسموح فيها بتعطي النتيجة الخاضعة للضريبة|التزاماتها التقاريرية والمحاسبية مستمرة|أربع إجابات قصيرة بتحوّل النسبة العامة لخطة/u);
+  assert.doesNotMatch(docs.el, /έσοδα μείον εκπιπτόμενες δαπάνες δίνουν το φορολογητέο αποτέλεσμα|οι υποχρεώσεις αναφοράς και λογιστικής συνεχίζονται|τέσσερις σύντομες απαντήσεις μετατρέπουν τον γενικό συντελεστή/iu);
+  for (const lang of LANGUAGES) {
+    assert.match(docs[lang], /15%/u, `${lang} must retain the sourced 2026 headline rate`);
+    assert.match(docs[lang], /qualified tax specialist|مختص ضريبي مؤهل|ειδικός φορολογικός σύμβουλος/iu,
+      `${lang} must route personalized calculations to case review`);
+  }
 });

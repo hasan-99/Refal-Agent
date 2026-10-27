@@ -6,7 +6,9 @@ const {
   classifyClaim,
   evaluateAnswerClaims,
   approvedEvidenceText,
-  isApprovedEvidence
+  isApprovedEvidence,
+  containsGuaranteeMarker,
+  containsPersonalizedConclusion
 } = require("./claimPolicy");
 const { MB_CANDIDATES, LANGUAGES, LANGUAGE_NAMES } = require("./brainMbCandidates");
 
@@ -420,6 +422,57 @@ test("a guarantee is blocked without evidence too", () => {
   assert.equal(verdict.allowed, false);
 });
 
+test("qualified absence of a guaranteed government timeline is not mistaken for a promise", () => {
+  const safe = classifyClaim("المعالجة الحكومية بيد الجهات المختصة وما إلها موعد ثابت مضمون.", { evidence: [] });
+  assert.notEqual(safe.claimClass, CLAIM_CLASSES.GUARANTEE);
+  const mixed = classifyClaim("ما في موعد ثابت مضمون، لكننا نضمن موافقة البنك.", { evidence: [] });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.deepEqual(mixed.reasons, ["guarantee_marker"]);
+});
+
+test("Arabic refusal to state a guaranteed investment return is not a guarantee", () => {
+  for (const sentence of [
+    "ما عندي أساس أقدر أحدد منه ربحًا مضمونًا لاستثمار ١٠٠ ألف؛ لذلك ما بقدر أذكر مبلغًا أو نسبة مضمونة.",
+    "ما عندي معلومات موثوقة تحدد ربحًا مضمونًا لاستثمار ١٠٠ ألف، لذلك ما بقدر أذكر مبلغًا أو نسبة مضمونة."
+  ]) {
+    assert.equal(classifyClaim(sentence, { language: "arabic" }).allowed, true, sentence);
+  }
+  const mixed = classifyClaim("ما في ربح مضمون لكن نضمن لك ربحًا مضمونًا.", { language: "arabic" });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(mixed.allowed, false);
+});
+
+test("a contracted statement that approval is not guaranteed remains a permitted safeguard", () => {
+  for (const sentence of [
+    "A bank account isn't guaranteed.",
+    "A bank account is not guaranteed.",
+    "Bank approval wasn't guaranteed by the application."
+  ]) {
+    const verdict = classifyClaim(sentence, { evidence: [] });
+    assert.notEqual(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, sentence);
+    assert.equal(verdict.allowed, true, sentence);
+    assert.equal(containsGuaranteeMarker(sentence), false, sentence);
+  }
+  const mixed = classifyClaim("An account isn't guaranteed, but we guarantee approval.", { evidence: [] });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(mixed.allowed, false);
+});
+
+test("a passive refusal that approval cannot be guaranteed remains safe without masking a later promise", () => {
+  for (const sentence of [
+    "An account can't be guaranteed.",
+    "An account cannot be guaranteed.",
+    "An account couldn’t be guaranteed."
+  ]) {
+    const verdict = classifyClaim(sentence, { evidence: [] });
+    assert.notEqual(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, sentence);
+    assert.equal(verdict.allowed, true, sentence);
+  }
+  const mixed = classifyClaim("An account can't be guaranteed, but we guarantee approval.", { evidence: [] });
+  assert.equal(mixed.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(mixed.allowed, false);
+});
+
 test("100% approval is caught even though \\b can never match after a percent sign", () => {
   const verdict = classifyClaim("This route has 100% approval for every applicant.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, verdict.reasons.join(", "));
@@ -513,6 +566,32 @@ test("a personalized conclusion outranks a programme fact in the same sentence",
   assert.equal(verdict.allowed, false);
 });
 
+test("a first-person refusal to determine eligibility is a limitation, not a personalized conclusion", () => {
+  const text = "I can’t determine the applicable conditions or your eligibility.";
+  const verdict = classifyClaim(text, { evidence: [] });
+  assert.equal(verdict.claimClass, CLAIM_CLASSES.NEUTRAL);
+  assert.equal(verdict.allowed, true);
+  assert.equal(containsPersonalizedConclusion(text), false);
+});
+
+test("a denied eligibility assessment does not hide a positive conclusion that follows it", () => {
+  const text = "I can’t determine your eligibility, but you qualify.";
+  const verdict = classifyClaim(text, { evidence: [] });
+  assert.equal(verdict.claimClass, CLAIM_CLASSES.PERSONALIZED_CONCLUSION);
+  assert.equal(verdict.allowed, false);
+  assert.equal(containsPersonalizedConclusion(text), true);
+});
+
+test("eligibility limitations are recognized in Arabic and Greek without allowing positive outcomes", () => {
+  for (const text of [
+    "ما فيني أكد أهليتك.",
+    "Δεν μπορώ να επιβεβαιώσω την επιλεξιμότητά σας."
+  ]) {
+    assert.equal(containsPersonalizedConclusion(text), false, text);
+    assert.equal(classifyClaim(text, { evidence: [] }).claimClass, CLAIM_CLASSES.NEUTRAL, text);
+  }
+});
+
 test("a programme fact outranks NEUTRAL whenever a number is present", () => {
   const verdict = classifyClaim("We have 3 offices.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.PROGRAM_FACT);
@@ -571,6 +650,16 @@ test("bare-alef اضمن is caught exactly like أضمن", () => {
 test("Arabic diacritics and tatweel do not hide a guarantee", () => {
   const verdict = classifyClaim("العائد مَضْمُون على هذا الاستثمار.", { evidence: [] });
   assert.equal(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, verdict.reasons.join(", "));
+});
+
+test("explicit Arabic shadda distinguishes including an excluded service from guaranteeing an outcome", () => {
+  const preference = "ما رح أضمّن الاستثمار أو العقارات.";
+  assert.equal(containsGuaranteeMarker(preference), false);
+  assert.notEqual(classifyClaim(preference, { evidence: [], language: "arabic" }).claimClass, CLAIM_CLASSES.GUARANTEE);
+  for (const guarantee of ["أنا أضمن لك الموافقة.", "العائد مضمون على هذا الاستثمار.", "نضمن موافقة البنك."]) {
+    assert.equal(containsGuaranteeMarker(guarantee), true, guarantee);
+    assert.equal(classifyClaim(guarantee, { evidence: [], language: "arabic" }).claimClass, CLAIM_CLASSES.GUARANTEE, guarantee);
+  }
 });
 
 test("an Arabic marker adjacent to other letters still matches without \\b", () => {
@@ -707,6 +796,26 @@ test("classifyClaim ignores malformed evidence entries without throwing", () => 
   const sentence = "Reduced VAT of 5% can apply to a first permanent residence.";
   assert.doesNotThrow(() => classifyClaim(sentence, { evidence: [null, undefined, 3, "x", approved(sentence)] }));
   assert.equal(classifyClaim(sentence, { evidence: [null, undefined, 3, "x", approved(sentence)] }).allowed, true);
+});
+
+test("approved document text supports grounded claims without evidence references or a second Fact Register approval", () => {
+  const content = "The corporate tax rate is 15 percent from 2026.";
+  const evidence = {
+    ...approved(content),
+    metadata: { facts: ["MB-F19"], supporting: [] },
+    policyMetadata: {
+      facts: ["MB-F19"], governedFacts: ["MB-F19"],
+      factRegisterRows: [{ id: "MB-F19", status: "pending", reviewer: "reviewer", verifiedAt: "2026-01-01", expiryOrReviewAt: "2027-01-01", approvedLanguages: ["en"] }]
+    }
+  };
+  assert.equal(isApprovedEvidence(evidence, { language: "english" }), true);
+  assert.equal(classifyClaim(content, { evidence: [evidence], language: "english" }).allowed, true);
+  evidence.metadata.supporting = [{ type: "general_reference", url: "https://refalco.com/" }];
+  evidence.policyMetadata.factRegisterRows = [];
+  assert.equal(isApprovedEvidence(evidence, { language: "english" }), true);
+  assert.equal(classifyClaim(content, { evidence: [evidence], language: "greek" }).allowed, true);
+  evidence.policyMetadata.factRegisterRows = [{ id: "MB-F19", status: "blocked" }];
+  assert.equal(isApprovedEvidence(evidence, { language: "english" }), false, "an explicit owner block remains enforced");
 });
 
 test("evaluateAnswerClaims is safe for empty, null and undefined input", () => {

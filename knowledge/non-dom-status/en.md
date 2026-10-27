@@ -1,7 +1,7 @@
 ---
 topic: non-dom-status
 lang: en
-title: Non Dom status in Cyprus: what the 17 year regime covers
+title: Non Dom status in Cyprus: SDC treatment and deemed domicile
 facts: MB-F34
 aliases: what is non dom status | non dom cyprus | how long does the non dom benefit last | are dividends exempt from tax under non dom | who qualifies for non dom | difference between tax residency and non dom | do i need to stay 183 days in cyprus | is there a 60 day rule in cyprus | is bank interest also exempt | what happens after the 17 years | non domiciled cyprus tax | 0% dividends and interest cyprus | moving my tax residency to cyprus | new cyprus tax resident benefits | cyprus dividend tax for foreigners
 ---
@@ -18,15 +18,15 @@ The second is that you are treated as not domiciled in Cyprus. Domicile is about
 
 Someone born in Cyprus who has always lived there is tax resident but is normally domiciled, so the regime is not aimed at them. It is aimed at individuals who newly become Cyprus tax residents after building their lives elsewhere.
 
-## The 0% rate and the 17 year window
+## SDC treatment and deemed-domicile rules
 <!-- facts: MB-F34 -->
-For individuals who newly become Cyprus tax residents, the Non Dom regime takes the rate on dividends and on interest down to 0%.
+An individual who qualifies as non-domiciled under Cyprus rules is generally outside Special Defence Contribution (SDC) on dividends and interest while eligible. This is not a blanket zero-tax promise: eligibility, other taxes or contributions, and the treatment in the person's circumstances need current specialist review.
 
-Both categories are covered. Dividends from a Cyprus company and dividends from abroad fall inside it, and so does interest, including ordinary bank interest.
+The guidance covers dividends and interest, but whether a particular payment and person meet the conditions must be checked against the current rules and the person's filings.
 
-The window is 17 years. It is a defined period attached to you as an individual. It is not an open ended status and it does not renew by itself simply because you keep living in Cyprus.
+Cyprus has a deemed-domicile test based on being tax resident for 17 of the previous 20 years. Current Tax Department guidance also describes an alternative extension application under the 2026 rules, subject to its conditions. The interaction of these rules is personal and should not be reduced to a guaranteed 17-year benefit.
 
-Two limits belong next to the headline. The 0% describes the treatment of dividends and interest and does not switch off every other charge, since separate contributions, such as national health system contributions, run under their own rules. And other income is outside this treatment entirely: salary, rent, business profit and gains are taxed under the rules that apply to them.
+This treatment does not switch off every other charge, since separate contributions, such as national health system contributions, run under their own rules. Salary, rent, business profit and gains are outside this SDC exemption and follow their own rules.
 
 ## Who it applies to, and who it does not
 <!-- facts: MB-F34 -->
@@ -40,9 +40,9 @@ Leaving has consequences too. If you stop being a Cyprus tax resident, the treat
 
 ## What changes at the end of the window
 <!-- facts: MB-F34 -->
-The 17 year window has an end, and a plan that ignores it is incomplete.
+The deemed-domicile and SDC rules need to be checked over time; a plan that ignores them is incomplete.
 
-After it, dividends and interest are no longer treated under the Non Dom regime. They fall under the ordinary rules that apply to a Cyprus tax resident who is domiciled in Cyprus. That is a change in cost, so it belongs in a long term plan rather than in a footnote.
+When a person is treated as deemed domiciled or otherwise no longer meets the applicable exemption conditions, SDC may apply under the rules then in force. The Tax Department describes an alternative extension application for 2026, but it has conditions and is not automatic. A tax adviser should review the person's residence history and filings before estimating any change in cost.
 
 There is also a counting question people rarely ask early enough. The window is measured over a defined period of Cyprus tax residency, so years in which you were not a Cyprus tax resident are not treated the same as years in which you were. How the count applies to your own record is confirmed with a tax advisor against the legislation, not estimated from an arrival date.
 

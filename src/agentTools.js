@@ -8,13 +8,15 @@
 // rather than reimplementing them.
 
 const { createHash } = require("node:crypto");
+const { detectMessageLanguage } = require("./language");
+const { redactPersonalData } = require("./ai");
 
 const { getConsentState } = require("./leadQualification");
 const { createHandover } = require("./handover");
 const { getConversationState } = require("./conversationState");
 const { ok, fail } = require("./agentToolResult");
 const { getBookingAvailability, requestBookingAction } = require("./agentBookingTools");
-const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeCrmCandidate } = require("./crmProfile");
+const { CRM_FIELDS, CUSTOMER_PROVENANCE, extractLiteralEvidence, extractLiteralSpan, isNegatedLiteralMention, isSelfIdentifiedName, isExplicitCorrectionMessage, normalizeForComparison, normalizeCrmCandidate } = require("./crmProfile");
 
 const DYNAMIC_READS = Object.freeze({
   lookupActiveOffer: { kind: "offers", fields: ["code"] },
@@ -366,6 +368,18 @@ function isPlainString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function currentMessageSearchQuery(message) {
+  const text = isPlainString(message) ? message.trim().slice(0, 1000) : "";
+  const boundary = /[?؟;;]/u.exec(text);
+  if (!boundary) return text;
+  const focusedQuestion = text.slice(0, boundary.index + boundary[0].length).trim();
+  // A short social opener such as "Hi?" is not a useful knowledge query.
+  // Keep the full text in model context; this only makes retrieval follow the
+  // first substantive question before later exclusions or side questions.
+  return focusedQuestion.length >= 20 && text.slice(boundary.index + boundary[0].length).trim()
+    ? focusedQuestion : text;
+}
+
 // --- searchApprovedKnowledge -------------------------------------------------
 // Wraps the existing embed + knowledge-search path (src/ai.js embedText,
 // store.searchKnowledge). Approval/freshness/review-status filtering happens
@@ -382,9 +396,9 @@ function isPlainString(value) {
 // field (`modelObservation`), never a tool's raw `data`. Reused for every
 // outcome (found/no_evidence/error) so the decision formatter has one
 // uniform shape to look for regardless of status.
-const MAX_RAG_EVIDENCE_ITEMS = 4;
-const MAX_RAG_EVIDENCE_CONTENT_CHARS = 500;
-const MAX_RAG_EVIDENCE_TOTAL_CHARS = 1600;
+const MAX_RAG_EVIDENCE_ITEMS = 16;
+const MAX_RAG_EVIDENCE_CONTENT_CHARS = 12000;
+const MAX_RAG_EVIDENCE_TOTAL_CHARS = 18000;
 const MAX_RAG_EVIDENCE_TITLE_CHARS = 160;
 const MAX_RAG_EVIDENCE_SECTION_CHARS = 160;
 const MAX_RAG_EVIDENCE_SOURCE_REF_CHARS = 80;
@@ -393,53 +407,30 @@ function safeField(value, max) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
 }
 
-const BRAIN_FACT_ID = /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u;
-const KNOWLEDGE_LANGUAGES = Object.freeze({ arabic: "ar", english: "en", greek: "el" });
-
-function knowledgeLanguageCode(value) {
-  const normalized = String(value || "").trim().toLowerCase();
-  return KNOWLEDGE_LANGUAGES[normalized] || (Object.hasOwn({ ar: true, en: true, el: true }, normalized) ? normalized : null);
-}
-
-function dateOnly(value) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(value.trim());
-  if (match) return match[1];
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : null;
-}
-
-// Fact-linked chunks require a complete, current register record for every
-// linked fact before they can reach the Agent model. A document-level approval
-// is not enough because the register can independently block or expire one
-// fact inside an otherwise approved document.
-function factLinkedChunkIsCurrent(row, language, now = new Date()) {
+// Search RPC and the Edge evidence resolver already verify the active source,
+// approved revision, and revision expiry. Fact Register links and Evidence
+// references are annotations; they do not decide whether approved indexed
+// text can be read or cited in an answer. Finding aids remain search-only.
+function isCustomerFacingKnowledgeChunk(row) {
   const kind = row?.chunk_kind ?? row?.chunkKind ?? row?.metadata?.kind;
   if (String(kind || "") === "aliases") return false;
-
-  const metadata = row?.policyMetadata;
-  const factIds = Array.isArray(metadata?.facts) ? metadata.facts : [];
-  if (!factIds.length) return true;
-
-  const languageCode = knowledgeLanguageCode(language);
-  if (!languageCode) return false;
-  const registerRows = Array.isArray(metadata?.factRegisterRows) ? metadata.factRegisterRows : [];
-  const rowsById = new Map(registerRows.filter((item) => item && typeof item.id === "string").map((item) => [item.id, item]));
-  const today = now.toISOString().slice(0, 10);
-
-  return factIds.every((rawId) => {
-    const id = String(rawId || "").trim();
-    if (!BRAIN_FACT_ID.test(id)) return false;
-    const fact = rowsById.get(id);
-    if (!fact || fact.status !== "approved") return false;
-    const effectiveFrom = fact.effectiveFrom == null ? null : dateOnly(fact.effectiveFrom);
-    const reviewAt = dateOnly(fact.expiryOrReviewAt);
-    const approvedLanguages = Array.isArray(fact.approvedLanguages) ? fact.approvedLanguages : [];
-    if ((fact.effectiveFrom != null && !effectiveFrom) || !reviewAt) return false;
-    return (!effectiveFrom || effectiveFrom <= today)
-      && reviewAt > today
-      && approvedLanguages.includes(languageCode);
-  });
+  // The Edge search RPC already enforces these gates. Keep the Node boundary
+  // defensive for alternate stores and offline callers: an explicit rejected
+  // state must never be promoted to approved evidence. Missing workflow fields
+  // remain acceptable because the trusted RPC may omit optional metadata.
+  const reviewStatus = row?.review_status ?? row?.reviewStatus;
+  if (reviewStatus != null && reviewStatus !== "approved") return false;
+  if (row?.enabled === false || row?.active === false || row?.is_current === false || row?.isCurrent === false) return false;
+  const validUntil = row?.valid_until ?? row?.validUntil;
+  if (validUntil != null && String(validUntil).trim()) {
+    const expiry = Date.parse(validUntil);
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
+  }
+  // Preserve an explicit owner block. Missing, pending, expired, or
+  // language-limited register rows are not a second approval requirement for
+  // an already approved Knowledge revision.
+  const rows = Array.isArray(row?.policyMetadata?.factRegisterRows) ? row.policyMetadata.factRegisterRows : [];
+  return !rows.some((fact) => fact?.status === "blocked");
 }
 
 // Builds the explicit "approved_knowledge" model observation from already
@@ -452,8 +443,33 @@ function factLinkedChunkIsCurrent(row, language, now = new Date()) {
 // guidance") that has already been through human review/approval. The trust
 // boundary here is the existing `review_status = 'approved'` filter, not a
 // second text scrub.
-function buildApprovedKnowledgeObservation(status, rows = []) {
-  const safeRows = Array.isArray(rows) ? rows : [];
+function buildApprovedKnowledgeObservation(status, rows = [], { candidatePool = false } = {}) {
+  const inputRows = Array.isArray(rows) ? rows : [];
+  // The Edge search route expands each ranked hit to its complete parent
+  // section. Reassemble ordered chunks into that section before applying the
+  // model context budget, so conditions and exceptions travel with the fact.
+  const groupedRows = [];
+  const groupBySection = new Map();
+  for (const row of inputRows) {
+    const sectionIndex = row?.section_index;
+    const groupKey = typeof row?.document_id === "string" && sectionIndex !== null && sectionIndex !== undefined
+      ? `${row.document_id}:${sectionIndex}` : null;
+    if (!groupKey) { groupedRows.push({ ...row, chunkIds: row?.chunk_id ? [row.chunk_id] : [] }); continue; }
+    let group = groupBySection.get(groupKey);
+    if (!group) {
+      group = { ...row, content: "", chunkIds: [], policyMetadata: { ...(row.policyMetadata || {}), facts: [], supporting: [], governedFacts: [], factRegisterRows: [] } };
+      groupBySection.set(groupKey, group);
+      groupedRows.push(group);
+    }
+    if (row?.chunk_id) group.chunkIds.push(row.chunk_id);
+    if (row?.content) group.content = group.content ? `${group.content}\n\n${row.content}` : String(row.content);
+    for (const key of ["facts", "supporting", "governedFacts"]) {
+      group.policyMetadata[key] = [...new Set([...(group.policyMetadata[key] || []), ...(Array.isArray(row?.policyMetadata?.[key]) ? row.policyMetadata[key] : [])])];
+    }
+    group.policyMetadata.factRegisterRows = [...new Map([...(group.policyMetadata.factRegisterRows || []), ...(Array.isArray(row?.policyMetadata?.factRegisterRows) ? row.policyMetadata.factRegisterRows : [])]
+      .filter((fact) => fact?.id).map((fact) => [fact.id, fact])).values()];
+  }
+  const safeRows = groupedRows;
   const evidence = [];
   const policyEvidence = [];
   const factRegisterRows = new Map();
@@ -461,26 +477,31 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
   let truncated = safeRows.length > MAX_RAG_EVIDENCE_ITEMS;
 
   for (const row of safeRows) {
-    if (evidence.length >= MAX_RAG_EVIDENCE_ITEMS) {
+    if (!candidatePool && evidence.length >= MAX_RAG_EVIDENCE_ITEMS) {
       truncated = true;
       break;
     }
     const rawContent = String(row?.content || row?.heading || row?.source_name || "").trim();
     if (!rawContent) continue;
-    const remainingBudget = MAX_RAG_EVIDENCE_TOTAL_CHARS - totalContentChars;
+    const remainingBudget = candidatePool ? Infinity : MAX_RAG_EVIDENCE_TOTAL_CHARS - totalContentChars;
     if (remainingBudget <= 0) {
       truncated = true;
       break;
     }
-    const perItemLimit = Math.min(MAX_RAG_EVIDENCE_CONTENT_CHARS, remainingBudget);
-    const content = rawContent.slice(0, perItemLimit);
-    const contentTruncated = rawContent.length > content.length;
+    // Never detach a claim from conditions at the end of its parent section.
+    if (rawContent.length > MAX_RAG_EVIDENCE_CONTENT_CHARS || rawContent.length > remainingBudget) { truncated = true; continue; }
+    const content = rawContent;
+    const contentTruncated = false;
     totalContentChars += content.length;
     const trustedPolicy = row?.policyMetadata && typeof row.policyMetadata === "object" ? row.policyMetadata : {};
     // Governance metadata is trusted only after the server-side enrichment
     // lookup succeeds. Raw search rows (or future adapters) cannot authorize
     // hooks/comparisons by supplying their own topic/fact labels.
-    const policyFacts = Array.isArray(trustedPolicy.facts) ? trustedPolicy.facts : [];
+    const policyFacts = [...new Set([
+      ...(Array.isArray(trustedPolicy.facts) ? trustedPolicy.facts : []),
+      ...(Array.isArray(trustedPolicy.supporting) ? trustedPolicy.supporting : []),
+      ...(Array.isArray(trustedPolicy.governedFacts) ? trustedPolicy.governedFacts : [])
+    ])];
     const factIds = policyFacts.map((id) => String(id || "").trim())
       .filter((id) => /^MB-(?:F(?:[1-9]|[1-5][0-9]|6[0-6])|C[1-5]|J[0-4]|DYN[1-6])$/u.test(id)).slice(0, 24);
     const ref = safeField(row?.chunk_id || row?.document_id || row?.source_id, MAX_RAG_EVIDENCE_SOURCE_REF_CHARS);
@@ -491,12 +512,17 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
     evidence.push({
       title: safeField(row?.document_title || row?.source_name, MAX_RAG_EVIDENCE_TITLE_CHARS) || "Approved information",
       section: safeField(row?.heading, MAX_RAG_EVIDENCE_SECTION_CHARS),
+      language: detectMessageLanguage(content),
       content,
       contentTruncated,
       // Opaque chunk/document identifiers only (never a reviewer name,
       // approval timestamp, or other workflow metadata) — safe for internal
       // source traceability, never customer/profile data.
-      sourceRef: ref
+      sourceRef: ref,
+      sourceRefs: Array.isArray(row?.chunkIds) ? row.chunkIds.slice(0, 40) : (ref ? [ref] : []),
+      relevance: Number(row?.selectionRelevance) || 1,
+      selectionOrder: Number.isInteger(row?.selectionOrder) ? row.selectionOrder : evidence.length,
+      retrievalRank: Number(row?.rank) || 0
     });
     policyEvidence.push({
       sourceRef: ref,
@@ -506,41 +532,219 @@ function buildApprovedKnowledgeObservation(status, rows = []) {
     });
   }
 
-  return { type: "approved_knowledge", status, evidence, truncated, policyEvidence, factRegisterRows: [...factRegisterRows.values()] };
+  const pool = candidatePool ? { evidence, policyEvidence } : buildApprovedKnowledgeObservation(status, rows, { candidatePool: true });
+  return { type: "approved_knowledge", status, evidence, candidateEvidence: pool.evidence.map((item) => ({ ...item })), truncated, policyEvidence, candidatePolicyEvidence: pool.policyEvidence.map((item) => ({ ...item })), factRegisterRows: [...factRegisterRows.values()] };
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language } = {}) {
+function knowledgeSectionIdentity(row, fallbackIndex) {
+  const document = row?.document_id || row?.source_id;
+  const section = row?.section_index ?? row?.metadata?.sectionIndex;
+  if (document && section !== null && section !== undefined) return `${document}:${section}`;
+  if (row?.chunk_id) return `chunk:${row.chunk_id}`;
+  return `row:${fallbackIndex}`;
+}
+
+function cosineSimilarity(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length || left.length === 0) return null;
+  let dot = 0; let leftNorm = 0; let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = Number(left[index]); const b = Number(right[index]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    dot += a * b; leftNorm += a * a; rightNorm += b * b;
+  }
+  if (leftNorm === 0 || rightNorm === 0) return null;
+  return dot / Math.sqrt(leftNorm * rightNorm);
+}
+
+function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historicalQueryIndex = -1, currentQueryIndex = -1 } = {}) {
+  const sections = new Map();
+  for (const [queryIndex, rows] of resultSets.entries()) {
+    const seenInQuery = new Set();
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const key = knowledgeSectionIdentity(row, index);
+      if (!sections.has(key)) sections.set(key, { rows: [], contributions: [], firstSeen: sections.size, primaryMatch: false, historicalMatch: false, currentQueryRank: null });
+      const group = sections.get(key);
+      if (seenInQuery.has(key)) continue;
+      seenInQuery.add(key);
+      // The primary query expresses the current need. Related and original-
+      // wording searches add coverage, but their repeated low-value hits must
+      // not crowd a strong one-query result out of the bounded answer context.
+      const queryWeight = queryIndex === 0 ? 4
+        : queryIndex === historicalQueryIndex ? 8
+          : queryIndex < contextualCount ? 4 : 1;
+      // Preserve both leading results from the model's primary contextual
+      // query: the first may establish the broad topic while the second holds
+      // a needed condition. Complementary queries still contribute only their
+      // top result so broad variants cannot crowd out current evidence.
+      if ((queryIndex === 0 && index < 2)
+        || (queryIndex > 0 && queryIndex < contextualCount && index === 0)
+        // Preserve the top two exact customer-question matches. A precise
+        // section can rank just below broader English or exclusion-heavy
+        // queries while still answering the relationship the customer asked.
+        || (queryIndex === currentQueryIndex && index < 2)) group.primaryMatch = true;
+      if (queryIndex === historicalQueryIndex) group.historicalMatch = true;
+      if (queryIndex === currentQueryIndex && (group.currentQueryRank === null || index < group.currentQueryRank)) group.currentQueryRank = index;
+      group.contributions.push(queryWeight / (60 + index + 1));
+      group.rows.push(...rows.filter((candidate) => {
+        const candidateKey = knowledgeSectionIdentity(candidate, index);
+        return candidateKey === key;
+      }));
+    }
+  }
+  return [...sections.values()].map((group) => {
+    const strongest = Math.max(...group.contributions);
+    const supporting = group.contributions.reduce((sum, value) => sum + value, 0) - strongest;
+    // A second relevant query is useful corroboration. Cap its influence so
+    // repeated generic matches cannot outrank a section that directly answers
+    // the customer's question in the primary search.
+    group.score = strongest + Math.min(strongest * 0.5, supporting * 0.2);
+    return group;
+  })
+    .sort((a, b) => b.score - a.score || a.firstSeen - b.firstSeen)
+    .flatMap((group) => [...new Map(group.rows.map((row) => [row.chunk_id || `${row.document_id}:${row.chunk_index}`, row])).values()]
+      .sort((a, b) => Number(a.chunk_index || 0) - Number(b.chunk_index || 0))
+      .map((row) => ({ ...row, primarySearchMatch: group.primaryMatch, historicalSearchMatch: group.historicalMatch,
+        currentQueryMatch: group.currentQueryRank !== null, currentQueryRank: group.currentQueryRank, selectionRelevance: group.score * 60 })));
+}
+
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
 
-  let embedding = null;
-  try {
-    if (typeof embedText === "function") embedding = await embedText(query);
-  } catch {
-    // Embedding failure degrades to lexical-only search server-side; do not
-    // fail the tool just because the local embedding pipeline is unavailable.
-    embedding = null;
+  // Search returns finding-aid chunks and chunks whose fact-register gate may
+  // reject them. Fetch a bounded candidate window so those rows do not crowd
+  // approved answer evidence out of the requested result count.
+  const requestedCount = Number.isInteger(matchCount) ? Math.min(MAX_RAG_EVIDENCE_ITEMS, Math.max(1, matchCount)) : 6;
+  const candidateCount = Math.min(20, requestedCount * 3);
+
+  const related = Array.isArray(args?.relatedQueries) ? args.relatedQueries.filter(isPlainString).map(value => value.trim().slice(0, 1000)).slice(0, 2) : [];
+  const currentQuery = currentMessageSearchQuery(currentMessage);
+  const currentLanguage = detectMessageLanguage(currentQuery);
+  const previousCustomerMessage = [...(Array.isArray(user?.history) ? user.history : [])].reverse()
+    .map((turn) => typeof turn?.message === "string" ? turn.message.trim() : "")
+    .find((message) => message && message !== currentQuery);
+  const priorLanguage = previousCustomerMessage ? detectMessageLanguage(previousCustomerMessage) : "unknown";
+  // A language switch can make a model-resolved English query miss the
+  // approved section found by the customer's original Arabic or Greek wording.
+  // Reuse only the immediately previous customer message, redact personal
+  // data, and keep the extra retrieval bounded to this cross-language case.
+  const crossLanguageHistoryQuery = previousCustomerMessage && priorLanguage !== currentLanguage
+    && ["arabic", "english", "greek"].includes(priorLanguage) && ["arabic", "english", "greek"].includes(currentLanguage)
+    ? redactPersonalData(previousCustomerMessage).slice(0, 1000).trim()
+    : "";
+  const contextualQueries = [...new Set([query, ...related, crossLanguageHistoryQuery])].filter(Boolean);
+  let queries = [...new Set([...contextualQueries, currentQuery])].filter(Boolean);
+  let historicalQueryIndex = crossLanguageHistoryQuery ? queries.indexOf(crossLanguageHistoryQuery) : -1;
+  const searchPlans = await Promise.all(queries.map(async (searchQuery, index) => {
+    let embedding = null;
+    try {
+      if (typeof embedText === "function") embedding = await embedText(searchQuery);
+    } catch {
+      // Embedding failure degrades to lexical-only search server-side; do not
+      // fail the tool just because the local embedding pipeline is unavailable.
+      embedding = null;
+    }
+    return { searchQuery, embedding, contextual: index < contextualQueries.length };
+  }));
+  const resolvedEmbedding = searchPlans[0]?.embedding;
+  const currentIndex = queries.indexOf(currentQuery);
+  const currentEmbedding = currentIndex >= 0 ? searchPlans[currentIndex]?.embedding : null;
+  const currentAlignment = cosineSimilarity(resolvedEmbedding, currentEmbedding);
+  const historyAlignment = historicalQueryIndex >= 0
+    ? cosineSimilarity(resolvedEmbedding, searchPlans[historicalQueryIndex]?.embedding) : null;
+  if (historicalQueryIndex >= 0 && currentIndex >= 0) {
+    // The prior turn may resolve a cross-language follow-up, but a stale
+    // previous topic must not outrank evidence for a clear current question.
+    // When embeddings are unavailable, retain the legacy history search so
+    // lexical-only retrieval remains compatible.
+    if (historyAlignment !== null && currentAlignment !== null && historyAlignment < currentAlignment) {
+      queries = queries.filter((_value, index) => index !== historicalQueryIndex);
+      searchPlans.splice(historicalQueryIndex, 1);
+      historicalQueryIndex = -1;
+    }
+  }
+  const resultSets = await Promise.all(searchPlans.map(async ({ searchQuery, embedding, contextual }) => {
+    try {
+      const value = await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
+      return { ok: true, value, contextual };
+    } catch (error) {
+      return { ok: false, error, contextual };
+    }
+  }));
+  const successfulResults = resultSets.filter((result) => result.ok);
+  if (!successfulResults.length) {
+    const error = resultSets.find((result) => !result.ok)?.error;
+    const providerErrorCode = /^[A-Z0-9_.-]{1,48}$/u.test(String(error?.code || "")) ? String(error.code) : null;
+    const providerStatus = Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599 ? error.status : null;
+    const errorName = /^[A-Z][A-Za-z0-9]{0,39}$/u.test(String(error?.name || "")) ? String(error.name) : null;
+    return fail("error", "RETRIEVAL_FAILED", {
+      message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200),
+      modelObservation: buildApprovedKnowledgeObservation("error", []),
+      trace: { searchQueries: queries, providerErrorCode, providerStatus, errorName }
+    });
+  }
+  const results = successfulResults.length > 1
+    ? mergeRankedKnowledgeResults(resultSets.map((result) => result.ok && Array.isArray(result.value) ? result.value : []), {
+      contextualCount: resultSets.filter(result => result.contextual).length,
+      historicalQueryIndex,
+      currentQueryIndex: queries.indexOf(currentQuery)
+    })
+    : (Array.isArray(successfulResults[0].value) ? successfulResults[0].value : [])
+      .map((row, index) => ({ ...row, selectionRelevance: 60 / (61 + index) }));
+
+  // The RPC enforces source/document approval and expiry. Evidence/supporting
+  // reference fields and Fact Register links are not admission requirements;
+  // indexed chunk content remains usable when they are empty, general, or
+  // stale. Finding aids are never customer evidence, even if a legacy RPC
+  // returns one.
+  const eligible = (Array.isArray(results) ? results : [])
+    .filter(isCustomerFacingKnowledgeChunk);
+  if (eligible.length === 0) {
+    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []), trace: { searchQueries: queries } });
   }
 
-  let results;
-  try {
-    results = await store.searchKnowledge(query, embedding, embeddingModel || null, matchCount);
-  } catch (error) {
-    return fail("error", "RETRIEVAL_FAILED", { message: String(error?.message || error).slice(0, 200), modelObservation: buildApprovedKnowledgeObservation("error", []) });
+  const assemblyStarted = performance.now();
+  const catalogue = [];
+  const sectionRows = new Map();
+  for (const [index, row] of eligible.entries()) {
+    const key = knowledgeSectionIdentity(row, index);
+    if (!sectionRows.has(key)) { sectionRows.set(key, []); catalogue.push({ sourceRef: row.chunk_id, title: row.document_title || row.source_name, section: row.heading, content: "", key }); }
+    sectionRows.get(key).push(row);
   }
-
-  // The RPC enforces source/document approval and expiry. Apply the separate
-  // fact-register gate here, before the bounded model observation is built.
-  // Finding aids are never customer evidence, even if a legacy RPC returns one.
-  const evidence = (Array.isArray(results) ? results : [])
-    .filter((row) => factLinkedChunkIsCurrent(row, language));
-  if (evidence.length === 0) {
-    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) });
-  }
-
-  const userSafeSummary = evidence.slice(0, matchCount).map((item) => String(item?.heading || item?.source_name || "Approved information").slice(0, 120));
-  return ok("found", evidence, { userSafeSummary, modelObservation: buildApprovedKnowledgeObservation("found", evidence) });
+  for (const item of catalogue) item.content = sectionRows.get(item.key).map((row) => String(row.content || "")).join("\n\n");
+  const visibleCatalogue = catalogue.slice(0, 40);
+  const catalogueOmittedIds = catalogue.slice(40).map(item => item.sourceRef);
+  // Search has already ranked these rows using semantic + lexical relevance.
+  // Do not spend another model round trip re-selecting them: that call both
+  // adds response latency and can discard a lower-ranked section that supplies
+  // a condition or the other half of a multi-part answer. Keep the ranked
+  // candidate window, then let the existing complete-section and prompt
+  // budgets retain as many as fit for BOTH generation and validation.
+  const prioritizedCatalogue = visibleCatalogue.map((item, index) => ({ item, index,
+    primarySearchMatch: sectionRows.get(item.key).some((row) => row.primarySearchMatch === true) }))
+    .sort((a, b) => Number(b.primarySearchMatch) - Number(a.primarySearchMatch) || a.index - b.index);
+  const selectedRows = prioritizedCatalogue.flatMap(({ item }, selectionRank) => sectionRows.get(item.key)
+    // Fusion scores depend on how many related searches were issued, so their
+    // raw values are not comparable across separate tool calls. Rank within
+    // this search round instead; accumulated-evidence budgeting can then
+    // reliably let a better-ranked new section replace a weaker older one.
+    .map((row) => ({ ...row,
+      // Keep a relevant original-language history match distinguishable from
+      // the current query; the history search is already gated by semantic
+      // alignment when embeddings are available.
+      selectionRelevance: 1 / (selectionRank + 1) + (row.historicalSearchMatch ? 1 : 0)
+        // Preserve only the strongest few exact-wording matches so low-value
+        // tail results cannot crowd out an already strong resolved overview.
+        + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
+      primarySearchMatch: row.primarySearchMatch === true,
+      selectionOrder: selectionRank })));
+  const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows);
+  modelObservation.primarySearchRefs = [...new Set(selectedRows.filter((row) => row.primarySearchMatch)
+    .map((row) => row.chunk_id).filter((id) => typeof id === "string"))];
+  const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
+  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });
 }
 
 // --- getCustomerContext ------------------------------------------------------
@@ -595,25 +799,27 @@ async function saveCustomerFact(args, { store, userId, currentMessage, sourceTur
   const evidence = extractLiteralEvidence(currentMessage, value);
   if (!evidence || !sourceTurnId) return fail("not_authorized", "UNVERIFIED_CUSTOMER_VALUE");
   if (isNegatedLiteralMention(currentMessage, value)) return fail("not_authorized", "NON_AFFIRMATIVE_CUSTOMER_VALUE");
+  const rawCustomerValue = extractLiteralSpan(currentMessage, value);
+  if (!rawCustomerValue) return fail("not_authorized", "UNVERIFIED_CUSTOMER_VALUE");
   const crmField = Object.keys(CRM_FIELDS).find((candidate) => candidate.toLowerCase() === canonicalField)
     || (canonicalField === "companyactivity" ? "businessActivity" : null);
   if (!crmField) return fail("not_authorized", "UNSUPPORTED_CRM_FIELD");
   const candidate = crmField ? normalizeCrmCandidate({
     field: crmField,
     value: String(value),
-    rawValue: String(value),
+    rawValue: rawCustomerValue,
     provenance: CUSTOMER_PROVENANCE,
     confidence: 1,
     sourceTurnId: String(sourceTurnId),
     evidence,
-    selfIdentified: crmField === "name" && isSelfIdentifiedName(currentMessage, value)
+    selfIdentified: crmField === "name" && isSelfIdentifiedName(currentMessage, rawCustomerValue)
   }) : null;
   if (crmField && !candidate?.ok) return fail("not_authorized", candidate?.reason === "name_not_self_identified" ? "NAME_NOT_SELF_IDENTIFIED" : "INVALID_CRM_CANDIDATE");
   const storedValue = candidate.record.normalizedValue;
   const safeEvidence = candidate.record.evidence;
   if (typeof store?.saveCrmProfile === "function") {
     try {
-      const result = await store.saveCrmProfile({ userId, field: crmField, value: storedValue, sourceTurnId: String(sourceTurnId) });
+      const result = await store.saveCrmProfile({ userId, field: crmField, rawValue: candidate.record.rawValue, normalizedValue: storedValue, sourceTurnId: String(sourceTurnId) });
       if (result?.status === "correction_needed") {
         return ok("correction_needed", { field: canonicalField, correctionNeeded: true });
       }
@@ -631,23 +837,39 @@ async function saveCustomerFact(args, { store, userId, currentMessage, sourceTur
       draft.profile = draft.profile || {};
       draft.profile.agentFacts = { ...(draft.profile.agentFacts || {}) };
       const current = draft.profile.agentFacts[canonicalField];
-      const resolvesPendingCorrection = draft.profile.crmCorrectionNeeded?.field === canonicalField
+      const priorCorrection = draft.profile.crmCorrectionNeeded;
+      const pendingFields = Array.isArray(priorCorrection?.fields)
+        ? priorCorrection.fields.map((field) => String(field).toLowerCase())
+        : priorCorrection?.field ? [String(priorCorrection.field).toLowerCase()] : [];
+      const resolvesPendingCorrection = pendingFields.includes(canonicalField)
         && isExplicitCorrectionMessage(currentMessage);
       if (current && resolvesPendingCorrection) {
         draft.profile.agentFacts[canonicalField] = {
           ...candidate.record, value: storedValue, provenance,
           sourceTurnId: String(sourceTurnId), evidence: safeEvidence, savedAt: new Date().toISOString()
         };
-        delete draft.profile.crmCorrectionNeeded;
+        draft.profile.agentFacts[canonicalField].correctionNeeded = false;
+        const remainingFields = pendingFields.filter((field) => field !== canonicalField);
+        for (const field of remainingFields) {
+          if (draft.profile.agentFacts[field]) draft.profile.agentFacts[field] = { ...draft.profile.agentFacts[field], correctionNeeded: true };
+        }
+        if (remainingFields.length) {
+          draft.profile.crmCorrectionNeeded = { ...priorCorrection, field: remainingFields[0], fields: remainingFields };
+        } else {
+          delete draft.profile.crmCorrectionNeeded;
+        }
         return;
       }
-      if (current && String(current.value ?? current.normalizedValue ?? "").trim().toLocaleLowerCase() !== storedValue.trim().toLocaleLowerCase()) {
+      if (current && normalizeForComparison(current.value ?? current.normalizedValue ?? "") !== normalizeForComparison(storedValue)) {
         // Never silently replace a different stated value. Leave the prior
         // record intact and request a clarification in the conversation.
+        const fields = [...new Set([...pendingFields, canonicalField])].sort();
         draft.profile.crmCorrectionNeeded = {
-          field: canonicalField,
+          ...(priorCorrection || {}),
+          field: fields[0],
+          fields,
           sourceTurnId: String(sourceTurnId),
-        proposedValue: storedValue,
+          proposedValue: storedValue,
           recordedAt: new Date().toISOString()
         };
         draft.profile.agentFacts[canonicalField] = { ...current, correctionNeeded: true };
@@ -694,7 +916,7 @@ async function proposeHandover(args, { user, intents = [], language } = {}) {
 
 const TOOL_REGISTRY = Object.freeze({
   lookupActiveOffer: {
-    description: "Read currently approved, effective offers. Pass the exact database code when known. If no exact code is present in the conversation or approved knowledge, call with empty args to discover up to four current offers. Never send a display title as a code. Use only returned data for price or inclusions.",
+    description: "Read current approved live offer records for offer-specific price, validity, availability, and terms. Do not use this instead of searchApprovedKnowledge for general company service scope, package descriptions, or process details. If the customer asks for both service facts and a live offer price or term, search approved knowledge for the service facts and use this tool only for the live offer detail. Pass the exact database code when known; otherwise use empty args to discover up to four current offers. Never send a display title as a code.",
     run: (args, context) => dynamicReadTool("lookupActiveOffer", args, context)
   },
   lookupRenewalFees: {
@@ -738,7 +960,7 @@ const TOOL_REGISTRY = Object.freeze({
     run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
   },
   searchApprovedKnowledge: {
-    description: "Search approved Refalco Group knowledge for current prices, services, or company facts. Use when the customer's current question needs a factual answer, not for greetings or clarifications.",
+    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. For one direct relationship question, use one concise query for the relationship and its necessary conditions. Do not add general eligibility or company-service-scope queries unless separately requested. Keep customer exclusions in context, but leave excluded alternatives out of model-generated queries even when the message names them as exclusions; treat them as answer scope, not additional topics. The current message is searched automatically. When approved knowledge directly states the requested relationship, state it plainly and reserve uncertainty for uncovered personal eligibility or conditions. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a summary across earlier turns, keep query a concise service overview; use relatedQueries only for distinct unresolved specifics from customer history, never repeat the full conversation in a query. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {

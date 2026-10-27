@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { google } = require("googleapis");
-const { appointmentChangeIntent, approvePendingAppointment, appointmentWindowIssue, changeAppointmentStatus, extractBookingNameReply, formatBookingTime, handleBookingMessage, isBookingRequest, parseBookingDetails, verifyCalendarAccess } = require("./booking.js");
+const { appointmentChangeIntent, approvePendingAppointment, appointmentWindowIssue, changeAppointmentStatus, extractBookingNameReply, formatBookingTime, handleBookingMessage, hasCalendarConfig, isBookingRequest, parseBookingDetails, verifyCalendarAccess } = require("./booking.js");
 
 const completePolicy = {
   timezone: "Europe/Nicosia",
@@ -119,6 +119,11 @@ test("calendar access failure preserves a truthful pending request path instead 
   assert.equal((await store.ensureUser()).booking.calendarUnavailable, true);
   assert.equal(store.calls.updates, 1);
   assert.equal(store.calls.appointments, 0);
+});
+
+test("calendar configuration remains ready when optional Meet-link creation is disabled", (t) => {
+  resetCalendarEnv(t, true);
+  assert.equal(hasCalendarConfig({ ...completePolicy, createMeetLink: false }), true);
 });
 
 test("Greek customer can submit a preferred time for admin review when calendar availability cannot be verified", async (t) => {
@@ -654,6 +659,59 @@ test("Arabic WhatsApp booking persists the confirmation state before creating a 
   assert.equal(user.booking.status, "booked");
   assert.equal(user.booking.appointmentId, appointmentId);
   assert.equal(reminders.length, 2);
+});
+
+test("admin approval succeeds without a Meet link when its creation is disabled", async (t) => {
+  resetCalendarEnv(t, true);
+  const originalCalendar = google.calendar;
+  let insertedBody;
+  google.calendar = () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) },
+    events: { insert: async ({ requestBody }) => { insertedBody = requestBody; return { data: { ...requestBody, id: requestBody.id, htmlLink: "https://calendar.google.com/calendar/event?id=no-meet" } }; } }
+  });
+  t.after(() => { google.calendar = originalCalendar; });
+  const appointment = {
+    id: "55555555-5555-4555-8555-555555555555", status: "pending_review",
+    starts_at: "2026-10-05T07:00:00.000Z", ends_at: "2026-10-05T07:30:00.000Z",
+    timezone: "Europe/Nicosia", purpose: "Consultation", whatsapp_jid: "35799111222@s.whatsapp.net"
+  };
+  const store = {
+    getAppointment: async () => appointment,
+    getBookingPolicy: async () => ({ ...completePolicy, createMeetLink: false }),
+    getUser: async () => ({ phone: "35799111222", profile: { name: "Test" } }),
+    updateAppointment: async (_id, patch) => ({ ...appointment, ...patch }),
+    createReminder: async () => {},
+    updateUser: async () => {}
+  };
+  const result = await approvePendingAppointment({ store, appointmentId: appointment.id, reviewer: "admin", now: new Date("2026-10-01T06:00:00.000Z") });
+  assert.equal(result.appointment.status, "confirmed");
+  assert.equal(result.event.meetLink, "");
+  assert.equal(result.appointment.googleMeetUrl, "");
+  assert.equal("conferenceData" in insertedBody, false);
+});
+
+test("admin approval still requires a Meet link when its creation is enabled", async (t) => {
+  resetCalendarEnv(t, true);
+  const originalCalendar = google.calendar;
+  let appointmentWrites = 0;
+  google.calendar = () => ({
+    freebusy: { query: async () => ({ data: { calendars: { primary: { busy: [] } } } }) },
+    events: { insert: async ({ requestBody }) => ({ data: { ...requestBody, id: requestBody.id, htmlLink: "https://calendar.google.com/calendar/event?id=missing-meet" } }) }
+  });
+  t.after(() => { google.calendar = originalCalendar; });
+  const appointment = {
+    id: "66666666-6666-4666-8666-666666666666", status: "pending_review",
+    starts_at: "2026-10-05T07:00:00.000Z", ends_at: "2026-10-05T07:30:00.000Z",
+    timezone: "Europe/Nicosia", purpose: "Consultation", whatsapp_jid: "35799111222@s.whatsapp.net"
+  };
+  const store = {
+    getAppointment: async () => appointment,
+    getBookingPolicy: async () => ({ ...completePolicy, createMeetLink: true }),
+    getUser: async () => ({ phone: "35799111222", profile: { name: "Test" } }),
+    updateAppointment: async () => { appointmentWrites += 1; return appointment; }
+  };
+  await assert.rejects(approvePendingAppointment({ store, appointmentId: appointment.id, reviewer: "admin", now: new Date("2026-10-01T06:00:00.000Z") }), /did not return a Meet link/u);
+  assert.equal(appointmentWrites, 0);
 });
 
 test("the main WhatsApp flow offers at most two live slots for tomorrow and asks for a numbered choice", async (t) => {

@@ -4,6 +4,15 @@ function isPhoneJid(value) {
   return typeof value === "string" && PHONE_JID.test(value.trim());
 }
 
+function needsWhatsAppContactRefresh(userId, user, pushName, phoneJid) {
+  if (!user || typeof user !== "object") return true;
+  const whatsapp = user.whatsapp && typeof user.whatsapp === "object" ? user.whatsapp : {};
+  if (whatsapp.jid !== userId) return true;
+  if (phoneJid && whatsapp.phoneJid !== phoneJid) return true;
+  if (pushName && (whatsapp.pushName !== pushName || !user.profile?.whatsappName)) return true;
+  return false;
+}
+
 async function resolvePhoneJid(userId, message, lidMapping) {
   const key = message?.key || {};
   const alternate = [key.remoteJidAlt, key.participantAlt].find(isPhoneJid);
@@ -18,4 +27,4 @@ async function resolvePhoneJid(userId, message, lidMapping) {
   }
 }
 
-module.exports = { isPhoneJid, resolvePhoneJid };
+module.exports = { isPhoneJid, resolvePhoneJid, needsWhatsAppContactRefresh };

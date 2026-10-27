@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { areAdjacentConsentTurns, buildSafeHistoryInsert, hasPurposeBoundAutomatedReminderConsent, hasPurposeBoundFollowUpConsent, sanitizeInboundHistoryText } from "./handoverPersistence.mjs";
 
+test("typed trace UUID survives history sanitization while an actual financial value is still redacted", () => {
+  const traceId = "9dd4aef3-0d14-46f2-ae15-2943787de883";
+  const row = buildSafeHistoryInsert({ contactId: "contact", id: "user" }, { message: "An information request", response: "Processing", metadata: { traceId, iban: "CY17002001280000001200527600" } });
+  assert.equal(row.metadata.traceId, traceId);
+  assert.equal(row.metadata.iban, "[redacted]");
+  const invalid = buildSafeHistoryInsert({ contactId: "contact", id: "user" }, { metadata: { traceId: "CY17002001280000001200527600" } });
+  assert.equal(invalid.metadata.traceId, "[redacted]");
+});
+
 test("Edge history persistence redacts privacy-risk messages before database insertion", () => {
   const payloadText = sanitizeInboundHistoryText("Password: SecretPhrase-81; help me set up a company");
   assert.equal(payloadText, "[message omitted: potentially sensitive credentials]");

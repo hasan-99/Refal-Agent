@@ -1,5 +1,73 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+
+test("later relevant evidence replaces weaker evidence without deleting omitted candidate sections", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const observation = (id, relevance, size) => ({ result: { modelObservation: { type: "approved_knowledge", evidence: [{ sourceRef: id, title: "Section", content: "x".repeat(size), relevance }], policyEvidence: [{ sourceRef: id, review_status: "approved" }] } } });
+  const observations = [observation("weak", 1, 350)];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(observation("strong", 3, 350));
+  const selected = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(selected.retainedIds, ["strong"]);
+  assert.deepEqual(selected.replacedIds, ["weak"]);
+  assert.equal(observations[0].result.modelObservation.candidateEvidence[0].content.length, 350);
+  assert.equal(observations[1].result.modelObservation.policyEvidence[0].sourceRef, "strong");
+  observations.push(observation("another", 2, 350));
+  const omitted = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.equal(omitted.newCandidateCount, 1);
+  assert.equal(omitted.newEvidenceCount, 0);
+  assert.ok(omitted.excludedIds.includes("another"));
+  assert.equal(observations[2].result.modelObservation.candidateEvidence.length, 1);
+});
+
+test("equal-ranked later search results do not evict earlier usable evidence", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const row = (id) => ({
+    result: { modelObservation: { type: "approved_knowledge", evidence: [
+      { sourceRef: id, title: id, content: "x".repeat(350), relevance: 2, selectionOrder: 0 }
+    ] } }
+  });
+  const observations = [row("earlier-approved-scope")];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(row("later-unrelated-result"));
+  const budget = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(budget.retainedIds, ["earlier-approved-scope"]);
+  assert.deepEqual(budget.excludedIds, ["later-unrelated-result"]);
+  assert.equal(budget.newEvidenceCount, 0);
+});
+
+test("an equally ranked direct result from the latest primary search replaces stale context", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const round = (id, primarySearchMatch = false) => ({ result: { modelObservation: {
+    type: "approved_knowledge", primarySearchRefs: primarySearchMatch ? [id] : [], evidence: [
+      { sourceRef: id, title: id, content: "x".repeat(350), relevance: 1, selectionOrder: 0 }
+    ]
+  } } });
+  const observations = [round("earlier-topic")];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(round("current-primary-overview", true));
+  const budget = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(budget.retainedIds, ["current-primary-overview"]);
+  assert.deepEqual(budget.replacedIds, ["earlier-topic"]);
+});
+
+test("a strong earlier same-turn match survives query drift, but clearly stronger evidence replaces it", () => {
+  const { boundAccumulatedKnowledgeEvidence } = require("./agentLoop");
+  const round = (id, relevance, primarySearchMatch) => ({ result: { modelObservation: {
+    type: "approved_knowledge", primarySearchRefs: primarySearchMatch ? [id] : [], evidence: [
+      { sourceRef: id, title: id, content: "x".repeat(350), relevance, selectionOrder: 0 }
+    ]
+  } } });
+  const observations = [round("residence-scope", 1, true)];
+  boundAccumulatedKnowledgeEvidence(observations, 500);
+  observations.push(round("formation-noise", 1, true));
+  assert.deepEqual(boundAccumulatedKnowledgeEvidence(observations, 500).retainedIds, ["residence-scope"]);
+
+  observations.push(round("specific-residence-conditions", 3, true));
+  const stronger = boundAccumulatedKnowledgeEvidence(observations, 500);
+  assert.deepEqual(stronger.retainedIds, ["specific-residence-conditions"]);
+  assert.deepEqual(stronger.replacedIds, ["residence-scope"]);
+});
 const { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 
@@ -11,7 +79,477 @@ function scriptedDecider(decisions) {
 }
 
 test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
-  assert.equal(DEFAULT_MAX_STEPS, 4);
+  assert.equal(DEFAULT_MAX_STEPS, 5);
+});
+
+test("a failed knowledge search is reported as technical and is not repeated", async () => {
+  let decisions = 0;
+  let searches = 0;
+  const toolEvents = [];
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    maxSteps: 4,
+    decideNextStep: async ({ tools }) => {
+      decisions += 1;
+      assert.equal(Boolean(tools.searchApprovedKnowledge), decisions === 1);
+      return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `attempt ${decisions}` } };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => {
+      searches += 1;
+      return { ok: false, status: "error", reasonCode: "EDGE_TIMEOUT", trace: { providerStatus: 503, providerErrorCode: "UPSTREAM_UNAVAILABLE" } };
+    } } },
+    onToolCall: async (event) => toolEvents.push(event)
+  });
+
+  assert.equal(searches, 1);
+  assert.equal(decisions, 2, "the model receives the technical failure once before repeated work stops");
+  assert.equal(result.outcome, "knowledge_unavailable");
+  assert.equal(result.reason, "EDGE_TIMEOUT");
+  assert.equal(result.steps.at(-1).result.status, "search_unavailable");
+  assert.equal(toolEvents[0].providerStatus, 503);
+  assert.equal(toolEvents[0].providerErrorCode, "UPSTREAM_UNAVAILABLE");
+});
+
+test("a rejected draft after a failed search stops without repeating model validation", async () => {
+  let decisions = 0;
+  let reviews = 0;
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    maxSteps: 5,
+    decideNextStep: async () => decisions++ === 0
+      ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } }
+      : { type: "respond", text: "I cannot summarize the services while the information source is unavailable." },
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" }) } },
+    assessDraft: async () => { reviews += 1; return { valid: false, reasons: ["context_mismatch", "question_not_answered"] }; }
+  });
+
+  assert.equal(decisions, 2);
+  assert.equal(reviews, 1, "a technical retrieval failure without evidence cannot make repeated reviews productive");
+  assert.equal(result.outcome, "knowledge_unavailable");
+  assert.equal(result.reason, "EDGE_TIMEOUT");
+});
+
+test("a failed follow-up search preserves previously retrieved approved evidence", async () => {
+  const evidence = { sourceRef: "approved-formation-scope", title: "Formation scope",
+    content: "The company formation package includes a registered office for four months.", relevance: 1 };
+  let decisionCount = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What does the package include?", locale: "english" }), {
+    maxSteps: 3,
+    initialObservations: [{ step: 0, tool: "searchApprovedKnowledge", args: { query: "package" }, result: {
+      ok: true, status: "found", modelObservation: { type: "approved_knowledge", status: "found", evidence: [evidence], policyEvidence: [] }
+    } }],
+    decideNextStep: async () => {
+      decisionCount += 1;
+      return decisionCount === 1
+        ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "registered office period" } }
+        : { type: "respond", text: evidence.content };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" }) } }
+  });
+
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, evidence.content);
+  assert.equal(result.steps[1].result.status, "error");
+});
+
+test("a failed additional search still allows an answer from evidence found earlier this turn", async () => {
+  const evidence = { sourceRef: "approved-formation-scope", title: "Formation scope",
+    content: "The approved package includes company formation and a registered office for four months.", relevance: 1 };
+  let searchCalls = 0;
+  let decisionCount = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "Please list the relevant options. I do not want to book.", locale: "english"
+  }), {
+    maxSteps: 5,
+    decideNextStep: async ({ tools: availableTools, observations }) => {
+      decisionCount += 1;
+      if (decisionCount <= 2) {
+        return { type: "tool", tool: "searchApprovedKnowledge", args: { query: decisionCount === 1 ? "formation options" : "formation package inclusions" } };
+      }
+      if (decisionCount === 3) {
+        assert.equal(availableTools.searchApprovedKnowledge, undefined, "a failed retrieval must not be retried");
+        return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "booking" } };
+      }
+      assert.match(JSON.stringify(observations), /approved-formation-scope/);
+      return { type: "respond", text: evidence.content };
+    },
+    tools: { searchApprovedKnowledge: { run: async () => {
+      searchCalls += 1;
+      if (searchCalls === 1) return { ok: true, status: "found", data: [evidence],
+        modelObservation: { type: "approved_knowledge", status: "found", evidence: [evidence], policyEvidence: [] } };
+      return { ok: false, status: "error", reasonCode: "EDGE_TIMEOUT" };
+    } } }
+  });
+
+  assert.equal(searchCalls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, evidence.content);
+  assert.equal(result.reason, undefined);
+  assert.ok(result.steps.some((item) => item.result?.reasonCode === "EDGE_TIMEOUT"));
+});
+
+test("unsupported comparisons receive focused correction guidance without an evidence disclaimer", async () => {
+  const rejected = "Yes, we offer other service areas beyond those.";
+  const recovered = "Those are the connected service areas we discussed. Is there a particular service you have in mind?";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "Are those all your services, or are there other areas too?", locale: "english",
+    recentConversation: [
+      { role: "user", content: "What services do you offer?" },
+      { role: "assistant", content: "We help with company formation, tax and accounting, investment and property, and residency and relocation." }
+    ]
+  }), {
+    maxSteps: 3,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: rejected };
+      const feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      assert.ok(feedback);
+      assert.equal(feedback.result.reasonCode, "unsupported_relation");
+      assert.match(feedback.result.correction, /Remove only that claim/);
+      assert.match(feedback.result.correction, /avoid repeating details already given/);
+      assert.match(feedback.result.correction, /generic disclaimer about what you can confirm/);
+      return { type: "respond", text: recovered };
+    },
+    assessDraft: async ({ text }) => text === rejected
+      ? { valid: false, reasons: ["unsupported_relation"], blockedClaims: [{ sentence: rejected, reasons: ["unsupported_relation"] }] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, recovered);
+});
+
+test("combined comparison and context rejection directs the agent to remove the repeated span", async () => {
+  const draft = "The areas are broader than company formation. We provide company formation, tax, investment, property, and residency services.";
+  const response = "Those are the connected areas we discussed. Is there a specific service you have in mind?";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Are those all your services?", locale: "english",
+    recentConversation: [{ role: "assistant", content: "We provide company formation, tax, investment, property, and residency services." }] }), {
+    maxSteps: 3,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: draft };
+      const feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      assert.equal(feedback.result.reasonCode, "unsupported_relation,context_mismatch");
+      assert.match(feedback.result.correction, /remove the full rejected repeat/);
+      assert.match(feedback.result.correction, /do not restate it in new words, bullets or translation/);
+      return { type: "respond", text: response };
+    },
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["unsupported_relation", "context_mismatch"], blockedClaims: [{ sentence: draft, reasons: ["unsupported_relation", "context_mismatch"] }] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, response);
+});
+
+test("rejection feedback keeps an unanswered request actionable when the draft also has an unsupported relation", async () => {
+  const draft = "Those are the areas related to our services.";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "Are those all your services, or are there other areas too?", locale: "english"
+  }), {
+    maxSteps: 2,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: draft };
+      const feedback = observations.find(item => item.tool === "responsePolicyCheck");
+      assert.equal(feedback.result.reasonCode, "unsupported_relation,question_not_answered");
+      assert.match(feedback.result.correction, /Answer every unanswered part of the customer's current request explicitly/);
+      assert.match(feedback.result.correction, /A follow-up question does not replace that answer/);
+      return { type: "respond", text: "The overview names the connected areas discussed and does not describe another separate service area." };
+    },
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["unsupported_relation", "question_not_answered"], blockedClaims: [
+        { sentence: draft, reasons: ["unsupported_relation"] },
+        { sentence: "Are those all your services, or are there other areas too?", claimClass: "UNMET_REQUEST", reasons: ["question_not_answered"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+});
+
+test("service attribution rejection preserves supported process facts as a partial answer", async () => {
+  const rejected = "We prepare and submit the bank application for you.";
+  const recovered = "The institution reviews the company, owners and fund flow and makes the decision. I can't confirm which preparation or submission steps REFAL handles, and approval is not guaranteed.";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({
+    currentMessage: "How can you help with a company bank account, and is approval guaranteed?", locale: "english"
+  }), {
+    maxSteps: 2,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: rejected };
+      const feedback = observations.find(item => item.tool === "responsePolicyCheck");
+      assert.equal(feedback.result.reasonCode, "service_not_established");
+      assert.match(feedback.result.correction, /describes a process but does not establish that REFAL performs/u);
+      assert.match(feedback.result.correction, /Keep useful process facts that the current-turn evidence states/u);
+      assert.match(feedback.result.correction, /Preserve any supported answer about outcomes or guarantees/u);
+      return { type: "respond", text: recovered };
+    },
+    assessDraft: async ({ text }) => text === rejected
+      ? { valid: false, reasons: ["service_not_established"], blockedClaims: [{ sentence: rejected, reasons: ["service_not_established"] }] }
+      : { valid: true }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, recovered);
+});
+
+test("mixed unsupported-service and unsupported-detail feedback preserves neutral process facts", async () => {
+  const { policyRejectionObservation } = require("./agentLoop");
+  const observation = policyRejectionObservation(2, "respond", {
+    reasons: ["no_approved_evidence", "service_not_established"],
+    blockedClaims: [{ sentence: "We submit the bank application", reasons: ["service_not_established"] }]
+  }, ["no_approved_evidence", "service_not_established"], [{ tool: "searchApprovedKnowledge" }]);
+  const correction = observation.result.correction;
+  assert.match(correction, /neutral process facts only when current-turn evidence states them/u);
+  assert.match(correction, /do not attribute the process to REFAL without explicit service evidence/u);
+});
+
+test("a no-evidence rejection routes general company facts to one knowledge search before fallback", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "formation-doc", section_index: "1", chunk_id: "package", chunk_index: 0,
+    document_title: "Approved formation package", heading: "Company formation", content: "Refalco Group's Cyprus Ltd formation package includes name reservation, preparation and filing of formation documents, the certificate of incorporation, and company secretary and registered address for four months.", review_status: "approved" };
+  const reply = "The Cyprus Ltd formation package includes name reservation, preparation and filing of formation documents, the certificate of incorporation, and company secretary and registered address for four months.";
+  const calls = [];
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What does the company formation package include?", locale: "english" }), {
+    maxSteps: 4,
+    tools: {
+      lookupActiveOffer: { run: async () => ({ ok: true, status: "found", modelObservation: { type: "dynamic_data", evidence: [] } }) },
+      searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source], modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) }
+    },
+    decideNextStep: async ({ step, observations }) => {
+      calls.push(step);
+      if (step === 1) return { type: "tool", tool: "lookupActiveOffer", args: {} };
+      if (step === 2) return { type: "respond", text: "I need to check the approved details before I can confirm the package." };
+      if (step === 3) {
+        const rejection = observations.find((item) => item.tool === "responsePolicyCheck");
+        assert.match(rejection.result.correction, /Use searchApprovedKnowledge/);
+        assert.match(rejection.result.correction, /live-offer lookup does not establish general service scope/);
+        return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation package inclusions" } };
+      }
+      return { type: "respond", text: reply };
+    },
+    assessDraft: async ({ text }) => text === reply ? { valid: true } : { valid: false, reasons: ["no_approved_evidence"] }
+  });
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, reply);
+  assert.deepEqual(result.toolsUsed, ["lookupActiveOffer", "searchApprovedKnowledge"]);
+});
+
+test("a repeated unsupported claim stops when its approved evidence has not changed", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation.", review_status: "approved" };
+  const firstDraft = "Refalco Group offers company formation. Residency follows a separate route with its own requirements";
+  const secondDraft = "For company formation, Refalco Group can help. Residency follows a separate route with its own requirements";
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize what is relevant to me.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: async ({ step, observations }) => {
+      calls += 1;
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } };
+      if (step === 2) return { type: "respond", text: firstDraft };
+      const feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      assert.match(feedback.result.correction, /one focused search/);
+      assert.match(feedback.result.correction, /remove that span/);
+      return { type: "respond", text: secondDraft };
+    },
+    assessDraft: async ({ text }) => text === firstDraft || text === secondDraft
+      ? { valid: false, reasons: ["prohibited_claim"], blockedClaims: [
+        { sentence: "Residency follows a separate route with its own requirements.", reasons: ["entities_not_in_evidence"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.outcome, "response_rejected");
+  assert.equal(result.reason, "repeated_blocked_claim_without_evidence_progress");
+  assert.equal(result.stepCount, 3);
+});
+
+test("an evidence-only rejection can preserve and revalidate the supported partial answer", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation and tax and accounting services.", review_status: "approved" };
+  const unsupported = "We also prepare payroll registrations.";
+  const draft = `Refalco Group offers company formation and tax and accounting services. ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize the relevant services.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["prohibited_claim"] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, "Refalco Group offers company formation and tax and accounting services.");
+  assert.equal(result.stepCount, 2);
+});
+
+test("an individualized eligibility clause is removed while the grounded summary is revalidated", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation.", review_status: "approved" };
+  const unsupported = "Your residence eligibility depends on the route.";
+  const draft = `Refalco Group offers company formation. ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize the relevant services.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["personalized_marker"], blockedClaims: [{ sentence: unsupported, reasons: ["personalized_marker"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, "Refalco Group offers company formation.");
+});
+
+test("a rejected trailing span after a semicolon is rewritten before delivery", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Residency and relocation are separate service areas.", review_status: "approved" };
+  const unsupported = "forming a company alone does not establish whether you qualify for residency, and the specific inclusions of those services aren’t detailed here.";
+  const draft = `Residency and relocation are separate service areas; ${unsupported}`;
+  const rewritten = "Residency and relocation are separate service areas. The supplied information does not establish whether Refalco Group provides the additional service you asked about.";
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What about residency?", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "residency services" } },
+      { type: "respond", text: draft },
+      { type: "respond", text: rewritten }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["personalized_marker"], blockedClaims: [{ sentence: unsupported, reasons: ["personalized_marker"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, rewritten);
+  assert.doesNotMatch(result.response, /[;,:]$/u);
+});
+
+test("an Arabic guarantee refusal with a rejected trailing clause is not delivered as a semicolon fragment", async () => {
+  const draft = "ما في ربح مضمون أقدر أؤكده على استثمار ١٠٠ ألف؛ العائد يعتمد على الاستثمار ومخاطره، وما بقدر أقدّم ضمانًا أو توقعًا ماليًا.";
+  const rewritten = "ما عندي معلومات موثوقة تحدد ربحًا مضمونًا لاستثمار ١٠٠ ألف. إذا عندك استثمار محدد ببالك، فيني أساعدك بالمعلومات المعتمدة عنه.";
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "إذا استثمرت ١٠٠ ألف، قديش الربح المضمون؟", locale: "arabic" }), {
+    decideNextStep: scriptedDecider([
+      { type: "respond", text: draft },
+      { type: "respond", text: rewritten }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["no_approved_evidence"], blockedClaims: [
+        { sentence: "العائد يعتمد على الاستثمار ومخاطره، وما بقدر أقدّم ضمانًا أو توقعًا ماليًا.", reasons: ["no_approved_evidence"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, rewritten);
+  assert.doesNotMatch(result.response, /[;،:]$/u);
+});
+
+test("a claim that a topic is an established service is removed while supported answer content is preserved", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+    document_title: "Approved scope", heading: "Services", content: "Refalco Group provides company formation and corporate support.", review_status: "approved" };
+  const unsupported = "We also provide partner-change support.";
+  const supported = "Refalco Group provides company formation and corporate support.";
+  const draft = `${supported} ${unsupported}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Can you summarize the relevant services?", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["service_not_established"], blockedClaims: [{ sentence: unsupported, reasons: ["service_not_established"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, supported);
+});
+
+test("unsupported service claims and evidence narration are removed without discarding a grounded partial answer", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "formation-doc", section_index: "1", chunk_id: "formation", chunk_index: 0,
+    document_title: "Approved formation details", heading: "Formation steps",
+    content: "The team prepares and submits company formation documents and follows up with the Companies Registry.", review_status: "approved" };
+  const supported = "The team prepares and submits company formation documents and follows up with the Companies Registry.";
+  const unsupportedService = "We provide ongoing accounting support.";
+  const evidenceNarration = "The approved information confirms that.";
+  const draft = `${supported} ${unsupportedService} ${evidenceNarration}`;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Summarize the relevant services.", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "found", data: [source],
+      modelObservation: buildApprovedKnowledgeObservation("found", [source]) }) } },
+    decideNextStep: scriptedDecider([
+      { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation" } },
+      { type: "respond", text: draft }
+    ]),
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["service_not_established", "context_mismatch"], blockedClaims: [
+        { sentence: unsupportedService, reasons: ["service_not_established"] },
+        { sentence: evidenceNarration, reasons: ["context_mismatch"] }
+      ] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, supported);
+});
+
+test("a two-search turn keeps one tool-free correction step after the second rejected draft", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const sources = [
+    { document_id: "scope-doc", section_index: "1", chunk_id: "scope", chunk_index: 0,
+      document_title: "Approved scope", heading: "Services", content: "Refalco Group offers company formation and accounting.", review_status: "approved" },
+    { document_id: "continuity-doc", section_index: "1", chunk_id: "continuity", chunk_index: 0,
+      document_title: "Approved continuity", heading: "After formation", content: "Refalco Group keeps the same company file open after formation.", review_status: "approved" }
+  ];
+  let searchCount = 0;
+  let rejectionCount = 0;
+  let finalStepTools = null;
+  const draft1 = "Refalco Group offers company formation and accounting.";
+  const draft2 = "Refalco Group keeps the same company file open after formation.";
+  const finalDraft = "Refalco Group offers company formation and accounting, and keeps the same company file open after formation.";
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "What support continues after formation?", locale: "english" }), {
+    tools: { searchApprovedKnowledge: { run: async () => {
+      const source = sources[searchCount++];
+      return { ok: true, status: "found", data: [source], modelObservation: buildApprovedKnowledgeObservation("found", [source]) };
+    } } },
+    decideNextStep: async ({ step, tools, observations }) => {
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company scope" } };
+      if (step === 2) return { type: "respond", text: draft1 };
+      if (step === 3) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "ongoing support" } };
+      if (step === 4) return { type: "respond", text: draft2 };
+      finalStepTools = Object.keys(tools);
+      assert.equal(step, 5);
+      assert.equal(tools.searchApprovedKnowledge, undefined, "the recovery slot must not repeat retrieval");
+      const feedback = observations.filter((item) => item?.tool === "responsePolicyCheck");
+      assert.equal(feedback.length, 2, "the final decision must see both rejected drafts");
+      assert.match(feedback.at(-1).result.reasonCode, /service_not_established/);
+      return { type: "respond", text: finalDraft };
+    },
+    assessDraft: async ({ text }) => {
+      if (text === finalDraft) return { valid: true };
+      rejectionCount += 1;
+      return { valid: false, reasons: ["service_not_established"], blockedClaims: [{ sentence: text, reasons: ["service_not_established"] }] };
+    }
+  });
+  assert.equal(searchCount, 2);
+  assert.equal(rejectionCount, 2);
+  assert.deepEqual(finalStepTools, []);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 5);
+  assert.equal(result.response, finalDraft);
 });
 
 test("validateDecision rejects an invented tool name", () => {
@@ -50,6 +588,31 @@ test("the pre-send gate rejects questions about already known customer facts and
   assert.equal(result.stepCount, 2);
   assert.equal(result.steps[0].result.reasonCode, "never_reask:countryOfResidence");
   assert.match(result.response, /next steps/i);
+});
+
+test("the pre-send gate catches natural business-activity repeats in all three supported languages", async () => {
+  const cases = [
+    { locale: "english", question: "What kind of work do you do?", next: "I have that noted. What would you like to know next?" },
+    { locale: "arabic", question: "ما طبيعة عملك؟", next: "سجلت ذلك. ما الذي تريد معرفته الآن؟" },
+    { locale: "greek", question: "Με τι ασχολείστε;", next: "Το έχω σημειώσει. Τι θα θέλατε να μάθετε τώρα;" }
+  ];
+  for (const item of cases) {
+    const context = buildAgentContext({
+      currentMessage: "Please continue helping me.",
+      locale: item.locale,
+      knownCustomerFacts: { businessActivity: { value: "software consultancy", normalizedValue: "software consultancy", provenance: "customer_message", confidence: 1 } }
+    });
+    const result = await runAgentTurn(context, {
+      decideNextStep: scriptedDecider([
+        { type: "clarify", text: item.question },
+        { type: "respond", text: item.next }
+      ]),
+      tools: {}
+    });
+    assert.equal(result.outcome, "responded", item.locale);
+    assert.equal(result.steps[0].result.reasonCode, "never_reask:businessActivity", item.locale);
+    assert.equal(result.response, item.next, item.locale);
+  }
 });
 
 test("the pre-send gate permits clarification when stored facts are inferred or conflict", async () => {
@@ -126,6 +689,110 @@ test("the loop stops at the step budget instead of looping forever", async () =>
   assert.equal(result.stepCount, 3);
   assert.equal(typeof result.response, "string");
   assert.notEqual(result.response, "");
+});
+
+test("knowledge evidence stays within one cumulative prompt budget across search rounds", async () => {
+  const makeRows = (prefix) => Array.from({ length: 8 }, (_, index) => ({
+    document_id: `${prefix}-doc-${index}`, section_index: "0", chunk_index: 0,
+    chunk_id: `${prefix}-chunk-${index}`, document_title: "Approved section", heading: `Section ${index}`,
+    content: `${prefix} ${"approved source detail ".repeat(95)}`, review_status: "approved"
+  }));
+  let round = 0;
+  let secondEvidenceChars = 0;
+  const tools = { searchApprovedKnowledge: { run: async () => ({
+    ok: true, status: "found", data: [],
+    modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", makeRows(`round-${++round}`))
+  }) } };
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    tools,
+    decideNextStep: async ({ observations, step }) => {
+      const evidence = observations.flatMap((item) => item?.result?.modelObservation?.evidence || []);
+      const chars = evidence.reduce((total, item) => total + item.content.length + item.title.length + (item.section || "").length + 48, 0);
+      assert.ok(chars <= 10000, `decision evidence exceeded budget: ${chars}`);
+      if (step === 3) secondEvidenceChars = chars;
+      if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "service overview" } };
+      if (step === 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "more service information" } };
+      return { type: "respond", text: "The approved information describes the service areas in the retrieved sections." };
+    }
+  });
+  assert.equal(round, 2);
+  assert.ok(secondEvidenceChars <= 10000);
+  assert.equal(result.outcome, "responded");
+});
+
+test("unselected new candidates without retained evidence stop repeated searches and preserve the answer attempt", async () => {
+  let calls = 0;
+  const source = { document_id: "doc-1", section_index: "1", chunk_id: "chunk-1", chunk_index: 1,
+    document_title: "Approved service overview", heading: "Services", content: "Company formation and accounting are supported services.", review_status: "approved" };
+  const tools = { searchApprovedKnowledge: { run: async () => {
+    calls += 1;
+    const observation = require("./agentTools").buildApprovedKnowledgeObservation("found", [source]);
+    if (calls === 2) observation.candidateEvidence.push({ sourceRef: "unselected-new-candidate", title: "Unrelated section",
+      section: "Not selected", content: "unrelated ".repeat(1200), relevance: 1 });
+    return { ok: true, status: "found", data: [source], modelObservation: observation };
+  } } };
+  let secondSearchProgress;
+  let finalSearchAvailable;
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 4, decideNextStep: async ({ step, tools: available, observations }) => {
+    if (step === 1) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "service overview" } };
+    if (step === 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } };
+    secondSearchProgress = observations[1]?.result?.reasonCode;
+    finalSearchAvailable = Object.hasOwn(available, "searchApprovedKnowledge");
+    return { type: "respond", text: "I can help with the details supported by approved information." };
+  } });
+  assert.equal(calls, 2);
+  assert.equal(finalSearchAvailable, false);
+  assert.equal(secondSearchProgress, "NO_NEW_RELEVANT_SECTIONS");
+  assert.equal(result.steps[1].result.status, "no_new_evidence");
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 3);
+});
+
+test("two focused knowledge searches exhaust retrieval and reserve the remaining steps for an answer", async () => {
+  let calls = 0;
+  const tools = { searchApprovedKnowledge: { run: async () => {
+    calls += 1;
+    const source = { document_id: `doc-${calls}`, section_index: 0, chunk_id: `chunk-${calls}`, chunk_index: 0,
+      document_title: "Approved service information", heading: `Section ${calls}`,
+      content: `Approved service detail ${calls}.`, review_status: "approved" };
+    return { ok: true, status: "found", modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source]) };
+  } } };
+  let searchWasAvailableAfterLimit = true;
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 5, decideNextStep: async ({ step, tools: available }) => {
+    if (step <= 3) {
+      if (step === 3) searchWasAvailableAfterLimit = Object.hasOwn(available, "searchApprovedKnowledge");
+      return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `distinct approved detail ${step}` } };
+    }
+    return { type: "respond", text: "The approved information describes the supported service details." };
+  } });
+  assert.equal(calls, 2, "a bounded recovery search is allowed, then retrieval stops");
+  assert.equal(searchWasAvailableAfterLimit, false);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, "The approved information describes the supported service details.");
+});
+
+test("one exhausted-search correction does not consume the reserved answer-review step", async () => {
+  let calls = 0;
+  let stepThreeCalls = 0;
+  let answerStep = null;
+  const tools = { searchApprovedKnowledge: { run: async () => {
+    calls += 1;
+    const source = { document_id: `doc-${calls}`, section_index: 0, chunk_id: `chunk-${calls}`, chunk_index: 0,
+      document_title: "Approved service information", heading: `Section ${calls}`,
+      content: `Approved service detail ${calls}.`, review_status: "approved" };
+    return { ok: true, status: "found", modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source]) };
+  } } };
+  const result = await runAgentTurn(BASE_CONTEXT, { tools, maxSteps: 5, decideNextStep: async ({ step }) => {
+    if (step <= 2) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: `distinct approved detail ${step}` } };
+    if (step === 3 && stepThreeCalls++ === 0) return { type: "tool", tool: "searchApprovedKnowledge", args: { query: "one more search after exhaustion" } };
+    answerStep = step;
+    return { type: "respond", text: "The approved information describes the supported service details." };
+  } });
+  assert.equal(calls, 2);
+  assert.equal(stepThreeCalls, 1);
+  assert.equal(answerStep, 4);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.stepCount, 4);
 });
 
 test("a decision naming an unknown tool stops safely with a deterministic fallback, not a thrown error", async () => {

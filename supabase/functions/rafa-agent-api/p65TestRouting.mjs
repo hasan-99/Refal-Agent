@@ -22,12 +22,13 @@ export function canCreateP65TestNotification({ kind, testRunId, idempotencyKey, 
     && isSyntheticP65Handover(handover, contact, testRunId);
 }
 
-export function canClaimP65TestNotification({ id, requestedId, kind, testRunId, recipient, configuredRecipient, status, payload }) {
+export function canClaimP65TestNotification({ id, requestedId, kind, testRunId, recipient, configuredRecipient, status, payload, idempotency_key: idempotencyKey }) {
   return UUID.test(String(requestedId || ""))
     && id === requestedId
     && kind === "handover_review"
     && UUID.test(String(testRunId || ""))
     && payload?.p65TestRunId === testRunId
+    && idempotencyKey === `p65-handover:${testRunId}`
     && status === "queued"
     && Boolean(controlledP65Recipient(configuredRecipient))
     && recipient === controlledP65Recipient(configuredRecipient);
