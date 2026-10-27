@@ -719,7 +719,9 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   }
   const resultSets = await Promise.all(searchPlans.map(async ({ searchQuery, embedding, contextual }) => {
     try {
-      const value = await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
+      const value = knowledgeReranker?.config?.candidateCount
+        ? await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount, { candidateCount: knowledgeReranker.config.candidateCount })
+        : await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
       return { ok: true, value, contextual };
     } catch (error) {
       return { ok: false, error, contextual };
