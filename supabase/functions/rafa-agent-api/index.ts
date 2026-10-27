@@ -55,7 +55,10 @@ const loadProviderSecret = createProviderSecretLoader({
   },
   readEnvironmentSecret: () => Deno.env.get("OPENROUTER_API_KEY") || ""
 });
-const defaultChatModel = "openai/gpt-6-luna";
+// Same defaults as src/openrouterPrivacy.js: Claude Sonnet 5.5, GPT-6 Luna as
+// the previous default. Neither model's ZDR endpoints accept temperature.
+const defaultChatModel = "anthropic/claude-sonnet-5.5";
+const noSamplingChatModels = new Set([defaultChatModel, "openai/gpt-6-luna"]);
 const legacyChatModels = new Set(["inclusionai/ling-3.0-flash-sante:free", "openrouter/free", "deepseek/deepseek-v4.1-flash", "qwen/qwen3.8-27b:free"]);
 const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -1032,7 +1035,7 @@ async function generateAgentReply(body: Record<string, any>) {
     provider: { data_collection: "deny", zdr: true },
     usage: { include: true },
     max_tokens: 650,
-    ...(model === defaultChatModel ? { reasoning: { effort: "none", exclude: true } } : { temperature: 0.35 }),
+    ...(noSamplingChatModels.has(model) ? { reasoning: { effort: "none", exclude: true } } : { temperature: 0.35 }),
     messages: [
       {
         role: "system",

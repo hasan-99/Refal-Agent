@@ -41,7 +41,7 @@ test("a prior specialist offer is not repeated in later answers unless the custo
 });
 
 test("legacy free-model aliases resolve to the privacy-compatible default", () => {
-  assert.equal(DEFAULT_OPENROUTER_MODEL, "openai/gpt-6-luna");
+  assert.equal(DEFAULT_OPENROUTER_MODEL, "anthropic/claude-sonnet-5.5");
   assert.equal(DEFAULT_OPENROUTER_FALLBACK_MODEL, "openai/gpt-6-luna");
   assert.equal(resolveOpenRouterModel("openrouter/free"), DEFAULT_OPENROUTER_MODEL);
   assert.equal(resolveOpenRouterModel("inclusionai/ling-3.0-flash-sante:free"), DEFAULT_OPENROUTER_MODEL);
