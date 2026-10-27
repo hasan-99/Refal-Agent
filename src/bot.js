@@ -13,6 +13,7 @@ const P = require("pino");
 const qrcode = require("qrcode-terminal");
 const { loadProjectEnv } = require("./env");
 const { askOpenRouter, embedText, embedQueryTexts, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
+const { getKnowledgeReranker } = require("./knowledgeRerank");
 const { createStore } = require("./supabaseStore");
 const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
@@ -112,6 +113,18 @@ void warmEmbeddingPipeline().then(() => {
 }).catch((error) => {
   logEvent("embedding_warmup_error", safeErrorDiagnostics(error));
 });
+
+// Optional knowledge reranker (RAFA_KNOWLEDGE_RERANK=on): load it at startup so
+// the first customer turn does not pay the model load inside its reply.
+const knowledgeReranker = getKnowledgeReranker();
+if (knowledgeReranker) {
+  const rerankWarmStartedAt = performance.now();
+  void knowledgeReranker.warm().then(() => {
+    logEvent("response_stage", { stage: "knowledge_rerank_warmup", durationMs: Math.round(performance.now() - rerankWarmStartedAt) });
+  }).catch((error) => {
+    logEvent("knowledge_rerank_warmup_error", safeErrorDiagnostics(error));
+  });
+}
 
 function removeCustomerCitations(text) {
   return String(text || "")

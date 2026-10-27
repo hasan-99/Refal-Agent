@@ -199,10 +199,21 @@ function planPackage(rows, manifest) {
  *   operator-edited  the live revision was not written by this importer
  *                    (someone edited it in the dashboard); skipped unless forced,
  *                    because re-approving the package text would silently undo it
- *   deactivate       source carries the package prefix but the chunk is retired,
- *                    inactive or gone from the package
+ *   deactivate       source carries the package prefix and the chunk is retired
+ *                    or inactive in the package; in "full" mode also when it is
+ *                    gone from the package
+ *   kept             "partial" mode only: a live package chunk that is not in
+ *                    the supplied file. Nothing is written for it.
+ *
+ * `mode` defaults to "partial": a file that only carries changed chunks must
+ * never switch off the chunks it does not mention. Deactivating absent chunks
+ * needs the caller to say, explicitly, that the file is the full package.
  */
-function classify(plan, dbState, { embeddingModel, force = false } = {}) {
+const IMPORT_MODES = Object.freeze(["partial", "full"]);
+
+function classify(plan, dbState, { embeddingModel, force = false, mode = "partial", retired = [] } = {}) {
+  if (!IMPORT_MODES.includes(mode)) throw new Error(`unknown import mode ${mode}`);
+  const explicitlyRemoved = new Set([...(retired || []), ...(plan.inactive || [])].map(canonicalUrlFor));
   const byUrl = new Map((dbState || []).map((row) => [row.canonical_url, row]));
   const actions = [];
   for (const chunk of plan.chunks) {
@@ -218,11 +229,106 @@ function classify(plan, dbState, { embeddingModel, force = false } = {}) {
   const planned = new Set(plan.chunks.map((chunk) => chunk.canonicalUrl));
   for (const db of dbState || []) {
     if (!db.canonical_url.startsWith(CANONICAL_URL_PREFIX) || planned.has(db.canonical_url)) continue;
-    if (db.enabled || db.approved) {
-      actions.push({ chunkId: db.canonical_url.slice(CANONICAL_URL_PREFIX.length), canonicalUrl: db.canonical_url, action: "deactivate" });
-    }
+    if (!db.enabled && !db.approved) continue;
+    const chunkId = db.canonical_url.slice(CANONICAL_URL_PREFIX.length);
+    const removable = mode === "full" || explicitlyRemoved.has(db.canonical_url);
+    actions.push({ chunkId, canonicalUrl: db.canonical_url, action: removable ? "deactivate" : "kept" });
   }
   return actions;
+}
+
+/**
+ * Decides whether a package file may be treated as the full package. Both the
+ * operator (--mode full) and the manifest (packageMode "full" + chunkCount equal
+ * to the number of package lines) must agree; anything else is an error, so an
+ * unclear input can never reach the "deactivate what is missing" path.
+ * @returns {{ ok: boolean, errors: string[] }}
+ */
+function checkImportMode(mode, manifest, lineCount) {
+  const errors = [];
+  if (!mode) {
+    errors.push("cannot tell whether this file is the full package: pass --mode partial (only the chunks in the file are touched) or --mode full (chunks missing from the file are deactivated)");
+    return { ok: false, errors };
+  }
+  if (!IMPORT_MODES.includes(mode)) errors.push(`--mode must be partial or full, got ${mode}`);
+  if (mode === "full") {
+    if (manifest?.packageMode !== "full") errors.push('--mode full needs manifest.packageMode = "full"');
+    if (!Number.isInteger(manifest?.chunkCount)) errors.push("--mode full needs manifest.chunkCount (the number of lines in the full package)");
+    else if (manifest.chunkCount !== lineCount) errors.push(`manifest.chunkCount ${manifest.chunkCount} does not match the ${lineCount} lines in the package, so this file is not provably the full package`);
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Write summary shown before any database write. `superseded` counts updates
+ * that replace a live approved revision (the old revision is kept as history).
+ */
+function summarizeActions(actions, dbState) {
+  const byUrl = new Map((dbState || []).map((row) => [row.canonical_url, row]));
+  const count = (name) => actions.filter((a) => a.action === name).length;
+  return {
+    added: count("insert"),
+    updated: count("update"),
+    superseded: actions.filter((a) => a.action === "update" && byUrl.get(a.canonicalUrl)?.approved_sha).length,
+    reembedded: count("embed"),
+    unchanged: count("unchanged"),
+    deactivated: count("deactivate"),
+    kept: count("kept"),
+    skippedOperatorEdited: count("operator-edited")
+  };
+}
+
+/** Read-only query: the live state every planned write would change, for rollback. */
+function rollbackStateQuery(canonicalUrls) {
+  const list = canonicalUrls.length ? canonicalUrls.map(dollarQuote).join(", ") : "null";
+  return `select coalesce(json_agg(row_to_json(x)), '[]'::json) state from (
+  select s.canonical_url, s.enabled, s.approved, s.last_status,
+         d.id document_id, d.title, d.canonical_content, d.content_sha256, d.language_code, d.metadata
+  from public.rafa_knowledge_sources s
+  left join public.rafa_knowledge_documents d on d.source_id = s.id and d.review_status = 'approved'
+  where s.canonical_url in (${list})
+) x;`;
+}
+
+/**
+ * Builds the rollback artefacts from the pre-write state:
+ *   - flagsSql: restores enabled/approved for deactivated sources and switches
+ *     off sources this run inserts;
+ *   - packageRows: the previous approved content of every updated chunk in
+ *     package format. Re-importing them with --mode partial restores the old
+ *     text through the same audited path. A row is only emitted when its
+ *     rebuilt embedding_text hashes to the stored content_sha256, so a
+ *     rollback can never put back text that differs from what was live.
+ */
+function renderRollback(actions, beforeRows, { agentId }) {
+  const before = new Map((beforeRows || []).map((row) => [row.canonical_url, row]));
+  const flags = ["-- rollback flags · generated by scripts/importRagPackage.js before the write", "begin;"];
+  const packageRows = [];
+  const problems = [];
+  for (const a of actions) {
+    const url = dollarQuote(a.canonicalUrl);
+    const prior = before.get(a.canonicalUrl);
+    if (a.action === "deactivate" && prior) {
+      flags.push(`update public.rafa_knowledge_sources set enabled = ${prior.enabled ? "true" : "false"}, approved = ${prior.approved ? "true" : "false"}, last_status = ${prior.last_status === null || prior.last_status === undefined ? "null" : dollarQuote(prior.last_status)}, updated_at = now() where canonical_url = ${url};`);
+    } else if (a.action === "insert") {
+      flags.push(`update public.rafa_knowledge_sources set enabled = false, approved = false, last_status = 'disabled', updated_at = now() where canonical_url = ${url};`);
+    } else if (a.action === "update") {
+      if (!prior?.canonical_content) { problems.push(`${a.chunkId}: no live approved revision to roll back to`); continue; }
+      const meta = prior.metadata || {};
+      const title = `${a.chunkId} — ${prior.title}`;
+      const embeddingText = `${title}\n${prior.canonical_content}`;
+      const hash = sha256(embeddingText);
+      if (hash !== prior.content_sha256) { problems.push(`${a.chunkId}: rebuilt previous text does not hash to the stored content_sha256; restore it from the database backup instead`); continue; }
+      packageRows.push({
+        chunk_id: a.chunkId, agent_id: meta.agentId || agentId, knowledge_scope: meta.knowledgeScope, category: meta.category,
+        title, content: prior.canonical_content, embedding_text: embeddingText, keywords: meta.keywords || [],
+        language: meta.language || prior.language_code, source_file: meta.sourceFile, source_family: meta.sourceFamily,
+        version: meta.packageVersion, reviewed_at: meta.reviewedAt, is_active: true, content_hash: hash
+      });
+    }
+  }
+  flags.push("commit;");
+  return { flagsSql: flags.join("\n"), packageRows, problems };
 }
 
 // Dollar quoting, same as scripts/emitCorpusSql.js: the tag is checked against
@@ -337,6 +443,11 @@ module.exports = {
   applyRemap,
   planPackage,
   classify,
+  checkImportMode,
+  summarizeActions,
+  rollbackStateQuery,
+  renderRollback,
+  IMPORT_MODES,
   renderBatch,
   renderValidityRefresh,
   dollarQuote,
