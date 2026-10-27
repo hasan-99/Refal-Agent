@@ -1283,6 +1283,8 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [archiveReason, setArchiveReason] = useState("");
   const [archiveUndo, setArchiveUndo] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteReason, setDeleteReason] = useState("");
   const [reviewReasons, setReviewReasons] = useState({});
   const [knowledgeSearch, setKnowledgeSearch] = useState("");
   const [knowledgeDomain, setKnowledgeDomain] = useState("all");
@@ -1487,6 +1489,16 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
     });
   }
 
+  async function deleteSource(source, reason) {
+    await run(`delete-${source.id}`, async () => {
+      const result = await api(`/api/knowledge/${source.id}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+      setDeleteTarget(null); setDeleteReason("");
+      if (archiveUndo?.source?.id === source.id) setArchiveUndo(null);
+      if (selectedId === source.id) { setSelectedId(""); setDetail(null); }
+      return { message: `${source.display_name} deleted permanently (${result.deletedRevisions} ${result.deletedRevisions === 1 ? "revision" : "revisions"}).` };
+    });
+  }
+
   async function reviewDocument(document, status) {
     const reason = String(reviewReasons[document.id] || "").trim();
     if (!reason) { setError("Enter a reason for this review decision."); return; }
@@ -1546,8 +1558,8 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
                 </button>
                 {isAdmin && <div className="knowledge-source-actions" aria-label={`Actions for ${doc.title}`}>
                   <button type="button" className="knowledge-icon-action edit" title={`Edit ${doc.title}`} aria-label={`Edit ${doc.title}`} onClick={() => openKnowledgeEditor(doc)}><Pencil size={14} /></button>
-                  {source?.enabled && <button type="button" className="knowledge-icon-action archive" title={`Remove ${doc.title} from agent knowledge`} aria-label={`Remove ${doc.title} from agent knowledge`} onClick={() => { setArchiveTarget(source); setArchiveReason(""); }}><Trash2 size={14} /></button>}
                   {source && !source.enabled && <button type="button" className="knowledge-icon-action restore" title={`Restore ${doc.title} to agent knowledge`} aria-label={`Restore ${doc.title} to agent knowledge`} onClick={() => archiveSource(source, false, "Restored by administrator from the knowledge library.")} disabled={Boolean(busy)}><RefreshCcw size={14} /></button>}
+                  {source && <button type="button" className="knowledge-icon-action delete" title={`Delete ${doc.title} permanently`} aria-label={`Delete ${doc.title} permanently`} onClick={() => { setDeleteTarget(source); setDeleteReason(""); }} disabled={Boolean(busy)}><Trash2 size={14} /></button>}
                 </div>}
               </div>;
             })}
@@ -1626,6 +1638,15 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
           <p id="knowledge-archive-description">REFAL will stop using this source in customer answers. Its content and review history stay saved, and you can restore it later.</p>
           <label className="knowledge-archive-reason" htmlFor="knowledge-archive-reason"><span>Reason for archive <small>Required for the audit history</small></span><textarea id="knowledge-archive-reason" placeholder="Briefly explain why this source is being archived…" value={archiveReason} onChange={(event) => setArchiveReason(event.target.value)} maxLength={500} rows={3} /></label>
           <div className="knowledge-delete-dialog-actions"><button type="button" onClick={() => setArchiveTarget(null)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="knowledge-delete-confirm-button" onClick={() => archiveSource(archiveTarget, true, archiveReason)} disabled={Boolean(busy) || !archiveReason.trim()}>{busy === `archive-${archiveTarget.id}` ? "Archiving…" : "Archive source"}</button></div>
+        </section>
+      </div>}
+      {deleteTarget && <div className="knowledge-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDeleteTarget(null); }}>
+        <section className="knowledge-delete-dialog knowledge-archive-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-delete-title" aria-describedby="knowledge-delete-description">
+          <div className="knowledge-archive-dialog-heading"><span className="knowledge-archive-dialog-icon"><Trash2 size={19} /></span><div><span className="knowledge-archive-dialog-eyebrow">KNOWLEDGE LIBRARY</span><h2 id="knowledge-delete-title">Delete this source permanently?</h2></div><button type="button" className="knowledge-archive-close" aria-label="Close delete dialog" onClick={() => setDeleteTarget(null)} disabled={Boolean(busy)}><X size={17} /></button></div>
+          <div className="knowledge-archive-source"><span>Source</span><strong>{deleteTarget.display_name}</strong></div>
+          <p id="knowledge-delete-description">REFAL stops using this source right away. The source, every language revision and all of its search chunks are removed from the database, and this cannot be undone. Sources with review history cannot be deleted.</p>
+          <label className="knowledge-archive-reason" htmlFor="knowledge-delete-reason"><span>Reason for delete <small>Recorded in the event log</small></span><textarea id="knowledge-delete-reason" placeholder="Briefly explain why this source is being deleted…" value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} maxLength={500} rows={3} /></label>
+          <div className="knowledge-delete-dialog-actions"><button type="button" onClick={() => setDeleteTarget(null)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="knowledge-delete-confirm-button" onClick={() => deleteSource(deleteTarget, deleteReason)} disabled={Boolean(busy) || !deleteReason.trim()}>{busy === `delete-${deleteTarget.id}` ? "Deleting…" : "Delete permanently"}</button></div>
         </section>
       </div>}
     </div>

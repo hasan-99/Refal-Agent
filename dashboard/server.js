@@ -21,7 +21,7 @@ import { dueFacts, editFactReview, factAudit, listFacts, reapproveFact, setFactS
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
 import { registerContactCorrectionAdminRoutes } from "./contactCorrectionAdmin.js";
-import { approveKnowledgeDocumentAfterIndex, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { approveKnowledgeDocumentAfterIndex, deleteKnowledgeSource, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
 import { normalizeHandoverLanguage } from "./handoverFilters.js";
 import { readAllRows, withStableCreatedAtIdOrder, withStableIdOrder } from "./readAllRows.js";
 import { mapWithConcurrency } from "./mapWithConcurrency.js";
@@ -1253,6 +1253,21 @@ app.patch("/api/knowledge/:id/archive", requireAdmin, async (req, res) => {
     await logDashboardEvent(result.archived ? "knowledge_source_archived" : "knowledge_source_restored", {
       sourceId: result.source.id, displayName: result.source.display_name, actor: result.actor, reason: result.reason
     });
+    res.json(result);
+  } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
+});
+
+app.delete("/api/knowledge/:id", requireAdmin, authRateLimit, async (req, res) => {
+  try {
+    const result = await deleteKnowledgeSource(supabaseRest, {
+      sourceId: requireUuid(req.params.id),
+      actor: req.dashboardUser?.email || req.dashboardUser?.id, reason: req.body?.reason
+    });
+    await logDashboardEvent("knowledge_source_deleted", {
+      sourceId: result.source.id, displayName: result.source.display_name, deletedRevisions: result.deletedRevisions,
+      actor: result.actor, reason: result.reason
+    });
+    res.setHeader("Cache-Control", "no-store");
     res.json(result);
   } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
 });

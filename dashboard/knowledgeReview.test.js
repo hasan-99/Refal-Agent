@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approveKnowledgeDocumentAfterIndex, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { approveKnowledgeDocumentAfterIndex, deleteKnowledgeSource, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
 
 const id = "123e4567-e89b-42d3-a456-426614174000";
 
@@ -133,4 +133,57 @@ test("archive and restore use reversible enabled state and require an audited re
   await assert.rejects(setKnowledgeSourceArchived(noWrite, { sourceId: id, archived: true, actor: "", reason: "reason" }), /verified dashboard reviewer/);
   await assert.rejects(setKnowledgeSourceArchived(noWrite, { sourceId: id, archived: true, actor: "admin", reason: " " }), /short reason/);
   assert.equal(deniedCalls, 0);
+});
+
+const documentId = "223e4567-e89b-42d3-a456-426614174001";
+
+function deleteRest({ found = true, documents = [{ id: documentId }], audits = [], deleted = [{ id, display_name: "Services" }] } = {}) {
+  const calls = [];
+  const rest = async (route, options = {}) => {
+    calls.push([route, options]);
+    if (options.method === "DELETE") return deleted;
+    if (route.startsWith("rafa_knowledge_sources")) return found ? [{ id, display_name: "Services" }] : [];
+    if (route.startsWith("rafa_knowledge_documents")) return documents;
+    if (route.startsWith("rafa_knowledge_review_audit")) return audits;
+    throw new Error(`unexpected route ${route}`);
+  };
+  return { rest, calls };
+}
+
+test("permanent delete removes the source and reports how many revisions cascade with it", async () => {
+  const { rest, calls } = deleteRest();
+  const result = await deleteKnowledgeSource(rest, { sourceId: id, actor: "admin@refalco.com", reason: "Obsolete test data" });
+  assert.deepEqual(result, { source: { id, display_name: "Services" }, deletedRevisions: 1, reason: "Obsolete test data", actor: "admin@refalco.com" });
+  const [route, options] = calls.at(-1);
+  assert.equal(options.method, "DELETE");
+  assert.equal(route, `rafa_knowledge_sources?id=eq.${id}&select=id,display_name`);
+  assert.equal(calls[2][0], `rafa_knowledge_review_audit?document_id=in.(${documentId})&select=id&limit=1`);
+});
+
+test("permanent delete refuses audited and missing sources without deleting", async () => {
+  for (const [setup, pattern] of [
+    [{ audits: [{ id: "audit" }] }, /review history/],
+    [{ found: false }, /not found/],
+    [{ deleted: [] }, /not found/]
+  ]) {
+    const { rest, calls } = deleteRest(setup);
+    await assert.rejects(deleteKnowledgeSource(rest, { sourceId: id, actor: "admin@refalco.com", reason: "Cleanup" }), pattern);
+    if (!setup.deleted) assert.ok(calls.every(([, options]) => options.method !== "DELETE"));
+  }
+});
+
+test("permanent delete skips the audit lookup for a source with no revisions", async () => {
+  const { rest, calls } = deleteRest({ documents: [] });
+  const result = await deleteKnowledgeSource(rest, { sourceId: id, actor: "admin@refalco.com", reason: "Empty source" });
+  assert.equal(result.deletedRevisions, 0);
+  assert.ok(calls.every(([route]) => !route.startsWith("rafa_knowledge_review_audit")));
+});
+
+test("permanent delete validates ID, reviewer, and reason before database access", async () => {
+  let calls = 0;
+  const rest = async () => { calls += 1; };
+  await assert.rejects(deleteKnowledgeSource(rest, { sourceId: "bad", actor: "admin", reason: "x" }), /Invalid knowledge source ID/);
+  await assert.rejects(deleteKnowledgeSource(rest, { sourceId: id, actor: "", reason: "x" }), /verified dashboard reviewer/);
+  await assert.rejects(deleteKnowledgeSource(rest, { sourceId: id, actor: "admin", reason: " " }), /short reason/);
+  assert.equal(calls, 0);
 });

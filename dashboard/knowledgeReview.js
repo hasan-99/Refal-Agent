@@ -100,3 +100,34 @@ export async function setKnowledgeSourceArchived(rest, { sourceId, archived, act
   if (!rows?.[0]) throw httpError(404, "Knowledge source not found.");
   return { source: rows[0], archived, reason: note, actor: reviewer };
 }
+
+/**
+ * Permanently delete a source, live or archived. Its revisions and chunks go
+ * with it through the database's ON DELETE CASCADE. A source with review audit
+ * history is refused because that history is append-only.
+ */
+export async function deleteKnowledgeSource(rest, { sourceId, actor, reason = "" } = {}) {
+  const id = String(sourceId || "");
+  if (!UUID.test(id)) throw httpError(400, "Invalid knowledge source ID.");
+  const reviewer = String(actor || "").trim();
+  if (reviewer.length < 2 || reviewer.length > 200) throw httpError(403, "A verified dashboard reviewer is required.");
+  const note = String(reason || "").trim().slice(0, 500);
+  if (!note) throw httpError(400, "Provide a short reason for deleting this source.");
+
+  const sources = await rest(`rafa_knowledge_sources?id=eq.${id}&select=id,display_name`);
+  if (!sources?.[0]) throw httpError(404, "Knowledge source not found.");
+
+  const documents = await rest(`rafa_knowledge_documents?source_id=eq.${id}&select=id`);
+  const documentIds = (documents || []).map((document) => document.id);
+  if (documentIds.length) {
+    const audits = await rest(`rafa_knowledge_review_audit?document_id=in.(${documentIds.join(",")})&select=id&limit=1`);
+    if (audits?.length) throw httpError(409, "This source has review history, which is kept permanently, so it cannot be deleted.");
+  }
+
+  const deleted = await rest(`rafa_knowledge_sources?id=eq.${id}&select=id,display_name`, {
+    method: "DELETE",
+    headers: { Prefer: "return=representation" }
+  });
+  if (!deleted?.[0]) throw httpError(404, "Knowledge source not found.");
+  return { source: deleted[0], deletedRevisions: documentIds.length, reason: note, actor: reviewer };
+}
