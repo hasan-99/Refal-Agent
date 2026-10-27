@@ -34,7 +34,7 @@ const DEFAULT_COMPANY_IDENTITY = identityFromProfile(profile);
 // rather than silently emitting a prompt with the persona missing.
 const STATIC_BLOCKS = [
   "identity", "evidence", "precedence", "antiPatterns",
-  "goldenFormula", "language", "operational", "crossSell", "compliance", "memory"
+  "goldenFormula", "language", "operational", "crossSell", "compliance", "conduct", "memory"
 ];
 const SERVICE_SUGGESTION_BLOCKS = new Set(["goldenFormula", "operational", "crossSell"]);
 
@@ -119,6 +119,7 @@ export function buildBrainPrompt({ leadTier = "", variant = "operator", response
     ...STATIC_BLOCKS.operational(allowRelevantServiceSuggestions),
     ...bookingOfferBlock(leadTier),
     ...STATIC_BLOCKS.compliance(),
+    ...STATIC_BLOCKS.conduct(),
     ...STATIC_BLOCKS.memory()
   ];
 }
