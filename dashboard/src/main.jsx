@@ -935,7 +935,7 @@ function AgentSidebar({ role }) {
       {section === "settings" && <section className="agent-settings agent-view">
         <div className="rail-section-title"><span>Agent settings</span></div>
         <form className="agent-model-form" onSubmit={saveAgentSettings}>
-          <label>OpenRouter model<input value={modelInput} onChange={(event) => setModelInput(event.target.value)} placeholder="openai/gpt-6-luna" /></label>
+          <label>OpenRouter model<input value={modelInput} onChange={(event) => setModelInput(event.target.value)} placeholder="anthropic/claude-sonnet-5.5" /></label>
           <button className="ghost" type="submit" disabled={!state.session || !modelInput.trim()}><Save size={15} /> Save model</button>
         </form>
         <label className="agent-memory-toggle"><input type="checkbox" checked={state.session?.memory_enabled !== false} disabled={!state.session} onChange={(event) => toggleSessionMemory(event.target.checked)} /> Use relevant saved memories in this chat</label>

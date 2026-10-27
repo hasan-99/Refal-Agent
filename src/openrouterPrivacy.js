@@ -2,8 +2,14 @@ const OPENROUTER_PRIVACY_POLICY = Object.freeze({
   data_collection: "deny",
   zdr: true
 });
-const DEFAULT_OPENROUTER_MODEL = "openai/gpt-6-luna";
-const DEFAULT_OPENROUTER_FALLBACK_MODEL = DEFAULT_OPENROUTER_MODEL;
+// Primary: Claude Sonnet 5.5. Fallback: GPT-6 Luna, the previous default, from a
+// different provider so one provider outage does not stop replies. Both have
+// zero-data-retention endpoints on OpenRouter (verified 2026-10-28).
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-5.5";
+const DEFAULT_OPENROUTER_FALLBACK_MODEL = "openai/gpt-6-luna";
+// Their ZDR endpoints accept no sampling parameters, so temperature/top_p are
+// dropped and reasoning is switched off explicitly for both.
+const NO_SAMPLING_PARAMETER_MODELS = new Set([DEFAULT_OPENROUTER_MODEL, DEFAULT_OPENROUTER_FALLBACK_MODEL]);
 const LEGACY_OPENROUTER_MODELS = new Set([
   "inclusionai/ling-3.0-flash-sante:free",
   "openrouter/free",
@@ -13,14 +19,18 @@ const LEGACY_OPENROUTER_MODELS = new Set([
 
 function withOpenRouterPrivacyPolicy(payload) {
   const compatible = { ...payload };
-  if (compatible.model === DEFAULT_OPENROUTER_MODEL) {
+  if (NO_SAMPLING_PARAMETER_MODELS.has(compatible.model)) {
     delete compatible.temperature;
     delete compatible.top_p;
     compatible.reasoning = { effort: "none", exclude: true };
   }
+  // One Anthropic ZDR endpoint (Amazon Bedrock) lacks strict structured
+  // outputs. A json_schema request must only route to endpoints that honour
+  // every parameter, or a decision could come back as unconstrained text.
+  const strictJson = String(compatible.model || "").startsWith("anthropic/") && compatible.response_format?.type === "json_schema";
   return {
     ...compatible,
-    provider: OPENROUTER_PRIVACY_POLICY
+    provider: strictJson ? { ...OPENROUTER_PRIVACY_POLICY, require_parameters: true } : OPENROUTER_PRIVACY_POLICY
   };
 }
 
