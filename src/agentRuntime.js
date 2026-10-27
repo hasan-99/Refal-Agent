@@ -6,15 +6,17 @@ const { decideNextStep: defaultDecideNextStep } = require("./agentDecision");
 const { TOOL_REGISTRY, MAX_RAG_EVIDENCE_ITEMS } = require("./agentTools");
 const { embedText: defaultEmbedText, DEFAULT_EMBEDDING_MODEL } = require("./ai");
 const { assessAgentDraft } = require("./semanticGrounding");
+const { getKnowledgeReranker } = require("./knowledgeRerank");
 
 function buildToolContext({
   store, user, userId, intents = [], language, embedText = defaultEmbedText,
   embeddingModel = DEFAULT_EMBEDDING_MODEL, matchCount = MAX_RAG_EVIDENCE_ITEMS,
   inboundMessageId = null, sourceTurnId = null, consentState = "unknown",
-  allowedCapabilities = [], policy = null, currentMessage = ""
+  allowedCapabilities = [], policy = null, currentMessage = "",
+  knowledgeReranker = getKnowledgeReranker()
 } = {}) {
   return {
-    store, user, userId, intents, language, embedText, embeddingModel, matchCount,
+    store, user, userId, intents, language, embedText, embeddingModel, matchCount, knowledgeReranker,
     inboundMessageId, sourceTurnId, consentState,
     currentMessage: String(currentMessage || "").slice(0, 4000),
     allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).filter((value) => typeof value === "string"))]),

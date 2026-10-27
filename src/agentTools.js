@@ -11,6 +11,8 @@ const { createHash } = require("node:crypto");
 const { detectMessageLanguage } = require("./language");
 const { INTENTS } = require("./intent");
 const { buildKnowledgeSearchQueries } = require("./knowledgeQuery");
+const { SUPPORT_INTENTS, detectSupportIntent } = require("./knowledgeIntents");
+const { rerankQuestion } = require("./knowledgeRerank");
 
 function isBroadServiceScopeRequest(message, intents = []) {
   const text = String(message || "").normalize("NFKC").replace(/[\u064B-\u065F\u0670\u0640]/gu, " ").toLocaleLowerCase();
@@ -621,7 +623,19 @@ function mergeRankedKnowledgeResults(resultSets, { contextualCount = 1, historic
         currentQueryMatch: group.currentQueryRank !== null, currentQueryRank: group.currentQueryRank, selectionRelevance: group.score * 60 })));
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user, intents = [] } = {}) {
+// Support-intent description embeddings, computed once per embedding function
+// (one per process in production) and only when reranking is enabled.
+const supportIntentProfiles = new WeakMap();
+function loadSupportIntentProfiles(embedText) {
+  if (!supportIntentProfiles.has(embedText)) {
+    const pending = Promise.all(SUPPORT_INTENTS.map(async (intent) => ({ id: intent.id, embedding: await embedText(intent.text) })));
+    pending.catch(() => supportIntentProfiles.delete(embedText));
+    supportIntentProfiles.set(embedText, pending);
+  }
+  return supportIntentProfiles.get(embedText);
+}
+
+async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user, intents = [], knowledgeReranker = null } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
@@ -684,6 +698,25 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       historicalQueryIndex = -1;
     }
   }
+  // With reranking on, one extra semantic probe widens the candidate pool for
+  // a clearly detected support intent (refund, guarantee, complaint, ...), so
+  // a dialect phrasing that e5 places far from the answering section still
+  // gets that section in front of the cross-encoder. It is appended last, so
+  // the merge gives it the lowest weight and never a primary-match flag; the
+  // reranker, not the probe, decides the final order.
+  let supportIntent = null;
+  const probeEmbedding = currentEmbedding || resolvedEmbedding;
+  if (knowledgeReranker && probeEmbedding && typeof embedText === "function") {
+    try {
+      supportIntent = detectSupportIntent(probeEmbedding, await loadSupportIntentProfiles(embedText));
+      if (supportIntent) {
+        const profile = (await loadSupportIntentProfiles(embedText)).find((p) => p.id === supportIntent.id);
+        searchPlans.push({ searchQuery: currentQuery || query, embedding: profile.embedding, contextual: false, intentProbe: true });
+      }
+    } catch {
+      supportIntent = null;
+    }
+  }
   const resultSets = await Promise.all(searchPlans.map(async ({ searchQuery, embedding, contextual }) => {
     try {
       const value = await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
@@ -741,9 +774,20 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // a condition or the other half of a multi-part answer. Keep the ranked
   // candidate window, then let the existing complete-section and prompt
   // budgets retain as many as fit for BOTH generation and validation.
-  const prioritizedCatalogue = visibleCatalogue.map((item, index) => ({ item, index,
-    primarySearchMatch: sectionRows.get(item.key).some((row) => row.primarySearchMatch === true) }))
-    .sort((a, b) => Number(b.primarySearchMatch) - Number(a.primarySearchMatch) || a.index - b.index);
+  // Optional cross-encoder rerank (RAFA_KNOWLEDGE_RERANK=on): the first-stage
+  // pool is re-ordered by how well each whole section answers the customer's
+  // full question. On any failure the first-stage order below is kept.
+  let rerank = null;
+  if (knowledgeReranker) {
+    rerank = await knowledgeReranker.rerank(rerankQuestion(currentQuery, query), visibleCatalogue);
+  }
+  const reranked = rerank?.status === "reranked";
+  const prioritizedCatalogue = reranked
+    ? rerank.sections.map((item, index) => ({ item, index,
+      primarySearchMatch: sectionRows.get(item.key).some((row) => row.primarySearchMatch === true) }))
+    : visibleCatalogue.map((item, index) => ({ item, index,
+      primarySearchMatch: sectionRows.get(item.key).some((row) => row.primarySearchMatch === true) }))
+      .sort((a, b) => Number(b.primarySearchMatch) - Number(a.primarySearchMatch) || a.index - b.index);
   // `requestedCount` is a section budget, not a chunk budget. The RPC can
   // return several chunks for one ranked section; slicing the flattened rows
   // below used to let one multi-chunk section consume the entire limit. That
@@ -763,7 +807,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       selectionRelevance: 1 / (selectionRank + 1) + (row.historicalSearchMatch ? 1 : 0)
         // Preserve only the strongest few exact-wording matches so low-value
         // tail results cannot crowd out an already strong resolved overview.
-        + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
+        + (!reranked && row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
       primarySearchMatch: row.primarySearchMatch === true,
       selectionOrder: selectionRank })));
   // Keep the bounded prompt-facing evidence to the requested number of whole
@@ -772,7 +816,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const rankedRows = rankedSections.flatMap(({ item }, selectionRank) => sectionRows.get(item.key)
     .map((row) => ({ ...row,
       selectionRelevance: 1 / (selectionRank + 1) + (row.historicalSearchMatch ? 1 : 0)
-        + (row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
+        + (!reranked && row.currentQueryMatch && Number(row.currentQueryRank) < 3 ? 1 / (Number(row.currentQueryRank) + 1) : 0),
       primarySearchMatch: row.primarySearchMatch === true,
       selectionOrder: selectionRank })));
   const modelObservation = buildApprovedKnowledgeObservation(selectedRows.length ? "found" : "no_evidence", selectedRows,
@@ -780,7 +824,8 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   modelObservation.primarySearchRefs = [...new Set(selectedRows.filter((row) => row.primarySearchMatch)
     .map((row) => row.chunk_id).filter((id) => typeof id === "string"))];
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
-  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, comprehensiveSearch: broadServiceRequest, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedSections.length, selectedChunkCount: selectedRows.length, excludedIds: [], selectionStatus: "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted) } });
+  return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, comprehensiveSearch: broadServiceRequest, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedSections.length, selectedChunkCount: selectedRows.length, excludedIds: [], selectionStatus: reranked ? "cross_encoder_reranked_bounded" : "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted),
+    ...(knowledgeReranker ? { supportIntent: supportIntent?.id || null, rerank: rerank ? { status: rerank.status, durationMs: rerank.durationMs, poolSize: rerank.poolSize } : null } : {}) } });
 }
 
 // --- getCustomerContext ------------------------------------------------------
