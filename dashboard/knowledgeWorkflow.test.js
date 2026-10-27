@@ -103,7 +103,20 @@ test("archive and restore are admin-only, reversible source disable actions with
   assert.match(ui, /Archive this source\?/);
   assert.match(ui, /Restore \$\{doc\.title\} to agent knowledge/);
   assert.doesNotMatch(ui, /Delete knowledge/);
-  assert.doesNotMatch(server, /app\.delete\("\/api\/knowledge\/:id"/);
+});
+
+test("permanent knowledge delete is admin-only, refuses audited sources, and records an actor/reason event", () => {
+  const remove = route("delete", "/api/knowledge/:id");
+  assert.match(remove, /requireAdmin/);
+  assert.match(remove, /deleteKnowledgeSource/);
+  assert.match(remove, /knowledge_source_deleted/);
+  assert.match(remove, /actor:\s*result\.actor/);
+  assert.match(remove, /reason:\s*result\.reason/);
+  const helper = readFileSync(new URL("./knowledgeReview.js", import.meta.url), "utf8");
+  assert.match(helper, /review history, which is kept permanently/);
+  assert.match(helper, /Provide a short reason for deleting/);
+  assert.match(ui, /Delete this source permanently\?/);
+  assert.match(ui, /cannot be undone/);
 });
 
 test("approved retrieval admin preview remains available while Knowledge shows the Add knowledge action", () => {
