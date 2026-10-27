@@ -265,17 +265,31 @@ Deno.serve(async (req: Request) => {
         ? `[${body.embedding.join(",")}]`
         : null;
       const embeddingModel = typeof body.embeddingModel === "string" ? body.embeddingModel.slice(0, 160) : "";
-      const { data, error } = embedding
-        ? await supabase.rpc("rafa_hybrid_search_knowledge", {
+      // A worker that reranks asks for a wider candidate window (candidateCount,
+      // max 50) through the additive v2 RPC. Callers that do not send it keep
+      // the v1 path unchanged, and any v2 failure falls back to v1.
+      const candidateCount = Number.isInteger(body.candidateCount) ? Math.min(50, Math.max(1, body.candidateCount)) : null;
+      const v1 = () => embedding
+        ? supabase.rpc("rafa_hybrid_search_knowledge", {
           p_query: query,
           p_embedding: embedding,
           p_embedding_model: embeddingModel,
           p_match_count: matchCount
         })
-        : await supabase.rpc("rafa_search_knowledge", {
+        : supabase.rpc("rafa_search_knowledge", {
           p_query: query,
           p_match_count: matchCount
         });
+      let { data, error } = embedding && candidateCount
+        ? await supabase.rpc("rafa_hybrid_search_knowledge_v2", {
+          p_query: query,
+          p_embedding: embedding,
+          p_embedding_model: embeddingModel,
+          p_match_count: candidateCount,
+          p_candidate_count: Math.max(candidateCount, 30)
+        })
+        : await v1();
+      if (error && embedding && candidateCount) ({ data, error } = await v1());
       if (error) throw error;
       const candidateRows = data || [];
       const candidateIds = candidateRows.map((row: { chunk_id?: string }) => row.chunk_id).filter((id: unknown): id is string => typeof id === "string");

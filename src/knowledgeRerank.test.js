@@ -10,8 +10,29 @@ test("reranking is off unless explicitly enabled, and its knobs are bounded", ()
   assert.equal(createKnowledgeReranker({}), null);
   assert.equal(rerankConfig({ RAFA_KNOWLEDGE_RERANK: "ON" }).enabled, true);
   assert.equal(rerankConfig({ RAFA_KNOWLEDGE_RERANK: "true" }).enabled, false);
-  const c = rerankConfig({ RAFA_KNOWLEDGE_RERANK_POOL: "500", RAFA_KNOWLEDGE_RERANK_TIMEOUT_MS: "1", RAFA_KNOWLEDGE_RERANK_THREADS: "x" });
-  assert.deepEqual([c.poolSize, c.timeoutMs, c.threads], [50, 500, 4]);
+  const c = rerankConfig({ RAFA_KNOWLEDGE_RERANK_POOL: "500", RAFA_KNOWLEDGE_RERANK_TIMEOUT_MS: "1", RAFA_KNOWLEDGE_RERANK_THREADS: "x", RAFA_KNOWLEDGE_RERANK_CANDIDATES: "999" });
+  assert.deepEqual([c.poolSize, c.timeoutMs, c.threads, c.candidateCount], [50, 500, 4, 50]);
+  assert.deepEqual([rerankConfig({}).poolSize, rerankConfig({}).candidateCount], [30, 40]);
+});
+
+test("the store asks for the wider v2 window only when a candidate count is given", async () => {
+  const { EdgeApiStore } = require("./supabaseStore");
+  const bodies = [];
+  const store = Object.create(EdgeApiStore.prototype);
+  store.request = async (_path, init) => { bodies.push(JSON.parse(init.body)); return { results: [] }; };
+  await store.searchKnowledge("q", null, null, 6);
+  await store.searchKnowledge("q", null, null, 6, { candidateCount: 40 });
+  assert.equal(Object.hasOwn(bodies[0], "candidateCount"), false);
+  assert.equal(bodies[1].candidateCount, 40);
+});
+
+test("with a reranker the agent search requests the reranker's candidate window", async () => {
+  const seen = [];
+  const store = { searchKnowledge: async (...args) => { seen.push(args[4]); return []; } };
+  await searchApprovedKnowledge({ query: "q" }, { store, embedText: async () => null, matchCount: 8, currentMessage: "q",
+    knowledgeReranker: { config: { candidateCount: 40 }, rerank: async (_q, sections) => ({ sections, status: "skipped" }) } });
+  await searchApprovedKnowledge({ query: "q" }, { store, embedText: async () => null, matchCount: 8, currentMessage: "q" });
+  assert.deepEqual(seen, [{ candidateCount: 40 }, undefined]);
 });
 
 test("the rerank question keeps the customer's words and adds the resolved query only when it adds context", () => {

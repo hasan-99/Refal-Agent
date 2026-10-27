@@ -413,10 +413,15 @@ class EdgeApiStore {
     return auditEvent;
   }
 
-  async searchKnowledge(query, embedding = null, embeddingModel = null, matchCount = 6) {
+  // `candidateCount` (optional, max 50) asks the endpoint for the wider v2
+  // candidate window used by cross-encoder reranking; without it the request
+  // is exactly the previous one.
+  async searchKnowledge(query, embedding = null, embeddingModel = null, matchCount = 6, { candidateCount } = {}) {
+    const payload = { query: String(query || "").slice(0, 1000), embedding, embeddingModel, matchCount };
+    if (Number.isInteger(candidateCount)) payload.candidateCount = candidateCount;
     const { results } = await this.request("/knowledge/search", {
       method: "POST",
-      body: JSON.stringify({ query: String(query || "").slice(0, 1000), embedding, embeddingModel, matchCount })
+      body: JSON.stringify(payload)
     });
     return results || [];
   }

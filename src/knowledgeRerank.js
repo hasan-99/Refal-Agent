@@ -19,7 +19,8 @@
 // enabling it can only change ordering, never availability.
 //
 //   RAFA_KNOWLEDGE_RERANK=on                 enable
-//   RAFA_KNOWLEDGE_RERANK_POOL=24            sections scored per search (4..50)
+//   RAFA_KNOWLEDGE_RERANK_CANDIDATES=40      first-stage rows per query (10..50, v2 RPC)
+//   RAFA_KNOWLEDGE_RERANK_POOL=30            sections scored per search (4..50)
 //   RAFA_KNOWLEDGE_RERANK_TIMEOUT_MS=8000    scoring deadline per search
 //   RAFA_KNOWLEDGE_RERANK_THREADS=4          onnxruntime intra-op threads
 
@@ -37,7 +38,10 @@ function rerankConfig(env = process.env) {
   };
   return {
     enabled,
-    poolSize: bounded(env.RAFA_KNOWLEDGE_RERANK_POOL, 24, 4, 50),
+    // First-stage rows requested per search (v2 RPC, max 50); then the best
+    // `poolSize` sections of the merged list are scored by the cross-encoder.
+    candidateCount: bounded(env.RAFA_KNOWLEDGE_RERANK_CANDIDATES, 40, 10, 50),
+    poolSize: bounded(env.RAFA_KNOWLEDGE_RERANK_POOL, 30, 4, 50),
     timeoutMs: bounded(env.RAFA_KNOWLEDGE_RERANK_TIMEOUT_MS, 8000, 500, 30000),
     threads: bounded(env.RAFA_KNOWLEDGE_RERANK_THREADS, 4, 1, 32)
   };
@@ -119,7 +123,7 @@ function orderByScores(items, scores, poolSize) {
  * @param {{ title?: string, section?: string, content: string }[]} sections first-stage order
  * @returns {Promise<{ sections: any[], status: "reranked"|"timeout"|"error"|"skipped", durationMs: number, poolSize: number, scores: (number|null)[] }>}
  */
-async function rerankSections(question, sections, { poolSize = 24, timeoutMs = 8000, scorer = scorePassages, now = Date.now } = {}) {
+async function rerankSections(question, sections, { poolSize = 30, timeoutMs = 8000, scorer = scorePassages, now = Date.now } = {}) {
   const started = now();
   const list = Array.isArray(sections) ? sections : [];
   const size = Math.min(poolSize, list.length);
