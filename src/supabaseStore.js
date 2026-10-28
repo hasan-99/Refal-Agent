@@ -419,11 +419,23 @@ class EdgeApiStore {
   async searchKnowledge(query, embedding = null, embeddingModel = null, matchCount = 6, { candidateCount } = {}) {
     const payload = { query: String(query || "").slice(0, 1000), embedding, embeddingModel, matchCount };
     if (Number.isInteger(candidateCount)) payload.candidateCount = candidateCount;
-    const { results } = await this.request("/knowledge/search", {
+    const { results, timing } = await this.request("/knowledge/search", {
       method: "POST",
       body: JSON.stringify(payload)
     });
-    return results || [];
+    const rows = results || [];
+    // Edge stage timings ride along as a non-enumerable property, so the
+    // returned value is still the plain row array every caller expects.
+    if (timing && typeof timing === "object") Object.defineProperty(rows, "serverTiming", { value: timing, enumerable: false });
+    return rows;
+  }
+
+  // Fingerprint of every approval/expiry/content field the search RPCs read
+  // (RAFA_SEARCH_CACHE keys on it). One fast attempt only: when it is slow or
+  // missing the caller skips the cache and searches normally.
+  async getKnowledgeVersion() {
+    const { version } = await this.request("/knowledge/version", { timeoutMs: 2500, attempts: 1 });
+    return typeof version === "string" ? version : null;
   }
 
   async getBookingPolicy() {

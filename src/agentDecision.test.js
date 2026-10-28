@@ -259,7 +259,9 @@ test("summary requests require current evidence for facts repeated from conversa
   assert.match(prompt, /previous assistant replies.*never approved evidence/i);
   assert.match(prompt, /search relevant company facts in both the requested language and the original language/i);
   assert.match(prompt, /one related query MUST restate the most recent relevant customer question in its original language/i);
-  assert.match(prompt, /one relatedQueries entry MUST restate the most recent relevant customer question in its original language/i);
+  // The rule is carried once, by BLOCKS.evidence; the inline copy was a
+  // duplicate removed from the budgeted prompt.
+  assert.equal(prompt.match(/MUST restate the most recent relevant customer question in its original language/giu)?.length, 1);
 });
 
 test("decision prompt keeps follow-ups within the customer's current unexcluded scope", () => {

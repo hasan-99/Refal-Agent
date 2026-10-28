@@ -4,7 +4,9 @@
 // telemetry, and typing are injected so the same post-response path can be
 // exercised without starting the WhatsApp worker.
 const { routeMessageResult, prepareInboundMessage, recordHistory, latestCustomerStatedName } = require("./messageRouter");
-const { runAgentTurnForContact } = require("./agentRuntime");
+const { runAgentTurnForContact, buildToolContext, isCompanyFactualTurn, prefetchKnowledgeSearch } = require("./agentRuntime");
+const { latencyFlags, getKnowledgeVersionReader } = require("./knowledgeCache");
+const { getSessionEvidenceCache } = require("./sessionEvidenceCache");
 const { TOOL_REGISTRY } = require("./agentTools");
 const { getConversationState } = require("./conversationState");
 const { getConsentState } = require("./leadQualification");
@@ -21,6 +23,46 @@ const { identityFromProfile } = require("./companyIdentitySettings");
 const { INTENTS } = require("./intent");
 const { RESPONSE_STYLE_DEFAULTS } = require("./responseStyle");
 const { BUSINESS_GUIDANCE_DEFAULTS } = require("./businessGuidance");
+
+// Per-turn latency and cache counters for agent_turn_completed. Counts,
+// durations and statuses only, never message text, queries or evidence.
+function createTurnMetrics() {
+  const metrics = { llmCalls: 0, decisionModelCalls: 0, decisionModelMs: 0, groundingModelCalls: 0, groundingModelMs: 0,
+    finalAnswerModelMs: null, knowledgeSearches: 0, knowledgeSearchMs: 0, dbSearchMs: 0, embeddingMs: 0, fusionMs: 0, rerankMs: 0,
+    versionCheckMs: 0, dbRpcMs: 0, dbExpandMs: 0, dbPolicyMs: 0, searchCacheHits: 0, searchCacheMisses: 0, rerankCacheHits: 0, rerankCacheMisses: 0, repeatedSearchesSkipped: 0 };
+  return {
+    metrics,
+    modelCall(measurement = {}) {
+      const durationMs = Number.isFinite(measurement.durationMs) ? measurement.durationMs : 0;
+      const outcome = String(measurement.outcome || "");
+      if (/fast_path$/u.test(outcome)) return;
+      metrics.llmCalls += 1;
+      if (measurement.stage === "validation") { metrics.groundingModelCalls += 1; metrics.groundingModelMs += durationMs; return; }
+      metrics.decisionModelCalls += 1;
+      metrics.decisionModelMs += durationMs;
+      if (outcome === "decision_respond" || outcome === "decision_clarify") metrics.finalAnswerModelMs = durationMs;
+    },
+    toolCall({ tool, result, durationMs, skipped } = {}) {
+      if (tool !== "searchApprovedKnowledge") return;
+      if (skipped) { metrics.repeatedSearchesSkipped += 1; return; }
+      metrics.knowledgeSearches += 1;
+      metrics.knowledgeSearchMs += Number.isFinite(durationMs) ? durationMs : 0;
+      const timing = result?.trace?.timing || {};
+      metrics.dbSearchMs += Number(timing.searchMs) || 0;
+      metrics.embeddingMs += Number(timing.embeddingMs) || 0;
+      metrics.fusionMs += Number(timing.fusionMs) || 0;
+      metrics.rerankMs += Number(timing.rerankMs) || 0;
+      metrics.versionCheckMs += Number(timing.versionMs) || 0;
+      metrics.dbRpcMs += Number(timing.server?.rpcMs) || 0;
+      metrics.dbExpandMs += Number(timing.server?.expandMs) || 0;
+      metrics.dbPolicyMs += Number(timing.server?.policyMs) || 0;
+      metrics.searchCacheHits += Number(result?.trace?.cache?.search?.hits) || 0;
+      metrics.searchCacheMisses += Number(result?.trace?.cache?.search?.misses) || 0;
+      if (result?.trace?.rerank?.cache === "hit") metrics.rerankCacheHits += 1;
+      if (result?.trace?.rerank?.cache === "miss") metrics.rerankCacheMisses += 1;
+    }
+  };
+}
 
 function isSocialOnlyClassification(classification = {}) {
   const intents = Array.isArray(classification.intents) ? classification.intents : [];
@@ -43,6 +85,12 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   if (!store) throw new TypeError("Agent live answer turn requires a store.");
   const turnStartedAt = performance.now();
   const timing = {};
+  const flags = latencyFlags();
+  const turnMetrics = createTurnMetrics();
+  // The knowledge version stamp is read once at the start of the turn, in
+  // parallel with setup and preflight; the reader trusts it for 5 seconds.
+  const versionReader = flags.sessionEvidenceCache || flags.searchCache ? getKnowledgeVersionReader(store) : null;
+  void versionReader?.read();
   const measure = async (key, action) => {
     const startedAt = performance.now();
     try { return await action(); }
@@ -74,8 +122,9 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
     ["searchApprovedKnowledge", "lookupActiveOffer", "lookupRenewalFees", "lookupGovernmentFees", "searchPropertyInventory", "lookupReservationRules"].includes(name))) : toolRegistry;
   const bookingState = user?.booking?.status;
   const prepared = await measure("preflightDurationMs", () => prepareInboundMessage({ userId, incoming: String(text || "").trim(), user: preflightUser, store, contextual: true,
-    ...preflightOptions, onModelCall: (measurement) => logEvent("agent_model_call", { ...measurement, traceId }) }));
+    ...preflightOptions, onModelCall: (measurement) => { timing.preflightOutcome = String(measurement?.outcome || "").slice(0, 40); turnMetrics.modelCall(measurement); return logEvent("agent_model_call", { ...measurement, traceId }); } }));
   const socialOnlyTurn = isSocialOnlyClassification(prepared.classification);
+  const fastSocialTurn = socialOnlyTurn && prepared.classification?.source === "deterministic_social_fast_path";
   prepared.metadata.traceId = traceId;
   if (["awaiting_details", "awaiting_confirmation"].includes(bookingState) || prepared.classification?.operation === "booking_request") {
     const error = new Error("Appointment turn remains owned by the deterministic booking workflow.");
@@ -86,6 +135,37 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   const routed = await measure("routeDurationMs", () => routeMessageResult({ userId, text, store, existingUser: user, preparedInbound: prepared }));
   const language = prepared.classification?.language || user?.profile?.language || "english";
   const agentMessage = safeAgentSourceMessage(text, prepared, routed);
+  // RAFA_SESSION_EVIDENCE_CACHE: approved evidence from the immediately
+  // previous turn, offered only if the knowledge version is unchanged and
+  // every chunk is still approved and unexpired.
+  const sessionEvidence = flags.sessionEvidenceCache ? getSessionEvidenceCache({ ttlMs: flags.sessionEvidenceTtlMs }) : null;
+  let evidenceReuse = { status: sessionEvidence ? (socialOnlyTurn ? "skipped_social" : "none") : "disabled" };
+  let turnKnowledgeVersion = null;
+  if (sessionEvidence && !socialOnlyTurn && routed?.shouldUseAi === true) {
+    turnKnowledgeVersion = await measure("evidenceReuseLookupDurationMs", () => versionReader.read());
+    evidenceReuse = sessionEvidence.lookup({ sessionKey: userId, previousTurnId: preflightUser?.history?.at(-1)?.id || null, knowledgeVersion: turnKnowledgeVersion });
+  }
+  // RAFA_FACTUAL_SEARCH_FIRST: a company-fact turn with no reusable evidence
+  // searches before the first draft. The search is read-only and starts now so
+  // it overlaps persisting the source turn; no model call or action runs
+  // before that turn is durable.
+  let searchFirst = { factual: false, basis: flags.factualSearchFirst ? "not_applicable" : "disabled" };
+  let prefetchPromise = null;
+  if (flags.factualSearchFirst && routed?.shouldUseAi === true && evidenceReuse.status !== "hit" && activeRegistry.searchApprovedKnowledge) {
+    const prefetchContext = buildToolContext({ store, user: preflightUser, userId, language, currentMessage: String(agentMessage || ""),
+      intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [], ...(embedText ? { embedText } : {}) });
+    const probeEmbed = prefetchContext.retrievalCache ? prefetchContext.retrievalCache.embedFor(prefetchContext.embedText) : prefetchContext.embedText;
+    searchFirst = await measure("searchFirstDecisionDurationMs", () => isCompanyFactualTurn({ intents: prefetchContext.intents,
+      operation: prepared.classification?.operation || "none", socialOnlyTurn, currentMessage: agentMessage, embedText: probeEmbed }));
+    if (searchFirst.factual) {
+      prefetchPromise = prefetchKnowledgeSearch({ tools: activeRegistry, toolContext: prefetchContext, currentMessage: agentMessage,
+        onToolCall: async ({ step, tool, args, result, durationMs, ...measurements }) => {
+          turnMetrics.toolCall({ tool, result, durationMs });
+          await logEvent("agent_tool_call", { traceId, step, tool, status: result?.status || (result?.ok ? "ok" : "error"), reasonCode: result?.reasonCode,
+            durationMs, ...measurements, ...(result?.trace || {}), searchQueries: undefined });
+        } });
+    }
+  }
   const result = await runAgentAfterPreflight({
     prepared, routed, userId, sourceMessage: String(agentMessage || ""), locale: language,
     metadata: prepared.metadata || {}, pendingResponse: "Your message is being processed."
@@ -108,6 +188,10 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const conversationState = getConversationState(currentUser || {});
       const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
       const commitState = createCommitState();
+      const initialObservations = [
+        ...(evidenceReuse.status === "hit" ? [evidenceReuse.observation] : []),
+        ...(prefetchPromise ? [await measure("searchFirstWaitDurationMs", () => prefetchPromise)].filter(Boolean) : [])
+      ];
       const agentResult = await measure("agentExecutionDurationMs", () => runAgentTurnForContact({
         currentMessage: String(agentMessage || ""), locale: language,
         responseStyle,
@@ -126,7 +210,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         recentConversation: buildRecentConversation(priorHistory),
         priorConfiguredIntroduction,
         conversationState, knownCustomerFacts: conversationState.agentFacts,
-        currentOpenQuestion: socialOnlyTurn ? null : deriveOpenQuestion(priorHistory.at(-1)), socialOnlyTurn,
+        currentOpenQuestion: socialOnlyTurn ? null : deriveOpenQuestion(priorHistory.at(-1)), socialOnlyTurn, fastSocialTurn,
         consentState, allowedCapabilities, sourceTurnId, store, user: currentUser, userId,
         intents: routed.metadata?.intent?.intents || prepared.classification?.intents || [],
         language, inboundMessageId: providerMessageId || null,
@@ -136,11 +220,14 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       }, {
         ...agentOptions,
         tools: buildCommitTrackingToolRegistry(activeRegistry, commitState),
+        initialObservations,
         onModelCall: async (measurement) => {
+          turnMetrics.modelCall(measurement);
           await logEvent("agent_model_call", { ...measurement, traceId, sourceTurnId });
           await agentOptions.onModelCall?.(measurement);
         },
         onToolCall: async ({ step, tool, args, result, durationMs, evidenceCount, evidenceChars, evidenceIds, skipped, ...measurements }) => {
+          turnMetrics.toolCall({ tool, result, durationMs, skipped });
           await logEvent("agent_tool_call", {
           traceId, sourceTurnId, step, tool, query: args?.query, searchQueries: result?.trace?.searchQueries, status: result?.status || (result?.ok ? "ok" : "error"),
           reasonCode: result?.reasonCode, durationMs, evidenceCount, evidenceChars, evidenceIds,
@@ -149,6 +236,14 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
           ...(skipped ? { outcome: "skipped" } : {})
           });
           await agentOptions.onToolCall?.({ step, tool, args, result, durationMs, evidenceCount, evidenceChars, evidenceIds, skipped, ...measurements });
+        },
+        // Prompt budget per decision: sizes and counts only, no content.
+        onPromptBudget: async (report) => {
+          timing.promptBudget = { layout: report.layout, totalBytes: report.totalBytes, headroomBytes: report.headroomBytes,
+            systemBytes: report.systemBytes, historyBytes: report.historyBytes, evidenceBudgetBytes: report.evidenceBudgetBytes,
+            evidenceItemsIncluded: report.evidenceItemsIncluded, evidenceItemsDropped: report.evidenceItemsDropped };
+          if (report.evidenceItemsIncluded > 0 || report.evidenceItemsDropped > 0) await logEvent("agent_prompt_budget", { traceId, sourceTurnId, ...report });
+          await agentOptions.onPromptBudget?.(report);
         },
         onPolicyRejection: async ({ step, type, reasonCodes, draft, evidence, claims }) => {
           await logEvent("agent_policy_rejected", { traceId, sourceTurnId, step, tool: type, validationReasons: reasonCodes });
@@ -178,6 +273,15 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       }));
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
       completedAgentResult = agentResult;
+      if (agentResult.outcome === "prompt_budget_exhausted") {
+        await logEvent("prompt_budget_exhausted", { traceId, sourceTurnId, stepCount: agentResult.stepCount, ...(timing.promptBudget || {}) });
+      }
+      if (sessionEvidence && !socialOnlyTurn) {
+        // Recorded under the version read BEFORE this turn searched, so a
+        // knowledge change during the turn can only cause a miss next turn.
+        try { timing.evidenceRecorded = sessionEvidence.record({ sessionKey: userId, sourceTurnId, knowledgeVersion: turnKnowledgeVersion,
+          language, observations: agentResult.steps }).recorded === true; } catch { timing.evidenceRecorded = false; }
+      }
       if (!decision.send) {
         const failedStep = Array.isArray(agentResult.steps) ? agentResult.steps.find((step) => step?.result?.ok === false) : null;
         const knowledgeStep = Array.isArray(agentResult.steps) ? agentResult.steps.find((step) => step?.tool === "searchApprovedKnowledge") : null;
@@ -212,7 +316,10 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
     await logEvent("agent_turn_completed", { traceId, sourceTurnId: completedSourceTurnId, outcome: completedAgentResult.outcome,
       stepCount: completedAgentResult.stepCount, toolsUsed: completedAgentResult.toolsUsed,
       terminationCause: completedAgentResult.reason || "validated_answer", delivered: result.sent === true,
-      persistenceUpdated: result.persistenceUpdated === true, ...timing });
+      persistenceUpdated: result.persistenceUpdated === true, ...timing, ...turnMetrics.metrics,
+      fastSocialPath: fastSocialTurn, evidenceReuse: evidenceReuse.status,
+      reusedChunkCount: evidenceReuse.status === "hit" ? evidenceReuse.chunkIds.length : 0,
+      searchFirst: searchFirst.basis, searchFirstSupportIntent: searchFirst.supportIntent || null, searchPrefetched: Boolean(prefetchPromise) });
   }
   if (result.persistenceUpdated === false) {
     try { await logEvent("agent_reply_persistence_failed", { persistenceUpdated: false, delivered: result.sent === true }); }

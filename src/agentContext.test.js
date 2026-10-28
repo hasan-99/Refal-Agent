@@ -111,7 +111,11 @@ test("the full twelve-turn window reaches both generation and validation", () =>
   assert.ok(context.recentConversation.some((turn) => turn.content === exclusion));
   const decision = buildDecisionMessages(context);
   assert.ok(decision.some((message) => message.content.includes(exclusion)));
-  assert.ok(promptTokenUpperBound(decision) < MAX_PROMPT_TOKEN_CEILING - 3000);
+  // Budgeted prompt: the history fits and the evidence reserve is still met.
+  const plan = require("./agentDecision").buildDecisionPrompt(context);
+  assert.ok(plan.evidenceBudgetBytes >= require("./promptBudget").DECISION_PROMPT_BUDGET.evidenceReserve);
+  assert.ok(promptTokenUpperBound(decision) <= require("./promptBudget").DECISION_PROMPT_CEILING);
+  assert.ok(MAX_PROMPT_TOKEN_CEILING > 0);
   const review = buildGroundingReviewMessages({ text: "A supported answer.", context });
   assert.ok(JSON.parse(review[1].content).history.some((turn) => turn.content === exclusion));
 });

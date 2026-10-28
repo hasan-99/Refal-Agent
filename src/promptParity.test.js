@@ -256,7 +256,13 @@ test("the prompt stays COMPACT — stable rules only, no reference content", () 
   // current size so the prompt cannot grow unnoticed. "Compact" here means no
   // per-customer or per-price REFERENCE content — that is what the assertions
   // below actually enforce. Raising this number should require a reason.
-  assert.ok(prompt.length <= 60, `prompt has ${prompt.length} lines; keep it compact`);
+  // 60 -> 71 (2026-10-28): prompt 1.14.0/1.15.0 (commit a580040) added seven
+  // Agent Brain Rules lines (role limits, combined-request tracks, evidence
+  // grading, no invented identifiers/prices/durations, action and case-status
+  // truthfulness, privacy, pre-send check) and four guided-advisor lines. All
+  // are stable rules, none is reference content, and each was checked against
+  // the other lines for duplication before raising this ceiling.
+  assert.ok(prompt.length <= 71, `prompt has ${prompt.length} lines; keep it compact`);
 
   const joined = prompt.join("\n");
   // The four credibility numbers are FACTS and must reach customers through

@@ -259,6 +259,15 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Knowledge version stamp for the worker's short-lived search cache. It
+    // changes whenever any approval, expiry, enabled flag or content that the
+    // search RPCs read changes. Read-only and additive.
+    if (parts[0] === "knowledge" && parts[1] === "version" && req.method === "GET" && parts.length === 2) {
+      const { data, error } = await supabase.rpc("rafa_knowledge_state_version");
+      if (error) throw error;
+      return json({ version: typeof data === "string" ? data : null });
+    }
+
     if (parts[0] === "knowledge" && parts[1] === "search" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const query = String(body.query || "").trim().slice(0, 1000);
@@ -283,6 +292,10 @@ Deno.serve(async (req: Request) => {
           p_query: query,
           p_match_count: matchCount
         });
+      // Server-side stage timings (ms) for worker observability. The lexical
+      // leg, the semantic leg and their RRF fusion all run inside the one
+      // hybrid SQL function, so they are reported together as rpcMs.
+      const stageStarted = Date.now();
       let { data, error } = embedding && candidateCount
         ? await supabase.rpc("rafa_hybrid_search_knowledge_v2", {
           p_query: query,
@@ -294,16 +307,21 @@ Deno.serve(async (req: Request) => {
         : await v1();
       if (error && embedding && candidateCount) ({ data, error } = await v1());
       if (error) throw error;
+      const rpcMs = Date.now() - stageStarted;
       const candidateRows = data || [];
       const candidateIds = candidateRows.map((row: { chunk_id?: string }) => row.chunk_id).filter((id: unknown): id is string => typeof id === "string");
+      const expandStarted = Date.now();
       const { data: expanded, error: expansionError } = await supabase.rpc("rafa_expand_knowledge_sections", {
         p_chunk_ids: candidateIds,
         p_max_chunks: 80
       });
       if (expansionError) throw expansionError;
+      const expandMs = Date.now() - expandStarted;
       // Governance metadata is fetched server-side for deterministic M5 policy
       // checks. It is carried separately from the model-safe evidence block.
-      return json({ results: await attachKnowledgePolicyMetadata(supabase, expanded || candidateRows) });
+      const policyStarted = Date.now();
+      const results = await attachKnowledgePolicyMetadata(supabase, expanded || candidateRows);
+      return json({ results, timing: { rpcMs, expandMs, policyMs: Date.now() - policyStarted, hybrid: Boolean(embedding) } });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {
