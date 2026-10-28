@@ -8,7 +8,8 @@ const OPENROUTER_PRIVACY_POLICY = Object.freeze({
 const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-5.5";
 const DEFAULT_OPENROUTER_FALLBACK_MODEL = "openai/gpt-6-luna";
 // Their ZDR endpoints accept no sampling parameters, so temperature/top_p are
-// dropped and reasoning is switched off explicitly for both.
+// dropped. Claude Sonnet 5.5 requires reasoning to remain enabled; low effort
+// keeps routine turns responsive while excluding reasoning from the response.
 const NO_SAMPLING_PARAMETER_MODELS = new Set([DEFAULT_OPENROUTER_MODEL, DEFAULT_OPENROUTER_FALLBACK_MODEL]);
 const LEGACY_OPENROUTER_MODELS = new Set([
   "inclusionai/ling-3.0-flash-sante:free",
@@ -22,7 +23,7 @@ function withOpenRouterPrivacyPolicy(payload) {
   if (NO_SAMPLING_PARAMETER_MODELS.has(compatible.model)) {
     delete compatible.temperature;
     delete compatible.top_p;
-    compatible.reasoning = { effort: "none", exclude: true };
+    compatible.reasoning = { effort: "low", exclude: true };
   }
   // One Anthropic ZDR endpoint (Amazon Bedrock) lacks strict structured
   // outputs. A json_schema request must only route to endpoints that honour

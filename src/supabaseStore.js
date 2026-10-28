@@ -476,7 +476,9 @@ class EdgeApiStore {
   }
 
   async getResponseStyle({ timeoutMs = 1200 } = {}) {
-    if (this.responseStyleCache && Date.now() - this.responseStyleCacheAt < 30_000) return this.responseStyleCache;
+    // Admins can change this setting while the WhatsApp worker runs as a
+    // separate process, so keep the worker's stale-style window very short.
+    if (this.responseStyleCache && Date.now() - this.responseStyleCacheAt < 2_000) return this.responseStyleCache;
     const { style } = await this.request("/settings/response-style", { timeoutMs, attempts: 1 });
     this.responseStyleCache = style || null;
     this.responseStyleCacheAt = Date.now();

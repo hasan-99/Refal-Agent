@@ -1057,12 +1057,17 @@ function CompanyIdentity() {
 }
 
 function ResponseStyleSettings() {
-  const defaults = { tone: "warm_professional", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true };
+  const defaults = { tone: "warm_professional", presentation: "conversational", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, sectionIcons: false, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true };
   const { data, loading, error: loadError, reload } = useApi("/api/settings/response-style");
   const [style, setStyle] = useState(defaults);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  function changeStyle(patch) {
+    setStyle((current) => ({ ...current, ...patch }));
+    setMessage(""); setError("");
+  }
 
   useEffect(() => {
     if (data.style) setStyle({ ...defaults, ...data.style });
@@ -1078,16 +1083,32 @@ function ResponseStyleSettings() {
   }
 
   const toneOptions = [
-    { value: "warm_professional", title: "Warm & professional", description: "Approachable, thoughtful, and still business-ready.", icon: Sparkles },
-            { value: "balanced_professional", title: "Clear & balanced", description: "Direct, calm, and naturally professional.", icon: MessageCircle },
-    { value: "formal", title: "Formal & polished", description: "More structured and courteous for formal enquiries.", icon: Building2 },
-    { value: "natural_conversational", title: "Natural & conversational", description: "Friendly and relaxed, while staying professional.", icon: MessageCircleMore }
+    { value: "warm_professional", title: "Warm", description: "Friendly, thoughtful, and professional.", icon: Sparkles },
+    { value: "balanced_professional", title: "Clear & direct", description: "Calm, straightforward, and business-ready.", icon: MessageCircle },
+    { value: "natural_conversational", title: "Conversational", description: "Natural and relaxed, while respectful.", icon: MessageCircleMore },
+    { value: "formal", title: "Formal", description: "Polished and courteous for formal enquiries.", icon: Building2 },
+    { value: "light_playful", title: "Light & witty", description: "A little humor when the topic and customer tone fit.", icon: Sparkles }
+  ];
+  const formatOptions = [
+    { value: "conversational", title: "Natural chat", description: "A few natural sentences for simple questions.", icon: MessageCircle },
+    { value: "bullet_points", title: "Short answer with points", description: "A quick answer followed by easy-to-scan points.", icon: ClipboardList },
+    { value: "structured", title: "Headings and sections", description: "Organized sections for offers and detailed answers.", icon: MessageSquareText }
+  ];
+  const lengthOptions = [
+    { value: "very_short", title: "Very short", description: "Just the answer and essential conditions." },
+    { value: "short", title: "Balanced", description: "A clear answer with useful context." },
+    { value: "detailed", title: "More detail", description: "Extra explanation for complex questions." }
+  ];
+  const listOptions = [
+    { value: "hyphen", title: "Bullet points", sample: "• First point" },
+    { value: "numbered", title: "Numbered steps", sample: "1. First step" }
   ];
   const previewOpening = {
     warm_professional: "Thanks for reaching out. I’m happy to help.",
     balanced_professional: "I can help with that. Here’s a clear place to start.",
     formal: "Thank you for your enquiry. I would be pleased to assist.",
-    natural_conversational: "Of course, happy to help. Let’s make this clear and simple."
+    natural_conversational: "Of course, happy to help. Let’s make this clear and simple.",
+    light_playful: "Absolutely. Let’s make this easy (and keep the paperwork drama-free)."
   }[style.tone];
   const previewDetail = style.paragraphLength === "very_short"
     ? "I’ll keep the reply focused on your question."
@@ -1099,6 +1120,10 @@ function ResponseStyleSettings() {
     useful_question: "Which detail would you like me to clarify?",
     helpful_next_step: "A useful next step is to tell me which part you want to explore."
   }[style.continuationStyle];
+  const previewSectionHeading = (label, icon) => {
+    const text = `${style.sectionIcons ? `${icon} ` : ""}${label}`;
+    return <p>{style.boldLabels ? <strong>{text}</strong> : text}</p>;
+  };
 
   if (loading && !data.style) return <Loading label="Loading response style" />;
   if (loadError) return <section className="panel response-style-panel response-style-load-error" role="alert">
@@ -1109,40 +1134,76 @@ function ResponseStyleSettings() {
   </section>;
   return <section className="panel response-style-panel">
     <PanelTitle icon={Settings} title="Rafa response style" />
-    <p className="booking-policy-intro">Shape how Rafa sounds and keeps a conversation moving. These settings apply to new replies in the customer’s language; approved knowledge and safety rules always take priority.</p>
+    <p className="booking-policy-intro">Pick one voice and one answer format. The example updates as you choose. Save to apply your choices to new replies.</p>
     {loadError && <p className="inline-error" role="alert">{loadError}</p>}
     <form className="response-style-form" onSubmit={save}>
       <div className="response-style-controls">
         <section className="response-style-section" aria-labelledby="response-style-tone-title">
-          <div className="response-style-section-heading"><div><h3 id="response-style-tone-title">Choose Rafa’s voice</h3><p>Pick the tone that best fits your customers.</p></div><span>ONE TONE</span></div>
+          <div className="response-style-section-heading"><div><span className="response-style-step">STEP 1</span><h3 id="response-style-tone-title">Choose Rafa’s voice</h3><p>How should Rafa sound?</p></div></div>
           <div className="response-style-tone-options" role="group" aria-label="Reply tone">
-            {toneOptions.map(({ value, title, description, icon: ToneIcon }) => <button key={value} type="button" className={`response-style-tone-option${style.tone === value ? " selected" : ""}`} aria-pressed={style.tone === value} onClick={() => setStyle({ ...style, tone: value })}>
-              <span className="response-style-tone-icon"><ToneIcon size={17} /></span><span className="response-style-tone-copy"><strong>{title}</strong><small>{description}</small></span><span className="response-style-tone-check"><CheckCircle2 size={16} /></span>
+            {toneOptions.map(({ value, title, description, icon: ToneIcon }) => <button key={value} type="button" className={`response-style-tone-option${style.tone === value ? " selected" : ""}`} aria-pressed={style.tone === value} onClick={() => changeStyle({ tone: value })}>
+              <span className="response-style-tone-icon"><ToneIcon size={18} /></span><span className="response-style-tone-copy"><strong>{title}</strong><small>{description}</small></span><span className="response-style-tone-check"><CheckCircle2 size={18} /></span>
             </button>)}
           </div>
         </section>
         <section className="response-style-section" aria-labelledby="response-style-layout-title">
-          <div className="response-style-section-heading"><div><h3 id="response-style-layout-title">Reply shape</h3><p>Keep messages readable and easy to respond to.</p></div></div>
-          <div className="response-style-fields">
-            <label className="field">Answer detail<StyledDropdown id="response-length" label="Answer detail" icon={MessageSquareText} value={style.paragraphLength} highlightSelection={false} onChange={(value) => setStyle({ ...style, paragraphLength: value })} options={[{ value: "very_short", label: "Brief" }, { value: "short", label: "Balanced" }, { value: "detailed", label: "More context" }]} /><small>Rafa still answers the full question and keeps important conditions.</small></label>
-            <label className="field">When useful, format lists as<StyledDropdown id="response-list-marker" label="List format" icon={ClipboardList} value={style.listMarker} highlightSelection={false} onChange={(value) => setStyle({ ...style, listMarker: value })} options={[{ value: "hyphen", label: "Simple bullets" }, { value: "numbered", label: "Numbered steps" }]} /></label>
-            <label className="field response-style-continuation">Conversation follow-up<StyledDropdown id="response-continuation" label="Conversation follow-up" icon={MessageCircle} value={style.continuationStyle} highlightSelection={false} onChange={(value) => setStyle({ ...style, continuationStyle: value })} options={[{ value: "adaptive", label: "A useful question or next step" }, { value: "useful_question", label: "Ask one useful question" }, { value: "helpful_next_step", label: "Suggest a helpful next step" }]} /><small>Rafa won’t add one when the answer is already complete.</small></label>
+          <div className="response-style-section-heading"><div><span className="response-style-step">STEP 2</span><h3 id="response-style-layout-title">Choose how answers look</h3><p>Pick the example closest to what you want Rafa to send.</p></div></div>
+          <div className="response-style-format-options" role="group" aria-label="Answer format">
+            {formatOptions.map(({ value, title, description, icon: FormatIcon }) => <button key={value} type="button" className={`response-style-format-option${style.presentation === value ? " selected" : ""}`} aria-pressed={style.presentation === value} onClick={() => changeStyle({ presentation: value })}>
+              <span className="response-style-format-top"><span className="response-style-format-icon"><FormatIcon size={19} /></span><span className="response-style-radio" aria-hidden="true">{style.presentation === value && <CheckCircle2 size={17} />}</span></span>
+              <strong>{title}</strong><small>{description}</small>
+              <span className={`response-style-format-example ${value}`}>
+                {value === "conversational" && <span>“Sure, here’s the short answer.”</span>}
+                {value === "bullet_points" && <><span>{style.sectionIcons && "✅ "}{style.listMarker === "numbered" ? "1. " : "• "}Main point</span><span>{style.listMarker === "numbered" ? "2. " : "• "}Important condition</span></>}
+                {value === "structured" && <><span><b>{style.sectionIcons && "✅ "}What’s included</b></span><span>{style.listMarker === "numbered" ? "1. " : "• "}Key details</span><span><b>{style.sectionIcons && "⏳ "}Timing</b></span></>}
+              </span>
+            </button>)}
           </div>
         </section>
-        <section className="response-style-section response-style-toggles" aria-label="Optional formatting">
-          <label className="response-style-toggle"><input type="checkbox" checked={style.boldLabels} onChange={(event) => setStyle({ ...style, boldLabels: event.target.checked })} /><span><strong>Emphasize short labels</strong><small>Use bold labels when they make an answer easier to scan.</small></span></label>
-          <label className="response-style-toggle"><input type="checkbox" checked={style.allowRelevantServiceSuggestions} onChange={(event) => setStyle({ ...style, allowRelevantServiceSuggestions: event.target.checked })} /><span><strong>Allow a relevant service suggestion</strong><small>At most one, only when approved knowledge supports it and it helps the customer.</small></span></label>
+        <section className="response-style-section" aria-labelledby="response-style-length-title">
+          <div className="response-style-section-heading"><div><span className="response-style-step">STEP 3</span><h3 id="response-style-length-title">Choose answer length</h3><p>Rafa keeps important facts and conditions in every style.</p></div></div>
+          <div className="response-style-length-options" role="group" aria-label="Answer length">
+            {lengthOptions.map(({ value, title, description }) => <button key={value} type="button" className={`response-style-length-option${style.paragraphLength === value ? " selected" : ""}`} aria-pressed={style.paragraphLength === value} onClick={() => changeStyle({ paragraphLength: value })}><span className="response-style-length-check">{style.paragraphLength === value ? <CheckCircle2 size={17} /> : <span />}</span><strong>{title}</strong><small>{description}</small></button>)}
+          </div>
         </section>
-        <div className="response-style-save-row"><button className="primary" type="submit" disabled={busy}><Save size={15} />{busy ? "Saving style…" : "Save response style"}</button>{message && <span role="status">{message}</span>}{error && <span className="calendar-check-error" role="alert">{error}</span>}</div>
+        <details className="response-style-section response-style-more-options">
+          <summary><span><strong>More options</strong><small>Lists, icons, follow-up questions, and emphasis</small></span><ChevronDown size={17} /></summary>
+          <div className="response-style-more-content">
+            <div className="response-style-extra-group"><span className="response-style-extra-label">List style</span><div className="response-style-list-options" role="group" aria-label="List style">
+              {listOptions.map(({ value, title, sample }) => <button key={value} type="button" className={`response-style-list-option${style.listMarker === value ? " selected" : ""}`} aria-pressed={style.listMarker === value} onClick={() => changeStyle({ listMarker: value })}><span>{style.listMarker === value ? <CheckCircle2 size={16} /> : <span className="response-style-empty-check" />}</span><strong>{title}</strong><small>{sample}</small></button>)}
+            </div></div>
+            <label className="field response-style-continuation">How should Rafa continue?<StyledDropdown id="response-continuation" label="Conversation follow-up" icon={MessageCircle} value={style.continuationStyle} highlightSelection={false} onChange={(value) => changeStyle({ continuationStyle: value })} options={[{ value: "adaptive", label: "Ask or suggest only when useful" }, { value: "useful_question", label: "Ask one useful question" }, { value: "helpful_next_step", label: "Suggest a next step" }]} /><small>Rafa won’t force a follow-up when the answer is complete.</small></label>
+            <div className="response-style-extra-toggles">
+              <label className={`response-style-toggle${style.presentation === "conversational" ? " disabled" : ""}`}><input type="checkbox" checked={style.sectionIcons} disabled={style.presentation === "conversational"} onChange={(event) => changeStyle({ sectionIcons: event.target.checked })} /><span><strong>Add icons to headings or points</strong><small>{style.presentation === "conversational" ? "Choose points or sections above to enable icons." : "Use a few restrained symbols such as ✅ or ⏳."}</small></span></label>
+              <label className="response-style-toggle"><input type="checkbox" checked={style.boldLabels} onChange={(event) => changeStyle({ boldLabels: event.target.checked })} /><span><strong>Emphasize key details</strong><small>Use bold for prices, short labels, or important conditions.</small></span></label>
+              <label className="response-style-toggle"><input type="checkbox" checked={style.allowRelevantServiceSuggestions} onChange={(event) => changeStyle({ allowRelevantServiceSuggestions: event.target.checked })} /><span><strong>Allow a related suggestion</strong><small>Only when it helps and approved knowledge supports it.</small></span></label>
+            </div>
+          </div>
+        </details>
+        <div className="response-style-save-row"><button className="primary" type="submit" disabled={busy}><Save size={16} />{busy ? "Saving style…" : "Save & apply to new replies"}</button>{message && <span role="status">{message}</span>}{error && <span className="calendar-check-error" role="alert">{error}</span>}</div>
       </div>
       <aside className="response-style-preview" aria-labelledby="response-style-preview-title" aria-label="Live reply preview">
-        <div className="response-style-preview-heading"><span className="response-style-preview-kicker"><MessageCircle size={14} /> LIVE PREVIEW</span><span>Updates as you choose</span></div>
-        <h3 id="response-style-preview-title">How Rafa will sound</h3>
+        <div className="response-style-preview-heading"><span className="response-style-preview-kicker"><MessageCircle size={16} /> YOUR PREVIEW</span><span>Live example</span></div>
+        <h3 id="response-style-preview-title">This is what the format looks like</h3>
         <div className={`response-style-preview-message ${style.tone}`} dir="auto">
-          <p className="response-style-preview-opening">{previewOpening}</p>
-          <p>{style.boldLabels && <strong>Key point: </strong>}{previewDetail}</p>
-          {style.listMarker === "numbered" ? <ol><li>Clear details in an easy order.</li><li>Only what helps answer the question.</li></ol> : <ul><li>Clear details in an easy order.</li><li>Only what helps answer the question.</li></ul>}
-          <p>{previewContinuation}</p>
+          {style.presentation === "structured" ? <>
+            <p className="response-style-preview-opening">{previewOpening}</p>
+            {previewSectionHeading("Relevant details", "✅")}
+            <p>{previewDetail}</p>
+            {style.listMarker === "numbered" ? <ol><li>Only supported details that answer the question.</li><li>Clear conditions and next steps.</li></ol> : <ul><li>Only supported details that answer the question.</li><li>Clear conditions and next steps.</li></ul>}
+            {previewSectionHeading("Timing or conditions", "⏳")}
+            <p>Include these only when they are relevant and supported.</p>
+            <p>{previewContinuation}</p>
+          </> : style.presentation === "bullet_points" ? <>
+            <p className="response-style-preview-opening">{previewOpening}</p>
+            {style.paragraphLength !== "very_short" && <p>{previewDetail}</p>}
+            {style.listMarker === "numbered" ? <ol><li>{style.sectionIcons && "✅ "}Key point, stated clearly.</li><li>Important condition, kept visible.</li></ol> : <ul><li>{style.sectionIcons && "✅ "}Key point, stated clearly.</li><li>Important condition, kept visible.</li></ul>}
+            <p>{previewContinuation}</p>
+          </> : <>
+            <p className="response-style-preview-opening">{previewOpening}</p>
+            <p>{style.boldLabels && <strong>Key point: </strong>}{previewDetail}</p>
+            <p>{previewContinuation}</p>
+          </>}
           {style.allowRelevantServiceSuggestions && <p className="response-style-preview-suggestion">An optional related suggestion appears only when it is relevant and supported.</p>}
         </div>
         <p className="response-style-preview-note">Example wording is illustrative. Actual answers follow the customer’s language and approved information.</p>

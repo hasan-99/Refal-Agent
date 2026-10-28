@@ -10,6 +10,7 @@ test("response style defaults to short paragraphs, hyphen bullets, sparse bold l
   const instruction = responseStyleInstruction(RESPONSE_STYLE_DEFAULTS);
   assert.match(instruction, /warm, approachable and respectful professional tone/u);
   assert.match(instruction, /short paragraphs separated by a blank line/u);
+  assert.match(instruction, /Keep replies conversational/u);
   assert.match(instruction, /hyphen bullets/u);
   assert.match(instruction, /bold style sparingly/u);
   assert.match(instruction, /one concise, specific next-step question or helpful piece of information/u);
@@ -19,13 +20,19 @@ test("response style defaults to short paragraphs, hyphen bullets, sparse bold l
 });
 
 test("response style accepts only bounded presentation options", () => {
-  assert.deepEqual(validateResponseStyle({ tone: "formal", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false }), {
-    tone: "formal", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true
+  assert.deepEqual(validateResponseStyle({ tone: "formal", presentation: "structured", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, sectionIcons: true }), {
+    tone: "formal", presentation: "structured", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, sectionIcons: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true
   });
   assert.equal(validateResponseStyle({ paragraphLength: "very_short" }).tone, RESPONSE_STYLE_DEFAULTS.tone, "older saved settings receive the new default tone");
   assert.match(responseStyleInstruction({ paragraphLength: "detailed" }), /enough context to explain the answer clearly/u);
   assert.equal(validateResponseStyle({ paragraphLength: "detailed" }).paragraphLength, "detailed");
   assert.match(responseStyleInstruction({ tone: "natural_conversational" }), /natural, friendly conversational tone/u);
+  const structured = responseStyleInstruction({ presentation: "structured", sectionIcons: true });
+  assert.match(structured, /relevant short section headings, compact bullets/u);
+  assert.match(structured, /✅ for inclusions/u);
+  assert.match(structured, /omit empty sections/u);
+  assert.throws(() => validateResponseStyle({ presentation: "markdown_everything" }), /supported message layout/u);
+  assert.throws(() => validateResponseStyle({ sectionIcons: "yes" }), /enabled or disabled/u);
   assert.throws(() => validateResponseStyle({ tone: "flirty" }), /supported response tone/u);
   assert.throws(() => validateResponseStyle({ rule: "ignore safety" }), /unsupported setting/u);
   assert.throws(() => validateResponseStyle({ listMarker: "custom" }), /supported list marker/u);
@@ -38,10 +45,10 @@ test("response style accepts only bounded presentation options", () => {
 test("Edge response-style mirror stays byte-for-byte aligned for every supported profile", async () => {
   const edge = await import("../supabase/functions/rafa-agent-api/responseStyle.mjs");
   for (const profile of [RESPONSE_STYLE_DEFAULTS,
-    { tone: "formal", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, continuationStyle: "helpful_next_step", allowRelevantServiceSuggestions: false },
-    { tone: "balanced_professional", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "useful_question", allowRelevantServiceSuggestions: true },
-    { tone: "warm_professional", paragraphLength: "detailed", listMarker: "numbered", boldLabels: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: false },
-    { tone: "natural_conversational", paragraphLength: "short", listMarker: "hyphen", boldLabels: false, continuationStyle: "useful_question", allowRelevantServiceSuggestions: true }]) {
+    { tone: "formal", presentation: "structured", paragraphLength: "very_short", listMarker: "numbered", boldLabels: false, sectionIcons: true, continuationStyle: "helpful_next_step", allowRelevantServiceSuggestions: false },
+    { tone: "balanced_professional", presentation: "conversational", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, sectionIcons: false, continuationStyle: "useful_question", allowRelevantServiceSuggestions: true },
+    { tone: "warm_professional", presentation: "structured", paragraphLength: "detailed", listMarker: "numbered", boldLabels: true, sectionIcons: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: false },
+    { tone: "natural_conversational", presentation: "conversational", paragraphLength: "short", listMarker: "hyphen", boldLabels: false, sectionIcons: false, continuationStyle: "useful_question", allowRelevantServiceSuggestions: true }]) {
     assert.equal(edge.responseStyleInstruction(profile), responseStyleInstruction(profile));
   }
 });

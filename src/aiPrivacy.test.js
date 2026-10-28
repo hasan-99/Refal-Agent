@@ -13,7 +13,7 @@ test("default chat routes select Claude Sonnet 5.5 with a GPT-6 Luna fallback an
     const request = withOpenRouterPrivacyPolicy({ model, temperature: 0.4, top_p: 0.9 });
     assert.equal(request.temperature, undefined);
     assert.equal(request.top_p, undefined);
-    assert.deepEqual(request.reasoning, { effort: "none", exclude: true });
+    assert.deepEqual(request.reasoning, { effort: "low", exclude: true });
     assert.deepEqual(request.provider, { data_collection: "deny", zdr: true });
   }
 });

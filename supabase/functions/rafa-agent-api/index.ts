@@ -1088,7 +1088,7 @@ async function generateAgentReply(body: Record<string, any>) {
     provider: { data_collection: "deny", zdr: true },
     usage: { include: true },
     max_tokens: 650,
-    ...(noSamplingChatModels.has(model) ? { reasoning: { effort: "none", exclude: true } } : { temperature: 0.35 }),
+    ...(noSamplingChatModels.has(model) ? { reasoning: { effort: "low", exclude: true } } : { temperature: 0.35 }),
     messages: [
       {
         role: "system",

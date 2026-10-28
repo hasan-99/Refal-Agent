@@ -1,22 +1,26 @@
-export const RESPONSE_STYLE_DEFAULTS = Object.freeze({ tone: "warm_professional", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true });
+export const RESPONSE_STYLE_DEFAULTS = Object.freeze({ tone: "warm_professional", presentation: "conversational", paragraphLength: "short", listMarker: "hyphen", boldLabels: true, sectionIcons: false, continuationStyle: "adaptive", allowRelevantServiceSuggestions: true });
 
 export function validateResponseStyle(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Response style must be an object.");
-  const allowed = new Set(["tone", "paragraphLength", "listMarker", "boldLabels", "continuationStyle", "allowRelevantServiceSuggestions"]);
+  const allowed = new Set(["tone", "presentation", "paragraphLength", "listMarker", "boldLabels", "sectionIcons", "continuationStyle", "allowRelevantServiceSuggestions"]);
   const tone = value.tone ?? RESPONSE_STYLE_DEFAULTS.tone;
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("Response style contains an unsupported setting.");
+  const presentation = value.presentation ?? RESPONSE_STYLE_DEFAULTS.presentation;
   const paragraphLength = value.paragraphLength ?? RESPONSE_STYLE_DEFAULTS.paragraphLength;
   const listMarker = value.listMarker ?? RESPONSE_STYLE_DEFAULTS.listMarker;
   const boldLabels = value.boldLabels ?? RESPONSE_STYLE_DEFAULTS.boldLabels;
+  const sectionIcons = value.sectionIcons ?? RESPONSE_STYLE_DEFAULTS.sectionIcons;
   const continuationStyle = value.continuationStyle ?? RESPONSE_STYLE_DEFAULTS.continuationStyle;
   const allowRelevantServiceSuggestions = value.allowRelevantServiceSuggestions ?? RESPONSE_STYLE_DEFAULTS.allowRelevantServiceSuggestions;
-  if (!["warm_professional", "balanced_professional", "formal", "natural_conversational"].includes(tone)) throw new Error("Choose a supported response tone.");
+  if (!["warm_professional", "balanced_professional", "formal", "natural_conversational", "light_playful"].includes(tone)) throw new Error("Choose a supported response tone.");
+  if (!["conversational", "bullet_points", "structured"].includes(presentation)) throw new Error("Choose a supported message layout.");
   if (!["very_short", "short", "detailed"].includes(paragraphLength)) throw new Error("Choose a supported paragraph length.");
   if (!["hyphen", "numbered"].includes(listMarker)) throw new Error("Choose a supported list marker.");
   if (typeof boldLabels !== "boolean") throw new Error("Bold labels must be enabled or disabled.");
+  if (typeof sectionIcons !== "boolean") throw new Error("Section icons must be enabled or disabled.");
   if (!["adaptive", "useful_question", "helpful_next_step"].includes(continuationStyle)) throw new Error("Choose a supported conversation continuation style.");
   if (typeof allowRelevantServiceSuggestions !== "boolean") throw new Error("Related service suggestions must be enabled or disabled.");
-  return Object.freeze({ tone, paragraphLength, listMarker, boldLabels, continuationStyle, allowRelevantServiceSuggestions });
+  return Object.freeze({ tone, presentation, paragraphLength, listMarker, boldLabels, sectionIcons, continuationStyle, allowRelevantServiceSuggestions });
 }
 
 export function responseStyleInstruction(value) {
@@ -27,12 +31,25 @@ export function responseStyleInstruction(value) {
     detailed: "Give enough context to explain the answer clearly, using short paragraphs; stay focused and do not repeat points."
   }[style.paragraphLength];
   const list = style.listMarker === "numbered" ? "When a list helps, use a numbered list with each item on its own line." : "When a list helps, use hyphen bullets with each item on its own line.";
-  const labels = style.boldLabels ? "Use the channel's supported bold style sparingly for short labels only." : "Do not use bold styling.";
+  const labels = style.boldLabels
+    ? style.presentation === "structured"
+      ? "Use short bold section headings on their own line in structured replies, and emphasize key prices or conditions sparingly with the channel's supported bold style."
+      : "Use the channel's supported bold style sparingly for short labels only."
+    : "Do not use bold styling.";
+  const presentation = style.presentation === "structured"
+    ? "For detailed or multi-part answers, use a clear opening followed by only the relevant short section headings, compact bullets, and blank lines between sections. Use headings such as price, inclusions, offer, timing, ongoing costs, exclusions, or next step only when they fit the customer's request and approved evidence; omit empty sections. Keep greetings and simple answers natural instead of forcing a template."
+    : style.presentation === "bullet_points"
+      ? "For answers with several details, give a brief direct opening and then organize the key points as a short, easy-to-scan bullet list. Skip headings unless the answer is long enough to need them. Keep simple answers conversational."
+    : "Keep replies conversational; add headings only when a genuinely long or multi-part answer benefits from them.";
+  const icons = style.presentation !== "conversational" && style.sectionIcons
+    ? "Use restrained visual markers: prefix major section headings, or a few key bullets when there are no headings, with at most one relevant emoji such as 💶 for price, ✅ for inclusions, ⏳ for timing, or ❌ for exclusions. Do not decorate every line."
+    : "Do not add decorative emoji or icons to headings.";
   const tone = {
     warm_professional: "Use a warm, approachable and respectful professional tone; sound natural in the customer's language without becoming overfamiliar.",
     balanced_professional: "Use a clear, neutral and professional tone; be helpful and human without sounding overly casual or formal.",
     formal: "Use a courteous, polished and more formal tone while staying clear and approachable.",
-    natural_conversational: "Use a natural, friendly conversational tone in the customer's language while remaining respectful, professional, and never overfamiliar."
+    natural_conversational: "Use a natural, friendly conversational tone in the customer's language while remaining respectful, professional, and never overfamiliar.",
+    light_playful: "Use light, occasional wit when it clearly fits the customer's tone and the topic is low-stakes. Keep the answer useful and professional. Never joke about complaints, distress, money problems, legal, tax, immigration, health, safety, or serious business decisions; when unsure, use a warm professional tone."
   }[style.tone];
   const continuation = {
     adaptive: "When useful to continue the conversation, add one concise, specific next-step question or helpful piece of information. Skip this when the answer stands on its own; never add a generic offer or force a question.",
@@ -42,5 +59,5 @@ export function responseStyleInstruction(value) {
   const serviceSuggestions = style.allowRelevantServiceSuggestions
     ? "After answering, you may add at most one related service suggestion only when it directly helps the customer's stated goal and current approved evidence supports it. It is optional; respect declines, sensitive situations, lead-tier limits, and prior interest boundaries."
     : "Do not add unsolicited related-service suggestions, cross-sell hooks, or benefit hints. Still answer all service details the customer requested, and respect safety, evidence, lead-tier, and prior-interest rules.";
-  return `Administrator response preferences: ${tone} ${paragraph} ${list} ${labels} ${continuation} ${serviceSuggestions} These preferences never override safety, accuracy, approved evidence, or appointment rules.`;
+  return `Administrator response preferences: ${tone} ${paragraph} ${presentation} ${list} ${labels} ${icons} ${continuation} ${serviceSuggestions} These preferences never override safety, accuracy, approved evidence, or appointment rules.`;
 }
