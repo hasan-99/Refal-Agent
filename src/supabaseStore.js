@@ -322,7 +322,7 @@ class EdgeApiStore {
 
   // Admin recording switch for Knowledge Gaps ({ settings: { recording } }).
   // Cached briefly so the recorder does not add a request per turn.
-  async getKnowledgeGapSettings({ timeoutMs = 1500, fresh = false } = {}) {
+  async getKnowledgeGapSettings({ timeoutMs = 4000, fresh = false } = {}) {
     if (!fresh && this.knowledgeGapSettingsCache && Date.now() - this.knowledgeGapSettingsCacheAt < 30_000) return this.knowledgeGapSettingsCache;
     const value = await this.request("/settings/knowledge-gaps", { timeoutMs, attempts: 1 });
     this.knowledgeGapSettingsCache = value;
