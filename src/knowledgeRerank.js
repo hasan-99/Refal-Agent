@@ -23,6 +23,11 @@
 //   RAFA_KNOWLEDGE_RERANK_POOL=30            sections scored per search (4..50)
 //   RAFA_KNOWLEDGE_RERANK_TIMEOUT_MS=8000    scoring deadline per search
 //   RAFA_KNOWLEDGE_RERANK_THREADS=4          onnxruntime intra-op threads
+//   RAFA_KNOWLEDGE_RERANK_MAX_TOKENS=512     question+passage tokens scored per pair (128..512)
+//   RAFA_RERANK_CACHE=on                     reuse an ordering for the same question + candidates
+//   RAFA_RERANK_CACHE_TTL_MS=600000          (10 min)
+
+const { createTtlCache, hashKey, latencyFlags, normalizeCacheQuery } = require("./knowledgeCache");
 
 const RERANK_MODEL_ID = "onnx-community/bge-reranker-v2-m3-ONNX";
 const RERANK_MODEL_REVISION = "6f5ff65298512715a1e669753bc754d2bc8f367b";
@@ -43,7 +48,10 @@ function rerankConfig(env = process.env) {
     candidateCount: bounded(env.RAFA_KNOWLEDGE_RERANK_CANDIDATES, 40, 10, 50),
     poolSize: bounded(env.RAFA_KNOWLEDGE_RERANK_POOL, 30, 4, 50),
     timeoutMs: bounded(env.RAFA_KNOWLEDGE_RERANK_TIMEOUT_MS, 8000, 500, 30000),
-    threads: bounded(env.RAFA_KNOWLEDGE_RERANK_THREADS, 4, 1, 32)
+    threads: bounded(env.RAFA_KNOWLEDGE_RERANK_THREADS, 4, 1, 32),
+    // Cross-encoder cost grows with sequence length; 512 is the model maximum
+    // and the previous fixed value.
+    maxTokens: bounded(env.RAFA_KNOWLEDGE_RERANK_MAX_TOKENS, 512, 128, 512)
   };
 }
 
@@ -76,13 +84,13 @@ async function loadReranker({ threads = rerankConfig().threads } = {}) {
  * throws, so a slow machine degrades to the first-stage order instead of
  * holding the customer's reply.
  */
-async function scorePassages(question, passages, { deadline = Infinity, loader = loadReranker } = {}) {
+async function scorePassages(question, passages, { deadline = Infinity, loader = loadReranker, maxTokens = 512 } = {}) {
   const { tokenizer, model } = await loader();
   const scores = [];
   for (let i = 0; i < passages.length; i += BATCH_SIZE) {
     if (Date.now() > deadline) throw Object.assign(new Error("rerank deadline exceeded"), { code: "RERANK_TIMEOUT" });
     const batch = passages.slice(i, i + BATCH_SIZE);
-    const inputs = tokenizer(new Array(batch.length).fill(question), { text_pair: batch, padding: true, truncation: true, max_length: 512 });
+    const inputs = tokenizer(new Array(batch.length).fill(question), { text_pair: batch, padding: true, truncation: true, max_length: maxTokens });
     const { logits } = await model(inputs);
     scores.push(...Array.from(logits.data, Number));
   }
@@ -117,6 +125,11 @@ function orderByScores(items, scores, poolSize) {
   };
 }
 
+function passageText(s) {
+  return [s.title, s.section && s.section !== s.title ? s.section : null, s.content]
+    .filter(Boolean).join("\n").slice(0, MAX_PASSAGE_CHARS);
+}
+
 /**
  * Reranks catalogue sections against the customer's question.
  * Never throws: any failure returns the input order with a status.
@@ -130,8 +143,7 @@ async function rerankSections(question, sections, { poolSize = 30, timeoutMs = 8
   if (!String(question || "").trim() || size < 2) {
     return { sections: list, status: "skipped", durationMs: 0, poolSize: size, scores: [] };
   }
-  const passages = list.slice(0, size).map((s) => [s.title, s.section && s.section !== s.title ? s.section : null, s.content]
-    .filter(Boolean).join("\n").slice(0, MAX_PASSAGE_CHARS));
+  const passages = list.slice(0, size).map(passageText);
   try {
     const scores = await scorer(String(question), passages, { deadline: started + timeoutMs });
     if (!Array.isArray(scores) || scores.length !== size) throw new Error("reranker returned the wrong number of scores");
@@ -147,17 +159,42 @@ async function rerankSections(question, sections, { poolSize = 30, timeoutMs = 8
  * Tool-context dependency. Returns null when reranking is disabled, so callers
  * can keep the existing path with a single truthiness check.
  */
-function createKnowledgeReranker(env = process.env) {
+function createKnowledgeReranker(env = process.env, { now = Date.now, scorer = scorePassages } = {}) {
   const config = rerankConfig(env);
   if (!config.enabled) return null;
   const loader = () => loadReranker({ threads: config.threads });
+  const flags = latencyFlags(env);
+  // RAFA_RERANK_CACHE: scores are a pure function of (model revision, question,
+  // exact pool passages in order), so the key holds a hash of every scored
+  // passage. Any knowledge edit changes a passage and therefore the key. Only
+  // complete "reranked" results are stored, never a timeout or an error.
+  const cache = flags.rerankCache ? createTtlCache({ maxEntries: 200, now }) : null;
+  const liveScorer = (q, passages, options) => scorer(q, passages, { ...options, loader, maxTokens: config.maxTokens });
+  const run = (question, sections, scoreWith) => rerankSections(question, sections, {
+    poolSize: config.poolSize, timeoutMs: config.timeoutMs, scorer: scoreWith
+  });
   return {
     config,
     warm: () => loader(),
-    rerank: (question, sections) => rerankSections(question, sections, {
-      poolSize: config.poolSize, timeoutMs: config.timeoutMs,
-      scorer: (q, passages, options) => scorePassages(q, passages, { ...options, loader })
-    })
+    rerank: async (question, sections) => {
+      const list = Array.isArray(sections) ? sections : [];
+      const size = Math.min(config.poolSize, list.length);
+      if (!cache || size < 2 || !String(question || "").trim()) return run(question, list, liveScorer);
+      const key = hashKey(["rerank:v1", RERANK_MODEL_ID, RERANK_MODEL_REVISION, config.maxTokens, size, normalizeCacheQuery(question),
+        list.slice(0, size).map((s) => [s?.sourceRef || null, hashKey([passageText(s)])])]);
+      const cached = cache.get(key);
+      if (cached) {
+        const ordered = orderByScores(list, cached, size);
+        return { sections: ordered.items, status: "reranked", durationMs: 0, poolSize: size, scores: ordered.scores, cache: "hit" };
+      }
+      let inputScores = null;
+      const result = await run(question, list, async (q, passages, options) => {
+        inputScores = await liveScorer(q, passages, options);
+        return inputScores;
+      });
+      if (result.status === "reranked" && Array.isArray(inputScores)) cache.set(key, [...inputScores], flags.rerankCacheTtlMs);
+      return { ...result, cache: "miss" };
+    }
   };
 }
 

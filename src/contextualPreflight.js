@@ -6,6 +6,8 @@ const { redactPersonalData, normalizeOpenRouterUsage } = require("./ai");
 const { fetchOpenRouter } = require("./openrouterTransport");
 const { resolveOpenRouterModel, withOpenRouterPrivacyPolicy } = require("./openrouterPrivacy");
 const { assertPromptWithinTokenCeiling } = require("./promptBudget");
+const { obviousSocialClassification } = require("./socialFastPath");
+const { latencyFlags } = require("./knowledgeCache");
 
 const INTENT_VALUES = [...new Set(Object.values(INTENTS))];
 const LANGUAGES = ["arabic", "english", "greek"];
@@ -94,8 +96,15 @@ function validateClassification(raw) {
     intents, primary: intents[0], isMultiIntent: intents.length > 1, source: "contextual_model" });
 }
 
-async function classifyContextualMessage(input, { callModel = callPreflightModel, onModelCall, onUsage } = {}) {
+async function classifyContextualMessage(input, { callModel = callPreflightModel, onModelCall, onUsage, fastSocialPath = latencyFlags().fastSocialPath } = {}) {
   const started = performance.now();
+  // RAFA_FAST_SOCIAL_PATH: a bare greeting, thanks, goodbye or emoji needs no
+  // model call to be classified as social. Grants no operation or consent.
+  const social = fastSocialPath ? obviousSocialClassification(input?.message, input?.user) : null;
+  if (social) {
+    await onModelCall?.({ step: 0, durationMs: Math.round(performance.now() - started), outcome: "deterministic_social_fast_path" });
+    return social;
+  }
   // Obvious informational questions do not need a separate model call just
   // to authorize read-only knowledge retrieval. Keep contextual classification
   // for operational, sensitive, or ambiguous turns.

@@ -7,7 +7,7 @@ const { profile } = require("./companyProfile");
 const { isApprovedEvidence } = require("./claimPolicy");
 const { fetchOpenRouter } = require("./openrouterTransport");
 const { resolveOpenRouterModel, withOpenRouterPrivacyPolicy, DEFAULT_OPENROUTER_MODEL } = require("./openrouterPrivacy");
-const { assertPromptWithinTokenCeiling } = require("./promptBudget");
+const { assertPromptWithinTokenCeiling, boundRecentConversation, GROUNDING_HISTORY_MAX, GROUNDING_PROMPT_CEILING } = require("./promptBudget");
 const { modelProviderCircuit } = require("./modelCircuitBreaker");
 const { normalizeOpenRouterUsage, redactPersonalData } = require("./ai");
 const { INTENTS } = require("./intent");
@@ -109,7 +109,10 @@ function buildGroundingReviewMessages({ text, evidenceItems = [], context = {} }
     preferences: context.conversationPreferences || {},
     customerName: context.contact?.nameSource && typeof context.contact.name === "string"
       ? redactPersonalData(context.contact.name).slice(0, 80) : null,
-    history: (context.recentConversation || []).map((turn) => ({ role: turn.role, content: redactPersonalData(turn.content || "") })),
+    // Bounded like the decision prompt (most recent turns, older assistant
+    // replies shortened first), so long chats cannot crowd out the evidence.
+    history: boundRecentConversation(context.recentConversation || [], GROUNDING_HISTORY_MAX).turns
+      .map((turn) => ({ role: turn.role, content: redactPersonalData(turn.content || "") })),
     draft: text,
     evidence: evidenceItems.map((item) => ({ ref: item.sourceRef, content: item.content, title: item.title, section: item.section }))
   }) }];
@@ -139,7 +142,7 @@ async function callGroundingReviewer(messages, { onUsage } = {}) {
       }
     } } }
   });
-  assertPromptWithinTokenCeiling(request);
+  assertPromptWithinTokenCeiling(request, GROUNDING_PROMPT_CEILING);
   const body = await modelProviderCircuit.run(async () => {
     const response = await fetchOpenRouter("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST", timeoutMs: 20000,

@@ -635,10 +635,21 @@ function loadSupportIntentProfiles(embedText) {
   return supportIntentProfiles.get(embedText);
 }
 
-async function searchApprovedKnowledge(args, { store, embedText, embeddingModel, matchCount = 6, language, currentMessage, user, intents = [], knowledgeReranker = null } = {}) {
+async function searchApprovedKnowledge(args, { store, embedText: rawEmbedText, embeddingModel, matchCount = 6, language, currentMessage, user, intents = [], knowledgeReranker = null, retrievalCache = null } = {}) {
   const query = isPlainString(args?.query) ? args.query.trim().slice(0, 1000) : "";
   if (!query) return fail("invalid_input", "QUERY_REQUIRED", { modelObservation: buildApprovedKnowledgeObservation("invalid_input", []) });
   if (typeof store?.searchKnowledge !== "function") return fail("error", "SEARCH_UNAVAILABLE", { modelObservation: buildApprovedKnowledgeObservation("error", []) });
+  const toolStarted = performance.now();
+  const elapsed = (from) => Math.max(0, Math.round(performance.now() - from));
+  const timing = {};
+  // RAFA_SEARCH_CACHE: the version stamp is read in parallel with the local
+  // embeddings and awaited before any cached row is used. Without a stamp
+  // (route not deployed, error) every query goes to the store as before.
+  const versionStarted = performance.now();
+  const versionPromise = retrievalCache ? Promise.resolve().then(() => retrievalCache.version.read())
+    .catch(() => null).then((value) => { timing.versionMs = elapsed(versionStarted); return value; }) : null;
+  const embedText = retrievalCache && typeof rawEmbedText === "function" ? retrievalCache.embedFor(rawEmbedText) : rawEmbedText;
+  const embeddingStats = embedText?.stats ? { hits: embedText.stats.hits, misses: embedText.stats.misses } : null;
 
   // Search returns finding-aid chunks and chunks whose fact-register gate may
   // reject them. Fetch a bounded candidate window so those rows do not crowd
@@ -670,6 +681,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // Focused questions retain the previous narrow query plan.
   let queries = [...new Set([...scopeQueries, ...contextualQueries, currentQuery])].filter(Boolean);
   let historicalQueryIndex = crossLanguageHistoryQuery ? queries.indexOf(crossLanguageHistoryQuery) : -1;
+  const embeddingStarted = performance.now();
   const searchPlans = await Promise.all(queries.map(async (searchQuery, index) => {
     let embedding = null;
     try {
@@ -681,6 +693,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     }
     return { searchQuery, embedding, contextual: index < contextualQueries.length };
   }));
+  timing.embeddingMs = elapsed(embeddingStarted);
   const resolvedEmbedding = searchPlans[0]?.embedding;
   const currentIndex = queries.indexOf(currentQuery);
   const currentEmbedding = currentIndex >= 0 ? searchPlans[currentIndex]?.embedding : null;
@@ -711,22 +724,50 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
       supportIntent = detectSupportIntent(probeEmbedding, await loadSupportIntentProfiles(embedText));
       if (supportIntent) {
         const profile = (await loadSupportIntentProfiles(embedText)).find((p) => p.id === supportIntent.id);
-        searchPlans.push({ searchQuery: currentQuery || query, embedding: profile.embedding, contextual: false, intentProbe: true });
+        searchPlans.push({ searchQuery: currentQuery || query, embedding: profile.embedding, contextual: false, intentProbe: supportIntent.id });
       }
     } catch {
       supportIntent = null;
     }
   }
-  const resultSets = await Promise.all(searchPlans.map(async ({ searchQuery, embedding, contextual }) => {
+  const knowledgeVersion = versionPromise ? await versionPromise : null;
+  const searchCacheStats = retrievalCache ? { version: knowledgeVersion ? "ok" : "unavailable", hits: 0, misses: 0 } : null;
+  const rerankCandidateCount = knowledgeReranker?.config?.candidateCount || null;
+  const searchStarted = performance.now();
+  const resultSets = await Promise.all(searchPlans.map(async ({ searchQuery, embedding, contextual, intentProbe }) => {
+    // The key carries everything that changes the store's answer: version,
+    // normalized query, embedding presence/model, which embedding (the intent
+    // probe reuses the query text with a different vector) and both counts.
+    const cacheParams = knowledgeVersion ? { version: knowledgeVersion, query: intentProbe ? `${searchQuery}\u0000intent:${intentProbe}` : searchQuery,
+      embeddingModel: embedding ? embeddingModel || null : null, hasEmbedding: Boolean(embedding), matchCount: candidateCount, candidateCount: rerankCandidateCount } : null;
+    if (cacheParams) {
+      try {
+        const cached = retrievalCache.search.get(cacheParams);
+        if (cached) { searchCacheStats.hits += 1; return { ok: true, value: cached, contextual }; }
+      } catch { /* A cache fault is a miss. */ }
+      searchCacheStats.misses += 1;
+    }
     try {
-      const value = knowledgeReranker?.config?.candidateCount
-        ? await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount, { candidateCount: knowledgeReranker.config.candidateCount })
+      const value = rerankCandidateCount
+        ? await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount, { candidateCount: rerankCandidateCount })
         : await store.searchKnowledge(searchQuery, embedding, embeddingModel || null, candidateCount);
+      if (cacheParams) { try { retrievalCache.search.set(cacheParams, value); } catch { /* best effort */ } }
       return { ok: true, value, contextual };
     } catch (error) {
       return { ok: false, error, contextual };
     }
   }));
+  timing.searchMs = elapsed(searchStarted);
+  // Edge stage timings for the live (uncached) queries. They ran in parallel,
+  // so the slowest query's stages approximate the wall time of each stage.
+  const serverTimings = resultSets.map((result) => result.ok ? result.value?.serverTiming : null).filter(Boolean);
+  if (serverTimings.length) {
+    timing.server = Object.fromEntries(["rpcMs", "expandMs", "policyMs"].map((key) =>
+      [key, Math.max(...serverTimings.map((item) => Number(item[key]) || 0))]));
+  }
+  const fusionStarted = performance.now();
+  const cacheTrace = () => (retrievalCache ? { cache: { search: searchCacheStats,
+    embedding: embeddingStats && embedText?.stats ? { hits: embedText.stats.hits - embeddingStats.hits, misses: embedText.stats.misses - embeddingStats.misses } : null } } : {});
   const successfulResults = resultSets.filter((result) => result.ok);
   if (!successfulResults.length) {
     const error = resultSets.find((result) => !result.ok)?.error;
@@ -736,7 +777,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     return fail("error", "RETRIEVAL_FAILED", {
       message: String(error?.message || error || "Knowledge retrieval failed.").slice(0, 200),
       modelObservation: buildApprovedKnowledgeObservation("error", []),
-      trace: { searchQueries: queries, providerErrorCode, providerStatus, errorName }
+      trace: { searchQueries: queries, providerErrorCode, providerStatus, errorName, timing: { ...timing, totalMs: elapsed(toolStarted) }, ...cacheTrace() }
     });
   }
   const results = successfulResults.length > 1
@@ -756,7 +797,7 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   const eligible = (Array.isArray(results) ? results : [])
     .filter(isCustomerFacingKnowledgeChunk);
   if (eligible.length === 0) {
-    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []), trace: { searchQueries: queries } });
+    return ok("no_evidence", [], { userSafeSummary: "No approved information matched this question.", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []), trace: { searchQueries: queries, timing: { ...timing, fusionMs: elapsed(fusionStarted), totalMs: elapsed(toolStarted) }, ...cacheTrace() } });
   }
 
   const assemblyStarted = performance.now();
@@ -779,9 +820,11 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
   // Optional cross-encoder rerank (RAFA_KNOWLEDGE_RERANK=on): the first-stage
   // pool is re-ordered by how well each whole section answers the customer's
   // full question. On any failure the first-stage order below is kept.
+  timing.fusionMs = elapsed(fusionStarted);
   let rerank = null;
   if (knowledgeReranker) {
     rerank = await knowledgeReranker.rerank(rerankQuestion(currentQuery, query), visibleCatalogue);
+    timing.rerankMs = Number.isFinite(rerank?.durationMs) ? Math.round(rerank.durationMs) : null;
   }
   const reranked = rerank?.status === "reranked";
   const prioritizedCatalogue = reranked
@@ -827,7 +870,8 @@ async function searchApprovedKnowledge(args, { store, embedText, embeddingModel,
     .map((row) => row.chunk_id).filter((id) => typeof id === "string"))];
   const userSafeSummary = modelObservation.evidence.map((item) => String(item?.section || item?.title || "Approved information").slice(0, 120));
   return ok(selectedRows.length ? "found" : "no_evidence", selectedRows.slice(0, requestedCount), { userSafeSummary, modelObservation, trace: { searchQueries: queries, comprehensiveSearch: broadServiceRequest, candidateCount: catalogue.length, candidateIds: catalogue.map((item) => item.sourceRef), catalogueOmittedIds, selectedCount: selectedSections.length, selectedChunkCount: selectedRows.length, excludedIds: [], selectionStatus: reranked ? "cross_encoder_reranked_bounded" : "retrieval_ranked_bounded", evidenceAssemblyDurationMs: Math.round(performance.now() - assemblyStarted),
-    ...(knowledgeReranker ? { supportIntent: supportIntent?.id || null, rerank: rerank ? { status: rerank.status, durationMs: rerank.durationMs, poolSize: rerank.poolSize } : null } : {}) } });
+    ...(knowledgeReranker ? { supportIntent: supportIntent?.id || null, rerank: rerank ? { status: rerank.status, durationMs: rerank.durationMs, poolSize: rerank.poolSize, ...(rerank.cache ? { cache: rerank.cache } : {}) } : null } : {}),
+    timing: { ...timing, totalMs: elapsed(toolStarted) }, ...cacheTrace() } });
 }
 
 // --- getCustomerContext ------------------------------------------------------
@@ -1043,7 +1087,7 @@ const TOOL_REGISTRY = Object.freeze({
     run: (args, context) => performDynamicAction("recordComplianceEvent", args, context)
   },
   searchApprovedKnowledge: {
-    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history. For one direct relationship question, use one concise query for the relationship and its necessary conditions. Do not add general eligibility or company-service-scope queries unless separately requested. Keep customer exclusions in context, but leave excluded alternatives out of model-generated queries even when the message names them as exclusions; treat them as answer scope, not additional topics. The current message is searched automatically. When approved knowledge directly states the requested relationship, state it plainly and reserve uncertainty for uncovered personal eligibility or conditions. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a summary across earlier turns, keep query a concise service overview; use relatedQueries only for distinct unresolved specifics from customer history, never repeat the full conversation in a query. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
+    description: "Search authorized current knowledge. Arguments: query (string), optional relatedQueries (up to two complementary model-generated query strings). Resolve the current need and its relationships from history; the query rules under Decision rules apply. Use a broad company-capability query only when the customer asks what REFAL offers or whether REFAL provides a service. For a summary across earlier turns, keep query a concise service overview; use relatedQueries only for distinct unresolved specifics from customer history, never repeat the full conversation in a query. Use relatedQueries for distinct missing evidence needs, not repeated paraphrases. A topic description is not proof of a company's service. Combine relevant searches in one tool call rather than repeating searches.",
     run: searchApprovedKnowledge
   },
   getCustomerContext: {
@@ -1087,6 +1131,7 @@ module.exports = {
   isFreshDynamicRow,
   dynamicRecord,
   buildApprovedKnowledgeObservation,
+  loadSupportIntentProfiles,
   MAX_RAG_EVIDENCE_ITEMS,
   MAX_RAG_EVIDENCE_CONTENT_CHARS,
   MAX_RAG_EVIDENCE_TOTAL_CHARS
