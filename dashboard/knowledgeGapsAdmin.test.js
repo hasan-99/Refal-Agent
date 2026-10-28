@@ -37,7 +37,7 @@ function fakeRest({ groupRow = group(), tests = [], chunks = null } = {}) {
   return { rest, calls };
 }
 
-async function withApp({ env = { RAFA_KNOWLEDGE_GAPS: "on" }, rest, createVerifier = null } = {}, run) {
+async function withApp({ env = { RAFA_KNOWLEDGE_GAPS: "on" }, rest, createVerifier = null, getSettings = null, updateSettings = null, logEvent = async () => {} } = {}, run) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -45,7 +45,7 @@ async function withApp({ env = { RAFA_KNOWLEDGE_GAPS: "on" }, rest, createVerifi
     next();
   });
   const requireAdmin = (req, res, next) => req.dashboardUser.role === "admin" ? next() : res.status(403).json({ error: "Administrator access is required." });
-  registerKnowledgeGapAdminRoutes(app, { requireAdmin, supabaseRest: rest, env, now: () => new Date(NOW), createVerifier });
+  registerKnowledgeGapAdminRoutes(app, { requireAdmin, supabaseRest: rest, env, now: () => new Date(NOW), createVerifier, getSettings, updateSettings, logEvent });
   const server = await new Promise((resolve) => { const instance = app.listen(0, "127.0.0.1", () => resolve(instance)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   try { await run((path, options = {}) => fetch(`${base}${path}`, { ...options, headers: { "content-type": "application/json", ...(options.headers || {}) } })); }
@@ -163,3 +163,58 @@ test("diagnostics separate weak retrieval, chunk needing improvement and agent l
   assert.equal(gapDiagnostics([{ search_ran: false, reason: "agent_failure", top_chunks: [] }], []).hint.code, "agent_logic");
   assert.equal(gapDiagnostics([{ search_ran: false, reason: "system_failure", top_chunks: [] }], []).hint.code, "system");
 });
+
+test("recording switch: anyone signed in can read it, only an admin can change it, and changes are logged", async () => {
+  const { rest } = fakeRest();
+  let stored = { settings: { recording: true }, updatedAt: "2026-10-28T10:00:00.000Z", updatedBy: null };
+  const updates = [];
+  const events = [];
+  const getSettings = async () => stored;
+  const updateSettings = async (settings, options) => { updates.push([settings, options]); stored = { settings, updatedAt: NOW.toISOString(), updatedBy: options.updatedBy }; return stored; };
+  await withApp({ rest, getSettings, updateSettings, logEvent: async (event, fields) => events.push([event, fields]) }, async (request) => {
+    const read = await (await request("/api/knowledge-gaps/settings", { headers: { "x-test-user": "user" } })).json();
+    assert.equal(read.recording, true);
+    assert.equal(read.canManage, false);
+    assert.equal((await request("/api/knowledge-gaps/settings", { method: "PUT", headers: { "x-test-user": "user" }, body: JSON.stringify({ recording: false }) })).status, 403);
+    assert.equal((await request("/api/knowledge-gaps/settings", { method: "PUT", body: JSON.stringify({ recording: "off" }) })).status, 400);
+    const saved = await (await request("/api/knowledge-gaps/settings", { method: "PUT", body: JSON.stringify({ recording: false }) })).json();
+    assert.equal(saved.recording, false);
+    assert.equal(saved.updatedBy, "admin@refalco.com");
+  });
+  assert.deepEqual(updates, [[{ recording: false }, { updatedBy: "admin@refalco.com" }]]);
+  assert.deepEqual(events, [["knowledge_gaps_recording_changed", { recording: false, actor: "admin@refalco.com" }]]);
+});
+
+test("recording switch routes are hidden with the feature and answer 503 when the store cannot provide settings", async () => {
+  const { rest } = fakeRest();
+  await withApp({ env: {}, rest, getSettings: async () => ({ settings: { recording: true } }) }, async (request) => {
+    assert.equal((await request("/api/knowledge-gaps/settings")).status, 404);
+  });
+  await withApp({ rest }, async (request) => {
+    assert.equal((await request("/api/knowledge-gaps/settings")).status, 503);
+  });
+});
+
+test("the list pages with limit/offset and the resolved tab covers resolved and verified gaps", async () => {
+  const extra = (n, status) => group({ id: `7777777${n}-7777-4777-8777-77777777777${n}`, title: `Gap ${n}`, status, last_seen_at: `2026-10-2${n}T09:00:00.000Z` });
+  const rows = [group(), extra(1, "open"), extra(2, "resolved"), extra(3, "verified"), extra(4, "ignored")];
+  const { rest } = fakeRest();
+  const paged = async (path, options) => (path.startsWith("rafa_knowledge_gap_groups?select") ? rows : rest(path, options));
+  await withApp({ rest: paged }, async (request) => {
+    const first = await (await request("/api/knowledge-gaps?status=all&limit=2&offset=0")).json();
+    assert.equal(first.groups.length, 2);
+    assert.equal(first.filteredTotal, 5);
+    assert.equal(first.nextOffset, 2);
+    const last = await (await request("/api/knowledge-gaps?status=all&limit=2&offset=4")).json();
+    assert.equal(last.groups.length, 1);
+    assert.equal(last.nextOffset, null);
+    const ids = new Set([...first.groups, ...(await (await request("/api/knowledge-gaps?status=all&limit=2&offset=2")).json()).groups, ...last.groups].map((item) => item.id));
+    assert.equal(ids.size, 5, "pages never overlap");
+    const done = await (await request("/api/knowledge-gaps?status=done")).json();
+    assert.deepEqual(done.groups.map((item) => item.status).sort(), ["resolved", "verified"]);
+    const unpaged = await (await request("/api/knowledge-gaps?status=all")).json();
+    assert.equal(unpaged.groups.length, 5);
+    assert.equal(unpaged.nextOffset, null);
+  });
+});
+

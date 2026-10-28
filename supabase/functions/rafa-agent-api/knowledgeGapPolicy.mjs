@@ -569,3 +569,21 @@ export function buildKnowledgeDraftPrefill(group = {}, examples = []) {
     answerMarker: GAP_DRAFT_ANSWER_MARKER
   };
 }
+
+// Admin recording switch, stored in rafa_settings under SETTINGS_KEY. The
+// worker records only when its RAFA_KNOWLEDGE_GAPS master flag is on AND this
+// switch is on. No row yet means "on" so enabling the master flag behaves as
+// before; an unreadable setting means "off" (the worker fails closed).
+export const KNOWLEDGE_GAP_SETTINGS_KEY = "knowledge_gaps";
+export const KNOWLEDGE_GAP_SETTINGS_DEFAULTS = Object.freeze({ recording: true });
+
+export function validateKnowledgeGapSettings(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Knowledge gap settings must be an object.");
+  if (typeof value.recording !== "boolean") throw new Error("recording must be true or false.");
+  return { recording: value.recording };
+}
+
+export function readKnowledgeGapSettings(stored) {
+  try { return validateKnowledgeGapSettings(stored); }
+  catch { return { ...KNOWLEDGE_GAP_SETTINGS_DEFAULTS }; }
+}

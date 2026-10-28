@@ -320,6 +320,23 @@ class EdgeApiStore {
     return this.request("/knowledge-gaps/events", { method: "POST", timeoutMs: 4000, body: JSON.stringify(event || {}) });
   }
 
+  // Admin recording switch for Knowledge Gaps ({ settings: { recording } }).
+  // Cached briefly so the recorder does not add a request per turn.
+  async getKnowledgeGapSettings({ timeoutMs = 1500, fresh = false } = {}) {
+    if (!fresh && this.knowledgeGapSettingsCache && Date.now() - this.knowledgeGapSettingsCacheAt < 30_000) return this.knowledgeGapSettingsCache;
+    const value = await this.request("/settings/knowledge-gaps", { timeoutMs, attempts: 1 });
+    this.knowledgeGapSettingsCache = value;
+    this.knowledgeGapSettingsCacheAt = Date.now();
+    return value;
+  }
+
+  async updateKnowledgeGapSettings(settings, { updatedBy = null } = {}) {
+    const value = await this.request("/settings/knowledge-gaps", { method: "PUT", body: JSON.stringify({ settings, updatedBy }) });
+    this.knowledgeGapSettingsCache = value;
+    this.knowledgeGapSettingsCacheAt = Date.now();
+    return value;
+  }
+
   async saveControlledInspection(userId, sourceTurnId, inspection) {
     return this.request("/controlled-diagnostics", {
       method: "POST", body: JSON.stringify({ userId, sourceTurnId, inspection })

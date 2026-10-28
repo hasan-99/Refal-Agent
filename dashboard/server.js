@@ -190,7 +190,9 @@ registerDynamicDataAdminRoutes(app, { requireAdmin });
 registerContactCorrectionAdminRoutes(app, { store, requireAdmin });
 registerKnowledgeGapAdminRoutes(app, {
   requireAdmin, supabaseRest, readAllRows: readAllSupabaseRows, logEvent: logDashboardEvent,
-  createVerifier: createDefaultGapVerifier({ store, embedText, embeddingModel: DEFAULT_EMBEDDING_MODEL })
+  createVerifier: createDefaultGapVerifier({ store, embedText, embeddingModel: DEFAULT_EMBEDDING_MODEL }),
+  getSettings: () => store.getKnowledgeGapSettings({ timeoutMs: 8000, fresh: true }),
+  updateSettings: (settings, options) => store.updateKnowledgeGapSettings(settings, options)
 });
 
 app.get("/api/whatsapp/status", async (_req, res) => {

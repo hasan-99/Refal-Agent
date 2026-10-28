@@ -32,6 +32,8 @@ function loadGapPolicy() {
   return policyPromise;
 }
 
+const SETTINGS_TIMEOUT_MS = 2000;
+
 function knowledgeGapsEnabled(env = process.env) {
   return /^(?:on|true|1|yes)$/iu.test(String(env?.RAFA_KNOWLEDGE_GAPS || "").trim());
 }
@@ -136,8 +138,23 @@ function safeFailure(error) {
 
 // Builds the event and sends it. Returns a small result for tests and
 // observability; never includes question text in what it logs.
+// Admin recording switch (dashboard toggle, rafa_settings.knowledge_gaps).
+// A store without the setting keeps the master-flag-only behaviour; a store
+// that has it but cannot answer means "do not record" (fail closed).
+async function recordingSwitch(store) {
+  if (typeof store?.getKnowledgeGapSettings !== "function") return { allowed: true, source: "master_flag_only" };
+  try {
+    const value = await withTimeout(Promise.resolve(store.getKnowledgeGapSettings()), SETTINGS_TIMEOUT_MS, "GAP_SETTINGS_TIMEOUT");
+    return value?.settings?.recording === true ? { allowed: true, source: "admin_switch" } : { allowed: false, skip: "recording_paused" };
+  } catch {
+    return { allowed: false, skip: "settings_unavailable" };
+  }
+}
+
 async function recordKnowledgeGap(input = {}, deps = {}) {
   const { store, embedText, logEvent = async () => {}, rateLimiter = defaultRateLimiter, now = Date.now() } = deps;
+  const recording = await recordingSwitch(store);
+  if (!recording.allowed) return { recorded: false, skip: recording.skip };
   const policy = await loadGapPolicy();
   const { agentResult, message, classification = {}, socialOnlyTurn = false, userId, sourceTurnId, traceId, delivered } = input;
   const intents = Array.isArray(classification?.intents) ? classification.intents.filter((item) => typeof item === "string") : [];
@@ -229,6 +246,7 @@ module.exports = {
   recordKnowledgeGap,
   extractGapSignals,
   knowledgeGapsEnabled,
+  recordingSwitch,
   createLocalRateLimiter,
   loadGapPolicy,
   AGENT_VERSION

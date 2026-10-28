@@ -185,3 +185,25 @@ test("a failing gap store and failing gap telemetry never change or delay the cu
     if (previous === undefined) delete process.env.RAFA_KNOWLEDGE_GAPS; else process.env.RAFA_KNOWLEDGE_GAPS = previous;
   }
 });
+
+test("the admin recording switch pauses recording and an unreadable setting fails closed", async () => {
+  const agentResult = { outcome: "response_rejected", reason: "no_approved_evidence", stepCount: 2,
+    steps: [searchStep(), { step: 2, tool: "responsePolicyCheck", result: { ok: false, status: "policy_rejected", reasonCode: "no_approved_evidence" } }] };
+  const input = { agentResult, message: "What is your refund deadline?", classification: { intents: ["company_formation"], language: "english" }, userId: "u1", delivered: true };
+
+  const paused = { ...stubStore(), getKnowledgeGapSettings: async () => ({ settings: { recording: false } }) };
+  assert.deepEqual(await recordKnowledgeGap(input, deps(paused)), { recorded: false, skip: "recording_paused" });
+  assert.equal(paused.calls.length, 0);
+
+  const broken = { ...stubStore(), getKnowledgeGapSettings: async () => { throw new Error("edge down"); } };
+  assert.deepEqual(await recordKnowledgeGap(input, deps(broken)), { recorded: false, skip: "settings_unavailable" });
+  assert.equal(broken.calls.length, 0);
+
+  const on = stubStore();
+  on.getKnowledgeGapSettings = async () => ({ settings: { recording: true } });
+  assert.equal((await recordKnowledgeGap(input, deps(on))).recorded, true);
+  assert.equal(on.calls.length, 1);
+
+  const legacy = stubStore();
+  assert.equal((await recordKnowledgeGap(input, deps(legacy))).recorded, true, "a store without the setting keeps master-flag behaviour");
+});
