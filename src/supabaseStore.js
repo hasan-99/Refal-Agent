@@ -313,6 +313,13 @@ class EdgeApiStore {
     });
   }
 
+  // Knowledge Gaps (RAFA_KNOWLEDGE_GAPS): one already-redacted gap event. The
+  // recorder calls this off the reply path; a short timeout and no retry keep a
+  // slow gateway from piling up background work.
+  async recordKnowledgeGapEvent(event) {
+    return this.request("/knowledge-gaps/events", { method: "POST", timeoutMs: 4000, body: JSON.stringify(event || {}) });
+  }
+
   async saveControlledInspection(userId, sourceTurnId, inspection) {
     return this.request("/controlled-diagnostics", {
       method: "POST", body: JSON.stringify({ userId, sourceTurnId, inspection })

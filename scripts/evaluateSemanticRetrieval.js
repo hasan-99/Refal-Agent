@@ -17,6 +17,9 @@
 //     [--local-models <dir>]   load e5 + reranker from a local folder (no hub access)
 //     [--only reranked|baseline]
 //     [--gate guarantee:5,refund:16]   fail when a group's case ranks worse than N (reranked run)
+//     [--gap-tests <file.json>]  also run Knowledge Gap regression tests exported from the
+//                                dashboard (GET /api/knowledge-gaps/regression-tests/export);
+//                                each fails when its expected chunk ranks worse than its own minimum
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -24,12 +27,13 @@ const { pathToFileURL } = require("node:url");
 const { RETRIEVAL_REGRESSION_SET } = require("../src/retrievalRegressionSet");
 
 function parseArgs(argv) {
-  const args = { out: null, localModels: null, only: null, gate: "guarantee:5" };
+  const args = { out: null, localModels: null, only: null, gate: "guarantee:5", gapTests: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--out") args.out = path.resolve(argv[++i]);
     else if (argv[i] === "--local-models") args.localModels = argv[++i];
     else if (argv[i] === "--only") args.only = argv[++i];
     else if (argv[i] === "--gate") args.gate = argv[++i];
+    else if (argv[i] === "--gap-tests") args.gapTests = path.resolve(argv[++i]);
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
   if (!args.out) throw new Error("--out is required");
@@ -126,7 +130,25 @@ async function run(argv) {
       }
     }
   }
-  const report = { generatedAt: new Date().toISOString(), cases: results.length, summary, byGroup, regressions, latency, gate: args.gate, gateFailures, results };
+  // Knowledge Gap regression tests (optional): the same real search tool, the
+  // same modes; ranks are matched by chunk, document or source id.
+  let gapRegression = null;
+  if (args.gapTests) {
+    const { loadGapRegressionCases, runGapRegressionTest, createGapSearch } = require("../src/knowledgeGapRegression");
+    const cases = loadGapRegressionCases(JSON.parse(fs.readFileSync(args.gapTests, "utf8")));
+    gapRegression = { cases: cases.length, runs: {} };
+    for (const mode of runs) {
+      const search = createGapSearch({ searchApprovedKnowledge, store, embedText, embeddingModel: DEFAULT_EMBEDDING_MODEL, knowledgeReranker: mode === "reranked" ? reranker : null });
+      const outcomes = [];
+      for (const test of cases) outcomes.push({ ...(await runGapRegressionTest(test, { search })), query: test.query, minRank: test.minRank });
+      gapRegression.runs[mode] = { passed: outcomes.filter((o) => o.result === "pass").length, failed: outcomes.filter((o) => o.result !== "pass").length, outcomes };
+      for (const o of outcomes.filter((item) => item.result !== "pass")) {
+        gateFailures.push({ id: `gap:${o.id}`, group: "knowledge_gap", rank: o.rank, limit: o.minRank, query: o.query, mode });
+      }
+    }
+    console.log(`gap regression ${JSON.stringify(Object.fromEntries(Object.entries(gapRegression.runs).map(([m, r]) => [m, { passed: r.passed, failed: r.failed }])))}`);
+  }
+  const report = { generatedAt: new Date().toISOString(), cases: results.length, summary, byGroup, regressions, latency, gate: args.gate, gateFailures, results, gapRegression };
   fs.writeFileSync(path.join(args.out, "semantic_retrieval_report.json"), JSON.stringify(report, null, 2), "utf8");
   console.log(`\nsummary ${JSON.stringify(summary)}`);
   console.log(`rerank latency ${JSON.stringify(latency)}`);

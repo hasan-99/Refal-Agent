@@ -31,6 +31,7 @@ import { containsSensitiveOutputValue } from "./sensitiveOutputPolicy.mjs";
 import { fetchJsonWithTimeout, ProviderTimeoutError } from "./providerTransport.mjs";
 import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
 import { detectMessageLanguage, languageInstruction } from "./language.mjs";
+import { recordKnowledgeGapEvent } from "./knowledgeGapEvents.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -917,6 +918,17 @@ Deno.serve(async (req: Request) => {
       return json({ inspections: (data || []).map((row) => ({ id: row.id, at: row.at, sourceTurnId: row.fields.sourceTurnId,
         inspection: sanitizeControlledInspection(row.fields.inspection, [contact.id, contact.phone, contact.profile?.name]) })) });
     }
+    // Knowledge Gaps: worker-side recording after the answer decision. Never on
+    // the customer reply path; the worker treats any failure here as best effort.
+    if (parts[0] === "knowledge-gaps" && parts[1] === "events" && req.method === "POST" && parts.length === 2) {
+      const raw = await req.text();
+      if (raw.length > 24000) throw new HttpError("Knowledge gap event exceeds size limit.", 413);
+      let body: unknown = {};
+      try { body = JSON.parse(raw || "{}"); } catch { throw new HttpError("Invalid knowledge gap event.", 400); }
+      const result = await recordKnowledgeGapEvent(supabase, body as Record<string, unknown>);
+      return json(result, result.error ? 400 : 200);
+    }
+
     if (parts[0] === "events" && req.method === "POST") {
       const body = await req.json();
       const event = String(body.event || "unknown").trim();

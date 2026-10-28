@@ -93,6 +93,7 @@ function createTurnMetrics() {
     }
   };
 }
+const { scheduleKnowledgeGapRecording } = require("./knowledgeGapRecorder");
 
 function isSocialOnlyClassification(classification = {}) {
   const intents = Array.isArray(classification.intents) ? classification.intents : [];
@@ -408,6 +409,10 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       searchFirst: searchFirst.basis, searchFirstSupportIntent: searchFirst.supportIntent || null, searchPrefetched: Boolean(prefetchPromise),
       ...(convoFeatures ? { ...turnQualityFields({ counters: qualityCounters, sessionState, responseText: completedResponseText || "", agentResult: completedAgentResult }),
         profileMemory: profileMemoryStatus } : {}) });
+    // Knowledge Gaps: flag-gated (RAFA_KNOWLEDGE_GAPS), synchronous, never
+    // throws and never awaited; the reply is already delivered at this point.
+    scheduleKnowledgeGapRecording({ agentResult: completedAgentResult, message: text, classification: prepared.classification,
+      socialOnlyTurn, userId, sourceTurnId: completedSourceTurnId, traceId, delivered: result.sent === true }, { store, embedText, logEvent });
   }
   if (result.persistenceUpdated === false) {
     try { await logEvent("agent_reply_persistence_failed", { persistenceUpdated: false, delivered: result.sent === true }); }
