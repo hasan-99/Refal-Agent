@@ -79,7 +79,7 @@ function isHedged(text) {
   return HEDGE.test(matchForm(text));
 }
 
-const NEGATION = /\b(?:not|no|never|don't|doesn't|didn't|isn't|aren't|wasn't|haven't|hasn't|cannot|can't|unable|without|unconfirmed|unknown)\b|(?:^|\s)(?:لا|ليس|ليست|لست|مش|مو|ما|لم|لن|غير|بدون|مب)(?=\s|$)|\b(?:δεν|όχι|χωρίς|μην)\b/iu;
+const NEGATION = /\b(?:not|no|never|don't|doesn't|didn't|isn't|aren't|wasn't|haven't|hasn't|cannot|can't|unable|without|unconfirmed|unknown)\b|(?:^|\s)(?:لا|ليس|ليست|لست|مش|مو|ما|لم|لن|غير|بدون|مب)(?=\s|$)|(?<![\p{L}\p{N}])(?:δεν|όχι|χωρίς|μην)(?![\p{L}\p{N}])/iu;
 
 // ---------------------------------------------------------------- names
 function isPlausibleName(value) {
