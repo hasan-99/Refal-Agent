@@ -19,7 +19,7 @@ import {
   Database,
   Eye,
   EyeOff,
-  FileQuestion,
+  SearchX,
   FolderOpen,
   KeyRound,
   Languages,
@@ -73,7 +73,7 @@ const navItems = [
   { id: "performance", label: "Performance", icon: TrendingUp },
   { id: "conversations", label: "Conversations", icon: MessageCircleMore },
   { id: "company-brain", label: "Company brain", icon: BrainCircuit },
-  { id: "knowledge-gaps", label: "Knowledge gaps", icon: FileQuestion, feature: "knowledgeGaps" },
+  { id: "knowledge-gaps", label: "Knowledge gaps", icon: SearchX, feature: "knowledgeGaps" },
   { id: "bookings", label: "Bookings", icon: CalendarClock },
   { id: "follow-ups", label: "Follow-ups", icon: Bell, adminOnly: true },
   { id: "blocked", label: "Blocked numbers", icon: ShieldBan, adminOnly: true }

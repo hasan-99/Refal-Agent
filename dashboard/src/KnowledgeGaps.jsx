@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleDot, Clock, Flame, Inbox, Languages, Link2, MessageSquare,
-  PauseCircle, Radio, RefreshCcw, Search, SlidersHorizontal, Sparkles, TrendingUp, Users, X
+  PauseCircle, Radio, RefreshCcw, Search, SearchX, SlidersHorizontal, TrendingUp, Users, X
 } from "lucide-react";
 import {
   EMPTY_FILTERS, LANGUAGE_LABELS, LANGUAGE_SHORT, PRIORITY_LABELS, STATUS_TABS, activeFilterCount, buildListQuery,
@@ -94,7 +94,7 @@ export default function KnowledgeGaps({ isAdmin, onCreateKnowledge, onOpenKnowle
   return <div className="kg-page">
     <header className="kg-hero">
       <div className="kg-hero-copy">
-        <span className="kg-eyebrow"><Sparkles size={13} /> Knowledge gaps</span>
+        <span className="kg-eyebrow"><SearchX size={13} /> Knowledge gaps</span>
         <h2>Questions REFAL couldn&apos;t answer</h2>
         <p>Grouped by meaning across Arabic, English and Greek. Personal details are removed before anything is stored, and nothing is published without an administrator&apos;s approval.</p>
       </div>
