@@ -37,6 +37,11 @@ const { languageSignalsFrom } = require("./agentObservability");
 const { findRepeatedQuestion } = require("./neverReAsk");
 const { evaluateAnswerClaims } = require("./claimPolicy");
 const { containsUnconditionalProhibition } = require("./refalcoAnswer");
+// Conversation-behaviour gates (src/conversationFlags.js). Active only when
+// the live turn put context.conversationFeatures in the Agent context.
+const { evaluateTruthfulActions, truthfulActionCorrection } = require("./truthfulActionGuard");
+const { stripUnhelpfulFollowups, dedupeLeadingName } = require("./sessionMemory");
+const { countFollowupRemovals } = require("./conversationQuality");
 
 // A turn may need two retrieval passes and two rejected drafts. Keep one final
 // tool-free decision slot so the agent can apply the exact latest validation
@@ -178,8 +183,9 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
     : hasContextMismatch
       ? "Correct the exact quoted context span. If it repeats or misuses earlier conversation, remove the full span rather than restating it in different words. Preserve other supported details, answer the current request directly, and do not narrate evidence or confirmation state."
     : "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. For a CONTEXT span, correct only the quoted passage to respect the customer's role, preference, or prior scope; preserve other supported facts. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support.";
+  const truthfulCorrection = truthfulActionCorrection(policy.reasons || [], policy.truthfulActionState || {});
   const actionableCorrection = [
-    correction,
+    truthfulCorrection || correction,
     hasUnestablishedService && !correction.includes("The approved content describes a process")
       ? "Separately, keep neutral process facts only when current-turn evidence states them, preserve the actor named by that evidence, and do not attribute the process to REFAL without explicit service evidence. State the specific REFAL role as unconfirmed when the evidence does not establish it."
       : null,
@@ -362,13 +368,57 @@ function draftProgressKey(text, observations, context) {
   return JSON.stringify([String(text).normalize("NFKC").replace(/\s+/gu, " ").trim(), currentDraftEvidence(observations, context).map((item) => [item.sourceRef, item.content])]);
 }
 
+// RAFA_SMART_FOLLOWUPS / RAFA_ANSWER_FIRST_STYLE: deterministic text edits
+// applied before every other gate, so the edited draft is what the gates and
+// the reviewer judge. They only remove a generic or repeated question or a
+// repeated name opener; they never add text and never call a model.
+function applyConversationStyleEdits(text, context = {}) {
+  const features = context.conversationFeatures;
+  if (!features) return text;
+  let draft = text;
+  if (features.smartFollowups === true && context.sessionState) {
+    const stripped = stripUnhelpfulFollowups(draft, context.sessionState, { knownFacts: context.knownCustomerFacts });
+    if (stripped.removed.length) { draft = stripped.text; countFollowupRemovals(context.conversationQuality, stripped.removed); }
+  }
+  if (features.answerFirstStyle === true && context.sessionState?.user?.name?.status === "confirmed") {
+    const previousResponse = [...(Array.isArray(context.recentConversation) ? context.recentConversation : [])].reverse().find((turn) => turn?.role === "assistant")?.content || "";
+    const conv = context.sessionState.conversation || {};
+    const allowName = conv.recapRequested === true || (Array.isArray(context.intents) && context.intents.includes("greeting"))
+      || (conv.corrections || []).some((entry) => entry.key === "name" && entry.turnId === "current");
+    const deduped = dedupeLeadingName(draft, { name: context.sessionState.user.name.value, previousResponse, allowName });
+    if (deduped.changed) { draft = deduped.text; if (context.conversationQuality) context.conversationQuality.nameOpenersDeduped += 1; }
+  }
+  return draft;
+}
+
 async function checkDraftPolicy(text, thresholds, observations, locale, context = {}, assessDraft = null, step = 0) {
+  // A clarify decision is itself the question, so it is never stripped.
+  if (context.conversationFeatures && thresholds !== AGENT_CLARIFY_THRESHOLDS) text = applyConversationStyleEdits(text, context);
+  if (context.conversationFeatures?.smartFollowups === true && thresholds === AGENT_CLARIFY_THRESHOLDS
+    && (context.sessionState?.conversation?.clarificationStreak || 0) >= 1) {
+    if (context.conversationQuality) context.conversationQuality.clarificationLimitHits += 1;
+    return { valid: false, text, reasons: ["smart_followup:clarification_limit"] };
+  }
   const evidenceItems = currentDraftEvidence(observations, context);
   const semanticGrounding = typeof assessDraft === "function";
   const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage, evidence: evidenceItems, language: locale, semanticGrounding });
   if (!policy.valid) return policy;
   const repeatedFields = findRepeatedQuestion(text, context.knownCustomerFacts);
   if (repeatedFields.length) return { ...policy, valid: false, reasons: repeatedFields.map((field) => `never_reask:${field}`) };
+  if (context.conversationFeatures?.truthfulActionStates === true) {
+    // RAFA_TRUTHFUL_ACTION_STATES: no handoff/record/booking/response-time/
+    // security/liability/guarantee/memory claim beyond the real state.
+    const truthful = evaluateTruthfulActions(policy.text, { actionState: context.sessionState?.actions || {}, evidenceItems, observations });
+    if (!truthful.valid) {
+      if (context.conversationQuality) context.conversationQuality.unsupportedClaimsBlocked += truthful.reasons.length;
+      return { ...policy, valid: false, reasons: truthful.reasons, blockedClaims: truthful.blockedClaims, truthfulActionState: truthful.state };
+    }
+    if (truthful.removed.length) {
+      if (context.conversationQuality) context.conversationQuality.unsupportedClaimsRemoved += truthful.removed.length;
+      text = truthful.text;
+      policy.text = truthful.text;
+    }
+  }
   const dynamicEvidenceItems = collectDynamicDataEvidence(observations);
   const grounding = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems, semanticGrounding });
   if (!grounding.valid) return { ...policy, valid: false, reasons: grounding.reasons };
@@ -675,6 +725,11 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
     const policy = rejectedDrafts.has(progressKey)
       ? { ...rejectedDrafts.get(progressKey), valid: false, text: validated.text, reasons: [...rejectedDrafts.get(progressKey).reasons, "repeated_rejected_draft"] }
       : await checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context, assessDraft, step);
+    if (!policy.valid && policy.reasons?.includes("smart_followup:clarification_limit")) {
+      // RAFA_SMART_FOLLOWUPS: one clarification per topic. A second one goes to
+      // the existing safe fallback instead of questioning the customer again.
+      return { finished: true, outcome: "clarify_rejected", response: safeFallback(context), steps: observations, toolsUsed, stepCount: step, reason: "clarification_limit" };
+    }
     if (!policy.valid) {
       rejectedDrafts.set(progressKey, policy);
       const evidenceItems = currentDraftEvidence(observations, context);

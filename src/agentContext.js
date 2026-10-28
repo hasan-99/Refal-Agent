@@ -34,7 +34,10 @@ function buildAgentContext({
   contextualWorkflow = "none",
   responseStyle = RESPONSE_STYLE_DEFAULTS,
   companyIdentity = null,
-  businessGuidance = BUSINESS_GUIDANCE_DEFAULTS
+  businessGuidance = BUSINESS_GUIDANCE_DEFAULTS,
+  sessionState = null,
+  conversationFeatures = null,
+  conversationQuality = null
 } = {}) {
   const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
   const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
@@ -80,7 +83,17 @@ function buildAgentContext({
     businessGuidance: validateBusinessGuidance(businessGuidance),
     leadTier: safeLeadTier,
     buyingSignals: Object.freeze(safeBuyingSignals),
-    allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))])
+    allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))]),
+    // Conversation-behaviour flags (src/conversationFlags.js). Present only
+    // when at least one flag is on, so the flags-off context is unchanged.
+    // sessionState is customer context, never company evidence.
+    ...(conversationFeatures && typeof conversationFeatures === "object" ? {
+      conversationFeatures: Object.freeze({ structuredSessionMemory: conversationFeatures.structuredSessionMemory === true,
+        answerFirstStyle: conversationFeatures.answerFirstStyle === true, truthfulActionStates: conversationFeatures.truthfulActionStates === true,
+        smartFollowups: conversationFeatures.smartFollowups === true }),
+      ...(sessionState && typeof sessionState === "object" ? { sessionState } : {}),
+      ...(conversationQuality && typeof conversationQuality === "object" ? { conversationQuality } : {})
+    } : {})
   });
 }
 
