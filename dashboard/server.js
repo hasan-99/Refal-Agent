@@ -30,6 +30,7 @@ import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboardi
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
 import { shapeDatabaseAuditEvents, shapeLegacyAdminEvents } from "./adminAudit.js";
 import { COMPANY_IDENTITY_CHANGE_REASONS, companyIdentityView } from "./companyIdentity.js";
+import { createDefaultGapVerifier, knowledgeGapsDashboardEnabled, registerKnowledgeGapAdminRoutes } from "./knowledgeGapsAdmin.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -177,7 +178,8 @@ app.get("/api/session", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     if (!identity?.user) return res.json({ authenticated: false });
     if (identity.account && !identity.account.is_active) return res.json({ authenticated: false, disabled: true, error: "This account has been disabled. Contact a workspace administrator." });
-    res.json({ authenticated: true, role: identity.account?.role || "pending", user: publicUser(identity.user, identity.account) });
+    res.json({ authenticated: true, role: identity.account?.role || "pending", user: publicUser(identity.user, identity.account),
+      features: { knowledgeGaps: knowledgeGapsDashboardEnabled(process.env) } });
   } catch (error) {
     res.status(error.statusCode || 503).json({ authenticated: false, error: error.statusCode ? error.message : "Could not verify the dashboard session." });
   }
@@ -186,6 +188,10 @@ app.get("/api/session", async (req, res) => {
 app.use("/api", requireAuth);
 registerDynamicDataAdminRoutes(app, { requireAdmin });
 registerContactCorrectionAdminRoutes(app, { store, requireAdmin });
+registerKnowledgeGapAdminRoutes(app, {
+  requireAdmin, supabaseRest, readAllRows: readAllSupabaseRows, logEvent: logDashboardEvent,
+  createVerifier: createDefaultGapVerifier({ store, embedText, embeddingModel: DEFAULT_EMBEDDING_MODEL })
+});
 
 app.get("/api/whatsapp/status", async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

@@ -19,6 +19,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  FileQuestion,
   FolderOpen,
   KeyRound,
   Languages,
@@ -64,6 +65,7 @@ const Performance = React.lazy(() => import("./Performance.jsx"));
 const HandoverInbox = React.lazy(() => import("./HandoverInbox.jsx"));
 const FactRegister = React.lazy(() => import("./FactRegister.jsx"));
 const DynamicData = React.lazy(() => import("./DynamicData.jsx"));
+const KnowledgeGaps = React.lazy(() => import("./KnowledgeGaps.jsx"));
 
 const navItems = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -71,6 +73,7 @@ const navItems = [
   { id: "performance", label: "Performance", icon: TrendingUp },
   { id: "conversations", label: "Conversations", icon: MessageCircleMore },
   { id: "company-brain", label: "Company brain", icon: BrainCircuit },
+  { id: "knowledge-gaps", label: "Knowledge gaps", icon: FileQuestion, feature: "knowledgeGaps" },
   { id: "bookings", label: "Bookings", icon: CalendarClock },
   { id: "follow-ups", label: "Follow-ups", icon: Bell, adminOnly: true },
   { id: "blocked", label: "Blocked numbers", icon: ShieldBan, adminOnly: true }
@@ -140,6 +143,9 @@ function App() {
   const [brainCategory, setBrainCategory] = useState(initialBrainCategory);
   const [conversationView, setConversationView] = useState(() => readInitialValue("view", DASHBOARD_CONVERSATION_VIEW_STORAGE_KEY, new Set(["inbox", "leads"]), "inbox"));
   const [selectedConversationId, setSelectedConversationId] = useState(readInitialConversationId);
+  // Knowledge Gaps hand-off: a draft prefill or a source to open in the
+  // existing knowledge editor. Saving still lands pending review.
+  const [knowledgeRequest, setKnowledgeRequest] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [sidebarSettingsOpen, setSidebarSettingsOpen] = useState(false);
   const sidebarSettingsRef = useRef(null);
@@ -280,7 +286,7 @@ function App() {
     }
     setActive(section);
   };
-  const visibleNavItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const visibleNavItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && (!item.feature || authState.features?.[item.feature] === true));
   const current = visibleNavItems.find((item) => item.id === active) ||
     (active === "team" ? { id: "team", label: "Team", icon: UserRoundPlus } : null) ||
     (active === "audit" && isAdmin ? { id: "audit", label: "Admin audit", icon: ClipboardList } : null) ||
@@ -358,7 +364,11 @@ function App() {
         {active === "agent-status" && <AgentStatus isAdmin={isAdmin} />}
         {active === "performance" && <React.Suspense fallback={<Loading label="Loading performance" />}><Performance isAdmin={isAdmin} /></React.Suspense>}
         {active === "conversations" && <React.Suspense fallback={<Loading label="Loading conversations" />}><Conversations isAdmin={isAdmin} view={conversationView} onViewChange={setConversationView} selectedConversationId={selectedConversationId} onSelectedConversationChange={setSelectedConversationId} onNavigate={navigateTo} /></React.Suspense>}
-        {active === "company-brain" && <CompanyBrain isAdmin={isAdmin} category={brainCategory} onCategoryChange={setBrainCategory} onNavigate={navigateTo} />}
+        {active === "company-brain" && <CompanyBrain isAdmin={isAdmin} category={brainCategory} onCategoryChange={setBrainCategory} onNavigate={navigateTo} knowledgeRequest={knowledgeRequest} onKnowledgeRequestHandled={() => setKnowledgeRequest(null)} />}
+        {active === "knowledge-gaps" && authState.features?.knowledgeGaps === true && <React.Suspense fallback={<Loading label="Loading knowledge gaps" />}><KnowledgeGaps isAdmin={isAdmin}
+          onCreateKnowledge={(prefill) => { setKnowledgeRequest({ type: "create", prefill }); setBrainCategory("knowledge"); setActive("company-brain"); }}
+          onOpenKnowledgeSource={(sourceId) => { setKnowledgeRequest({ type: "open", sourceId }); setBrainCategory("knowledge"); setActive("company-brain"); }} /></React.Suspense>}
+        {active === "knowledge-gaps" && authState.features?.knowledgeGaps !== true && <Overview onNavigate={navigateTo} isAdmin={isAdmin} />}
         {active === "bookings" && <Bookings isAdmin={isAdmin} />}
         {active === "follow-ups" && isAdmin && <React.Suspense fallback={<Loading label="Loading specialist follow-ups" />}><HandoverInbox onNavigate={navigateTo} /></React.Suspense>}
         {active === "blocked" && isAdmin && <BlockedNumbers />}
@@ -947,7 +957,7 @@ function AgentSidebar({ role }) {
   );
 }
 
-function CompanyBrain({ isAdmin, category, onCategoryChange, onNavigate }) {
+function CompanyBrain({ isAdmin, category, onCategoryChange, onNavigate, knowledgeRequest = null, onKnowledgeRequestHandled }) {
   const [openKnowledgeCreate, setOpenKnowledgeCreate] = useState(false);
   function startKnowledgeCreate() {
     setOpenKnowledgeCreate(true);
@@ -973,7 +983,7 @@ function CompanyBrain({ isAdmin, category, onCategoryChange, onNavigate }) {
       {categories.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" role="tab" aria-selected={activeCategory === item.id} className={activeCategory === item.id ? "active" : ""} onClick={() => onCategoryChange(item.id)}><Icon size={17} /><span><strong>{item.label}</strong><small>{item.description}</small></span><ChevronRight size={15} /></button>; })}
     </nav>
     <div role="tabpanel" aria-label={categories.find((item) => item.id === activeCategory)?.label}>
-      {activeCategory === "knowledge" && <Knowledge isAdmin={isAdmin} onNavigate={onNavigate} openCreateRequest={openKnowledgeCreate} onCreateRequestHandled={() => setOpenKnowledgeCreate(false)} />}
+      {activeCategory === "knowledge" && <Knowledge isAdmin={isAdmin} onNavigate={onNavigate} openCreateRequest={knowledgeRequest || openKnowledgeCreate} onCreateRequestHandled={() => { setOpenKnowledgeCreate(false); onKnowledgeRequestHandled?.(); }} />}
       {activeCategory === "identity" && isAdmin && <CompanyIdentity />}
       {activeCategory === "facts" && isAdmin && <React.Suspense fallback={<Loading label="Loading the fact register" />}><FactRegister isAdmin={isAdmin} onAddKnowledge={startKnowledgeCreate} /></React.Suspense>}
       {activeCategory === "commercial-data" && isAdmin && <React.Suspense fallback={<Loading label="Loading commercial data" />}><DynamicData isAdmin={isAdmin} /></React.Suspense>}
@@ -1290,6 +1300,7 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
   const [knowledgeDomain, setKnowledgeDomain] = useState("all");
   const [knowledgeLanguage, setKnowledgeLanguage] = useState("all");
   const [knowledgeStatus, setKnowledgeStatus] = useState("all");
+  const [gapDraft, setGapDraft] = useState(null);
 
   useEffect(() => {
     if (!selectedId && data.documents?.length) setSelectedId(data.documents[0].source_id);
@@ -1343,15 +1354,16 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
   const selected = detail?.source || sources.find((source) => source.id === selectedId);
   const canFetchSelectedSource = /^https:\/\//i.test(String(selected?.canonical_url || ""));
 
-  function openKnowledgeEditor(document = null) {
+  function openKnowledgeEditor(document = null, prefill = null) {
     setError("");
+    setGapDraft(prefill?.gapId ? prefill : null);
     setKnowledgeMode("text");
     setImportUrl("");
     setEditingDocument(document);
     setEditorMode(document ? "update" : "new");
-    setImportTitle(document?.title || "");
-    setImportContent(document?.canonical_content || "");
-    setImportLanguage(document?.language_code || "en");
+    setImportTitle(document?.title || prefill?.title || "");
+    setImportContent(document?.canonical_content || prefill?.content || "");
+    setImportLanguage(document?.language_code || prefill?.language || "en");
     setUploadFile(null);
     setKnowledgeView("edit");
   }
@@ -1379,6 +1391,7 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
 
   function cancelKnowledgeEditor() {
     setError("");
+    setGapDraft(null);
     setImportTitle("");
     setImportContent("");
     setEditingDocument(null);
@@ -1390,7 +1403,10 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
 
   useEffect(() => {
     if (!openCreateRequest || loading || (data.documents?.length > 0 && !selectedId)) return;
-    openKnowledgeEditor();
+    if (openCreateRequest?.type === "open" && openCreateRequest.sourceId) {
+      setSelectedId(openCreateRequest.sourceId);
+      setNotice("Opened the knowledge entry linked to this gap. Use Edit to save an improved revision; it stays pending until approved.");
+    } else openKnowledgeEditor(null, openCreateRequest?.type === "create" ? openCreateRequest.prefill : null);
     onCreateRequestHandled?.();
   }, [openCreateRequest, onCreateRequestHandled, loading, data.documents, selectedId]);
 
@@ -1415,6 +1431,10 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
 
   async function importText(event) {
     event.preventDefault();
+    if (gapDraft?.answerMarker && importContent.includes(gapDraft.answerMarker)) {
+      setError("Write the approved answer and its source in place of the placeholder before saving this draft.");
+      return;
+    }
     await run("import", async () => {
       let targetSourceId = selectedId;
       let saved;
@@ -1426,6 +1446,13 @@ function Knowledge({ isAdmin, onNavigate, openCreateRequest = false, onCreateReq
         const value = await api(`/api/knowledge/${targetSourceId}/import`, { method: "POST", body: JSON.stringify({ title: importTitle, content: importContent, language: importLanguage }) });
         saved = value;
         setSelectedId(targetSourceId);
+      }
+      if (gapDraft?.gapId && saved?.document_id) {
+        // Link the pending draft to its gap. Best effort: the knowledge is
+        // already saved, and the gap can still be linked by hand.
+        try { await api(`/api/knowledge-gaps/${gapDraft.gapId}/actions`, { method: "POST", body: JSON.stringify({ action: "link_created", documentId: saved.document_id, reason: "Draft created from this gap." }) }); }
+        catch { /* The gap page shows the link state. */ }
+        setGapDraft(null);
       }
       setImportTitle(""); setImportContent(""); setEditingDocument(null); setEditorMode("new"); setKnowledgeView("content"); setDetail(await api(`/api/knowledge/${targetSourceId}`));
       if (saved.titleUpdated) return { message: "Title updated on the existing pending revision. The text was unchanged, so no duplicate knowledge was added." };
