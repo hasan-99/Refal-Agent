@@ -22,8 +22,11 @@ const {
 } = require("../src/brainPrompt");
 const { LEAD_TIERS } = require("../src/leadTemperature");
 const { buildBrainPrompt } = require("../src/brainPrompt");
+const { profile } = require("../src/companyProfile");
+const { identityFromProfile } = require("../src/companyIdentitySettings");
 
 const TARGET = path.join(__dirname, "..", "supabase", "functions", "rafa-agent-api", "brainPrompt.mjs");
+const DEFAULT_COMPANY_IDENTITY = identityFromProfile(profile);
 
 // Blocks that are pure static text. personaRoles and humourEngine are NOT
 // mirrored: they are per-turn, customer-path-only, and the edge function serves
@@ -31,8 +34,9 @@ const TARGET = path.join(__dirname, "..", "supabase", "functions", "rafa-agent-a
 // rather than silently emitting a prompt with the persona missing.
 const STATIC_BLOCKS = [
   "identity", "evidence", "precedence", "antiPatterns",
-  "goldenFormula", "language", "operational", "crossSell", "compliance", "memory"
+  "goldenFormula", "language", "operational", "crossSell", "compliance", "conduct", "memory"
 ];
+const SERVICE_SUGGESTION_BLOCKS = new Set(["goldenFormula", "operational", "crossSell"]);
 
 function lit(value) {
   return JSON.stringify(value, null, 2);
@@ -40,7 +44,9 @@ function lit(value) {
 
 function render() {
   const blockSources = STATIC_BLOCKS
-    .map((name) => `  ${name}: () => ${lit(BLOCKS[name]())},`)
+    .map((name) => SERVICE_SUGGESTION_BLOCKS.has(name)
+      ? `  ${name}: (allowRelevantServiceSuggestions = true) => allowRelevantServiceSuggestions ? ${lit(BLOCKS[name](true))} : ${lit(BLOCKS[name](false))},`
+      : `  ${name}: () => ${lit(BLOCKS[name]())},`)
     .join("\n");
 
   const tiers = {};
@@ -63,9 +69,13 @@ function render() {
 
 export const PROMPT_VERSION = ${lit(PROMPT_VERSION)};
 
+export const DEFAULT_COMPANY_IDENTITY = Object.freeze(${lit(DEFAULT_COMPANY_IDENTITY)});
+
 export const CHANGE_HISTORY = Object.freeze(${lit(CHANGE_HISTORY)}.map(Object.freeze));
 
 export const MANDATORY_BLOCKS = Object.freeze(${lit(MANDATORY_BLOCKS)});
+
+import { validateCompanyIdentity } from "./companyIdentitySettings.mjs";
 
 const STATIC_BLOCKS = Object.freeze({
 ${blockSources}
@@ -91,20 +101,25 @@ const OPERATOR_HEADER = Object.freeze(${lit(operatorHeader)});
  * are not mirrored here; asking for it throws rather than quietly returning a
  * prompt with REFAL's voice missing.
  */
-export function buildBrainPrompt({ leadTier = "", variant = "operator" } = {}) {
+/** @param {{ leadTier?: string, variant?: string, responseStyle?: { allowRelevantServiceSuggestions?: boolean } | null, companyIdentity?: { legalName: string, brand: string, groupName: string, jurisdiction: string, timezone: string, cities: readonly string[], departments: readonly string[], languages: readonly string[] } | null }} options */
+export function buildBrainPrompt({ leadTier = "", variant = "operator", responseStyle = null, companyIdentity = null } = {}) {
   if (variant !== "operator") {
     throw new Error("brainPrompt.mjs mirrors the operator variant only; the customer path runs in Node from src/brainPrompt.js");
   }
+  const identity = validateCompanyIdentity(companyIdentity || DEFAULT_COMPANY_IDENTITY);
+  const allowRelevantServiceSuggestions = responseStyle?.allowRelevantServiceSuggestions !== false;
   return [
-    ...OPERATOR_HEADER,
+    "You are " + identity.brand + "'s assistant operating inside the dashboard for " + identity.groupName + ", a " + identity.jurisdiction + "-based group. That identity is established and may be stated freely. Company FACTS require retrieved approved knowledge; an empty knowledge base means no company facts are available.",
+    OPERATOR_HEADER[1],
     ...STATIC_BLOCKS.language(),
     ...STATIC_BLOCKS.evidence(),
     ...STATIC_BLOCKS.precedence(),
     ...STATIC_BLOCKS.antiPatterns(),
-    ...STATIC_BLOCKS.goldenFormula(),
-    ...STATIC_BLOCKS.operational(),
+    ...STATIC_BLOCKS.goldenFormula(allowRelevantServiceSuggestions),
+    ...STATIC_BLOCKS.operational(allowRelevantServiceSuggestions),
     ...bookingOfferBlock(leadTier),
     ...STATIC_BLOCKS.compliance(),
+    ...STATIC_BLOCKS.conduct(),
     ...STATIC_BLOCKS.memory()
   ];
 }

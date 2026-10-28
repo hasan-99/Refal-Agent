@@ -11,6 +11,9 @@ const PACKAGE_TITLE_QUERY = Object.freeze({
   greek: "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας"
 });
 const COMPANY_PROFILE_QUERY = Object.freeze({
+  // These are the approved profile's actual section headings in each
+  // language. Match the source's scope section directly instead of relying
+  // on a generic paraphrase that can retrieve a narrow process article.
   english: "Not a narrow company registration office",
   arabic: "مو مكتب تسجيل شركات ضيق",
   greek: "Όχι ένα στενό γραφείο εγγραφής εταιρειών"

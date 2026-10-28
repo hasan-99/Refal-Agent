@@ -6,7 +6,7 @@ const { spawnSync } = require("node:child_process");
 const { test } = require("node:test");
 const {
   PROMPT_VERSION, CHANGE_HISTORY, MANDATORY_BLOCKS, BLOCKS,
-  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPECTFUL_ADDRESS_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, KNOWLEDGE_QUERY_FOCUS_RULE
+  buildBrainPrompt, bookingOfferBlock, buyingSignalBlock, REGISTER_MIRRORING_RULE, RESPECTFUL_ADDRESS_RULE, RESPONSE_FORMAT_RULE, COMPARATIVE_SCOPE_RULE, SERVICE_SCOPE_RULE, KNOWLEDGE_QUERY_FOCUS_RULE, APPOINTMENT_AVAILABILITY_RULE
 } = require("./brainPrompt");
 
 // W1.7.9 — drift test.
@@ -165,14 +165,21 @@ test("answer prompts format multiple inclusions clearly and allow one useful con
   assert.match(edge, expected, "Edge mirror lost readable conversational formatting; regenerate it");
   assert.match(RESPONSE_FORMAT_RULE, /start a bullet with a conjunction/);
   assert.match(RESPONSE_FORMAT_RULE, /complete standalone item/);
+  assert.match(RESPONSE_FORMAT_RULE, /short paragraphs separated by a blank line/);
+  assert.match(RESPONSE_FORMAT_RULE, /each item on its own line with a leading hyphen/);
+  assert.match(RESPONSE_FORMAT_RULE, /never bold full paragraphs/);
   const { buildDecisionMessages } = require("./agentDecision");
   assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
     new RegExp(RESPONSE_FORMAT_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
     /Ask at most one question when it helps move the customer's stated goal forward/);
-  assert.match(RESPONSE_FORMAT_RULE, /answer first, then usually offer one specific, useful next step/u);
+  assert.match(RESPONSE_FORMAT_RULE, /answer first, then follow the administrator's selected continuation style/u);
   assert.match(RESPONSE_FORMAT_RULE, /do not add a generic offer or force a question/u);
   assert.match(RESPONSE_FORMAT_RULE, /When safety or missing information limits the exact answer, do not end with a bare refusal/u);
+  assert.match(RESPONSE_FORMAT_RULE, /For questions asking whether an immigration, residency, banking, permit, or investment outcome is guaranteed/u);
+  assert.match(RESPONSE_FORMAT_RULE, /Do not stop after the refusal when that path would help/u);
+  assert.match(RESPONSE_FORMAT_RULE, /Do not add general claims about decision-makers, eligibility factors, requirements, or process unless current approved evidence supports them/u);
+  assert.match(RESPONSE_FORMAT_RULE, /If the active conversation is about setting up a company in Cyprus, do not ask which country/u);
   const detailRule = /When a customer shows concrete interest in a service and (?:current approved )?evidence contains its inclusions or scope, briefly summarize the most relevant supported details before any follow-up/i;
   for (const variant of ["customer", "operator"]) assert.match(buildBrainPrompt({ variant }).join("\n"), detailRule);
   assert.match(edge, detailRule);
@@ -180,6 +187,17 @@ test("answer prompts format multiple inclusions clearly and allow one useful con
     /When a customer shows concrete interest in a service and current approved evidence contains its inclusions or scope/);
   assert.match(buildDecisionMessages({ currentMessage: "I want to form a company", locale: "english" })[0].content,
     /After clear interest in a service, ask about one next decision-relevant detail only when it will help tailor the guidance/);
+});
+
+test("appointment request guidance uses team review and stays aligned on every prompt surface", () => {
+  const expected = new RegExp(APPOINTMENT_AVAILABILITY_RULE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"));
+  for (const variant of ["customer", "operator"]) assert.match(buildBrainPrompt({ variant }).join("\n"), expected);
+  const edge = fs.readFileSync(path.join(REPO, "supabase/functions/rafa-agent-api/brainPrompt.mjs"), "utf8");
+  assert.match(edge, expected);
+  const { buildDecisionMessages } = require("./agentDecision");
+  assert.match(buildDecisionMessages({ currentMessage: "Is tomorrow at 10 available?", locale: "english" })[0].content, expected);
+  assert.match(APPOINTMENT_AVAILABILITY_RULE, /create a pending team-review request/u);
+  assert.match(APPOINTMENT_AVAILABILITY_RULE, /never claim that the time is available or the appointment is confirmed/u);
 });
 
 test("comparative follow-ups separate genuinely new evidence from earlier context", () => {
@@ -238,7 +256,13 @@ test("the prompt stays COMPACT — stable rules only, no reference content", () 
   // current size so the prompt cannot grow unnoticed. "Compact" here means no
   // per-customer or per-price REFERENCE content — that is what the assertions
   // below actually enforce. Raising this number should require a reason.
-  assert.ok(prompt.length <= 60, `prompt has ${prompt.length} lines; keep it compact`);
+  // 60 -> 71 (2026-10-28): prompt 1.14.0/1.15.0 (commit a580040) added seven
+  // Agent Brain Rules lines (role limits, combined-request tracks, evidence
+  // grading, no invented identifiers/prices/durations, action and case-status
+  // truthfulness, privacy, pre-send check) and four guided-advisor lines. All
+  // are stable rules, none is reference content, and each was checked against
+  // the other lines for duplication before raising this ceiling.
+  assert.ok(prompt.length <= 71, `prompt has ${prompt.length} lines; keep it compact`);
 
   const joined = prompt.join("\n");
   // The four credibility numbers are FACTS and must reach customers through
@@ -501,7 +525,7 @@ test("BLK-3/5/6 are absent from the FOURTH prompt surface, the Agent decision st
     "removing BLK-6 here left no contact rule at all, which is a fail-open");
 });
 
-test("every surface DERIVES its identity line from the profile, not a literal", () => {
+test("every surface derives its identity line from validated profile defaults and runtime identity", () => {
   // The requirement is narrower than "no literal anywhere". Rule TEXT may name
   // the company ("never produce a claim about Refalco Group"), and several of
   // those strings are pinned verbatim by src/ragPolicy.test.js across three
@@ -516,11 +540,14 @@ test("every surface DERIVES its identity line from the profile, not a literal", 
     const source = fs.readFileSync(path.join(REPO, file), "utf8");
     assert.match(source, /require\(["'][^"']*companyProfile["']\)/,
       `${file} does not read the company profile at all`);
-    // The identity sentence must interpolate, never hardcode.
-    assert.match(source, /\$\{profile\.groupName\}/,
-      `${file} hardcodes the group name in its identity line instead of using profile.groupName`);
-    assert.match(source, /\$\{profile\.brand\}/,
-      `${file} hardcodes the brand in its identity line instead of using profile.brand`);
+    // The identity sentence uses an allowlisted runtime identity, whose default
+    // is derived from the validated startup profile.
+    assert.match(source, /companyIdentitySettings/,
+      `${file} does not use the validated identity settings contract`);
+    assert.match(source, /\$\{(?:companyIdentity|identity)\.groupName\}/,
+      `${file} does not use the current configured group name`);
+    assert.match(source, /\$\{(?:companyIdentity|identity)\.brand\}/,
+      `${file} does not use the current configured brand`);
   }
 
   // A rename is then a data edit: change the profile and all four surfaces move

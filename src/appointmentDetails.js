@@ -1,15 +1,22 @@
 const { isPlausibleCustomerName } = require("./messageRouter.js");
+const { isPhoneJid } = require("./whatsappContact.js");
 
 const SUPPORTED_FORMATS = Object.freeze(["whatsapp", "phone", "video", "office"]);
 function normalizeAppointmentDetails({ user = {}, purpose = "", timezone = "", language = "english", format = "whatsapp" } = {}) {
   const profile = user.profile || {};
+  const mappedPhoneJid = isPhoneJid(user.whatsapp?.phoneJid) ? user.whatsapp.phoneJid : "";
+  const directPhoneJid = isPhoneJid(user.id) ? user.id : "";
+  const trustedPhoneJid = mappedPhoneJid || directPhoneJid;
+  const phone = trustedPhoneJid
+    ? trustedPhoneJid.split("@")[0].split(":")[0]
+    : String(user.id || "").endsWith("@lid") ? null : user.phone || String(user.id || "").replace(/@.+$/, "") || null;
   const selected = String(format || "whatsapp").toLowerCase().trim();
   const configured = String(process.env.APPOINTMENT_FORMATS || SUPPORTED_FORMATS.join(",")).split(",").map((item) => item.trim().toLowerCase()).filter((item) => SUPPORTED_FORMATS.includes(item));
   const allowed = configured.length ? configured : ["whatsapp"];
   const meetingFormat = allowed.includes(selected) ? selected : allowed[0];
   const details = {
     name: isPlausibleCustomerName(profile.name) ? profile.name : null,
-    phone: user.phone || String(user.id || "").replace(/@.+$/, "") || null,
+    phone,
     email: profile.email || null,
     company: profile.company || null,
     topic: String(purpose || "").trim().slice(0, 1000) || null,

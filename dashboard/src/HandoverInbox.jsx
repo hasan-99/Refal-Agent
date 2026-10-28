@@ -25,20 +25,24 @@ export default function HandoverInbox({ onNavigate }) {
   const [subject, setSubject] = useState("");
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
   const [notice, setNotice] = useState("");
   const [filters, setFilters] = useState({ department: "all", priority: "all", status: "all", language: "all", from: "", to: "" });
 
   const load = useCallback(async () => {
-    setError("");
+    setError(""); setRefreshError("");
     try {
       const result = await request("/api/handovers");
       const groupedHandovers = groupHandoversByContact(result.handovers);
       setHandovers(groupedHandovers);
       setNotificationSchemaReady(result.notificationSchemaReady !== false);
+      setHasLoaded(true);
+      setRefreshError("");
       setSelectedId((current) => groupedHandovers.some((item) => item.groupKey === current) ? current : groupedHandovers[0]?.groupKey || "");
-    } catch (cause) { setError(cause.message || "Could not load specialist requests."); }
+    } catch (cause) { const message = cause.message || "Could not load specialist requests."; setError(message); setRefreshError(message); }
     finally { setLoading(false); }
   }, []);
 
@@ -105,7 +109,8 @@ export default function HandoverInbox({ onNavigate }) {
     {!notificationSchemaReady && <div className="handover-alert" role="status">Handover records can be reviewed, but drafts and delivery tracking are not enabled in Supabase yet. Apply the latest handover-follow-ups migration and deploy the matching agent API before composing messages.</div>}
     <div className="handover-layout">
       <section className="handover-list panel" aria-label="Open specialist requests">
-        <div className="handover-list-head"><div><span className="handover-eyebrow">OPEN QUEUE</span><h3>Requests to review</h3></div><span className="handover-count" aria-label={`${visibleHandovers.length} of ${handovers.length} requests`}>{visibleHandovers.length}{visibleHandovers.length !== handovers.length ? ` / ${handovers.length}` : ""}</span></div>
+        <div className="handover-list-head"><div><span className="handover-eyebrow">OPEN QUEUE</span><h3>Requests to review</h3></div><span className="handover-count" aria-label={!hasLoaded ? loading ? "Loading request count" : "Request count unavailable" : `${visibleHandovers.length} of ${handovers.length} requests`}>{!hasLoaded ? loading ? "…" : "—" : <>{visibleHandovers.length}{visibleHandovers.length !== handovers.length ? ` / ${handovers.length}` : ""}</>}</span></div>
+        {refreshError && hasLoaded && <p className="handover-stale-note" role="status">Showing the last successfully loaded requests. Refresh to check for updates.</p>}
         {!loading && handovers.length > 0 && <div className="handover-filters" aria-label="Filter specialist requests">
           <label>Department<select value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))}><option value="all">All</option>{filterOptions.departments.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
           <label>Priority<select value={filters.priority} onChange={(event) => setFilters((current) => ({ ...current, priority: event.target.value }))}><option value="all">All</option>{["urgent", "high", "normal"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
@@ -115,7 +120,7 @@ export default function HandoverInbox({ onNavigate }) {
           <label>To<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label>
           <button className="ghost" type="button" onClick={() => setFilters({ department: "all", priority: "all", status: "all", language: "all", from: "", to: "" })}>Clear filters</button>
         </div>}
-        {loading ? <p className="handover-empty">Loading requests…</p> : handovers.length === 0 ? <p className="handover-empty">No open specialist requests. New customer-approved handovers will appear here.</p> : visibleHandovers.length === 0 ? <p className="handover-empty">No requests match these filters.</p> : <div className="handover-rows">{visibleHandovers.map((item) => { const match = item.matchedRecords?.[0] || item; return <button key={item.groupKey} type="button" className={`handover-row${selectedId === item.groupKey ? " selected" : ""}`} onClick={() => setSelectedId(item.groupKey)}>
+        {loading && !hasLoaded ? <p className="handover-empty">Loading requests…</p> : refreshError && !hasLoaded ? <div className="handover-unavailable"><strong>Request count unavailable</strong><span>The queue could not be loaded, so this is not an empty result.</span><button className="ghost" type="button" onClick={() => void load()} disabled={loading}>Try again</button></div> : handovers.length === 0 ? <p className="handover-empty">No open specialist requests. New customer-approved handovers will appear here.</p> : visibleHandovers.length === 0 ? <p className="handover-empty">No requests match these filters.</p> : <div className="handover-rows">{visibleHandovers.map((item) => { const match = item.matchedRecords?.[0] || item; return <button key={item.groupKey} type="button" className={`handover-row${selectedId === item.groupKey ? " selected" : ""}`} onClick={() => setSelectedId(item.groupKey)}>
           <span className="handover-row-top"><strong>{item.contact?.name || item.contact?.phone || "Unknown contact"}</strong><span className={`handover-priority ${match.priority || "normal"}`}>{match.priority || "normal"}</span></span>
           <span>{match.department?.replaceAll("_", " ") || "General"} · {match.summary?.intent || "Request"}{item.groupCount > 1 ? ` · ${item.groupCount} linked requests` : ""}</span>
           <small>{match.status || "open"} · {match.language || "language unknown"}</small>

@@ -1,6 +1,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { sanitizeControlledInspection } = require("./controlledDiagnostics");
+const { sanitizeControlledInspection, canRunControlledAppointmentWorkflow } = require("./controlledDiagnostics");
+
+test("controlled QA permits only explicit appointment requests that stay in pending team review", () => {
+  const controlled = { profile: { qaControlledDiagnostics: true } };
+  assert.equal(canRunControlledAppointmentWorkflow(controlled, { operation: "booking_request" }), true);
+  assert.equal(canRunControlledAppointmentWorkflow({ ...controlled, booking: { status: "awaiting_details", teamReviewRequired: true } }, {}), true);
+  assert.equal(canRunControlledAppointmentWorkflow({ ...controlled, booking: { status: "awaiting_details" } }, {}), false);
+  assert.equal(canRunControlledAppointmentWorkflow({ ...controlled, booking: { status: "awaiting_confirmation" } }, {}), false);
+  assert.equal(canRunControlledAppointmentWorkflow(controlled, { operation: "none" }), false);
+  assert.equal(canRunControlledAppointmentWorkflow({ profile: {} }, { operation: "none" }), true);
+});
 
 test("controlled inspection contains only rejected draft, evidence and bounded verdicts, with Node/Edge parity", async () => {
   const { sanitizeControlledInspection: edge } = await import("../supabase/functions/rafa-agent-api/controlledDiagnostics.mjs");

@@ -9,18 +9,19 @@ const TEMPERATURES = [
 ];
 
 export function summarizeLeadTemperatures(leads = []) {
+  const activeLeads = leads.filter((lead) => Number(lead.conversationCount) > 0);
   const counts = { hot: 0, warm: 0, cold: 0, unclassified: 0 };
-  for (const lead of leads) counts[leadTemperatureStatus(lead)] += 1;
+  for (const lead of activeLeads) counts[leadTemperatureStatus(lead)] += 1;
   return TEMPERATURES.map(([key, label]) => ({
     key,
     label,
     count: counts[key],
-    percent: leads.length ? Math.round((counts[key] / leads.length) * 100) : 0
+    percent: activeLeads.length ? Math.round((counts[key] / activeLeads.length) * 100) : 0
   }));
 }
 
 export function LeadTemperatureSummary({ leads = [] }) {
-  return createElement("section", { className: "conversation-temperature-summary", "aria-label": "Lead temperature distribution" },
+  return createElement("section", { className: "conversation-temperature-summary", "aria-label": "Lead temperatures for contacts with conversation history" },
     summarizeLeadTemperatures(leads).map(({ key, label, count, percent }) => createElement("div", {
       className: `conversation-temperature-stat ${key}`,
       key
@@ -29,11 +30,11 @@ export function LeadTemperatureSummary({ leads = [] }) {
       className: "conversation-temperature-ring",
       style: { "--temperature-color": TEMPERATURES.find(([temperature]) => temperature === key)[2], "--temperature-progress": `${percent}%` },
       role: "img",
-      "aria-label": `${label}: ${count} leads`
+      "aria-label": `${label}: ${count} chat contacts`
     }, createElement("span", null, count.toLocaleString())),
     createElement("span", null,
       createElement("strong", null, label),
-      createElement("small", null, `${percent}% of leads`)
+      createElement("small", null, `${percent}% of chat contacts`)
     )))
   );
 }

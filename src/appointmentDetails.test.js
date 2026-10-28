@@ -21,3 +21,16 @@ test("configured appointment requirements are explicit and fail closed", (t) => 
   assert.deepEqual(result.missingRequired, ["email", "company"]);
   assert.equal(result.ready, false);
 });
+
+test("LID contacts use only WhatsApp's verified phone mapping, never the opaque LID digits", () => {
+  const user = { id: "210277387751547@lid", phone: "210277387751547", profile: { name: "Hasan" },
+    whatsapp: { phoneJid: "35799260049@s.whatsapp.net" } };
+  const mapped = normalizeAppointmentDetails({ user, purpose: "company discussion" });
+  assert.equal(mapped.phone, "35799260049");
+  assert.equal(mapped.ready, true);
+
+  const unmapped = normalizeAppointmentDetails({ user: { ...user, whatsapp: {} }, purpose: "company discussion" });
+  assert.equal(unmapped.phone, null);
+  assert.equal(unmapped.ready, false);
+  assert.ok(unmapped.missingRequired.includes("phone"));
+});

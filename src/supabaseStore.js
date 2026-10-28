@@ -1,5 +1,8 @@
 const { redactSensitiveData, redactAuditEventFields } = require("./sensitiveData");
 const { sanitizeAgentTraceFields } = require("./operationalTelemetry");
+const { profile } = require("./companyProfile");
+const { identityFromProfile, validateCompanyIdentity } = require("./companyIdentitySettings");
+const { BUSINESS_GUIDANCE_DEFAULTS, validateBusinessGuidance } = require("./businessGuidance");
 
 function requireRafaApiConfig() {
   const url = process.env.SUPABASE_URL;
@@ -31,12 +34,18 @@ class EdgeApiStore {
     this.key = config.key;
     this.apiSecret = config.apiSecret;
     this.data = { users: {} };
+    this.responseStyleCache = null;
+    this.responseStyleCacheAt = 0;
+    this.companyIdentityCache = null;
+    this.companyIdentityCacheAt = 0;
+    this.businessGuidanceCache = null;
+    this.businessGuidanceCacheAt = 0;
   }
 
   async request(path, options = {}) {
-    const { timeoutMs = 8000, signal, ...fetchOptions } = options;
+    const { timeoutMs = 8000, signal, attempts: requestedAttempts, ...fetchOptions } = options;
     const method = String(fetchOptions.method || "GET").toUpperCase();
-    const attempts = method === "GET" ? 3 : 1;
+    const attempts = method === "GET" ? Math.max(1, Math.min(3, Number(requestedAttempts) || 3)) : 1;
     let lastError;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const timeout = AbortSignal.timeout(Math.max(500, Math.min(15000, Number(timeoutMs) || 8000)));
@@ -304,6 +313,30 @@ class EdgeApiStore {
     });
   }
 
+  // Knowledge Gaps (RAFA_KNOWLEDGE_GAPS): one already-redacted gap event. The
+  // recorder calls this off the reply path; a short timeout and no retry keep a
+  // slow gateway from piling up background work.
+  async recordKnowledgeGapEvent(event) {
+    return this.request("/knowledge-gaps/events", { method: "POST", timeoutMs: 4000, body: JSON.stringify(event || {}) });
+  }
+
+  // Admin recording switch for Knowledge Gaps ({ settings: { recording } }).
+  // Cached briefly so the recorder does not add a request per turn.
+  async getKnowledgeGapSettings({ timeoutMs = 4000, fresh = false } = {}) {
+    if (!fresh && this.knowledgeGapSettingsCache && Date.now() - this.knowledgeGapSettingsCacheAt < 30_000) return this.knowledgeGapSettingsCache;
+    const value = await this.request("/settings/knowledge-gaps", { timeoutMs, attempts: 1 });
+    this.knowledgeGapSettingsCache = value;
+    this.knowledgeGapSettingsCacheAt = Date.now();
+    return value;
+  }
+
+  async updateKnowledgeGapSettings(settings, { updatedBy = null } = {}) {
+    const value = await this.request("/settings/knowledge-gaps", { method: "PUT", body: JSON.stringify({ settings, updatedBy }) });
+    this.knowledgeGapSettingsCache = value;
+    this.knowledgeGapSettingsCacheAt = Date.now();
+    return value;
+  }
+
   async saveControlledInspection(userId, sourceTurnId, inspection) {
     return this.request("/controlled-diagnostics", {
       method: "POST", body: JSON.stringify({ userId, sourceTurnId, inspection })
@@ -404,12 +437,29 @@ class EdgeApiStore {
     return auditEvent;
   }
 
-  async searchKnowledge(query, embedding = null, embeddingModel = null, matchCount = 6) {
-    const { results } = await this.request("/knowledge/search", {
+  // `candidateCount` (optional, max 50) asks the endpoint for the wider v2
+  // candidate window used by cross-encoder reranking; without it the request
+  // is exactly the previous one.
+  async searchKnowledge(query, embedding = null, embeddingModel = null, matchCount = 6, { candidateCount } = {}) {
+    const payload = { query: String(query || "").slice(0, 1000), embedding, embeddingModel, matchCount };
+    if (Number.isInteger(candidateCount)) payload.candidateCount = candidateCount;
+    const { results, timing } = await this.request("/knowledge/search", {
       method: "POST",
-      body: JSON.stringify({ query: String(query || "").slice(0, 1000), embedding, embeddingModel, matchCount })
+      body: JSON.stringify(payload)
     });
-    return results || [];
+    const rows = results || [];
+    // Edge stage timings ride along as a non-enumerable property, so the
+    // returned value is still the plain row array every caller expects.
+    if (timing && typeof timing === "object") Object.defineProperty(rows, "serverTiming", { value: timing, enumerable: false });
+    return rows;
+  }
+
+  // Fingerprint of every approval/expiry/content field the search RPCs read
+  // (RAFA_SEARCH_CACHE keys on it). One fast attempt only: when it is slow or
+  // missing the caller skips the cache and searches normally.
+  async getKnowledgeVersion() {
+    const { version } = await this.request("/knowledge/version", { timeoutMs: 2500, attempts: 1 });
+    return typeof version === "string" ? version : null;
   }
 
   async getBookingPolicy() {
@@ -423,6 +473,62 @@ class EdgeApiStore {
       body: JSON.stringify({ policy })
     });
     return saved;
+  }
+
+  async getResponseStyle({ timeoutMs = 1200 } = {}) {
+    if (this.responseStyleCache && Date.now() - this.responseStyleCacheAt < 30_000) return this.responseStyleCache;
+    const { style } = await this.request("/settings/response-style", { timeoutMs, attempts: 1 });
+    this.responseStyleCache = style || null;
+    this.responseStyleCacheAt = Date.now();
+    return this.responseStyleCache;
+  }
+
+  async updateResponseStyle(style) {
+    const { style: saved } = await this.request("/settings/response-style", {
+      method: "PUT",
+      body: JSON.stringify({ style })
+    });
+    this.responseStyleCache = saved || null;
+    this.responseStyleCacheAt = Date.now();
+    return saved;
+  }
+
+  async getCompanyIdentity({ timeoutMs = 1200 } = {}) {
+    if (this.companyIdentityCache && Date.now() - this.companyIdentityCacheAt < 5000) return this.companyIdentityCache;
+    const { identity } = await this.request("/settings/company-identity", { timeoutMs, attempts: 1 });
+    this.companyIdentityCache = identity ? validateCompanyIdentity(identity) : identityFromProfile(profile);
+    this.companyIdentityCacheAt = Date.now();
+    return this.companyIdentityCache;
+  }
+
+  async updateCompanyIdentity(identity) {
+    const validated = validateCompanyIdentity(identity);
+    const { identity: saved } = await this.request("/settings/company-identity", {
+      method: "PUT",
+      body: JSON.stringify({ identity: validated })
+    });
+    this.companyIdentityCache = validateCompanyIdentity(saved);
+    this.companyIdentityCacheAt = Date.now();
+    return this.companyIdentityCache;
+  }
+
+  async getBusinessGuidance({ timeoutMs = 1200 } = {}) {
+    if (this.businessGuidanceCache && Date.now() - this.businessGuidanceCacheAt < 30_000) return this.businessGuidanceCache;
+    const { guidance } = await this.request("/settings/business-guidance", { timeoutMs, attempts: 1 });
+    this.businessGuidanceCache = validateBusinessGuidance(guidance || BUSINESS_GUIDANCE_DEFAULTS);
+    this.businessGuidanceCacheAt = Date.now();
+    return this.businessGuidanceCache;
+  }
+
+  async updateBusinessGuidance(guidance) {
+    const validated = validateBusinessGuidance(guidance);
+    const { guidance: saved } = await this.request("/settings/business-guidance", {
+      method: "PUT",
+      body: JSON.stringify({ guidance: validated })
+    });
+    this.businessGuidanceCache = validateBusinessGuidance(saved || BUSINESS_GUIDANCE_DEFAULTS);
+    this.businessGuidanceCacheAt = Date.now();
+    return this.businessGuidanceCache;
   }
 
   async createAppointment(appointment) {

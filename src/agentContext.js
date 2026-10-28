@@ -5,6 +5,10 @@
 // from ever seeing secrets, raw WhatsApp transport internals, or more
 // personal data than it needs to help with the current message.
 const { INTENTS } = require("./intent");
+const { RESPONSE_STYLE_DEFAULTS, validateResponseStyle } = require("./responseStyle");
+const { profile } = require("./companyProfile");
+const { identityFromProfile, validateCompanyIdentity } = require("./companyIdentitySettings");
+const { BUSINESS_GUIDANCE_DEFAULTS, validateBusinessGuidance } = require("./businessGuidance");
 
 function safeTrim(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -21,12 +25,19 @@ function buildAgentContext({
   knownCustomerFacts = {},
   currentOpenQuestion = null,
   socialOnlyTurn = false,
+  fastSocialTurn = false,
   consentState = "unknown",
   allowedCapabilities = [],
   leadTier = "",
   buyingSignals = [],
   conversationPreferences = {},
-  contextualWorkflow = "none"
+  contextualWorkflow = "none",
+  responseStyle = RESPONSE_STYLE_DEFAULTS,
+  companyIdentity = null,
+  businessGuidance = BUSINESS_GUIDANCE_DEFAULTS,
+  sessionState = null,
+  conversationFeatures = null,
+  conversationQuality = null
 } = {}) {
   const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
   const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
@@ -63,12 +74,26 @@ function buildAgentContext({
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,
     socialOnlyTurn: socialOnlyTurn === true,
+    fastSocialTurn: fastSocialTurn === true && socialOnlyTurn === true,
     consentState: safeTrim(consentState, 20) || "unknown",
     conversationPreferences: Object.freeze({ noProactiveBookingOrContact: conversationPreferences.noProactiveBookingOrContact === true }),
     contextualWorkflow: safeTrim(contextualWorkflow, 40),
+    responseStyle: validateResponseStyle(responseStyle),
+    companyIdentity: validateCompanyIdentity(companyIdentity || identityFromProfile(profile)),
+    businessGuidance: validateBusinessGuidance(businessGuidance),
     leadTier: safeLeadTier,
     buyingSignals: Object.freeze(safeBuyingSignals),
-    allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))])
+    allowedCapabilities: Object.freeze([...new Set((Array.isArray(allowedCapabilities) ? allowedCapabilities : []).map((v) => String(v)))]),
+    // Conversation-behaviour flags (src/conversationFlags.js). Present only
+    // when at least one flag is on, so the flags-off context is unchanged.
+    // sessionState is customer context, never company evidence.
+    ...(conversationFeatures && typeof conversationFeatures === "object" ? {
+      conversationFeatures: Object.freeze({ structuredSessionMemory: conversationFeatures.structuredSessionMemory === true,
+        answerFirstStyle: conversationFeatures.answerFirstStyle === true, truthfulActionStates: conversationFeatures.truthfulActionStates === true,
+        smartFollowups: conversationFeatures.smartFollowups === true }),
+      ...(sessionState && typeof sessionState === "object" ? { sessionState } : {}),
+      ...(conversationQuality && typeof conversationQuality === "object" ? { conversationQuality } : {})
+    } : {})
   });
 }
 

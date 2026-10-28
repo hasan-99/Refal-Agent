@@ -13,6 +13,7 @@ const P = require("pino");
 const qrcode = require("qrcode-terminal");
 const { loadProjectEnv } = require("./env");
 const { askOpenRouter, embedText, embedQueryTexts, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
+const { getKnowledgeReranker } = require("./knowledgeRerank");
 const { createStore } = require("./supabaseStore");
 const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
@@ -33,6 +34,7 @@ const { buildOperationalEvent, safeErrorDiagnostics } = require("./operationalTe
 const { createMessageExecutor, parseMessageQueueLimit } = require("./messageConcurrency");
 const { claimInboundReceipt } = require("./inboundMessageReceipt");
 const { runAgentLiveAnswerTurn: runAgentLiveAnswerTurnComposition } = require("./agentLiveAnswerTurn");
+const { canRunControlledAppointmentWorkflow } = require("./controlledDiagnostics");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
@@ -111,6 +113,18 @@ void warmEmbeddingPipeline().then(() => {
 }).catch((error) => {
   logEvent("embedding_warmup_error", safeErrorDiagnostics(error));
 });
+
+// Optional knowledge reranker (RAFA_KNOWLEDGE_RERANK=on): load it at startup so
+// the first customer turn does not pay the model load inside its reply.
+const knowledgeReranker = getKnowledgeReranker();
+if (knowledgeReranker) {
+  const rerankWarmStartedAt = performance.now();
+  void knowledgeReranker.warm().then(() => {
+    logEvent("response_stage", { stage: "knowledge_rerank_warmup", durationMs: Math.round(performance.now() - rerankWarmStartedAt) });
+  }).catch((error) => {
+    logEvent("knowledge_rerank_warmup_error", safeErrorDiagnostics(error));
+  });
+}
 
 function removeCustomerCitations(text) {
   return String(text || "")
@@ -272,7 +286,9 @@ async function runOperationalBookingTurn(socket, chatId, userId, text, requestTr
   const requestStartedAt = performance.now();
   const user = await store.getUser(userId);
   if (prepared.safety?.restricted || prepared.complianceTriggers?.length) throw Object.assign(new Error("Booking restricted by policy."), { code: "BOOKING_POLICY_RESTRICTED" });
-  if (user.profile?.qaControlledDiagnostics === true) throw Object.assign(new Error("Controlled test cannot create bookings."), { code: "TEST_ACTION_FORBIDDEN" });
+  if (user.profile?.qaControlledDiagnostics === true && !canRunControlledAppointmentWorkflow(user, prepared.classification)) {
+    throw Object.assign(new Error("Controlled test cannot create confirmed bookings."), { code: "TEST_ACTION_FORBIDDEN" });
+  }
   const traceId = requestTrace.traceId;
   const stage = (name, startedAt, fields = {}) => logEvent("response_stage", { traceId, stage: name, durationMs: Math.round(performance.now() - startedAt), ...fields });
   let stageStartedAt;
@@ -306,7 +322,7 @@ async function runOperationalBookingTurn(socket, chatId, userId, text, requestTr
         const expectedAppointmentStatus = booking.appointment.status;
         const payload = {
           name: booking.user.profile?.name || "",
-          phone: booking.user.phone || String(userId || "").replace(/@.+$/, ""),
+          phone: booking.appointment?.metadata?.appointmentDetails?.phone || "",
           startsAt: booking.details.start.toISOString(),
           timezone: booking.policy.timezone,
           purpose: booking.details.purpose,

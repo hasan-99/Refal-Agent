@@ -217,7 +217,13 @@ test("P14.4 mock approved-search result with an uploaded-document-style passage 
         chunk_id: `synthetic-${language}`
       }]
     };
-    const context = buildAgentContext({ currentMessage: fixture.text, locale: LOCALE[language] });
+    // Keep the customer turn concise so prompt-budget coverage stays focused
+    // on malicious approved text, rather than the unusually long adversarial
+    // fixture wording crowding out the evidence block in Greek.
+    const currentMessage = language === "arabic" ? "ممكن تأكد لي معلومات المستند المرفق؟"
+      : language === "greek" ? "Μπορείτε να επιβεβαιώσετε τα στοιχεία του συνημμένου;"
+        : "Can you confirm the attached document's details?";
+    const context = buildAgentContext({ currentMessage, locale: LOCALE[language] });
     let call = 0;
     const result = await runAgentTurn(context, {
       tools: TOOL_REGISTRY,

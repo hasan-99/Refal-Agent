@@ -55,6 +55,29 @@ test("an appointment topic cannot authorize booking without a present operationa
   assert.ok(request.intents.includes("appointment"));
 });
 
+test("specific date and time availability requests enter booking while general meeting questions do not", () => {
+  const instructions = buildPreflightMessages({ message: "بكرا الساعة ١٠ الصبح في موعد متاح؟" })[0].content;
+  assert.match(instructions, /a question asking whether a specific date\/time can be arranged/u);
+  assert.match(instructions, /create a pending team-review request/u);
+  assert.match(instructions, /Do not claim that the slot is free or that an appointment is confirmed/u);
+  assert.match(instructions, /asking how booking works does not request one/u);
+});
+
+test("a concrete Arabic slot inquiry is routed into the booking workflow even if the classifier omits the operation", async () => {
+  const result = await classifyContextualMessage({ message: "بكرا الساعة ١٠ الصبح في موعد متاح؟", user: { history: [] } }, {
+    callModel: async () => classification({ intents: ["general_information"], operation: "none" })
+  });
+  assert.equal(result.operation, "booking_request");
+  assert.equal(result.primary, "appointment");
+  assert.equal(result.source, "contextual_specific_availability");
+
+  const state = fixture();
+  const text = "بكرا الساعة ١٠ الصبح في موعد متاح؟";
+  const prepared = await prepare(text, state, classification({ intents: ["general_information"], operation: "none" }));
+  assert.equal(prepared.classification.operation, "booking_request");
+  assert.equal(prepared.metadata.intent.operation, "booking_request");
+});
+
 test("malformed or overprivileged classifier output fails closed", async () => {
   for (const raw of ["invalid", classification({ operation: "confirm_booking" }), { ...classification(), authorized: true }, classification({ language: "other" })]) {
     await assert.rejects(classifyContextualMessage({ message: "request" }, { callModel: async () => raw }), { code: "PREFLIGHT_INVALID_RESULT" });
@@ -92,6 +115,46 @@ test("regulated informational questions reach retrieval while secrets and hidden
   const rejected = await routeMessageResult({ userId: state.user.id, text: injection, existingUser: state.user, store: state.store, preparedInbound: blocked });
   assert.equal(rejected.shouldUseAi, false);
   assert.equal(state.calls.some((call) => call.kind === "handover"), false);
+});
+
+test("classifier timeout falls back to deterministic intent without inventing booking consent", async () => {
+  const state = fixture();
+  const observations = [];
+  const timedOut = await classifyContextualMessage({ message: "I have a complaint about your service", user: state.user }, {
+    callModel: async () => { throw Object.assign(new Error("provider timeout"), { name: "TimeoutError" }); },
+    onModelCall: async (value) => observations.push(value)
+  });
+  assert.equal(timedOut.source, "contextual_fallback");
+  assert.equal(timedOut.operation, "none");
+  assert.ok(timedOut.intents.includes("complaint"));
+  assert.equal(observations[0].outcome, "provider_error");
+
+  const prepared = await prepareInboundMessage({ userId: state.user.id, incoming: "I have a complaint about your service", user: state.user,
+    store: state.store, contextual: true, classifyMessage: async () => timedOut });
+  const routed = await routeMessageResult({ userId: state.user.id, text: "I have a complaint about your service", existingUser: state.user,
+    store: state.store, preparedInbound: prepared });
+  assert.equal(routed.shouldUseAi, true);
+  assert.equal(routed.metadata.contextualWorkflow.operation, "none");
+
+  const booking = await classifyContextualMessage({ message: "بكرا الساعة ١٠ الصبح في موعد متاح؟", user: state.user }, {
+    callModel: async () => { throw Object.assign(new Error("provider timeout"), { name: "TimeoutError" }); }
+  });
+  assert.equal(booking.operation, "none");
+  const bookingPrepared = await prepareInboundMessage({ userId: state.user.id, incoming: "بكرا الساعة ١٠ الصبح في موعد متاح؟",
+    user: state.user, store: state.store, contextual: true, classifyMessage: async () => booking });
+  assert.equal(bookingPrepared.classification.operation, "booking_request");
+});
+
+test("clear broad information requests skip the operational model classifier", async () => {
+  const state = fixture();
+  let modelCalled = false;
+  const classification = await classifyContextualMessage({ message: "احكيلي بشكل عام شو مجالات عمل مجموعة Refalco بقبرص؟", user: state.user }, {
+    callModel: async () => { modelCalled = true; throw new Error("must not classify an informational overview"); }
+  });
+  assert.equal(modelCalled, false);
+  assert.equal(classification.source, "contextual_fallback");
+  assert.equal(classification.operation, "none");
+  assert.ok(classification.intents.includes("business_areas"));
 });
 
 test("model offer acceptance cannot revive expired consent or accept an unrelated offer", async () => {

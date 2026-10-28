@@ -26,6 +26,19 @@ test("knowledge saves queue revisions without embedding them", () => {
     assert.doesNotMatch(body, /indexKnowledgeDocument\(/, `${method.toUpperCase()} ${path} must not index pending saves`);
     assert.match(body, /embeddedChunks:\s*0/, `${method.toUpperCase()} ${path} reports no indexed chunks`);
   }
+  assert.match(server, /app\.get\("\/api\/knowledge\/fetch-policy",\s*requireAdmin/);
+  const policy = route("get", "/api/knowledge/fetch-policy");
+  assert.match(policy, /allowedKnowledgeHosts/);
+  const fetch = route("post", "/api/knowledge/:id/fetch");
+  assert.match(fetch, /req\.body\?\.language/);
+  assert.match(fetch, /Choose English, Arabic, or Greek/);
+  const edit = route("patch", "/api/knowledge/documents/:id");
+  assert.match(edit, /content_sha256/);
+  assert.match(edit, /review_status !== "pending"/);
+  assert.match(edit, /duplicate copies of the same knowledge are not saved/);
+  assert.match(edit, /knowledge_pending_title_updated/);
+  assert.match(ui, /Fetch a web page/);
+  assert.match(ui, /allowedHosts/);
 });
 
 test("admin review queue sees all statuses while non-admin API reads stay approved-only", () => {
@@ -58,13 +71,20 @@ test("approval reindexes the pending revision before the audited decision publis
   assert.match(ui, /reviewDocument\(doc, "approved"\)/);
   assert.match(ui, /reviewDocument\(doc, "rejected"\)/);
   assert.match(ui, /reviewDocument\(doc, "pending"\)/);
-  assert.match(ui, /Revision v\{doc\.revision\}[^<]*\{doc\.language_code/);
-  assert.match(ui, /Source: \{selected\.display_name\}/);
+  assert.match(ui, /docs\.find\(\(item\) => item\.review_status === "pending"\) \|\| docs\[0\]/);
+  assert.match(ui, /knowledge-content-meta/);
+  assert.match(ui, /Source: \{sourceLabel\}/);
+  assert.ok(ui.includes('const canFetchSelectedSource = /^https:\\/\\//i.test('));
+  assert.match(ui, /knowledgeView === "content" && isAdmin && canFetchSelectedSource && <button className="ghost" onClick=\{fetchSource\}/);
+  assert.ok(ui.includes('knowledgeView === "edit" ? " knowledge-layout-editing" : ""'));
+  assert.ok(ui.includes('knowledgeView === "edit" ? " is-editing" : ""'));
+  assert.ok(ui.includes("onClick={cancelKnowledgeEditor}>Cancel</button>"));
+  assert.doesNotMatch(ui, /Start a new entry|Back to content/);
+  assert.doesNotMatch(ui, /Revision \{doc\.revision|Source and approval details|Review decision history/);
   assert.match(ui, /Decision reason/);
-  assert.match(ui, /Review decision history/);
-  assert.match(ui, /reviewHistory\?\.length/);
+  assert.match(ui, /doc\.review_status === "pending" && <details className="knowledge-review-panel"/);
   assert.match(ui, /JSON\.stringify\(\{ status, reason \}\)/);
-  assert.match(ui, /Approved by \{doc\.approved_by \|\| "Not recorded"\} · Approved on \{formatDate\(doc\.approved_at\)\}/);
+  assert.doesNotMatch(ui, /doc\.approved_by|doc\.approved_at|doc\.valid_until|doc\.chunks\?\.length/);
   assert.doesNotMatch(ui, /Effective \{formatDate\(doc\.approved_at\)\}/);
 });
 
@@ -81,9 +101,22 @@ test("archive and restore are admin-only, reversible source disable actions with
   assert.match(helper, /Provide a short reason/);
   assert.match(ui, /Undo/);
   assert.match(ui, /Archive this source\?/);
-  assert.match(ui, /Restore source/);
+  assert.match(ui, /Restore \$\{doc\.title\} to agent knowledge/);
   assert.doesNotMatch(ui, /Delete knowledge/);
-  assert.doesNotMatch(server, /app\.delete\("\/api\/knowledge\/:id"/);
+});
+
+test("permanent knowledge delete is admin-only, refuses audited sources, and records an actor/reason event", () => {
+  const remove = route("delete", "/api/knowledge/:id");
+  assert.match(remove, /requireAdmin/);
+  assert.match(remove, /deleteKnowledgeSource/);
+  assert.match(remove, /knowledge_source_deleted/);
+  assert.match(remove, /actor:\s*result\.actor/);
+  assert.match(remove, /reason:\s*result\.reason/);
+  const helper = readFileSync(new URL("./knowledgeReview.js", import.meta.url), "utf8");
+  assert.match(helper, /review history, which is kept permanently/);
+  assert.match(helper, /Provide a short reason for deleting/);
+  assert.match(ui, /Delete this source permanently\?/);
+  assert.match(ui, /cannot be undone/);
 });
 
 test("approved retrieval admin preview remains available while Knowledge shows the Add knowledge action", () => {
@@ -92,11 +125,16 @@ test("approved retrieval admin preview remains available while Knowledge shows t
   assert.match(preview, /previewKnowledgeAcrossLanguages/);
   assert.match(preview, /rafa_hybrid_search_knowledge/);
   assert.match(preview, /rafa_search_knowledge/);
-  assert.match(ui, /knowledge-add-button/);
-  assert.match(ui, /className="knowledge-stat approved"/);
-  assert.match(ui, /className="knowledge-stat pending"/);
+  assert.match(ui, /knowledge-filter-add/);
+  assert.doesNotMatch(ui, /ACTIVE SOURCES|APPROVED REVISIONS|AWAITING REVIEW|ALL REVISIONS/);
+  assert.match(ui, /knowledge-result-count/);
   assert.match(ui, /knowledge-library-search/);
-  assert.match(ui, /Search titles or content in any language/);
+  assert.match(ui, /placeholder="Search knowledge"/);
+  assert.match(ui, /label="Filter by category"/);
+  assert.match(ui, /label="Filter by language"/);
+  assert.match(ui, /label="Filter by review status"/);
+  assert.match(ui, /role="listbox"/);
+  assert.match(ui, /has-selection/);
   assert.match(ui, /Add knowledge/);
   assert.doesNotMatch(ui, /Search approved knowledge in any language/);
   assert.doesNotMatch(ui, /Preview approved retrieval in all customer languages/);

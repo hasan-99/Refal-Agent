@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, History, MoreHorizontal, Pencil, RefreshCcw, Save, ShieldBan, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, History, MoreHorizontal, Pencil, Plus, RefreshCcw, Save, ShieldBan, ShieldCheck, X } from "lucide-react";
 import "./fact-register.css";
+import { summarizeManualEvidenceFacts } from "../factRegisterProvenance.js";
 
 // W3.9.7 — the fact register admin surface.
 //
@@ -57,7 +58,7 @@ function auditChange(entry) {
   return changed.map((key) => `${key.replaceAll("_", " ")}: ${entry.previous?.[key] ?? "—"} → ${entry.next?.[key] ?? "—"}`).join(" · ");
 }
 
-export default function FactRegister({ isAdmin }) {
+export default function FactRegister({ isAdmin, onAddKnowledge }) {
   const [register, setRegister] = useState(null);
   const [due, setDue] = useState(null);
   const [migration, setMigration] = useState(null);
@@ -73,6 +74,7 @@ export default function FactRegister({ isAdmin }) {
   const [busyFactId, setBusyFactId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [showManualEvidenceOnly, setShowManualEvidenceOnly] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -103,6 +105,8 @@ export default function FactRegister({ isAdmin }) {
   useEffect(() => { void load(); }, [load]);
 
   const facts = register?.facts || [];
+  const manualEvidence = summarizeManualEvidenceFacts(facts);
+  const visibleFacts = showManualEvidenceOnly ? manualEvidence.facts : facts;
 
   const explanations = {
     approved: "REFAL states it with its evidence.",
@@ -203,9 +207,12 @@ export default function FactRegister({ isAdmin }) {
       <div>
         <span className="facts-kicker"><ShieldCheck size={14} /> KNOWLEDGE GOVERNANCE · RULE 2</span>
         <h2>Fact &amp; evidence register</h2>
-        <p>Review the claim, its evidence, and when it needs checking again. Only approved, current facts may support customer answers. Evidence changes return the fact to review.</p>
+        <p>Review the claim, its evidence, and when it needs checking again. Only approved, current facts may support customer answers. This register follows REFAL’s curated fact catalogue; add new company guidance through reviewed knowledge, and keep new high risk or numeric claims in the catalogue workflow.</p>
       </div>
-      <button className="ghost facts-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCcw size={15} /> Refresh</button>
+      <div className="facts-hero-actions">
+        {isAdmin && onAddKnowledge && <button className="primary" type="button" onClick={onAddKnowledge}><Plus size={15} /> Add company knowledge</button>}
+        <button className="ghost facts-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCcw size={15} /> Refresh</button>
+      </div>
     </section>
 
     {migration && <div className="facts-migration" role="status">
@@ -220,6 +227,11 @@ export default function FactRegister({ isAdmin }) {
 
     {error && <div className="facts-alert" role="alert">{error}</div>}
     {notice && <div className="facts-notice" role="status">{notice}</div>}
+    {manualEvidence.facts.length > 0 && <div className={`facts-provenance-alert${manualEvidence.approved > 0 ? " has-approved" : " is-pending"}`} role={manualEvidence.approved > 0 ? "alert" : "status"}>
+      <AlertTriangle size={18} />
+      <div className="facts-provenance-copy"><strong>{manualEvidence.approved > 0 ? `${manualEvidence.approved} approved fact${manualEvidence.approved === 1 ? "" : "s"} still cite the owner source report.` : manualEvidence.pending > 0 ? `${manualEvidence.pending} pending fact${manualEvidence.pending === 1 ? "" : "s"} still cite the owner source report.` : `${manualEvidence.facts.length} fact record${manualEvidence.facts.length === 1 ? "" : "s"} still cite the owner source report and need evidence review.`}</strong><p>The source report is reference material, not approval evidence. Replace it with a current approved source and exact citation before an administrator reviews a fact for customer use.</p></div>
+      <button className="ghost facts-provenance-toggle" type="button" aria-pressed={showManualEvidenceOnly} onClick={() => setShowManualEvidenceOnly((value) => !value)}>{showManualEvidenceOnly ? "Show all facts" : `Review ${manualEvidence.facts.length} facts`}</button>
+    </div>}
 
     {!migration && <>
       <section className="facts-banner" aria-label="Review workload">
@@ -256,7 +268,7 @@ export default function FactRegister({ isAdmin }) {
       </section>
 
       <section className="facts-table-wrap panel" aria-label="Fact register">
-        {loading && !register ? <p className="facts-empty">Loading the fact register…</p> : facts.length === 0 ? <p className="facts-empty">No fact in the register matches these filters. The register itself holds {counts?.total ?? 0} facts.</p> : <table className="facts-table">
+        {loading && !register ? <p className="facts-empty">Loading the fact register…</p> : visibleFacts.length === 0 ? <p className="facts-empty">{showManualEvidenceOnly ? "No fact cites the owner source report." : `No fact in the register matches these filters. The register itself holds ${counts?.total ?? 0} facts.`}</p> : <table className="facts-table">
           <thead>
             <tr>
               <th>Fact</th><th>Claim</th><th>Evidence</th><th>Scope</th><th>Status</th>
@@ -264,7 +276,7 @@ export default function FactRegister({ isAdmin }) {
             </tr>
           </thead>
           <tbody>
-            {facts.map((fact) => {
+            {visibleFacts.map((fact) => {
               const Icon = STATUS_ICONS[fact.effectiveStatus] || Clock3;
               const audit = auditByFact[fact.id];
               const actionLabel = fact.status === "pending"

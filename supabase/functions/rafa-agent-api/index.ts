@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { createProviderSecretLoader } from "./providerSecret.mjs";
 import { hasConfirmationEventId, isAllowedAppointmentTransition, updateAppointmentIfStatusMatches } from "./appointmentStateMachine.mjs";
 import { areAdjacentConsentTurns, buildSafeHistoryInsert, hasPurposeBoundAutomatedReminderConsent, hasPurposeBoundFollowUpConsent, mergeActiveHandover, sanitizeHandoverSummary } from "./handoverPersistence.mjs";
 import { containsUnconsentedContactCommitment, containsProhibitedConstructionEstimate, containsForbiddenCredentialRequest } from "./responsePolicy.mjs";
@@ -7,7 +8,10 @@ import { containsUnconsentedContactCommitment, containsProhibitedConstructionEst
 // and wrongly blocked "I cannot provide tax advice". Now a generated,
 // drift-tested extract of src/refalcoAnswer.js (npm run edge:mirrors).
 import { containsProhibitedClaim } from "./refalcoAnswer.mjs";
-import { buildBrainPrompt as buildOperatorPrompt } from "./brainPrompt.mjs";
+import { buildBrainPrompt as buildOperatorPrompt, DEFAULT_COMPANY_IDENTITY } from "./brainPrompt.mjs";
+import { RESPONSE_STYLE_DEFAULTS, responseStyleInstruction, validateResponseStyle } from "./responseStyle.mjs";
+import { validateCompanyIdentity } from "./companyIdentitySettings.mjs";
+import { BUSINESS_GUIDANCE_DEFAULTS, businessGuidanceInstruction, validateBusinessGuidance } from "./businessGuidance.mjs";
 import { listDynamicData, mutateDynamicData, performDynamicAction } from "./dynamicData.mjs";
 import { validateCustomerLeadFields } from "./dynamicActionValidation.mjs";
 import { persistDynamicActionAlert } from "./dynamicActionAlert.mjs";
@@ -27,6 +31,8 @@ import { containsSensitiveOutputValue } from "./sensitiveOutputPolicy.mjs";
 import { fetchJsonWithTimeout, ProviderTimeoutError } from "./providerTransport.mjs";
 import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
 import { detectMessageLanguage, languageInstruction } from "./language.mjs";
+import { recordKnowledgeGapEvent } from "./knowledgeGapEvents.mjs";
+import { KNOWLEDGE_GAP_SETTINGS_KEY, readKnowledgeGapSettings, validateKnowledgeGapSettings } from "./knowledgeGapPolicy.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,7 +48,19 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
     persistSession: false
   }
 });
-const defaultChatModel = "openai/gpt-6-luna";
+const loadProviderSecret = createProviderSecretLoader({
+  readVaultSecret: async () => {
+    const { data, error } = await supabase.schema("vault").from("decrypted_secrets")
+      .select("decrypted_secret").eq("name", "openrouter_api_key").maybeSingle();
+    if (error) throw error;
+    return data?.decrypted_secret || "";
+  },
+  readEnvironmentSecret: () => Deno.env.get("OPENROUTER_API_KEY") || ""
+});
+// Same defaults as src/openrouterPrivacy.js: Claude Sonnet 5.5, GPT-6 Luna as
+// the previous default. Neither model's ZDR endpoints accept temperature.
+const defaultChatModel = "anthropic/claude-sonnet-5.5";
+const noSamplingChatModels = new Set([defaultChatModel, "openai/gpt-6-luna"]);
 const legacyChatModels = new Set(["inclusionai/ling-3.0-flash-sante:free", "openrouter/free", "deepseek/deepseek-v4.1-flash", "qwen/qwen3.8-27b:free"]);
 const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -186,6 +204,94 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    if (parts[0] === "settings" && parts[1] === "response-style" && parts.length === 2) {
+      if (req.method === "GET") {
+        const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", "response_style").maybeSingle();
+        if (error) throw error;
+        return json({ style: validateResponseStyle(data?.value || RESPONSE_STYLE_DEFAULTS), updatedAt: data?.updated_at || null });
+      }
+      if (req.method === "PUT") {
+        const body = await req.json().catch(() => ({}));
+        let style;
+        try { style = validateResponseStyle(body.style); }
+        catch (error) { throw new HttpError(error instanceof Error ? error.message : "Invalid response style.", 400); }
+        const { data, error } = await supabase.from("rafa_settings").upsert({ key: "response_style", value: style }, { onConflict: "key" }).select("value,updated_at").single();
+        if (error) throw error;
+        return json({ style: validateResponseStyle(data.value), updatedAt: data.updated_at });
+      }
+    }
+
+    // Knowledge Gaps admin recording switch (dashboard toggle). The worker also
+    // needs its RAFA_KNOWLEDGE_GAPS master flag; this switch can only pause it.
+    if (parts[0] === "settings" && parts[1] === "knowledge-gaps" && parts.length === 2) {
+      if (req.method === "GET") {
+        const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", KNOWLEDGE_GAP_SETTINGS_KEY).maybeSingle();
+        if (error) throw error;
+        return json({ settings: readKnowledgeGapSettings(data?.value), updatedAt: data?.updated_at || null,
+          updatedBy: typeof data?.value?.updatedBy === "string" ? data.value.updatedBy : null });
+      }
+      if (req.method === "PUT") {
+        const body = await req.json().catch(() => ({}));
+        let settings;
+        try { settings = validateKnowledgeGapSettings(body.settings); }
+        catch (error) { throw new HttpError(error instanceof Error ? error.message : "Invalid knowledge gap settings.", 400); }
+        const updatedBy = String(body.updatedBy || "").trim().slice(0, 320) || null;
+        const { data, error } = await supabase.from("rafa_settings").upsert({ key: KNOWLEDGE_GAP_SETTINGS_KEY, value: { ...settings, updatedBy }, updated_at: new Date().toISOString() }, { onConflict: "key" })
+          .select("value,updated_at").single();
+        if (error) throw error;
+        return json({ settings: readKnowledgeGapSettings(data.value), updatedAt: data.updated_at, updatedBy });
+      }
+    }
+
+    if (parts[0] === "settings" && parts[1] === "company-identity" && parts.length === 2) {
+      if (req.method === "GET") {
+        const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", "company_identity").maybeSingle();
+        if (error) throw error;
+        let identity;
+        try { identity = validateCompanyIdentity(data?.value || DEFAULT_COMPANY_IDENTITY); }
+        catch { identity = DEFAULT_COMPANY_IDENTITY; }
+        return json({ identity, updatedAt: data?.updated_at || null });
+      }
+      if (req.method === "PUT") {
+        const body = await req.json().catch(() => ({}));
+        let identity;
+        try { identity = validateCompanyIdentity(body.identity); }
+        catch (error) { throw new HttpError(error instanceof Error ? error.message : "Invalid company identity.", 400); }
+        const { data, error } = await supabase.from("rafa_settings").upsert({ key: "company_identity", value: identity }, { onConflict: "key" }).select("value,updated_at").single();
+        if (error) throw error;
+        return json({ identity: validateCompanyIdentity(data.value), updatedAt: data.updated_at });
+      }
+    }
+
+    if (parts[0] === "settings" && parts[1] === "business-guidance" && parts.length === 2) {
+      if (req.method === "GET") {
+        const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", "business_guidance").maybeSingle();
+        if (error) throw error;
+        let guidance;
+        try { guidance = validateBusinessGuidance(data?.value || BUSINESS_GUIDANCE_DEFAULTS); }
+        catch { guidance = BUSINESS_GUIDANCE_DEFAULTS; }
+        return json({ guidance, updatedAt: data?.updated_at || null });
+      }
+      if (req.method === "PUT") {
+        const body = await req.json().catch(() => ({}));
+        let guidance;
+        try { guidance = validateBusinessGuidance(body.guidance); }
+        catch (error) { throw new HttpError(error instanceof Error ? error.message : "Invalid business guidance.", 400); }
+        const { data, error } = await supabase.from("rafa_settings").upsert({ key: "business_guidance", value: guidance }, { onConflict: "key" }).select("value,updated_at").single();
+        if (error) throw error;
+        return json({ guidance: validateBusinessGuidance(data.value), updatedAt: data.updated_at });
+      }
+    }
+
+    // Knowledge version stamp for the worker's short-lived search cache. It
+    // changes whenever any approval, expiry, enabled flag or content that the
+    // search RPCs read changes. Read-only and additive.
+    if (parts[0] === "knowledge" && parts[1] === "version" && req.method === "GET" && parts.length === 2) {
+      const { data, error } = await supabase.rpc("rafa_knowledge_state_version");
+      if (error) throw error;
+      return json({ version: typeof data === "string" ? data : null });
+    }
+
     if (parts[0] === "knowledge" && parts[1] === "search" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const query = String(body.query || "").trim().slice(0, 1000);
@@ -195,28 +301,51 @@ Deno.serve(async (req: Request) => {
         ? `[${body.embedding.join(",")}]`
         : null;
       const embeddingModel = typeof body.embeddingModel === "string" ? body.embeddingModel.slice(0, 160) : "";
-      const { data, error } = embedding
-        ? await supabase.rpc("rafa_hybrid_search_knowledge", {
+      // A worker that reranks asks for a wider candidate window (candidateCount,
+      // max 50) through the additive v2 RPC. Callers that do not send it keep
+      // the v1 path unchanged, and any v2 failure falls back to v1.
+      const candidateCount = Number.isInteger(body.candidateCount) ? Math.min(50, Math.max(1, body.candidateCount)) : null;
+      const v1 = () => embedding
+        ? supabase.rpc("rafa_hybrid_search_knowledge", {
           p_query: query,
           p_embedding: embedding,
           p_embedding_model: embeddingModel,
           p_match_count: matchCount
         })
-        : await supabase.rpc("rafa_search_knowledge", {
+        : supabase.rpc("rafa_search_knowledge", {
           p_query: query,
           p_match_count: matchCount
         });
+      // Server-side stage timings (ms) for worker observability. The lexical
+      // leg, the semantic leg and their RRF fusion all run inside the one
+      // hybrid SQL function, so they are reported together as rpcMs.
+      const stageStarted = Date.now();
+      let { data, error } = embedding && candidateCount
+        ? await supabase.rpc("rafa_hybrid_search_knowledge_v2", {
+          p_query: query,
+          p_embedding: embedding,
+          p_embedding_model: embeddingModel,
+          p_match_count: candidateCount,
+          p_candidate_count: Math.max(candidateCount, 30)
+        })
+        : await v1();
+      if (error && embedding && candidateCount) ({ data, error } = await v1());
       if (error) throw error;
+      const rpcMs = Date.now() - stageStarted;
       const candidateRows = data || [];
       const candidateIds = candidateRows.map((row: { chunk_id?: string }) => row.chunk_id).filter((id: unknown): id is string => typeof id === "string");
+      const expandStarted = Date.now();
       const { data: expanded, error: expansionError } = await supabase.rpc("rafa_expand_knowledge_sections", {
         p_chunk_ids: candidateIds,
         p_max_chunks: 80
       });
       if (expansionError) throw expansionError;
+      const expandMs = Date.now() - expandStarted;
       // Governance metadata is fetched server-side for deterministic M5 policy
       // checks. It is carried separately from the model-safe evidence block.
-      return json({ results: await attachKnowledgePolicyMetadata(supabase, expanded || candidateRows) });
+      const policyStarted = Date.now();
+      const results = await attachKnowledgePolicyMetadata(supabase, expanded || candidateRows);
+      return json({ results, timing: { rpcMs, expandMs, policyMs: Date.now() - policyStarted, hybrid: Boolean(embedding) } });
     }
 
     if (parts[0] === "agent" && parts[1] === "sessions" && req.method === "GET" && parts.length === 2) {
@@ -812,6 +941,17 @@ Deno.serve(async (req: Request) => {
       return json({ inspections: (data || []).map((row) => ({ id: row.id, at: row.at, sourceTurnId: row.fields.sourceTurnId,
         inspection: sanitizeControlledInspection(row.fields.inspection, [contact.id, contact.phone, contact.profile?.name]) })) });
     }
+    // Knowledge Gaps: worker-side recording after the answer decision. Never on
+    // the customer reply path; the worker treats any failure here as best effort.
+    if (parts[0] === "knowledge-gaps" && parts[1] === "events" && req.method === "POST" && parts.length === 2) {
+      const raw = await req.text();
+      if (raw.length > 24000) throw new HttpError("Knowledge gap event exceeds size limit.", 413);
+      let body: unknown = {};
+      try { body = JSON.parse(raw || "{}"); } catch { throw new HttpError("Invalid knowledge gap event.", 400); }
+      const result = await recordKnowledgeGapEvent(supabase, body as Record<string, unknown>);
+      return json(result, result.error ? 400 : 200);
+    }
+
     if (parts[0] === "events" && req.method === "POST") {
       const body = await req.json();
       const event = String(body.event || "unknown").trim();
@@ -918,8 +1058,12 @@ async function listAgentSessions() {
 }
 
 async function generateAgentReply(body: Record<string, any>) {
-  const apiKey = Deno.env.get("OPENROUTER_API_KEY") || "";
-  if (!apiKey) throw new HttpError("OpenRouter is not configured in Supabase secrets.", 503);
+  const responseStyle = await loadResponseStyle();
+  const companyIdentity = await loadCompanyIdentity();
+  const businessGuidance = await loadBusinessGuidance();
+  let apiKey: string;
+  try { apiKey = await loadProviderSecret(); }
+  catch { throw new HttpError("OpenRouter is not configured in Supabase secrets or Vault.", 503); }
 
   const text = redactForModel(String(body.text || "").trim()).slice(0, 4000);
   if (!text) throw new HttpError("Message text is required.", 400);
@@ -944,7 +1088,7 @@ async function generateAgentReply(body: Record<string, any>) {
     provider: { data_collection: "deny", zdr: true },
     usage: { include: true },
     max_tokens: 650,
-    ...(model === defaultChatModel ? { reasoning: { effort: "none", exclude: true } } : { temperature: 0.35 }),
+    ...(noSamplingChatModels.has(model) ? { reasoning: { effort: "none", exclude: true } } : { temperature: 0.35 }),
     messages: [
       {
         role: "system",
@@ -962,7 +1106,9 @@ async function generateAgentReply(body: Record<string, any>) {
           // `body.lead_tier`, which no caller has ever sent — dead wiring that
           // reads as if the tier were plumbed through when it is not. The
           // builder's default emits the protective instruction.
-          ...buildOperatorPrompt({ variant: "operator" }),
+          ...buildOperatorPrompt({ variant: "operator", responseStyle, companyIdentity }),
+          responseStyleInstruction(responseStyle),
+          businessGuidanceInstruction(businessGuidance, language),
           languageInstruction(language),
           // Edge-specific operator instructions. These are NOT policy rules and
           // have no counterpart on the customer path: they describe this
@@ -1132,6 +1278,38 @@ async function addAgentMessage(sessionId: string, body: Record<string, unknown>)
   return data;
 }
 
+async function loadResponseStyle() {
+  try {
+    const { data, error } = await supabase.from("rafa_settings").select("value").eq("key", "response_style").maybeSingle();
+    if (error) throw error;
+    return validateResponseStyle(data?.value || RESPONSE_STYLE_DEFAULTS);
+  } catch {
+    // A presentation preference outage must not stop a dashboard answer.
+    return RESPONSE_STYLE_DEFAULTS;
+  }
+}
+
+async function loadCompanyIdentity() {
+  try {
+    const { data, error } = await supabase.from("rafa_settings").select("value").eq("key", "company_identity").maybeSingle();
+    if (error) throw error;
+    return validateCompanyIdentity(data?.value || DEFAULT_COMPANY_IDENTITY);
+  } catch {
+    // Keep the validated startup identity as the safe fallback during a settings outage.
+    return DEFAULT_COMPANY_IDENTITY;
+  }
+}
+
+async function loadBusinessGuidance() {
+  try {
+    const { data, error } = await supabase.from("rafa_settings").select("value").eq("key", "business_guidance").maybeSingle();
+    if (error) throw error;
+    return validateBusinessGuidance(data?.value || BUSINESS_GUIDANCE_DEFAULTS);
+  } catch {
+    return BUSINESS_GUIDANCE_DEFAULTS;
+  }
+}
+
 async function listAgentMemories() {
   const { data, error } = await supabase
     .from("rafa_agent_memories")
@@ -1170,7 +1348,7 @@ async function deleteAgentMemory(memoryId: string) {
   return Boolean(count);
 }
 
-async function getUser(userId: string, includeHistory = true) {
+async function getUser(userId: string, includeHistory = true): Promise<Record<string, any> | null> {
   const { data, error } = await supabase
     .from("rafa_contacts")
     .select("*")

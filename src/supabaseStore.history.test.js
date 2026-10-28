@@ -6,6 +6,88 @@ const { buildConversationContext } = require("./conversationMemory");
 const { recordHistory } = require("./messageRouter");
 const { hasAutomatedReminderPermission } = require("./leadQualification");
 
+test("response style reads are bounded and cached, and a save refreshes the cache", async (t) => {
+  const store = new EdgeApiStore({ apiUrl: "https://example.invalid/functions/v1/rafa-agent-api", key: "public-test-key", apiSecret: "test-secret" });
+  const originalFetch = global.fetch;
+  const calls = [];
+  let saved = { paragraphLength: "short", listMarker: "hyphen", boldLabels: true };
+  global.fetch = async (url, options) => {
+    calls.push({ url, method: options.method || "GET", signal: options.signal });
+    if (options.method === "PUT") saved = JSON.parse(options.body).style;
+    return Response.json({ style: saved });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const first = await store.getResponseStyle();
+  const second = await store.getResponseStyle();
+  assert.deepEqual(first, saved);
+  assert.deepEqual(second, saved);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/settings\/response-style$/u);
+
+  const next = { paragraphLength: "very_short", listMarker: "numbered", boldLabels: false };
+  assert.deepEqual(await store.updateResponseStyle(next), next);
+  assert.deepEqual(await store.getResponseStyle(), next);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].method, "PUT");
+});
+
+test("response style reads allow a dashboard-sized timeout without changing the fast customer default", async () => {
+  const store = new EdgeApiStore({ apiUrl: "https://example.invalid/functions/v1/rafa-agent-api", key: "public-test-key", apiSecret: "test-secret" });
+  const calls = [];
+  store.request = async (path, options) => { calls.push({ path, ...options }); return { style: { paragraphLength: "short" } }; };
+  await store.getResponseStyle();
+  store.responseStyleCache = null;
+  await store.getResponseStyle({ timeoutMs: 8000 });
+  assert.equal(calls[0].timeoutMs, 1200, "customer turns keep a short settings lookup bound");
+  assert.equal(calls[1].timeoutMs, 8000, "dashboard admins can load settings across an Edge cold start");
+  assert.equal(calls.every((call) => call.attempts === 1), true);
+});
+
+test("company identity settings are validated, cached briefly, and refreshed after an admin save", async () => {
+  const store = new EdgeApiStore({ apiUrl: "https://example.invalid/functions/v1/rafa-agent-api", key: "public-test-key", apiSecret: "test-secret" });
+  const { identityFromProfile } = require("./companyIdentitySettings");
+  const { profile } = require("./companyProfile");
+  const initial = identityFromProfile(profile);
+  let saved = initial;
+  const calls = [];
+  store.request = async (path, options = {}) => {
+    calls.push({ path, method: options.method || "GET", timeoutMs: options.timeoutMs });
+    if (options.method === "PUT") saved = JSON.parse(options.body).identity;
+    return { identity: saved };
+  };
+
+  assert.deepEqual(await store.getCompanyIdentity(), initial);
+  assert.deepEqual(await store.getCompanyIdentity(), initial);
+  assert.equal(calls.length, 1);
+  const changed = { ...initial, brand: "REFAL Demo" };
+  assert.deepEqual(await store.updateCompanyIdentity(changed), changed);
+  assert.deepEqual(await store.getCompanyIdentity(), changed);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].method, "PUT");
+});
+
+test("business guidance is loaded from its own settings key, cached, and refreshed after save", async () => {
+  const store = new EdgeApiStore({ apiUrl: "https://example.invalid/functions/v1/rafa-agent-api", key: "public-test-key", apiSecret: "test-secret" });
+  const calls = [];
+  let saved = { rules: [], hooks: [] };
+  store.request = async (path, options = {}) => {
+    calls.push({ path, method: options.method || "GET", timeoutMs: options.timeoutMs, body: options.body });
+    if (options.method === "PUT") saved = JSON.parse(options.body).guidance;
+    return { guidance: saved };
+  };
+  assert.deepEqual(await store.getBusinessGuidance(), saved);
+  assert.deepEqual(await store.getBusinessGuidance(), saved);
+  assert.equal(calls.length, 1);
+  const next = { rules: [{ id: "rule-1", title: "Answer first", language: "all", instruction: "Answer before qualifying.", enabled: true }], hooks: [] };
+  assert.deepEqual(await store.updateBusinessGuidance(next), next);
+  assert.deepEqual(await store.getBusinessGuidance(), next);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].path, /settings\/business-guidance$/u);
+  assert.equal(calls[1].method, "PUT");
+  assert.deepEqual(JSON.parse(calls[1].body), { guidance: next });
+});
+
 test("MemoryStore preserves consent provenance and binds it to the inserted turn", async () => {
   const store = new MemoryStore();
   const at = "2026-10-10T10:00:00.000Z";

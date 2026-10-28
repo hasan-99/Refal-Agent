@@ -101,14 +101,15 @@ export function assertPasteWithinLimit(content) {
 }
 
 // Empty by default. Operators explicitly configure permitted import hosts.
-function knowledgeHosts() {
+export function allowedKnowledgeHosts() {
   return new Set(String(process.env.KNOWLEDGE_ALLOWED_HOSTS || "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean));
 }
 
 export function validateKnowledgeUrl(value) {
   let url;
   try { url = new URL(String(value || "")); } catch { throw httpError(400, "Enter a valid HTTPS URL."); }
-  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !knowledgeHosts().has(url.hostname.toLowerCase())) {
+  const hosts = allowedKnowledgeHosts();
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !hosts.has(url.hostname.toLowerCase())) {
     throw httpError(400, "Only HTTPS pages on explicitly configured KNOWLEDGE_ALLOWED_HOSTS are allowed. You can also upload a file or paste text.");
   }
   url.hash = "";

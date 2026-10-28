@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import multer from "multer";
 import { canAccessDashboardSession, clearAuthCookies, createRequestAuthClient, isSameOriginRequest, roleAllows, validPassword } from "./auth.js";
-import { assertPasteWithinLimit, chunkKnowledge, extractKnowledgeText, extractUploadedDocument, fetchKnowledgePage, MAX_UPLOAD_BYTES, normalizeKnowledgeContent, UPLOAD_MIME_TYPES, validateKnowledgeUrl } from "./knowledge.js";
+import { allowedKnowledgeHosts, assertPasteWithinLimit, chunkKnowledge, extractKnowledgeText, extractUploadedDocument, fetchKnowledgePage, MAX_UPLOAD_BYTES, normalizeKnowledgeContent, UPLOAD_MIME_TYPES, validateKnowledgeUrl } from "./knowledge.js";
 import { contactActivityStats, operatorSignals, recentConversations } from "./activity.js";
 import { createWhatsAppController } from "./whatsappController.js";
 import { aggregateModelUsage, normalizeQualificationStatus } from "./performance.js";
@@ -21,13 +21,16 @@ import { dueFacts, editFactReview, factAudit, listFacts, reapproveFact, setFactS
 import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent-api/handoverPersistence.mjs";
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
 import { registerContactCorrectionAdminRoutes } from "./contactCorrectionAdmin.js";
-import { approveKnowledgeDocumentAfterIndex, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
+import { approveKnowledgeDocumentAfterIndex, deleteKnowledgeSource, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
 import { normalizeHandoverLanguage } from "./handoverFilters.js";
 import { readAllRows, withStableCreatedAtIdOrder, withStableIdOrder } from "./readAllRows.js";
 import { mapWithConcurrency } from "./mapWithConcurrency.js";
 import { HandoverStatusSyncError, syncHandoverStatus } from "./handoverStatusSync.js";
 import { createCalendarCredentialOnboarding } from "./calendarCredentialOnboarding.js";
 import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv.js";
+import { shapeDatabaseAuditEvents, shapeLegacyAdminEvents } from "./adminAudit.js";
+import { COMPANY_IDENTITY_CHANGE_REASONS, companyIdentityView } from "./companyIdentity.js";
+import { createDefaultGapVerifier, knowledgeGapsDashboardEnabled, registerKnowledgeGapAdminRoutes } from "./knowledgeGapsAdmin.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +48,8 @@ const { createCalendarReadinessTracker, isBookingPolicyReady } = require("../src
 const { validateBookingPolicy } = require("../src/bookingPolicy.js");
 const { workerCredentialsReady } = require("../scripts/googleCalendarCredentialStore.js");
 const { dashboardFailureReply } = await import("./agentFallback.js");
+const { selectRelevantPinnedMemories } = await import("./agentMemoryRelevance.js");
+const { createAgentApiHeaders } = await import("./agentApiHeaders.js");
 const {
   DEFAULT_OPENROUTER_MODEL,
   resolveOpenRouterModel
@@ -71,12 +76,15 @@ void warmEmbeddingPipeline().then(() => {
 });
 
 const app = express();
-const port = Number(process.env.DASHBOARD_PORT || 8787);
+// Plesk Passenger assigns the public application port through PORT. Keep the
+// local override for development, while letting the hosting runtime take priority.
+const port = Number(process.env.PORT || process.env.DASHBOARD_PORT || 8787);
 const authAttemptBuckets = new Map();
 const limitAgentChat = createAgentRateLimit();
 const calendarReadiness = createCalendarReadinessTracker();
 const calendarOnboarding = createCalendarCredentialOnboarding({ botRoot, onConfigured: () => whatsappController.restart() });
 let openRouterCreditsCache = { expiresAt: 0, value: null };
+let whatsappStatusCache = { expiresAt: 0, value: null };
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -170,7 +178,8 @@ app.get("/api/session", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     if (!identity?.user) return res.json({ authenticated: false });
     if (identity.account && !identity.account.is_active) return res.json({ authenticated: false, disabled: true, error: "This account has been disabled. Contact a workspace administrator." });
-    res.json({ authenticated: true, role: identity.account?.role || "pending", user: publicUser(identity.user, identity.account) });
+    res.json({ authenticated: true, role: identity.account?.role || "pending", user: publicUser(identity.user, identity.account),
+      features: { knowledgeGaps: knowledgeGapsDashboardEnabled(process.env) } });
   } catch (error) {
     res.status(error.statusCode || 503).json({ authenticated: false, error: error.statusCode ? error.message : "Could not verify the dashboard session." });
   }
@@ -179,6 +188,38 @@ app.get("/api/session", async (req, res) => {
 app.use("/api", requireAuth);
 registerDynamicDataAdminRoutes(app, { requireAdmin });
 registerContactCorrectionAdminRoutes(app, { store, requireAdmin });
+registerKnowledgeGapAdminRoutes(app, {
+  requireAdmin, supabaseRest, readAllRows: readAllSupabaseRows, logEvent: logDashboardEvent,
+  createVerifier: createDefaultGapVerifier({ store, embedText, embeddingModel: DEFAULT_EMBEDDING_MODEL }),
+  getSettings: () => store.getKnowledgeGapSettings({ timeoutMs: 8000, fresh: true }),
+  updateSettings: (settings, options) => store.updateKnowledgeGapSettings(settings, options)
+});
+
+app.get("/api/whatsapp/status", async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const control = whatsappController.snapshot();
+  if (control.state !== "disconnected") {
+    return res.json({ status: {
+      connected: control.state === "connected",
+      lastState: control.state,
+      lastSeen: control.connectedAt || null,
+      lastConnectionEvent: control.connectedAt || null
+    } });
+  }
+  if (whatsappStatusCache.expiresAt > Date.now() && whatsappStatusCache.value) return res.json({ status: whatsappStatusCache.value });
+  try {
+    let events = await readEvents();
+    let status = botStatus(events);
+    if (status.lastState === "unknown" && store.listEvents) {
+      events = await store.listEvents({ limit: 5000 });
+      status = botStatus(events);
+    }
+    whatsappStatusCache = { value: status, expiresAt: Date.now() + 5000 };
+    return res.json({ status });
+  } catch {
+    return res.status(502).json({ error: "Could not check WhatsApp status." });
+  }
+});
 
 app.get("/api/whatsapp/control", requireAdmin, async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -252,24 +293,26 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
 app.get("/api/admin/audit", requireAdmin, async (_req, res) => {
   try {
     const events = await readEvents();
-    const auditEvents = new Set(["dashboard_admin_action", "contact_memory_admin_updated", "lead_qualification_admin_updated", "conversation_reply_admin_edited"]);
-    res.json({ events: events.filter((event) => auditEvents.has(event.event)).slice(-100).reverse().map((event) => ({
-      event: event.event,
-      at: event.at,
-      actor: String(event.actor || event.reviewer || "admin").slice(0, 160),
-      action: String(event.action || event.event).slice(0, 120),
-      targetId: String(event.contactId || event.userId || event.targetId || "").slice(0, 200),
-      fields: Array.isArray(event.fields) ? event.fields.slice(0, 20).map((field) => String(field).slice(0, 80)) : []
-    })) });
+    const auditEvents = new Set(["dashboard_admin_action", "contact_memory_admin_updated", "lead_qualification_admin_updated", "conversation_reply_admin_edited", "business_guidance_admin_updated"]);
+    const databaseAuditRows = await supabaseRest("rafa_audit_events?select=id,event,actor_type,source,details,created_at&order=created_at.desc&limit=100");
+    res.json({ events: shapeLegacyAdminEvents(events, auditEvents), databaseAuditEvents: shapeDatabaseAuditEvents(databaseAuditRows) });
   } catch (error) {
-    res.status(502).json({ error: error.message || "Could not load the admin audit." });
+    console.error("Admin audit load failed:", error?.message || "unknown error");
+    res.status(502).json({ error: "Could not load the admin audit." });
   }
 });
 
 app.post("/api/admin/users", requireAdmin, async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   if (!email || email.length > 320) return res.status(400).json({ error: "Enter a valid email address." });
-  try { res.status(201).json(await invokeAdminFunction(req.authClient, { action: "invite-user", email })); }
+  const password = req.body?.password;
+  if (password !== undefined && !validPassword(password)) {
+    return res.status(400).json({ error: "Use at least 12 characters with uppercase, lowercase, and a number." });
+  }
+  const operation = password === undefined
+    ? { action: "invite-user", email }
+    : { action: "create-admin-user", email, password };
+  try { res.status(201).json(await invokeAdminFunction(req.authClient, operation)); }
   catch (error) { res.status(error.statusCode || 502).json({ error: error.message }); }
 });
 
@@ -344,17 +387,24 @@ app.patch("/api/knowledge/:id", requireAdmin, async (req, res) => {
   }
 });
 
+app.get("/api/knowledge/fetch-policy", requireAdmin, (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ allowedHosts: [...allowedKnowledgeHosts()].sort() });
+});
+
 app.post("/api/knowledge/:id/fetch", requireAdmin, async (req, res) => {
   let id;
   try {
     id = requireUuid(req.params.id);
+    const language = String(req.body?.language || "en").trim().toLowerCase();
+    if (!["en", "ar", "el"].includes(language)) return res.status(400).json({ error: "Choose English, Arabic, or Greek for this fetched revision." });
     const sources = await supabaseRest(`rafa_knowledge_sources?id=eq.${id}&select=id,canonical_url,display_name&limit=1`);
     const source = sources[0];
     if (!source) return res.status(404).json({ error: "Knowledge source not found." });
     await supabaseRest(`rafa_knowledge_sources?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ last_status: "fetching", last_error: "", last_fetched_at: new Date().toISOString() }) });
     const page = await fetchKnowledgePage(source.canonical_url);
     const extracted = extractKnowledgeText(page.html, page.url);
-    const saved = await storeKnowledgeRevision(id, extracted, "en");
+    const saved = await storeKnowledgeRevision(id, extracted, language);
     res.json({ ...saved, embeddedChunks: 0, embeddingWarning: "", title: extracted.title, characterCount: extracted.content.length, chunkCount: extracted.chunks.length });
   } catch (error) {
     const status = error.code || 502;
@@ -389,9 +439,25 @@ app.patch("/api/knowledge/documents/:id", requireAdmin, async (req, res) => {
     if (!title) return res.status(400).json({ error: "Enter a title for this knowledge entry." });
     if (content.length < 40) return res.status(400).json({ error: "Enter at least 40 characters of knowledge text." });
 
-    const documents = await supabaseRest(`rafa_knowledge_documents?id=eq.${id}&select=id,source_id&limit=1`);
+    const documents = await supabaseRest(`rafa_knowledge_documents?id=eq.${id}&select=id,source_id,revision,title,content_sha256,review_status,language_code&limit=1`);
     if (!documents[0]) return res.status(404).json({ error: "Knowledge entry not found." });
     const chunks = chunkKnowledge(content);
+    const contentSha256 = crypto.createHash("sha256").update(content).digest("hex");
+    if (documents[0].content_sha256 === contentSha256) {
+      if (documents[0].title === title && documents[0].language_code === String(req.body?.language || "en").slice(0, 8)) {
+        return res.json({ document_id: id, revision: documents[0].revision, unchanged: true, embeddedChunks: 0, embeddingWarning: "", chunkCount: chunks.length });
+      }
+      if (documents[0].review_status !== "pending") {
+        return res.status(409).json({ error: "The text is unchanged and this content is already approved. Edit the text to create a new pending revision; duplicate copies of the same knowledge are not saved." });
+      }
+      const saved = await supabaseRest(`rafa_knowledge_documents?id=eq.${id}&select=id,source_id,revision,title,review_status,language_code`, {
+        method: "PATCH", headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ title, language_code: String(req.body?.language || "en").slice(0, 8) })
+      });
+      if (!saved[0]) return res.status(404).json({ error: "Knowledge entry could not be updated." });
+      await logDashboardEvent("knowledge_pending_title_updated", { documentId: id, sourceId: documents[0].source_id, revision: documents[0].revision, actor: req.dashboardUser.email || req.dashboardUser.id });
+      return res.json({ document_id: id, revision: documents[0].revision, unchanged: true, titleUpdated: true, review_status: saved[0]?.review_status || "pending", embeddedChunks: 0, embeddingWarning: "", chunkCount: chunks.length });
+    }
     const result = await storeKnowledgeRevision(documents[0].source_id, { title, content, chunks }, String(req.body?.language || "en").slice(0, 8));
     res.json({ ...result, embeddedChunks: 0, embeddingWarning: "", chunkCount: chunks.length });
   } catch (error) {
@@ -1090,24 +1156,15 @@ app.patch("/api/blocks/:id", requireAdmin, authRateLimit, async (req, res) => {
 app.post("/api/bookings/:id/review", requireAdmin, authRateLimit, async (req, res) => {
   const action = String(req.body?.action || "");
   const reason = String(req.body?.reason || "").trim().slice(0, 500);
+  const customerMessage = String(req.body?.customerMessage || "").trim();
+  if (!["approve", "reject", "cancel", "reschedule"].includes(action)) return res.status(400).json({ error: "Choose a valid booking action." });
+  if (!customerMessage || customerMessage.length > 1200) return res.status(400).json({ error: "Enter a customer message of up to 1,200 characters." });
   try {
     if (action === "approve") {
       const result = await calendarOnboarding.review({ action, appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id });
       let notificationError = result.reminderError || "";
       try {
-        const when = new Intl.DateTimeFormat("en-GB", { timeZone: result.policy.timezone, dateStyle: "full", timeStyle: "short" }).format(result.event.start?.dateTime ? new Date(result.event.start.dateTime) : new Date(result.appointment.starts_at));
-        const contact = await store.getUser(result.appointment.whatsapp_jid, { includeHistory: true });
-        const lastCustomerText = contact?.history?.at(-1)?.message || "";
-        const arabic = /[\u0600-\u06ff]/.test(lastCustomerText);
-        const linkIsDue = Date.parse(result.appointment.starts_at) - Date.now() <= 60 * 60 * 1000;
-        const meetLink = result.event.meetLink || "";
-        const reminderCopy = result.reminderError
-          ? (arabic ? " سيتابع فريق الشركة إرسال رابط الاجتماع معك." : " The Refalco Group team will follow up with your meeting link.")
-          : (arabic ? " سنرسل رابط Google Meet قبل الاجتماع بساعة." : " The Google Meet link will be sent one hour before the meeting.");
-        const text = arabic
-          ? `تم تأكيد موعدك مع الشركة يوم ${when} (${result.policy.timezone}).${linkIsDue && meetLink ? ` رابط Google Meet: ${meetLink}` : reminderCopy}`
-          : `Your Refalco Group appointment is confirmed for ${when} (${result.policy.timezone}).${linkIsDue && meetLink ? ` Google Meet: ${meetLink}` : reminderCopy}`;
-        await enqueueAppointmentMessage(result.appointment, "confirmed", text, result.appointment.reviewed_at || new Date().toISOString());
+        await enqueueAppointmentMessage(result.appointment, "confirmed", customerMessage, result.appointment.reviewed_at || new Date().toISOString());
       } catch (error) { notificationError = String(error?.message || "WhatsApp notification queue failed").slice(0, 240); }
       await store.logEvent?.("appointment_admin_approved", { appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id, notificationError });
       return res.json({ ok: true, status: "confirmed", notificationError });
@@ -1120,37 +1177,19 @@ app.post("/api/bookings/:id/review", requireAdmin, authRateLimit, async (req, re
       const updated = result.updated;
       let notificationError = "";
       try {
-        const contact = await store.getUser(appointment.whatsapp_jid, { includeHistory: true });
-        const arabic = /[\u0600-\u06ff]/.test(contact?.history?.at(-1)?.message || "");
-        const text = nextStatus === "cancelled"
-          ? (arabic ? "تم إلغاء موعدك مع الشركة." : "Your Refalco Group appointment has been cancelled.")
-          : (arabic ? "يرغب فريق الشركة في تغيير موعدك. أرسل اليوم والوقت الجديدين وسنرسلهما للمراجعة." : "The Refalco Group team needs to reschedule your meeting. Send a new day and time and we’ll submit it for review.");
-        await enqueueAppointmentMessage(appointment, nextStatus, text, updated.reviewed_at || new Date().toISOString());
+        await enqueueAppointmentMessage(appointment, nextStatus, customerMessage, updated.reviewed_at || new Date().toISOString());
       } catch (error) { notificationError = String(error?.message || "WhatsApp notification queue failed").slice(0, 240); }
       await store.logEvent?.(`appointment_${nextStatus}`, { appointmentId: appointment.id, reviewer: req.dashboardUser.email || req.dashboardUser.id, notificationError });
       return res.json({ ok: true, status: updated.status, notificationError });
     }
-    if (action !== "reject" || !reason) return res.status(400).json({ error: "Choose approve or provide a short reason when rejecting." });
+    if (action !== "reject" || !reason) return res.status(400).json({ error: "Provide a short internal reason when rejecting." });
     const appointment = await store.getAppointment(req.params.id);
     if (!appointment || appointment.status !== "pending_review") return res.status(409).json({ error: "This appointment is no longer awaiting review." });
     const updated = await store.updateAppointment(req.params.id, { status: "rejected", reviewReason: reason, reviewedAt: new Date().toISOString(), reviewedBy: req.dashboardUser.email || req.dashboardUser.id });
     await store.updateUser(appointment.whatsapp_jid, (draft) => { draft.booking = { status: "awaiting_details", startedAt: new Date().toISOString(), idempotencyKey: crypto.randomUUID(), purpose: appointment.purpose }; });
     let notificationError = "";
     try {
-      const contact = await store.getUser(appointment.whatsapp_jid, { includeHistory: true });
-      const arabic = /[\u0600-\u06ff]/.test(contact?.history?.at(-1)?.message || "");
-      let alternatives = [];
-      let bookingPolicy;
-      try {
-        bookingPolicy = await store.getBookingPolicy();
-        alternatives = await suggestAvailableTimes(bookingPolicy, { count: 3 });
-      }
-      catch (availabilityError) { await store.logEvent?.("appointment_alternatives_lookup_error", { appointmentId: appointment.id, message: String(availabilityError?.message || "Calendar lookup failed").slice(0, 200) }); }
-      const times = bookingPolicy ? alternatives.map(({ start }) => formatBookingTime(start, bookingPolicy, arabic ? "arabic" : "english")) : [];
-      const rejectionText = arabic
-        ? `نعتذر، تعذر اعتماد هذا الوقت.${times.length ? ` هذه أوقات بديلة متاحة بعد التحقق: ${times.join("، ")}.` : " أرسل يومًا ووقتًا آخر وسأطلب من الفريق مراجعته."} ${times.length ? "اختر وقتًا وسأرسله للمراجعة." : ""}`
-        : `Sorry, we can’t accept that time.${times.length ? ` These available alternatives were checked: ${times.join(", ")}. Choose one and I’ll send it for review.` : " Please send another suitable day and time, and I’ll ask the team to review it."}`;
-      await enqueueAppointmentMessage(updated, "rejected", rejectionText, updated.reviewed_at || new Date().toISOString());
+      await enqueueAppointmentMessage(updated, "rejected", customerMessage, updated.reviewed_at || new Date().toISOString());
     } catch (error) { notificationError = String(error?.message || "WhatsApp notification queue failed").slice(0, 240); }
     await store.logEvent?.("appointment_admin_rejected", { appointmentId: req.params.id, reviewer: req.dashboardUser.email || req.dashboardUser.id, reason, notificationError });
     return res.json({ ok: true, status: updated.status, notificationError });
@@ -1226,6 +1265,21 @@ app.patch("/api/knowledge/:id/archive", requireAdmin, async (req, res) => {
   } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
 });
 
+app.delete("/api/knowledge/:id", requireAdmin, authRateLimit, async (req, res) => {
+  try {
+    const result = await deleteKnowledgeSource(supabaseRest, {
+      sourceId: requireUuid(req.params.id),
+      actor: req.dashboardUser?.email || req.dashboardUser?.id, reason: req.body?.reason
+    });
+    await logDashboardEvent("knowledge_source_deleted", {
+      sourceId: result.source.id, displayName: result.source.display_name, deletedRevisions: result.deletedRevisions,
+      actor: result.actor, reason: result.reason
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json(result);
+  } catch (error) { res.status(error.code || 500).json({ error: error.message }); }
+});
+
 app.post("/api/bookings/calendar-oauth/start", requireAdmin, authRateLimit, async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   try {
@@ -1254,6 +1308,82 @@ app.put("/api/bookings/policy", requireAdmin, async (req, res) => {
     calendarReadiness.invalidate();
     res.json({ policy: saved, active: false, calendarAccessVerified: false });
   } catch (error) { res.status(error.statusCode || 400).json({ error: error.message }); }
+});
+
+app.get("/api/company/identity", requireAdmin, async (_req, res) => {
+  try { res.json({ identity: companyIdentityView(await store.getCompanyIdentity({ timeoutMs: 8000 })) }); }
+  catch (error) {
+    console.error("Could not load the validated company identity:", error?.message || "unknown error");
+    res.status(error.status || 502).json({ error: "Company identity is unavailable." });
+  }
+});
+
+app.put("/api/company/identity", requireAdmin, authRateLimit, async (req, res) => {
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  const reasonCodes = new Set(COMPANY_IDENTITY_CHANGE_REASONS.map(({ value }) => value));
+  if (!reasonCodes.has(reason)) return res.status(400).json({ error: "Choose a valid reason for this change." });
+  try {
+    const current = await store.getCompanyIdentity({ timeoutMs: 8000 });
+    const saved = companyIdentityView(await store.updateCompanyIdentity(req.body?.identity));
+    const changedFields = Object.keys(saved).filter((field) => JSON.stringify(saved[field]) !== JSON.stringify(current[field]));
+    try {
+      await logDashboardEvent("company_identity_admin_updated", {
+        actor: req.dashboardUser.email || req.dashboardUser.id,
+        changedFields,
+        reason: reason.slice(0, 300)
+      });
+    } catch (error) {
+      console.error("Company identity saved but its dashboard audit event failed:", error?.message || "unknown error");
+    }
+    res.json({ identity: saved, changedFields });
+  } catch (error) { res.status(error.status || error.statusCode || 400).json({ error: error.message || "Could not save company identity." }); }
+});
+
+app.get("/api/settings/response-style", requireAdmin, async (_req, res) => {
+  try { res.json({ style: await store.getResponseStyle({ timeoutMs: 8000 }) }); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: error.message || "Could not load response style." }); }
+});
+
+app.put("/api/settings/response-style", requireAdmin, async (req, res) => {
+  try {
+    const { validateResponseStyle } = require("../src/responseStyle.js");
+    const style = validateResponseStyle(req.body?.style);
+    res.json({ style: await store.updateResponseStyle(style) });
+  } catch (error) { res.status(error.statusCode || 400).json({ error: error.message || "Could not save response style." }); }
+});
+
+app.get("/api/settings/business-guidance", requireAdmin, async (_req, res) => {
+  try { res.json({ guidance: await store.getBusinessGuidance({ timeoutMs: 8000 }) }); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: error.message || "Could not load business guidance." }); }
+});
+
+app.put("/api/settings/business-guidance", requireAdmin, authRateLimit, async (req, res) => {
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  const reasonCodes = new Set(["clarify_customer_follow_up", "improve_localized_wording", "align_with_approved_process", "remove_outdated_guidance", "other_operational_adjustment"]);
+  if (!reasonCodes.has(reason)) return res.status(400).json({ error: "Choose a valid reason for this change." });
+  try {
+    const { validateBusinessGuidance } = require("../src/businessGuidance.js");
+    const guidance = validateBusinessGuidance(req.body?.guidance);
+    const previous = await store.getBusinessGuidance({ timeoutMs: 8000 });
+    const saved = await store.updateBusinessGuidance(guidance);
+    const changedIds = (before, after) => [...new Set([
+      ...before.filter((item) => JSON.stringify(item) !== JSON.stringify(after.find((savedItem) => savedItem.id === item.id))),
+      ...after.filter((item) => JSON.stringify(item) !== JSON.stringify(before.find((oldItem) => oldItem.id === item.id)))
+    ].map((item) => item.id))];
+    const changedRuleIds = changedIds(previous.rules, saved.rules);
+    const changedHookIds = changedIds(previous.hooks, saved.hooks);
+    try {
+      await logDashboardEvent("business_guidance_admin_updated", {
+        actor: req.dashboardUser.email || req.dashboardUser.id,
+        guidanceItemCodes: [...changedRuleIds, ...changedHookIds],
+        reasonCode: reason
+      });
+    } catch (error) {
+      console.error("Business guidance saved but its dashboard audit event failed:", error?.message || "unknown error");
+      return res.status(503).json({ saved: true, error: "Guidance was saved, but its audit record could not be confirmed. Refresh the page to verify the saved values before retrying." });
+    }
+    res.json({ guidance: saved, changedRuleIds, changedHookIds });
+  } catch (error) { res.status(error.status || error.statusCode || 400).json({ error: error.message || "Could not save business guidance." }); }
 });
 
 app.get("/api/reports", async (_req, res) => {
@@ -1964,13 +2094,15 @@ async function dashboardKnowledge(text) {
 }
 
 async function relevantAgentMemories(text) {
+  const fallback = async () => selectRelevantPinnedMemories(text, await listAgentMemories());
   try {
-    return await supabaseRest("rpc/rafa_search_agent_memories", {
+    const results = await supabaseRest("rpc/rafa_search_agent_memories", {
       method: "POST",
       body: JSON.stringify({ p_query: text, p_match_count: 5 })
     });
+    return Array.isArray(results) && results.length ? results : fallback();
   } catch {
-    return (await listAgentMemories()).filter((memory) => memory.pinned).slice(0, 5);
+    return fallback();
   }
 }
 
@@ -1984,13 +2116,14 @@ async function askDashboardAgent({ text, messages, model: sessionModel, memories
 async function askSupabaseAgent({ text, messages, model, memories, evidence, signal, onToken, onUsage }) {
   const apiUrl = process.env.RAFA_API_URL || `${String(process.env.SUPABASE_URL || "").replace(/\/$/, "")}/functions/v1/rafa-agent-api`;
   const apiSecret = process.env.RAFA_API_SECRET;
-  if (!apiUrl || !apiSecret) throw new Error("RAFA Supabase agent API is not configured.");
+  const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!apiUrl) throw new Error("RAFA Supabase agent API is not configured.");
   const response = await fetch(`${apiUrl.replace(/\/$/, "")}/agent/generate`, {
     method: "POST",
     signal,
     headers: {
       "Content-Type": "application/json",
-      "x-rafa-api-secret": apiSecret
+      ...createAgentApiHeaders({ apiKey, apiSecret })
     },
     body: JSON.stringify({ text, messages, model, memories, evidence })
   });

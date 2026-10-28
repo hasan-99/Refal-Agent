@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyAuthResponseHeaders, canAccessDashboardSession, clearAuthCookies, isSameOriginRequest, parseCookieHeader, roleAllows, serializeCookie, validPassword } from "./auth.js";
+import { applyAuthResponseHeaders, canAccessDashboardSession, clearAuthCookies, decodeAuthCookieTransportValue, encodeAuthCookieTransportValue, isSameOriginRequest, parseCookieHeader, roleAllows, serializeCookie, validPassword } from "./auth.js";
 
 test("cookie parser preserves equals signs and safely decodes values", () => {
   assert.deepEqual(parseCookieHeader("a=one%20two; token=abc==; broken"), [
@@ -13,6 +13,16 @@ test("auth cookie serialization is HttpOnly, same-site, and secure when requeste
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
   assert.match(cookie, /Secure/);
+});
+
+test("Supabase auth cookie transport avoids ModSecurity keyword false positives and reads legacy cookies", () => {
+  const supabaseValue = "base64-eyJhbGciOiJIUzI1NiJ9";
+  const wireValue = encodeAuthCookieTransportValue(supabaseValue);
+  assert.equal(wireValue, "ssr-eyJhbGciOiJIUzI1NiJ9");
+  assert.equal(wireValue.includes("base64"), false);
+  assert.equal(decodeAuthCookieTransportValue(wireValue), supabaseValue);
+  assert.equal(decodeAuthCookieTransportValue("base64-legacy-cookie"), "base64-legacy-cookie");
+  assert.equal(encodeAuthCookieTransportValue("plain-value"), "plain-value");
 });
 
 test("logout expires every auth cookie chunk", () => {

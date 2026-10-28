@@ -22,14 +22,21 @@ export function createRequestAuthClient(req, res) {
       httpOnly: true,
       maxAge: SESSION_MAX_AGE_SECONDS
     },
+    // Keep Supabase's compact base64url payload but replace its `base64-`
+    // marker on the wire. Plesk ModSecurity falsely flags that marker, and raw
+    // JSON cookies trigger its SQL injection rules. The transport helpers
+    // restore Supabase's marker before the SSR client reads the cookie.
     cookieEncoding: "base64url",
     auth: { autoRefreshToken: false, persistSession: true, detectSessionInUrl: false, flowType: "pkce" },
     cookies: {
-      getAll: () => parseCookieHeader(req.headers.cookie),
+      getAll: () => parseCookieHeader(req.headers.cookie).map(({ name, value }) => ({
+        name,
+        value: decodeAuthCookieTransportValue(value)
+      })),
       setAll: (cookies, responseHeaders) => {
         applyAuthResponseHeaders(res, responseHeaders);
         for (const item of cookies) {
-          res.append("Set-Cookie", serializeCookie(item.name, item.value, {
+          res.append("Set-Cookie", serializeCookie(item.name, encodeAuthCookieTransportValue(item.value), {
             ...item.options,
             path: "/",
             sameSite: "lax",
@@ -40,6 +47,21 @@ export function createRequestAuthClient(req, res) {
       }
     }
   });
+}
+
+const SUPABASE_COOKIE_PREFIX = "base64-";
+const WAF_SAFE_COOKIE_PREFIX = "ssr-";
+
+export function encodeAuthCookieTransportValue(value) {
+  return typeof value === "string" && value.startsWith(SUPABASE_COOKIE_PREFIX)
+    ? `${WAF_SAFE_COOKIE_PREFIX}${value.slice(SUPABASE_COOKIE_PREFIX.length)}`
+    : value;
+}
+
+export function decodeAuthCookieTransportValue(value) {
+  return typeof value === "string" && value.startsWith(WAF_SAFE_COOKIE_PREFIX)
+    ? `${SUPABASE_COOKIE_PREFIX}${value.slice(WAF_SAFE_COOKIE_PREFIX.length)}`
+    : value;
 }
 
 export function parseCookieHeader(header = "") {
