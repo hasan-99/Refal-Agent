@@ -99,7 +99,7 @@ export default function KnowledgeGaps({ isAdmin, onCreateKnowledge, onOpenKnowle
         <p>Grouped by meaning across Arabic, English and Greek. Personal details are removed before anything is stored, and nothing is published without an administrator&apos;s approval.</p>
       </div>
       <div className="kg-hero-actions">
-        <RecordingSwitch isAdmin={isAdmin} />
+        <RecordingSwitch isAdmin={isAdmin} refreshKey={refreshKey} />
         <button type="button" className="kg-icon-button" onClick={refresh} disabled={loading} aria-label="Refresh" title="Refresh">
           <RefreshCcw size={16} className={loading ? "kg-spin" : ""} />
         </button>
@@ -160,41 +160,71 @@ export default function KnowledgeGaps({ isAdmin, onCreateKnowledge, onOpenKnowle
   </div>;
 }
 
-function RecordingSwitch({ isAdmin }) {
-  const [state, setState] = useState({ loading: true, recording: false, updatedBy: null, error: "" });
+// Admin recording switch. First load shows a placeholder (the state is unknown,
+// so no on/off wording); the page Refresh re-checks it in the background.
+function RecordingSwitch({ isAdmin, refreshKey }) {
+  const [state, setState] = useState({ phase: "loading", recording: false, updatedBy: null, updatedAt: null, canManage: false, error: "" });
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const seq = useRef(0);
 
-  useEffect(() => {
-    let alive = true;
+  const load = useCallback(() => {
+    const current = ++seq.current;
+    setChecking(true);
     request("/api/knowledge-gaps/settings")
-      .then((value) => { if (alive) setState({ loading: false, recording: value.recording === true, updatedBy: value.updatedBy, canManage: value.canManage, error: "" }); })
-      .catch((value) => { if (alive) setState({ loading: false, recording: false, unavailable: true, error: value.message }); });
-    return () => { alive = false; };
+      .then((value) => {
+        if (current !== seq.current) return;
+        setState({ phase: "ready", recording: value.recording === true, updatedBy: value.updatedBy || null, updatedAt: value.updatedAt || null,
+          canManage: value.canManage === true, error: "" });
+      })
+      .catch((value) => {
+        if (current !== seq.current) return;
+        setState((previous) => (previous.phase === "ready" ? { ...previous, error: "Could not re-check the setting." }
+          : { phase: "unavailable", recording: false, updatedBy: null, updatedAt: null, canManage: false, error: value.message }));
+      })
+      .finally(() => { if (current === seq.current) setChecking(false); });
   }, []);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
-  const canToggle = isAdmin && !state.loading && !state.unavailable && state.canManage !== false && !saving;
   async function toggle() {
-    if (!canToggle) return;
+    if (state.phase !== "ready" || !isAdmin || !state.canManage || saving) return;
     const next = !state.recording;
+    seq.current += 1; // a save wins over any re-check still in flight
     setSaving(true);
     setState((current) => ({ ...current, recording: next, error: "" }));
     try {
       const value = await request("/api/knowledge-gaps/settings", { method: "PUT", body: JSON.stringify({ recording: next }) });
-      setState((current) => ({ ...current, recording: value.recording === true, updatedBy: value.updatedBy }));
+      setState((current) => ({ ...current, recording: value.recording === true, updatedBy: value.updatedBy || null, updatedAt: value.updatedAt || null }));
     } catch (value) {
-      setState((current) => ({ ...current, recording: !next, error: value.message }));
-    } finally { setSaving(false); }
+      setState((current) => ({ ...current, recording: !next, error: value.message || "Could not save. Try again." }));
+    } finally { setSaving(false); setChecking(false); }
   }
 
-  const label = state.loading ? "Checking…" : state.unavailable ? "Unavailable" : state.recording ? "Recording" : "Paused";
-  const hint = state.unavailable ? "The recording setting could not be loaded."
-    : !isAdmin ? "Only administrators can change this."
-      : state.recording ? "New unanswered questions are captured. Takes effect within a minute." : "No new questions are captured. Existing gaps stay.";
-  return <div className={`kg-recording${state.recording ? " on" : ""}${state.loading ? " loading" : ""}`} title={state.error || hint}>
-    <span className="kg-recording-icon" aria-hidden="true">{state.recording ? <Radio size={15} /> : <PauseCircle size={15} />}</span>
-    <span className="kg-recording-text"><strong>{label}</strong><small>{state.error || hint}</small></span>
-    <button type="button" role="switch" aria-checked={state.recording} aria-label="Record knowledge gaps" className="kg-switch"
-      onClick={toggle} disabled={!canToggle}><span className="kg-switch-thumb" /></button>
+  // One layout for every phase: the title and description render at once, the
+  // switch stays greyed out until the stored value arrives, then slides to it.
+  const loading = state.phase === "loading";
+  const unavailable = state.phase === "unavailable";
+  const canToggle = state.phase === "ready" && isAdmin && state.canManage && !saving;
+  const status = loading ? null : unavailable ? "Unavailable" : saving ? "Saving…" : state.recording ? "On" : "Paused";
+  const hint = unavailable ? "The setting could not be loaded."
+    : loading || state.recording ? "Captures the questions REFAL could not answer. Changes apply within a minute."
+      : "Paused: no new questions are captured. Existing gaps stay.";
+  const changed = state.updatedBy ? `Changed by ${state.updatedBy.split("@")[0]} · ${relativeTime(state.updatedAt)}` : "Default setting";
+  const meta = loading ? "" : unavailable ? "" : state.error || (isAdmin ? changed : `${changed} · admins only`);
+  const tone = unavailable ? " unavailable" : !loading && state.recording ? " on" : "";
+  return <div className={`kg-recording${tone}${saving ? " saving" : ""}`} aria-busy={loading}>
+    <span className="kg-recording-icon" aria-hidden="true">{unavailable ? <AlertTriangle size={15} /> : !loading && !state.recording ? <PauseCircle size={15} /> : <Radio size={15} />}</span>
+    <span className="kg-recording-text">
+      <strong>Gap recording
+        {status && <span className={`kg-recording-status${tone}`}>{status}</span>}
+        {checking && !saving && !loading && <RefreshCcw size={11} className="kg-spin kg-recheck" aria-label="Re-checking" />}</strong>
+      <small>{hint}</small>
+      {unavailable ? <button type="button" className="kg-inline-link" onClick={load} disabled={checking}>{checking ? "Retrying…" : "Retry"}</button>
+        : <small className={state.error ? "kg-recording-error" : "kg-recording-meta"} role={state.error ? "alert" : undefined}>{meta || "\u00a0"}</small>}
+    </span>
+    <button type="button" role="switch" aria-checked={!loading && state.recording} aria-label="Record knowledge gaps" className="kg-switch"
+      onClick={toggle} disabled={!canToggle} title={loading ? "Loading…" : canToggle ? (state.recording ? "Pause recording" : "Start recording") : "Only administrators can change this"}>
+      <span className="kg-switch-thumb" /></button>
   </div>;
 }
 
