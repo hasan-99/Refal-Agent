@@ -32,7 +32,7 @@ function loadGapPolicy() {
   return policyPromise;
 }
 
-const SETTINGS_TIMEOUT_MS = 2000;
+const SETTINGS_TIMEOUT_MS = 5000; // off the reply path; covers an Edge cold start
 
 function knowledgeGapsEnabled(env = process.env) {
   return /^(?:on|true|1|yes)$/iu.test(String(env?.RAFA_KNOWLEDGE_GAPS || "").trim());
