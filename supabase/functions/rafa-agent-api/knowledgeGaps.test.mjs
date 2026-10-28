@@ -141,3 +141,12 @@ test("Edge recording stores the contact uuid (not the phone), upgrades expired k
   assert.equal(record.p_event.language, "en");
   assert.equal(record.p_rate_limit_seconds, 600);
 });
+
+test("knowledge gap settings accept only a boolean recording flag and default to on", async () => {
+  const { validateKnowledgeGapSettings, readKnowledgeGapSettings, KNOWLEDGE_GAP_SETTINGS_KEY } = await import("./knowledgeGapPolicy.mjs");
+  assert.equal(KNOWLEDGE_GAP_SETTINGS_KEY, "knowledge_gaps");
+  assert.deepEqual(validateKnowledgeGapSettings({ recording: false, extra: "dropped" }), { recording: false });
+  for (const bad of [null, [], "on", { recording: "true" }, { recording: 1 }, {}]) assert.throws(() => validateKnowledgeGapSettings(bad));
+  assert.deepEqual(readKnowledgeGapSettings(undefined), { recording: true });
+  assert.deepEqual(readKnowledgeGapSettings({ recording: false, updatedBy: "a@b.c" }), { recording: false });
+});

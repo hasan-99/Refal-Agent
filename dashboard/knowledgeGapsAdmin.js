@@ -80,6 +80,7 @@ export function withPriority(group, stats = {}) {
 }
 
 const OPEN_STATUSES = new Set(["open", "reviewing", "needs_knowledge", "needs_retrieval_fix", "needs_agent_fix"]);
+const DONE_STATUSES = new Set(["resolved", "verified"]);
 
 export function filterGapGroups(groups, query = {}, linksByGroup = new Map()) {
   const text = String(query.q || "").normalize("NFKC").toLocaleLowerCase().trim().slice(0, 200);
@@ -87,7 +88,9 @@ export function filterGapGroups(groups, query = {}, linksByGroup = new Map()) {
   const to = Date.parse(query.to || "");
   const pick = (value) => String(value || "").trim();
   return groups.filter((group) => {
-    if (pick(query.status) && pick(query.status) !== "all" && (pick(query.status) === "active" ? !OPEN_STATUSES.has(group.status) : group.status !== pick(query.status))) return false;
+    const status = pick(query.status);
+    if (status && status !== "all" && (status === "active" ? !OPEN_STATUSES.has(group.status)
+      : status === "done" ? !DONE_STATUSES.has(group.status) : group.status !== status)) return false;
     if (pick(query.category) && pick(query.category) !== "all" && group.category !== pick(query.category)) return false;
     if (pick(query.priority) && pick(query.priority) !== "all" && group.priority !== pick(query.priority)) return false;
     if (pick(query.reason) && pick(query.reason) !== "all" && group.reason !== pick(query.reason)) return false;
@@ -214,7 +217,7 @@ function regressionTestsFor(group, links, { minRank = 5 } = {}) {
 
 export function registerKnowledgeGapAdminRoutes(app, {
   requireAdmin, supabaseRest, readAllRows = (path) => supabaseRest(path), env = process.env, now = () => new Date(),
-  createVerifier = null, logEvent = async () => {}
+  createVerifier = null, logEvent = async () => {}, getSettings = null, updateSettings = null
 } = {}) {
   if (!app?.get || !app?.post || typeof requireAdmin !== "function" || typeof supabaseRest !== "function") {
     throw new TypeError("An Express app, requireAdmin and supabaseRest are required.");
@@ -249,6 +252,30 @@ export function registerKnowledgeGapAdminRoutes(app, {
       priorities: GAP_PRIORITIES, reasons: Object.entries(GAP_REASON_LABELS).map(([id, label]) => ({ id, label })) });
   });
 
+  // Admin recording switch. Stored centrally (rafa_settings via the Edge API) so
+  // the WhatsApp worker picks it up within ~30 s without a restart. The worker's
+  // own RAFA_KNOWLEDGE_GAPS flag stays the master switch.
+  app.get("/api/knowledge-gaps/settings", gate, async (req, res) => {
+    try {
+      if (typeof getSettings !== "function") throw httpError(503, "Knowledge gap settings are not available on this dashboard.");
+      const value = await getSettings();
+      res.json({ recording: value?.settings?.recording === true, updatedAt: value?.updatedAt || null, updatedBy: value?.updatedBy || null,
+        canManage: req.dashboardUser?.role === "admin" });
+    } catch (error) { sendError(res, error); }
+  });
+
+  app.put("/api/knowledge-gaps/settings", gate, requireAdmin, async (req, res) => {
+    try {
+      if (typeof updateSettings !== "function") throw httpError(503, "Knowledge gap settings are not available on this dashboard.");
+      const actor = actorOf(req);
+      if (!actor) throw httpError(403, "A named administrator is required.");
+      if (typeof req.body?.recording !== "boolean") throw httpError(400, "recording must be true or false.");
+      const value = await updateSettings({ recording: req.body.recording }, { updatedBy: actor });
+      await logEvent("knowledge_gaps_recording_changed", { recording: req.body.recording, actor });
+      res.json({ recording: value?.settings?.recording === true, updatedAt: value?.updatedAt || null, updatedBy: value?.updatedBy || actor, canManage: true });
+    } catch (error) { sendError(res, error); }
+  });
+
   app.get("/api/knowledge-gaps", gate, async (req, res) => {
     try {
       const since = new Date(now().getTime() - 14 * 86400000).toISOString();
@@ -265,9 +292,16 @@ export function registerKnowledgeGapAdminRoutes(app, {
       const filtered = filterGapGroups(prioritized, req.query || {}, linksByGroup);
       const order = { critical: 0, high: 1, medium: 2, low: 3 };
       filtered.sort((a, b) => (order[a.priority] ?? 9) - (order[b.priority] ?? 9) || Date.parse(b.last_seen_at) - Date.parse(a.last_seen_at));
+      // Optional paging for the infinite list; without limit the full list is returned as before.
+      const limit = Number.parseInt(req.query?.limit, 10);
+      const offset = Math.max(0, Number.parseInt(req.query?.offset, 10) || 0);
+      const paged = Number.isInteger(limit) && limit > 0 ? filtered.slice(offset, offset + Math.min(limit, 100)) : filtered;
+      const nextOffset = paged === filtered || offset + paged.length >= filtered.length ? null : offset + paged.length;
       res.json({
-        groups: filtered.map(({ example_questions: examples, ...group }) => ({ ...group, exampleCount: (examples || []).length, examples: (examples || []).slice(-3) })),
+        groups: paged.map(({ example_questions: examples, ...group }) => ({ ...group, exampleCount: (examples || []).length, examples: (examples || []).slice(-3) })),
         total: prioritized.length,
+        filteredTotal: filtered.length,
+        nextOffset,
         metrics: gapMetrics(prioritized, recent, now()),
         facets: {
           categories: countBy(prioritized.map((group) => group.category)).map((item) => item.key),

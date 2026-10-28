@@ -32,6 +32,7 @@ import { fetchJsonWithTimeout, ProviderTimeoutError } from "./providerTransport.
 import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
 import { detectMessageLanguage, languageInstruction } from "./language.mjs";
 import { recordKnowledgeGapEvent } from "./knowledgeGapEvents.mjs";
+import { KNOWLEDGE_GAP_SETTINGS_KEY, readKnowledgeGapSettings, validateKnowledgeGapSettings } from "./knowledgeGapPolicy.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -217,6 +218,28 @@ Deno.serve(async (req: Request) => {
         const { data, error } = await supabase.from("rafa_settings").upsert({ key: "response_style", value: style }, { onConflict: "key" }).select("value,updated_at").single();
         if (error) throw error;
         return json({ style: validateResponseStyle(data.value), updatedAt: data.updated_at });
+      }
+    }
+
+    // Knowledge Gaps admin recording switch (dashboard toggle). The worker also
+    // needs its RAFA_KNOWLEDGE_GAPS master flag; this switch can only pause it.
+    if (parts[0] === "settings" && parts[1] === "knowledge-gaps" && parts.length === 2) {
+      if (req.method === "GET") {
+        const { data, error } = await supabase.from("rafa_settings").select("value,updated_at").eq("key", KNOWLEDGE_GAP_SETTINGS_KEY).maybeSingle();
+        if (error) throw error;
+        return json({ settings: readKnowledgeGapSettings(data?.value), updatedAt: data?.updated_at || null,
+          updatedBy: typeof data?.value?.updatedBy === "string" ? data.value.updatedBy : null });
+      }
+      if (req.method === "PUT") {
+        const body = await req.json().catch(() => ({}));
+        let settings;
+        try { settings = validateKnowledgeGapSettings(body.settings); }
+        catch (error) { throw new HttpError(error instanceof Error ? error.message : "Invalid knowledge gap settings.", 400); }
+        const updatedBy = String(body.updatedBy || "").trim().slice(0, 320) || null;
+        const { data, error } = await supabase.from("rafa_settings").upsert({ key: KNOWLEDGE_GAP_SETTINGS_KEY, value: { ...settings, updatedBy }, updated_at: new Date().toISOString() }, { onConflict: "key" })
+          .select("value,updated_at").single();
+        if (error) throw error;
+        return json({ settings: readKnowledgeGapSettings(data.value), updatedAt: data.updated_at, updatedBy });
       }
     }
 
