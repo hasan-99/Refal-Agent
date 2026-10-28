@@ -23,6 +23,36 @@ const { identityFromProfile } = require("./companyIdentitySettings");
 const { INTENTS } = require("./intent");
 const { RESPONSE_STYLE_DEFAULTS } = require("./responseStyle");
 const { BUSINESS_GUIDANCE_DEFAULTS } = require("./businessGuidance");
+const { conversationFlags, anyConversationFlag } = require("./conversationFlags");
+const { buildSessionMemory, getSessionMemoryStore, sameName } = require("./sessionMemory");
+const { readProfileMemory, deriveProfileUpdate, persistProfileMemory } = require("./userProfileMemory");
+const { createQualityCounters, turnQualityFields } = require("./conversationQuality");
+
+const NON_TOPIC_INTENTS = new Set([INTENTS.GREETING, INTENTS.SMALL_TALK, INTENTS.AGENT_IDENTITY, INTENTS.UNKNOWN, INTENTS.PROMPT_INJECTION,
+  INTENTS.UNRELATED, INTENTS.LANGUAGE_CAPABILITY, INTENTS.COMPLAINT, INTENTS.PRIVACY]);
+
+// Live-only facts for the session memory overlay: outcome, evidence refs,
+// non-search tool results. Ids, statuses and counts only, never text.
+function sessionOverlayFromResult(agentResult = {}, { intents = [], handoffStatus = null } = {}) {
+  const steps = Array.isArray(agentResult.steps) ? agentResult.steps : [];
+  const evidenceRefs = [...new Set(steps.flatMap((step) => step?.result?.modelObservation?.type === "approved_knowledge" ? step.result.modelObservation.evidence || [] : [])
+    .map((item) => item?.sourceRef).filter((ref) => typeof ref === "string"))];
+  const searches = steps.filter((step) => step?.tool === "searchApprovedKnowledge" && step?.result?.ok === true);
+  const topics = (Array.isArray(intents) ? intents : []).filter((intent) => typeof intent === "string" && !NON_TOPIC_INTENTS.has(intent)).map((intent) => intent.replace(/_/gu, " "));
+  const clean = ["responded", "clarified"].includes(agentResult.outcome);
+  const searchedWithoutEvidence = searches.length > 0 && evidenceRefs.length === 0;
+  return {
+    answered: agentResult.outcome === "responded" && !(topics.length && searchedWithoutEvidence),
+    clarified: agentResult.outcome === "clarified",
+    unanswered: topics.length > 0 && (!clean || searchedWithoutEvidence),
+    unansweredReason: !clean ? String(agentResult.outcome || "not_clean").slice(0, 40) : searchedWithoutEvidence ? "no_approved_evidence" : null,
+    topics, evidenceRefs,
+    search: searches.length ? { itemCount: searches.reduce((sum, step) => sum + (step.result.modelObservation?.evidence?.length || 0), 0) } : null,
+    toolResults: steps.filter((step) => step?.tool && !["searchApprovedKnowledge", "previousTurnApprovedKnowledge", "responsePolicyCheck"].includes(step.tool))
+      .map((step) => ({ tool: step.tool, ok: step?.result?.ok === true, status: step?.result?.status || "" })),
+    handoffStatus
+  };
+}
 
 // Per-turn latency and cache counters for agent_turn_completed. Counts,
 // durations and statuses only, never message text, queries or evidence.
@@ -87,6 +117,18 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
   const timing = {};
   const flags = latencyFlags();
   const turnMetrics = createTurnMetrics();
+  // Conversation-behaviour flags. All off: none of the code below runs and the
+  // Agent context, prompts, gates and events are exactly as before.
+  const convoFlags = conversationFlags();
+  const convoFeatures = anyConversationFlag(convoFlags) ? { structuredSessionMemory: convoFlags.structuredSessionMemory,
+    answerFirstStyle: convoFlags.answerFirstStyle, truthfulActionStates: convoFlags.truthfulActionStates, smartFollowups: convoFlags.smartFollowups } : null;
+  const qualityCounters = convoFeatures ? createQualityCounters() : null;
+  const sessionMemoryStore = convoFeatures ? getSessionMemoryStore({ idleTtlMs: convoFlags.sessionIdleTtlMs }) : null;
+  let sessionState = null;
+  let persistOutcome = null;
+  let completedResponseText = null;
+  let profileMemoryStatus = null;
+  let pendingProfileUpdate = null;
   // The knowledge version stamp is read once at the start of the turn, in
   // parallel with setup and preflight; the reader trusts it for 5 seconds.
   const versionReader = flags.sessionEvidenceCache || flags.searchCache ? getKnowledgeVersionReader(store) : null;
@@ -170,8 +212,13 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
     prepared, routed, userId, sourceMessage: String(agentMessage || ""), locale: language,
     metadata: prepared.metadata || {}, pendingResponse: "Your message is being processed."
   }, {
-    persistTurn: async ({ message, response, metadata }) => measure("sourceTurnPersistDurationMs",
-      async () => (await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true })).turn),
+    persistTurn: async ({ message, response, metadata }) => measure("sourceTurnPersistDurationMs", async () => {
+      const recorded = await recordHistory(store, userId, message, response, { metadata }, { bestEffortWorkflowWrites: true });
+      // Kept for the handoff state machine; read only when a flag is on.
+      persistOutcome = { handoverRequested: recorded?.handoverPersisted !== undefined || Boolean(recorded?.turn?.metadata?.handover),
+        handoverPersisted: recorded?.handoverPersisted };
+      return recorded.turn;
+    }),
     runAgent: async ({ sourceTurnId, allowedCapabilities }) => {
       completedSourceTurnId = sourceTurnId;
       const currentUser = await measure("contextLoadDurationMs", () => store.getUser(userId));
@@ -188,6 +235,40 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       const conversationState = getConversationState(currentUser || {});
       const consentState = getConsentState({ user: currentUser || {}, history }) || "unknown";
       const commitState = createCommitState();
+      const turnIntents = routed.metadata?.intent?.intents || prepared.classification?.intents || [];
+      let contactForAgent = {
+        id: userId,
+        // Keep customer-stated names transient: the latest explicit name in
+        // this conversation transcript is the durable source for continuity.
+        // A saved profile name is only a fallback when the transcript has no
+        // explicit name (for example, older contacts with imported memory).
+        name: prepared?.currentTurnCustomerName || priorCustomerName || currentUser?.profile?.name || null,
+        nameSource: prepared?.currentTurnCustomerName || priorCustomerName
+          ? "customer_stated" : currentUser?.profile?.nameSource || null
+      };
+      if (convoFeatures) {
+        await measure("sessionMemoryDurationMs", async () => {
+          const profileMemory = convoFlags.userProfileMemory ? readProfileMemory(currentUser, { retentionDays: convoFlags.profileRetentionDays }) : null;
+          sessionState = buildSessionMemory({ history: priorHistory, currentMessage: String(agentMessage || ""), language, user: currentUser || {},
+            currentTurn: { id: sourceTurnId, intents: turnIntents, handoverRequested: persistOutcome?.handoverRequested === true,
+              handoverPersisted: persistOutcome?.handoverPersisted, specialistRequested: prepared.classification?.operation === "specialist_request" },
+            overlay: sessionMemoryStore.overlay(userId), profileMemory, evidenceReuse, idleTtlMs: convoFlags.sessionIdleTtlMs });
+          if (convoFlags.userProfileMemory) {
+            const existing = profileMemory || (currentUser?.profile?.memoryProfile ? { fields: {} } : null);
+            pendingProfileUpdate = deriveProfileUpdate(sessionState, existing);
+          }
+        });
+        if (convoFlags.structuredSessionMemory) {
+          // Only a confirmed customer-stated name (session or durable profile)
+          // is used. A corrected or forgotten name is never re-used, and a
+          // WhatsApp/contact label never becomes a name.
+          const name = sessionState.user?.name?.status === "confirmed" ? sessionState.user.name.value : null;
+          const rejected = (value) => (sessionState.user?.nameCorrections || []).some((entry) => sameName(entry.value, value));
+          const fallbackAllowed = !name && contactForAgent.name && !rejected(contactForAgent.name) && !sessionState.conversation?.forgetRequested && !sessionState.user?.forgotten;
+          contactForAgent = name ? { id: userId, name, nameSource: "customer_stated" }
+            : fallbackAllowed ? contactForAgent : { id: userId, name: null, nameSource: null };
+        }
+      }
       const initialObservations = [
         ...(evidenceReuse.status === "hit" ? [evidenceReuse.observation] : []),
         ...(prefetchPromise ? [await measure("searchFirstWaitDurationMs", () => prefetchPromise)].filter(Boolean) : [])
@@ -197,16 +278,7 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         responseStyle,
         businessGuidance,
         companyIdentity,
-        contact: {
-          id: userId,
-          // Keep customer-stated names transient: the latest explicit name in
-          // this conversation transcript is the durable source for continuity.
-          // A saved profile name is only a fallback when the transcript has no
-          // explicit name (for example, older contacts with imported memory).
-          name: prepared?.currentTurnCustomerName || priorCustomerName || currentUser?.profile?.name || null,
-          nameSource: prepared?.currentTurnCustomerName || priorCustomerName
-            ? "customer_stated" : currentUser?.profile?.nameSource || null
-        },
+        contact: contactForAgent,
         recentConversation: buildRecentConversation(priorHistory),
         priorConfiguredIntroduction,
         conversationState, knownCustomerFacts: conversationState.agentFacts,
@@ -216,7 +288,8 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         language, inboundMessageId: providerMessageId || null,
         leadTier: routed.metadata?.leadTier || "", buyingSignals: routed.metadata?.buyingSignals || [],
         conversationPreferences: currentUser?.profile?.conversationPreferences || {},
-        contextualWorkflow: prepared.classification?.operation || "none"
+        contextualWorkflow: prepared.classification?.operation || "none",
+        ...(convoFeatures ? { conversationFeatures: convoFeatures, sessionState, conversationQuality: qualityCounters } : {})
       }, {
         ...agentOptions,
         tools: buildCommitTrackingToolRegistry(activeRegistry, commitState),
@@ -241,7 +314,8 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
         onPromptBudget: async (report) => {
           timing.promptBudget = { layout: report.layout, totalBytes: report.totalBytes, headroomBytes: report.headroomBytes,
             systemBytes: report.systemBytes, historyBytes: report.historyBytes, evidenceBudgetBytes: report.evidenceBudgetBytes,
-            evidenceItemsIncluded: report.evidenceItemsIncluded, evidenceItemsDropped: report.evidenceItemsDropped };
+            evidenceItemsIncluded: report.evidenceItemsIncluded, evidenceItemsDropped: report.evidenceItemsDropped,
+            ...(report.sessionStateBytes !== undefined ? { sessionStateBytes: report.sessionStateBytes } : {}) };
           if (report.evidenceItemsIncluded > 0 || report.evidenceItemsDropped > 0) await logEvent("agent_prompt_budget", { traceId, sourceTurnId, ...report });
           await agentOptions.onPromptBudget?.(report);
         },
@@ -273,6 +347,13 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       }));
       const decision = decideAgentTurnOutcome({ result: agentResult, commitState, locale: language });
       completedAgentResult = agentResult;
+      if (convoFeatures) {
+        completedResponseText = decision.send ? decision.responseText : null;
+        try {
+          sessionMemoryStore.recordTurn(userId, sourceTurnId, sessionOverlayFromResult(agentResult, { intents: turnIntents,
+            handoffStatus: sessionState?.actions?.handoff?.verified ? sessionState.actions.handoff.status : null }));
+        } catch { /* The overlay is an optimisation; the transcript rebuild stays authoritative. */ }
+      }
       if (agentResult.outcome === "prompt_budget_exhausted") {
         await logEvent("prompt_budget_exhausted", { traceId, sourceTurnId, stepCount: agentResult.stepCount, ...(timing.promptBudget || {}) });
       }
@@ -310,6 +391,11 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       });
     }
   });
+  if (pendingProfileUpdate) {
+    // RAFA_USER_PROFILE_MEMORY: written after the reply, best effort, so it
+    // adds no latency before the answer and a failure changes nothing.
+    profileMemoryStatus = (await persistProfileMemory(store, userId, pendingProfileUpdate)).status;
+  }
   if (completedAgentResult) {
     timing.postAnswerDurationMs = Math.max(0, (timing.turnUpdateDurationMs || 0) + (timing.topicSummaryDurationMs || 0) + (timing.replyDeliveryDurationMs || 0));
     timing.totalDurationMs = Math.max(0, Math.round(performance.now() - turnStartedAt));
@@ -319,7 +405,9 @@ async function runAgentLiveAnswerTurn({ socket, chatId, userId, text, providerMe
       persistenceUpdated: result.persistenceUpdated === true, ...timing, ...turnMetrics.metrics,
       fastSocialPath: fastSocialTurn, evidenceReuse: evidenceReuse.status,
       reusedChunkCount: evidenceReuse.status === "hit" ? evidenceReuse.chunkIds.length : 0,
-      searchFirst: searchFirst.basis, searchFirstSupportIntent: searchFirst.supportIntent || null, searchPrefetched: Boolean(prefetchPromise) });
+      searchFirst: searchFirst.basis, searchFirstSupportIntent: searchFirst.supportIntent || null, searchPrefetched: Boolean(prefetchPromise),
+      ...(convoFeatures ? { ...turnQualityFields({ counters: qualityCounters, sessionState, responseText: completedResponseText || "", agentResult: completedAgentResult }),
+        profileMemory: profileMemoryStatus } : {}) });
   }
   if (result.persistenceUpdated === false) {
     try { await logEvent("agent_reply_persistence_failed", { persistenceUpdated: false, delivered: result.sent === true }); }

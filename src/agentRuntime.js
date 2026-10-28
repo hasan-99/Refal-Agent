@@ -86,7 +86,8 @@ async function runAgentTurnForContact({
   currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, intents, conversationState,
   knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, fastSocialTurn = false, consentState, allowedCapabilities,
   leadTier, buyingSignals, conversationPreferences, contextualWorkflow, store, user, userId, language, embedText,
-  embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy, responseStyle, businessGuidance, companyIdentity
+  embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy, responseStyle, businessGuidance, companyIdentity,
+  sessionState = null, conversationFeatures = null, conversationQuality = null
 } = {}, {
   decideNextStep = defaultDecideNextStep, onModelCall, onModelUsage,
   onToolCall, onPolicyRejection, onPromptBudget, assessDraft = assessAgentDraft, tools: registry = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS,
@@ -98,7 +99,8 @@ async function runAgentTurnForContact({
   const context = buildAgentContext({
     currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, intents, conversationState,
     knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, fastSocialTurn, consentState, allowedCapabilities,
-    leadTier, buyingSignals, conversationPreferences, contextualWorkflow, responseStyle, businessGuidance, companyIdentity
+    leadTier, buyingSignals, conversationPreferences, contextualWorkflow, responseStyle, businessGuidance, companyIdentity,
+    sessionState, conversationFeatures, conversationQuality
   });
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,

@@ -25,6 +25,7 @@ const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
 const { probesAnotherCustomer, crossCustomerRefusal } = require("./crossCustomerPolicy");
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
 const { isSpecificAppointmentAvailabilityInquiry } = require("./contextualPreflight");
+const { conversationFlags } = require("./conversationFlags");
 
 const NO_PROACTIVE_CONTACT_OR_BOOKING = /\b(?:please\s+)?do\s+not\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:please\s+)?don't\s+pressure\s+me\s+(?:to\s+book|about\s+(?:a\s+)?call|to\s+send|to\s+share)\b.{0,100}\b(?:contact\s+details|contact|booking|book|share|send)\b|\b(?:i|we)\s+(?:can|will|'ll)\s+(?:ask|reach\s+out|come\s+back|contact)\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\b(?:still\s+comparing|not\s+ready\s+to\s+(?:book|schedule|share\s+(?:my\s+)?contact))\b.{0,100}\b(?:later|when\s+(?:i|we)(?:'m|\s+am|\s+are)\s+ready|if\s+(?:i|we)\s+decide)\b|\bden\s+thelo\s+na\s+me\s+piesis\b.{0,140}\b(?:kleiso|stoicheia\s+epikoinonias|epikoinonias)\b|\b(?:an|otan)\s+(?:thelo|xreiastei|apofasiso)\b.{0,100}\b(?:tha\s+)?(?:rotiso|epikoinoniso|to\s+zit(?:iso|iseis))\b|إذا\s*(?:قررت|احتجت|بحتاج).{0,100}(?:بسأل|رح\s*اسأل|بتواصل|بحكي).{0,50}(?:بعدين|لاحقاً|لما\s*كون\s*جاهز)|(?:لسا\s*عم\s*قارن|مو\s*جاهز).{0,100}(?:بعدين|لاحقاً|لما\s*قرر)|(?:αν|όταν)\s+(?:αποφασίσω|είμαι\s+έτοιμος|το\s+χρειαστώ).{0,100}(?:θα\s+)?(?:ρωτήσω|επικοινωνήσω|κλείσω).{0,40}(?:αργότερα|μετά)/iu;
 const QUALIFICATION_EVIDENCE = Symbol("qualification evidence retained until durable turn insert");
@@ -323,6 +324,10 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     turn,
     turnId: turn?.id || null,
     workflowError: workflowFailures.length > 0,
+    // Which workflow writes failed (operation names only), so a caller can
+    // report a handover truthfully instead of from the aggregate flag.
+    failedWorkflowOperations: workflowFailures.map((failure) => failure.operation),
+    handoverPersisted: handoverWrite ? !workflowFailures.some((failure) => failure.operation === "createHandover") : undefined,
     ...(metadata.complianceEscalation?.record
       ? { complianceRecorded: Boolean(complianceAuditRecord), complianceRecordId: complianceAuditRecord?.id || null }
       : {})
@@ -699,7 +704,14 @@ function extractCustomerName(text) {
 // Contextual turns may contain an explicit correction to a saved name. Accept
 // only unambiguous name-introduction forms here: the broader "I am ..." form
 // can also describe a need or role, so it remains disabled in this path.
-function extractExplicitCustomerName(text) {
+function extractExplicitCustomerName(text, { ignoreFlag = false } = {}) {
+  // RAFA_STRUCTURED_SESSION_MEMORY: negation-aware parsing, so "My name is not
+  // Sami, it is Hassan" yields Hassan instead of "not Sami". Flag off: the
+  // original grammar below, unchanged.
+  if (!ignoreFlag && conversationFlags().structuredSessionMemory) {
+    const parsed = require("./sessionMemory").parseNameStatement(text);
+    return parsed.name && !parsed.hedged ? parsed.name : null;
+  }
   const value = selfIntroductionClause(text);
   const explicitIntro = /^(?:my name is|call me|(?:أنا|انا) اسمي|اسمي|με λένε|με λενε|λέγομαι|λεγομαι|ονομάζομαι|ονομαζομαι)\s+/iu;
   const singleNameIntro = /^(?:أنا|انا)\s+[\p{L}\p{M}][\p{L}\p{M}'-]*[.!،؟?]*$/iu;
@@ -709,6 +721,12 @@ function extractExplicitCustomerName(text) {
 
 function latestCustomerStatedName(history = []) {
   if (!Array.isArray(history)) return null;
+  // RAFA_STRUCTURED_SESSION_MEMORY: fold forward so a later "my name is not X"
+  // or "forget my details" can never be undone by an older introduction.
+  if (conversationFlags().structuredSessionMemory) {
+    const folded = require("./sessionMemory").foldConfirmedName(history).name;
+    return folded?.status === "confirmed" ? folded.value : null;
+  }
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const turn = history[index];
     const message = typeof turn?.message === "string" ? turn.message
