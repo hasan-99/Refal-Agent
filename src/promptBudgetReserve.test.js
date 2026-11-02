@@ -19,8 +19,11 @@ transport.fetchOpenRouter = async (_url, init) => {
   let content;
   if (surface === "rafa_agent_decision") {
     const marker = /TOPFACT-[A-Z]+-\d+/u.exec(user)?.[0];
+    const language = /locale: arabic/u.test(user) ? "arabic" : "english";
     content = JSON.stringify(marker
-      ? { type: "respond", tool: null, args: null, text: `${marker}: the approved answer is stated in the top section.` }
+      ? { type: "respond", tool: null, args: null, text: language === "arabic"
+        ? `بحسب المقطع المعتمد ${marker}، الإجابة موضحة في هذا القسم.`
+        : `${marker}: the approved answer is stated in the top section.` }
       : { type: "tool", tool: "searchApprovedKnowledge", args: JSON.stringify({ query: "approved answer" }), text: null });
   } else {
     const parsed = JSON.parse(user);

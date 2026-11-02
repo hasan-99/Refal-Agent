@@ -28,14 +28,14 @@ const EVIDENCE_TEXT = "Refalco Group provides Company Formation for EUR 1500. Ac
 // --- Important Integration Test (ticket-required, cases A/B/C) -------------
 
 test("Important Integration Test — Case A: a response that only restates grounded facts is allowed", async () => {
-  const context = buildAgentContext({ currentMessage: "What services do you provide and how much does company formation cost?", locale: "english" });
+  const context = buildAgentContext({ currentMessage: "What services do you provide?", locale: "english" });
   const decide = scriptedDecider([
-    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "services and company formation price" } },
-    { type: "respond", text: "Refalco Group offers Company Formation for EUR 1500 and Accounting services." }
+    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+    { type: "respond", text: "Refalco Group offers Company Formation and Accounting services." }
   ]);
   const result = await runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store: storeWith(EVIDENCE_TEXT), embedText: async () => null } });
   assert.equal(result.outcome, "responded");
-  assert.equal(result.response, "Refalco Group offers Company Formation for EUR 1500 and Accounting services.");
+  assert.equal(result.response, "Refalco Group offers Company Formation and Accounting services.");
 });
 
 function currentOfferRows(overrides = {}) {
@@ -63,6 +63,62 @@ test("a current dynamic offer reaches and passes the real Agent grounding gate",
   assert.equal(result.outcome, "responded");
   assert.match(result.response, /EUR 999/);
   assert.equal(result.steps[0].result.modelObservation.source, "trusted_edge_dynamic_read");
+});
+
+test("an approved RAG price reaches and passes the real Agent grounding gate without Active Offer", async () => {
+  const context = buildAgentContext({ currentMessage: "What is the company formation package price?", locale: "english" });
+  const decide = scriptedDecider([
+    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation package price" } },
+    { type: "respond", text: "The company formation package is EUR 1500." }
+  ]);
+  const result = await runAgentTurn(context, {
+    decideNextStep: decide,
+    tools: TOOL_REGISTRY,
+    toolContext: { store: storeWith("The approved company formation package price is EUR 1500."), embedText: async () => null }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /EUR 1500/);
+});
+
+async function runConflictingPrices({ ragEffectiveAt = null, offerEffectiveAt = new Date(Date.now() - 86400000).toISOString(), answer = "The Cyprus company formation package is EUR 999 plus VAT." } = {}) {
+  const context = buildAgentContext({ currentMessage: "What is the Cyprus company formation package price?", locale: "english" });
+  const decide = scriptedDecider([
+    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "Cyprus company formation package price" } },
+    { type: "tool", tool: "lookupActiveOffer", args: { code: "formation-package" } },
+    { type: "respond", text: answer }
+  ]);
+  const offer = currentOfferRows({ amount: 999, location: "Cyprus", vat_note: "plus VAT", effective_from: offerEffectiveAt, valid_until: new Date(Date.now() + 86400000).toISOString() });
+  const store = {
+    searchKnowledge: async () => [{ document_title: "Cyprus company formation package", content: "The Cyprus company formation package costs EUR 888 plus VAT.", chunk_id: "price-rag", document_id: "price-doc", review_status: "approved", valid_until: new Date(Date.now() + 86400000).toISOString(), approved_at: new Date(Date.now()).toISOString(), policyMetadata: { reviewStatus: "approved", validUntil: new Date(Date.now() + 86400000).toISOString(), approvedAt: new Date(Date.now()).toISOString(), priceEffectiveAt: ragEffectiveAt } }],
+    lookupDynamicData: async () => ({ ok: true, status: "found", data: offer })
+  };
+  return runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store, embedText: async () => null }, maxSteps: 3 });
+}
+
+test("newer Active Offer effective date wins and the losing RAG price is unavailable to grounding", async () => {
+  const now = Date.now();
+  const result = await runConflictingPrices({ ragEffectiveAt: new Date(now - 2 * 86400000).toISOString(), offerEffectiveAt: new Date(now - 86400000).toISOString() });
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /EUR 999/);
+});
+
+test("newer RAG price wins only with explicit effective metadata; approval time alone is not effective time", async () => {
+  const now = Date.now();
+  const result = await runConflictingPrices({ ragEffectiveAt: new Date(now - 12 * 3600000).toISOString(), offerEffectiveAt: new Date(now - 2 * 86400000).toISOString(), answer: "The Cyprus company formation package costs EUR 888 plus VAT." });
+  assert.equal(result.outcome, "responded");
+  assert.match(result.response, /EUR 888/);
+
+  const approvalOnly = await runConflictingPrices({ ragEffectiveAt: null, offerEffectiveAt: new Date(now - 2 * 86400000).toISOString(), answer: "The Cyprus company formation package costs EUR 888 plus VAT." });
+  assert.equal(approvalOnly.outcome, "response_rejected");
+  assert.match(approvalOnly.reason, /unsupported_price_claim/);
+});
+
+test("conflicting current prices without precedence evidence end in safe uncertainty", async () => {
+  const result = await runConflictingPrices({ ragEffectiveAt: null, answer: "The Cyprus company formation package is EUR 999 plus VAT." });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /unsupported_price_claim/);
+  assert.doesNotMatch(result.response, /888|999/);
+  assert.match(result.response, /conflict|confirm|unconfirmed|not available|not able/i);
 });
 
 test("an expired dynamic offer is unavailable and cannot ground a claimed price in the real Agent loop", async () => {
@@ -99,17 +155,17 @@ test("Important Integration Test — Case B: an unsupported price (EUR 2500 vs e
 });
 
 test("Important Integration Test — Case C: unsupported added services (Payroll, Legal Representation) are rejected; a corrected second draft without them succeeds (tests 15/16/26/27)", async () => {
-  const context = buildAgentContext({ currentMessage: "What services do you provide and how much does company formation cost?", locale: "english" });
+  const context = buildAgentContext({ currentMessage: "What services do you provide?", locale: "english" });
   const decide = scriptedDecider([
-    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "services and company formation price" } },
-    // Step 2: supported price + an unsupported service addition — must be rejected (test 15).
-    { type: "respond", text: "Refalco Group offers Company Formation for EUR 1500, Accounting, Payroll and Legal Representation." },
-    // Step 3: the corrected draft drops the unsupported items — must succeed (test 16/27).
-    { type: "respond", text: "Refalco Group offers Company Formation for EUR 1500 and Accounting services." }
+    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company services" } },
+    // Step 2: an unsupported service addition must be rejected (test 15).
+    { type: "respond", text: "Refalco Group offers Company Formation, Accounting, Payroll and Legal Representation." },
+    // Step 3: the corrected draft drops the unsupported items (test 16/27).
+    { type: "respond", text: "Refalco Group offers Company Formation and Accounting services." }
   ]);
   const result = await runAgentTurn(context, { decideNextStep: decide, tools: TOOL_REGISTRY, toolContext: { store: storeWith(EVIDENCE_TEXT), embedText: async () => null }, maxSteps: 3 });
   assert.equal(result.outcome, "responded");
-  assert.equal(result.response, "Refalco Group offers Company Formation for EUR 1500 and Accounting services.");
+  assert.equal(result.response, "Refalco Group offers Company Formation and Accounting services.");
   assert.equal(result.stepCount, 3);
   // Test 26: the rejection became a structured observation the retried
   // decision could see, not a silent edit or a thrown error.

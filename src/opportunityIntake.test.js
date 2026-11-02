@@ -29,3 +29,13 @@ test("normalizes labelled formation and development facts without inventing valu
   assert.equal(build.data.boq, "available");
   assert.equal(build.data.approximateProjectValue, "€20M");
 });
+
+test("attachment review captions are not saved as company activity, and stale caption data is removed", () => {
+  const existing = { type: "company_formation", status: "in_progress",
+    data: { businessActivity: "Please review the attached file" },
+    provenance: { businessActivity: "customer_stated" } };
+  const result = updateIntake(existing, { intents: ["company_formation"], text: "I want to register a company in Cyprus." });
+  assert.equal(result.data.businessActivity, undefined);
+  assert.equal(result.provenance.businessActivity, undefined);
+  assert.ok(result.missingFields.includes("businessActivity"));
+});

@@ -9,6 +9,10 @@ export function normalizeHandoverLanguage(value) {
   return LANGUAGE_ALIASES[text] || "unknown";
 }
 
+export function handoverLanguage({ summary, profile } = {}) {
+  return normalizeHandoverLanguage(summary?.language || summary?.customer?.language || profile?.preferredLanguage || profile?.language);
+}
+
 export function filterHandovers(handovers = [], filters = {}) {
   const department = String(filters.department || "all").toLowerCase();
   const priority = String(filters.priority || "all").toLowerCase();

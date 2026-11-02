@@ -239,6 +239,9 @@
 .conversation-flag-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .conversation-flag-list span { padding: 4px 7px; border-radius: 4px; color: #99533f; background: #fff1ed; font-size: 9px; font-weight: 700; }
 .conversation-handover-summary { margin: 0; padding: 9px 10px; display: grid; gap: 4px; border-left: 3px solid #4d97ae; color: #526d78; background: #f2f8fa; font-size: 10px; line-height: 1.45; }
+.conversation-workflow-badge:first-child { color: #6d5010; border-color: #ead8a6; background: #fff8df; }
+.conversation-close-ready { display:grid; gap:4px; padding:10px 12px; border:1px solid #ead8a6; border-left:3px solid #d29b32; border-radius:5px; color:#705a2c; background:#fff9e8; font-size:11px; line-height:1.45; }
+.conversation-close-ready strong { color:#62490e; font-size:12px; }
 .conversation-handover-summary strong { color: #2f6175; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .conversation-preview { display: block; max-width: 320px; overflow: hidden; color: #617784; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-direction,
@@ -320,44 +323,6 @@
 .conversation-contact-editor input { width: 100%; min-height: 34px; padding: 7px 9px; border: 1px solid #d1e0e7; border-radius: 4px; color: #284656; background: #fff; font-size: 10px; }
 .conversation-contact-editor .conversation-save-button { min-height: 34px; padding: 6px 9px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .conversation-contact-notice { margin: -9px 0 0; color: #357a61; font-size: 10px; }
-.conversation-diagnostics { padding: 18px; border: 1px solid #cbdfe8; border-radius: 9px; color: #284656; background: linear-gradient(145deg, #fff 0%, #f5fafc 100%); box-shadow: 0 4px 14px rgb(35 69 87 / 5%); }
-.conversation-diagnostics-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
-.conversation-diagnostics-heading > div { min-width: 0; }
-.conversation-diagnostics-kicker { color: #397b98; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
-.conversation-diagnostics h2 { margin: 5px 0 0; color: #173a50; font-size: 17px; line-height: 1.3; }
-.conversation-diagnostics-heading p { margin: 5px 0 0; color: #627b87; font-size: 11px; line-height: 1.5; }
-.conversation-diagnostics-load { min-height: 38px; padding: 0 13px; flex: 0 0 auto; border: 1px solid #287da8; border-radius: 6px; color: #fff; background: #287da8; font-size: 10px; font-weight: 700; }
-.conversation-diagnostics-load:hover { border-color: #206b91; background: #206b91; }
-.conversation-diagnostics-guide { margin-top: 14px; padding: 12px 14px; border: 1px solid #d8e8ee; border-radius: 7px; background: #f4f9fb; }
-.conversation-diagnostics-guide > strong { color: #23485b; font-size: 10px; }
-.conversation-diagnostics-guide ol { margin: 7px 0 0; padding-left: 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; color: #55717e; font-size: 10px; line-height: 1.55; }
-.conversation-diagnostics-note { margin: 10px 0 0; color: #71838b; font-size: 9px; line-height: 1.5; }
-.conversation-diagnostics-error,.conversation-diagnostics-empty { margin: 12px 0 0; padding: 11px 12px; border-radius: 6px; color: #536e7b; background: #edf5f8; font-size: 10px; line-height: 1.5; }
-.conversation-diagnostics-error { color: #98473e; background: #fff3f1; }
-.conversation-diagnostic-record { margin-top: 12px; overflow: hidden; border: 1px solid #d5e3e9; border-radius: 7px; background: #fff; }
-.conversation-diagnostic-record > summary { min-height: 55px; padding: 9px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style-position: inside; }
-.conversation-diagnostic-record > summary > span:first-of-type { min-width: 0; display: grid; gap: 4px; }
-.conversation-diagnostic-record > summary strong { color: #294a5b; font-size: 10px; }
-.conversation-diagnostic-record > summary small { color: #7a8d96; font-size: 9px; }
-.conversation-diagnostic-count { padding: 4px 8px; flex: 0 0 auto; border-radius: 99px; color: #84591c; background: #fff4da; font-size: 9px; font-weight: 700; }
-.conversation-diagnostic-body { padding: 0 14px 14px; border-top: 1px solid #edf2f4; }
-.conversation-diagnostic-body h3 { margin: 14px 0 7px; color: #31566a; font-size: 10px; }
-.conversation-diagnostic-reasons { margin: 0; padding: 0; display: grid; gap: 6px; list-style: none; }
-.conversation-diagnostic-reasons li { padding: 9px 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border: 1px solid #f0e4c8; border-radius: 5px; color: #5f5140; background: #fffaf0; font-size: 10px; line-height: 1.5; }
-.conversation-diagnostic-reasons code,.conversation-diagnostic-technical code { flex: 0 0 auto; color: #806c4e; font-size: 9px; overflow-wrap: anywhere; }
-.conversation-diagnostic-claims blockquote,.conversation-diagnostic-draft p { margin: 0; padding: 10px 11px; border-left: 3px solid #e3bd70; border-radius: 3px; color: #3b515c; background: #faf8f3; font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
-.conversation-diagnostic-evidence > h3 { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
-.conversation-diagnostic-evidence > h3 span { color: #71838b; font-size: 9px; font-weight: 500; }
-.conversation-diagnostic-evidence > details { margin-top: 6px; border: 1px solid #dce8ed; border-radius: 5px; background: #fbfdfe; }
-.conversation-diagnostic-evidence > details > summary { padding: 9px 10px; display: grid; gap: 3px; cursor: pointer; }
-.conversation-diagnostic-evidence > details > summary span { color: #31566a; font-size: 10px; font-weight: 700; }
-.conversation-diagnostic-evidence > details > summary small { color: #71838b; font-size: 9px; }
-.conversation-diagnostic-evidence pre { max-height: 260px; overflow: auto; margin: 0 10px 8px; padding: 9px; border-radius: 4px; color: #425b67; background: #f1f6f8; font-family: inherit; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
-.conversation-diagnostic-source { display: block; margin: 0 10px 9px; color: #75868e; font-size: 8px; overflow-wrap: anywhere; }
-.conversation-diagnostic-technical { margin-top: 12px; border-top: 1px solid #e8eef1; }
-.conversation-diagnostic-technical > summary { padding: 10px 0 0; color: #657b85; cursor: pointer; font-size: 9px; font-weight: 700; }
-.conversation-diagnostic-technical dl { margin: 8px 0 0; display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px 10px; color: #6c818b; font-size: 9px; }
-.conversation-diagnostic-technical dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .conversation-thread-wrap { min-width: 0; overflow: hidden; border: 1px solid #d4e1e8; border-radius: 7px; background: #f8fbfd; box-shadow: 0 3px 10px rgb(35 69 87 / 5%); }
 .conversation-thread { min-height: 260px; max-height: min(68vh, 760px); overflow-y: auto; padding: clamp(14px, 3vw, 28px); display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
 .conversation-message { width: fit-content; max-width: min(80%, 650px); display: flex; flex-direction: column; gap: 2px; }
@@ -366,8 +331,51 @@
 .conversation-message-bubble { width: fit-content; min-width: 88px; max-width: 100%; padding: 10px 14px; border: 1px solid #dce7ec; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgb(31 64 82 / 4%); }
 .conversation-message.from-rafa .conversation-message-bubble { border-color: #c8e0eb; background: #eaf5fa; }
 .conversation-message-body { margin: 0; color: #294454; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; text-align: start; unicode-bidi: plaintext; }
+.conversation-attachment { display: flex; align-items: center; gap: 9px; margin-top: 10px; padding: 9px; border: 1px solid #d5e3e9; border-radius: 8px; background: #f4f8fa; }
+.conversation-attachment-icon { flex: 0 0 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; color: #28627c; background: #e1eff5; font-size: 9px; font-weight: 700; }
+.conversation-attachment-details { min-width: 0; display: grid; gap: 3px; }
+.conversation-attachment-details strong { overflow-wrap: anywhere; color: #294454; font-size: 11px; }
+.conversation-attachment-details small { overflow-wrap: anywhere; color: #718792; font-size: 9px; }
+.conversation-attachment-status { margin-left: auto; color: #517064; font-size: 9px; white-space: nowrap; }
+.conversation-attachments { margin: 12px 0; padding: 11px 12px; border: 1px solid #dce8ed; border-radius: 8px; background: #fbfdfe; }
+.conversation-attachments-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.conversation-attachments-heading h2 { margin: 3px 0 0; color: #294653; font-size: 14px; }
+.conversation-attachments-actions { display: flex; align-items: center; gap: 10px; }
+.conversation-attachments-actions > span { color: #718792; font-size: 10px; white-space: nowrap; }
+.conversation-attachments-toggle { min-height: 29px; padding: 0 9px; border: 1px solid #d3e3ea; border-radius: 5px; color: #287293; background: #fff; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.conversation-attachments-toggle:hover { border-color: #9bc6d8; background: #f4fafc; }
+.conversation-attachments-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 8px; }
+.conversation-attachments-grid.is-expanded { max-height: 320px; overflow-y: auto; padding: 1px 4px 4px 1px; }
+.conversation-attachments-grid.is-compact { grid-template-columns: minmax(0, 1fr); }
+.conversation-file-card { min-width: 0; min-height: 68px; padding: 8px; display: flex; align-items: center; gap: 10px; border: 1px solid #e0eaee; border-radius: 7px; color: inherit; background: #fff; text-align: left; cursor: pointer; }
+.conversation-attachments-grid.is-compact .conversation-file-card { min-height: 56px; padding: 5px 8px; }
+.conversation-attachments-grid.is-compact .conversation-file-thumb { width: 40px; min-width: 40px; height: 40px; }
+.conversation-file-card:hover { border-color: #9bc6d8; background: #f6fbfd; }
+.conversation-file-thumb { width: 48px; min-width: 48px; height: 48px; display: grid; place-items: center; overflow: hidden; border-radius: 5px; background: #eef5f8; }
+.conversation-file-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.conversation-file-copy { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.conversation-file-copy strong { overflow: hidden; color: #294653; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-file-copy small { overflow: hidden; color: #718792; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-file-open { color: #287da8; font-size: 10px; font-weight: 700; }
+.conversation-file-modal-backdrop { position: fixed; z-index: 1000; inset: 0; padding: 24px; display: grid; place-items: center; background: rgb(16 31 39 / 64%); }
+.conversation-file-modal { width: min(880px, 100%); max-height: min(90vh, 900px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d9e5ea; border-radius: 11px; background: #fff; box-shadow: 0 20px 70px rgb(0 0 0 / 28%); }
+.conversation-file-modal > header, .conversation-file-modal > footer { padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.conversation-file-modal > header { border-bottom: 1px solid #e5ecef; }
+.conversation-file-modal > header h2 { margin: 3px 0 0; color: #294653; font-size: 15px; overflow-wrap: anywhere; }
+.conversation-file-modal > header button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 6px; color: #526b77; background: #f0f5f7; cursor: pointer; }
+.conversation-file-preview { min-height: 220px; flex: 1; display: grid; place-items: center; overflow: auto; background: #f2f5f7; }
+.conversation-file-loading { padding: 28px; color: #526b77; font-size: 13px; }
+.conversation-file-preview > img { max-width: 100%; max-height: 70vh; object-fit: contain; }
+.conversation-file-preview > iframe { width: 100%; height: min(70vh, 720px); border: 0; background: #fff; }
+.conversation-file-unavailable { max-width: 400px; padding: 28px; display: grid; justify-items: center; gap: 10px; color: #49616d; text-align: center; }
+.conversation-file-unavailable strong { font-size: 14px; }
+.conversation-file-unavailable p { margin: 0; color: #718792; font-size: 12px; line-height: 1.5; }
+.conversation-file-modal > footer { border-top: 1px solid #e5ecef; color: #718792; font-size: 11px; }
+.conversation-file-modal > footer a { display: inline-flex; align-items: center; gap: 6px; color: #24769d; text-decoration: none; font-weight: 700; }
+@media (max-width: 520px) { .conversation-file-modal-backdrop { padding: 10px; } .conversation-file-card { gap: 7px; } .conversation-file-open { font-size: 9px; } }
 .conversation-message-footer { min-height: 18px; padding: 0 3px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .conversation-message-footer time { color: #7c909a; font-size: 9px; line-height: 1; white-space: nowrap; }
+.conversation-response-type { color: #617782; font-size: 9px; line-height: 1; white-space: nowrap; }
 .conversation-edit-button { min-height: 22px; margin: 0; padding: 2px 5px; display: inline-flex; align-items: center; gap: 4px; border-color: transparent; color: #397b98; background: transparent; font-size: 9px; }
 .conversation-edit-button:hover { border-color: #bdd9e6; background: #f7fbfd; }
 .conversation-edit-form { margin-top: 9px; }
@@ -387,11 +395,6 @@
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
 @media (max-width: 760px) {
-  .conversation-diagnostics { padding: 13px; }
-  .conversation-diagnostics-heading { align-items: flex-start; flex-direction: column; }
-  .conversation-diagnostics-load { min-height: 35px; }
-  .conversation-diagnostics-guide ol { grid-template-columns: minmax(0, 1fr); gap: 5px; }
-  .conversation-diagnostic-reasons li { flex-direction: column; gap: 4px; }
   .conversation-temperature-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversations-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
   .conversations-toolbar > .conversation-search { grid-column: 1 / -1; }

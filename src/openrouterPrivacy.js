@@ -11,6 +11,10 @@ const DEFAULT_OPENROUTER_FALLBACK_MODEL = "openai/gpt-6-luna";
 // dropped. Claude Sonnet 5.5 requires reasoning to remain enabled; low effort
 // keeps routine turns responsive while excluding reasoning from the response.
 const NO_SAMPLING_PARAMETER_MODELS = new Set([DEFAULT_OPENROUTER_MODEL, DEFAULT_OPENROUTER_FALLBACK_MODEL]);
+// DeepSeek V4.1 Flash is reasoning-enabled by default. Keeping the effort low
+// protects small structured-output calls (such as contextual preflight) from
+// spending their entire completion budget before emitting the requested JSON.
+const LOW_EFFORT_REASONING_MODELS = new Set(["deepseek/deepseek-v4.1-flash-1017"]);
 const LEGACY_OPENROUTER_MODELS = new Set([
   "inclusionai/ling-3.0-flash-sante:free",
   "openrouter/free",
@@ -24,6 +28,13 @@ function withOpenRouterPrivacyPolicy(payload) {
     delete compatible.temperature;
     delete compatible.top_p;
     compatible.reasoning = { effort: "low", exclude: true };
+  }
+  if (LOW_EFFORT_REASONING_MODELS.has(compatible.model)) {
+    compatible.reasoning = compatible.reasoning?.enabled === false
+      ? { effort: "none", exclude: true }
+      : compatible.reasoning?.effort
+        ? { ...compatible.reasoning, exclude: true }
+        : { effort: "low", exclude: true };
   }
   // One Anthropic ZDR endpoint (Amazon Bedrock) lacks strict structured
   // outputs. A json_schema request must only route to endpoints that honour
@@ -53,6 +64,7 @@ module.exports = {
   classifyEmbeddingFailure,
   DEFAULT_OPENROUTER_FALLBACK_MODEL,
   DEFAULT_OPENROUTER_MODEL,
+  LOW_EFFORT_REASONING_MODELS,
   LEGACY_OPENROUTER_MODELS,
   OPENROUTER_PRIVACY_POLICY,
   resolveOpenRouterModel,

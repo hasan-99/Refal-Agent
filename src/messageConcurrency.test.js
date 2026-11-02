@@ -33,6 +33,19 @@ test("serializes messages from one contact in FIFO order", async () => {
   assert.deepEqual(seen, ["first:start", "first:end", "second"]);
 });
 
+test("queued attachment metadata can supersede an in-flight review-request turn", async () => {
+  const executor = createMessageExecutor({ concurrency: 2, maxQueue: 5 });
+  const gate = deferred();
+  const first = executor.run("contact-review", () => gate.promise);
+  await Promise.resolve();
+  const upload = executor.run("contact-review", async () => {}, { hasAttachment: true });
+  assert.equal(executor.hasQueued("contact-review", (metadata) => metadata.hasAttachment === true), true);
+  assert.equal(executor.hasQueued("contact-review", (metadata) => metadata.hasAttachment === false), false);
+  gate.resolve();
+  await Promise.all([first, upload]);
+  assert.equal(executor.hasQueued("contact-review"), false);
+});
+
 test("serializes legacy and current phone JID spellings for the same contact", async () => {
   const executor = createMessageExecutor({ concurrency: 2, maxQueue: 2 });
   const gate = deferred();

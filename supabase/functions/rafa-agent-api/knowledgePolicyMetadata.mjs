@@ -10,7 +10,7 @@ function cleanIds(values, pattern) {
   return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter((value) => pattern.test(value)))];
 }
 
-function policyMetadataForRow(row, chunkMetadata, factRows) {
+function policyMetadataForRow(row, chunkMetadata, factRows, documentMetadata = {}) {
   const facts = cleanIds(chunkMetadata?.facts, FACT_ID);
   const supporting = cleanIds(chunkMetadata?.supporting, FACT_ID);
   const factById = new Map((Array.isArray(factRows) ? factRows : []).map((item) => [item.fact_id, item]));
@@ -36,7 +36,13 @@ function policyMetadataForRow(row, chunkMetadata, factRows) {
     factRegisterRows,
     // Search RPC status and expiry remain authoritative for the document.
     reviewStatus: row?.review_status === "approved" ? "approved" : null,
-    validUntil: typeof row?.valid_until === "string" ? row.valid_until.slice(0, 40) : null
+    validUntil: typeof row?.valid_until === "string" ? row.valid_until.slice(0, 40) : null,
+    approvedAt: typeof row?.approved_at === "string" && Number.isFinite(Date.parse(row.approved_at)) ? row.approved_at.slice(0, 40) : null,
+    // Approval time records governance; only this separately curated field
+    // may establish when a price itself became effective.
+    priceEffectiveAt: typeof documentMetadata?.priceEffectiveAt === "string"
+      && Number.isFinite(Date.parse(documentMetadata.priceEffectiveAt))
+      ? documentMetadata.priceEffectiveAt.slice(0, 40) : null
   };
 }
 
@@ -50,6 +56,16 @@ async function attachKnowledgePolicyMetadata(supabase, rows) {
     throw Object.assign(new Error("Knowledge governance metadata is unavailable."), { code: "KNOWLEDGE_METADATA_UNAVAILABLE" });
   }
   const chunkById = new Map(chunksResult.data.map((chunk) => [chunk.id, chunk.metadata || {}]));
+  const documentIds = cleanIds(results.map((row) => row?.document_id), UUID);
+  const documentById = new Map();
+  if (documentIds.length) {
+    const documentsResult = await supabase.from("rafa_knowledge_documents").select("id,metadata").in("id", documentIds);
+    if (documentsResult?.error || !Array.isArray(documentsResult?.data)
+      || documentIds.some((id) => !documentsResult.data.some((row) => row.id === id))) {
+      throw Object.assign(new Error("Knowledge revision metadata is unavailable."), { code: "KNOWLEDGE_METADATA_UNAVAILABLE" });
+    }
+    for (const document of documentsResult.data) documentById.set(document.id, document.metadata || {});
+  }
   const factIds = cleanIds(chunksResult.data.flatMap((chunk) => [
     ...(Array.isArray(chunk?.metadata?.facts) ? chunk.metadata.facts : []),
     ...(Array.isArray(chunk?.metadata?.supporting) ? chunk.metadata.supporting : [])
@@ -66,7 +82,7 @@ async function attachKnowledgePolicyMetadata(supabase, rows) {
 
   return results.map((row) => ({
     ...row,
-    policyMetadata: policyMetadataForRow(row, chunkById.get(row?.chunk_id), factRows)
+    policyMetadata: policyMetadataForRow(row, chunkById.get(row?.chunk_id), factRows, documentById.get(row?.document_id))
   }));
 }
 

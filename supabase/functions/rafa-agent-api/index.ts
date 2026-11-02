@@ -33,6 +33,8 @@ import { normalizeOpenRouterUsage } from "./providerUsage.mjs";
 import { detectMessageLanguage, languageInstruction } from "./language.mjs";
 import { recordKnowledgeGapEvent } from "./knowledgeGapEvents.mjs";
 import { KNOWLEDGE_GAP_SETTINGS_KEY, readKnowledgeGapSettings, validateKnowledgeGapSettings } from "./knowledgeGapPolicy.mjs";
+import { ATTACHMENT_BUCKET, ATTACHMENT_MIME_TYPES, ATTACHMENT_TENANT_ID, MAX_ATTACHMENT_SIZE_BYTES,
+  attachmentBelongsToContact, attachmentStoragePath, isPrivateAttachmentBucket, isValidFailedAttachmentReference, validateAttachmentMetadata } from "./attachmentStoragePolicy.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -63,6 +65,93 @@ const defaultChatModel = "anthropic/claude-sonnet-5.5";
 const noSamplingChatModels = new Set([defaultChatModel, "openai/gpt-6-luna"]);
 const legacyChatModels = new Set(["inclusionai/ling-3.0-flash-sante:free", "openrouter/free", "deepseek/deepseek-v4.1-flash", "qwen/qwen3.8-27b:free"]);
 const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
+let attachmentBucketReady = false;
+
+async function ensurePrivateAttachmentBucket() {
+  if (attachmentBucketReady) return;
+  const existing = await supabase.storage.getBucket(ATTACHMENT_BUCKET);
+  if (!existing.error && existing.data?.public === true) throw new HttpError("Private attachment storage is not configured.", 503);
+  if (existing.error) {
+    const created = await supabase.storage.createBucket(ATTACHMENT_BUCKET, {
+      public: false, fileSizeLimit: MAX_ATTACHMENT_SIZE_BYTES, allowedMimeTypes: ATTACHMENT_MIME_TYPES
+    });
+    if (created.error) {
+      const afterRace = await supabase.storage.getBucket(ATTACHMENT_BUCKET);
+      if (afterRace.error || afterRace.data?.public !== false) throw new HttpError("Private attachment storage is not available.", 503);
+    }
+  }
+  const { data: bucket, error } = await supabase.storage.getBucket(ATTACHMENT_BUCKET);
+  if (error || !bucket || bucket.public !== false) throw new HttpError("Private attachment storage is not configured.", 503);
+  if (!isPrivateAttachmentBucket(bucket)) {
+    const updated = await supabase.storage.updateBucket(ATTACHMENT_BUCKET, {
+      public: false, fileSizeLimit: MAX_ATTACHMENT_SIZE_BYTES, allowedMimeTypes: ATTACHMENT_MIME_TYPES
+    });
+    if (updated.error) throw new HttpError("Private attachment storage limits could not be verified.", 503);
+    const verified = await supabase.storage.getBucket(ATTACHMENT_BUCKET);
+    if (verified.error || !isPrivateAttachmentBucket(verified.data)) throw new HttpError("Private attachment storage limits could not be verified.", 503);
+  }
+  attachmentBucketReady = true;
+}
+
+async function prepareAttachmentUpload(body: Record<string, unknown>) {
+  let metadata;
+  try { metadata = validateAttachmentMetadata(body); }
+  catch { throw new HttpError("Invalid attachment metadata.", 400); }
+  const { userId, messageId, fileName, contentType, sizeBytes, sha256 } = metadata;
+  await ensurePrivateAttachmentBucket();
+  const user = await ensureUser(userId);
+  const { data: existing, error: existingError } = await supabase.from("rafa_attachments")
+    .select("id,storage_path,sha256,status,size_bytes,content_type")
+    .eq("tenant_id", ATTACHMENT_TENANT_ID).eq("contact_id", user.contactId).eq("provider_message_id", messageId).maybeSingle();
+  if (existingError) throw existingError;
+  if (existing && (existing.sha256 !== sha256 || existing.size_bytes !== sizeBytes || existing.content_type !== contentType || existing.status !== "pending")) {
+    throw new HttpError("Attachment message has already been processed.", 409);
+  }
+  const attachmentId = existing?.id || crypto.randomUUID();
+  const storagePath = existing?.storage_path || attachmentStoragePath(user.contactId, await sha256Hex(messageId), attachmentId);
+  if (!existing) {
+    const { error } = await supabase.from("rafa_attachments").insert({
+      id: attachmentId, tenant_id: ATTACHMENT_TENANT_ID, contact_id: user.contactId,
+      provider_message_id: messageId, storage_path: storagePath, file_name: fileName,
+      content_type: contentType, size_bytes: sizeBytes, sha256, status: "pending"
+    });
+    if (error) throw error;
+  }
+  const { data: signed, error: signedError } = await supabase.storage.from(ATTACHMENT_BUCKET).createSignedUploadUrl(storagePath, { upsert: false });
+  if (signedError || !signed?.token) throw new HttpError("Attachment upload could not be prepared.", 503);
+  return { attachmentId, storagePath, token: signed.token };
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function completeAttachmentUpload(body: Record<string, unknown>) {
+  const userId = String(body.userId || "").trim();
+  const messageId = String(body.messageId || "").trim();
+  const attachmentId = String(body.attachmentId || "");
+  if (!validWhatsAppJid(userId) || !messageId || messageId.length > 200 || !isUuid(attachmentId)) throw new HttpError("Invalid attachment reference.", 400);
+  const user = await ensureUser(userId);
+  const { data: attachment, error } = await supabase.from("rafa_attachments")
+    .select("id,tenant_id,contact_id,provider_message_id,storage_path,file_name,content_type,size_bytes,status")
+    .eq("id", attachmentId).eq("tenant_id", ATTACHMENT_TENANT_ID).eq("contact_id", user.contactId)
+    .eq("provider_message_id", messageId).maybeSingle();
+  if (error) throw error;
+  if (!attachment || !attachmentBelongsToContact(attachment, { contactId: user.contactId, messageId, attachmentId })
+      || attachment.status !== "pending") throw new HttpError("Attachment is not available for this message.", 404);
+  const parentPath = attachment.storage_path.slice(0, attachment.storage_path.lastIndexOf("/"));
+  const { data: objects, error: listError } = await supabase.storage.from(ATTACHMENT_BUCKET).list(parentPath, { limit: 10, search: attachmentId });
+  if (listError) throw listError;
+  const uploaded = (objects || []).find((object: Record<string, any>) => object.name === attachmentId);
+  if (!uploaded || Number(uploaded.metadata?.size) !== Number(attachment.size_bytes)) throw new HttpError("Attachment upload could not be verified.", 400);
+  const { data: saved, error: saveError } = await supabase.from("rafa_attachments").update({ status: "uploaded" })
+    .eq("id", attachmentId).eq("contact_id", user.contactId).eq("provider_message_id", messageId).eq("status", "pending")
+    .select("id,file_name,content_type,size_bytes,status").maybeSingle();
+  if (saveError) throw saveError;
+  if (!saved) throw new HttpError("Attachment state changed before completion.", 409);
+  return { id: saved.id, fileName: saved.file_name, contentType: saved.content_type, sizeBytes: saved.size_bytes, status: saved.status };
+}
 
 async function requireFollowUpConsent(handoverId: string) {
   const { data: handover, error: handoverError } = await supabase.from("rafa_handovers").select("contact_id").eq("id", handoverId).maybeSingle();
@@ -398,6 +487,29 @@ Deno.serve(async (req: Request) => {
       return json({ users: await listUsers(includeHistory) });
     }
 
+    if (parts[0] === "contacts" && parts[1] === "summaries" && req.method === "GET" && parts.length === 2) {
+      const [{ data: summaries, error: summaryError }, users] = await Promise.all([
+        supabase.rpc("rafa_dashboard_conversation_summaries"),
+        listUsers(false)
+      ]);
+      if (summaryError) throw summaryError;
+      const byUserId = new Map((summaries || []).map((summary: Record<string, any>) => [String(summary.user_id), summary] as const));
+      return json({ users: users.map((user) => ({
+        ...user,
+        historySummary: byUserId.get(user.id) || {
+          conversation_count: 0,
+          message_count: 0,
+          has_agent_reply: false,
+          has_customer_message: false,
+          last_message_at: null,
+          last_message_preview: "",
+          last_message: "",
+          last_message_direction: "unknown",
+          needs_reply: false
+        }
+      })) });
+    }
+
     if (parts[0] === "contacts" && parts[1] === "ensure" && req.method === "POST") {
       const body = await req.json();
       return json({ user: await ensureUser(String(body.userId || "")) });
@@ -442,6 +554,16 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await supabase.from("rafa_handovers").select("id,status").eq("id", handoverId).maybeSingle();
       if (error) throw error;
       return json({ handover: data || null });
+    }
+
+    if (parts[0] === "attachments" && parts[1] === "prepare" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      return json(await prepareAttachmentUpload(body));
+    }
+
+    if (parts[0] === "attachments" && parts[1] === "complete" && req.method === "POST" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      return json({ attachment: await completeAttachmentUpload(body) });
     }
 
     if (parts[0] === "contacts" && parts[1] && parts[2] === "history" && req.method === "POST") {
@@ -1405,12 +1527,39 @@ async function updateUser(userId: string, body: Record<string, unknown>) {
 }
 
 async function addHistory(user: Record<string, any>, body: Record<string, unknown>) {
+  const attachment = body?.metadata && typeof body.metadata === "object"
+    ? (body.metadata as Record<string, any>).attachment : null;
+  const attachmentId = typeof attachment?.id === "string" ? attachment.id : "";
+  const attachmentMessageId = typeof attachment?.messageId === "string" ? attachment.messageId : "";
+  let attachmentRow: Record<string, any> | null = null;
+  if (attachmentId || attachmentMessageId) {
+    if (!attachmentId && isValidFailedAttachmentReference(attachment)) {
+      // Extraction failed before storage was prepared. Persist the turn and its
+      // failure status without attempting to link a nonexistent attachment row.
+    } else {
+      if (!isUuid(attachmentId) || !attachmentMessageId || attachmentMessageId.length > 200) throw new HttpError("Invalid attachment reference.", 400);
+      const { data, error } = await supabase.from("rafa_attachments")
+        .select("id,tenant_id,contact_id,provider_message_id,status")
+        .eq("id", attachmentId).eq("tenant_id", ATTACHMENT_TENANT_ID).eq("contact_id", user.contactId)
+        .eq("provider_message_id", attachmentMessageId).maybeSingle();
+      if (error) throw error;
+      if (!data || !attachmentBelongsToContact(data, { contactId: user.contactId, messageId: attachmentMessageId, attachmentId }) || data.status !== "uploaded") {
+        throw new HttpError("Attachment does not belong to this conversation message.", 403);
+      }
+      attachmentRow = data;
+    }
+  }
   const { data, error } = await supabase
     .from("rafa_conversation_turns")
     .insert(buildSafeHistoryInsert(user, body))
     .select("id,at,message,response,automated,source,metadata")
     .single();
   if (error) throw error;
+  if (attachmentRow) {
+    const { error: linkError } = await supabase.from("rafa_attachments").update({ conversation_turn_id: data.id, status: "linked" })
+      .eq("id", attachmentRow.id).eq("contact_id", user.contactId).eq("provider_message_id", attachmentMessageId).eq("status", "uploaded");
+    if (linkError) throw linkError;
+  }
   return data;
 }
 

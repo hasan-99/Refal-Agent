@@ -13,6 +13,7 @@ function requireRafaApiConfig() {
   }
   return {
     apiUrl: process.env.RAFA_API_URL || `${url.replace(/\/$/, "")}/functions/v1/rafa-agent-api`,
+    supabaseUrl: url.replace(/\/$/, ""),
     key,
     apiSecret
   };
@@ -31,6 +32,7 @@ async function parseResponse(response) {
 class EdgeApiStore {
   constructor(config = requireRafaApiConfig()) {
     this.apiUrl = config.apiUrl;
+    this.supabaseUrl = String(config.supabaseUrl || new URL(config.apiUrl).origin).replace(/\/$/, "");
     this.key = config.key;
     this.apiSecret = config.apiSecret;
     this.data = { users: {} };
@@ -195,6 +197,11 @@ class EdgeApiStore {
     return users || [];
   }
 
+  async listUserSummaries() {
+    const { users } = await this.request("/contacts/summaries");
+    return users || [];
+  }
+
   async toJsonData({ includeHistory = true } = {}) {
     const users = await this.allUsers({ includeHistory });
     return { users: Object.fromEntries(users.map((user) => [user.id, user])) };
@@ -288,6 +295,47 @@ class EdgeApiStore {
     current.history = [...(current.history || []), turn];
     this.data.users[userId] = current;
     return turn;
+  }
+
+  async prepareAttachment({ userId, messageId, fileName, contentType, sizeBytes, sha256 }) {
+    const result = await this.request("/attachments/prepare", {
+      method: "POST", timeoutMs: 10000,
+      body: JSON.stringify({ userId, messageId, fileName, contentType, sizeBytes, sha256 })
+    });
+    if (!result?.attachmentId || !result?.storagePath || !result?.token) throw new Error("Attachment upload could not be prepared.");
+    return result;
+  }
+
+  async uploadAttachment(upload, bytes, contentType) {
+    if (!upload?.storagePath || !upload?.token || !Buffer.isBuffer(bytes)) throw new TypeError("Invalid attachment upload request.");
+    const path = upload.storagePath.split("/").map(encodeURIComponent).join("/");
+    const url = new URL(`/storage/v1/object/upload/sign/rafa-private-attachments/${path}`, this.supabaseUrl);
+    url.searchParams.set("token", upload.token);
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        apikey: this.key,
+        authorization: `Bearer ${this.key}`,
+        "content-type": contentType,
+        "cache-control": "max-age=0",
+        "x-upsert": "false"
+      },
+      body: bytes,
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!response.ok) throw Object.assign(new Error("Attachment upload failed."), { code: "ATTACHMENT_STORAGE_FAILED", status: response.status });
+    return true;
+  }
+
+  async completeAttachment({ userId, messageId, attachmentId }) {
+    const result = await this.request("/attachments/complete", {
+      method: "POST", timeoutMs: 10000,
+      body: JSON.stringify({ userId, messageId, attachmentId })
+    });
+    if (!result?.attachment?.id || result.attachment.id !== attachmentId || result.attachment.status !== "uploaded") {
+      throw new Error("Attachment upload could not be verified.");
+    }
+    return result.attachment;
   }
 
   async updateHistoryTurn(userId, turnId, patch) {

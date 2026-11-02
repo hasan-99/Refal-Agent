@@ -39,13 +39,13 @@ const ANCHORS = Object.freeze({
   ],
   readiness: [
     /\b(?:ready to|want to start|proceed|move forward|book|schedule|send the documents)\b|جاهز ل|أريد أن أبدأ|لنبدأ|أتابع|احجز|أرسل المستندات|έτοιμος να|θέλω να ξεκινήσω|να προχωρήσουμε|κλείσω ραντεβού/iu,
-    /\b(?:today|now|immediately)\b[^.!?]{0,40}\b(?:start|proceed|book|sign)\b|ابدأ\s+الآن|نبدأ\s+اليوم|να\s+ξεκινήσουμε\s+τώρα/iu,
+    /\b(?:i|we)\s+(?:want|would like|am ready|are ready)\s+to\s+(?:start|begin|proceed|move forward)|\b(?:let's|lets)\s+(?:start|begin|proceed)|\bstart\s+(?:the|this)\s+(?:process|application)|\b(?:today|now|immediately)\b[^.!?]{0,40}\b(?:start|proceed|book|sign)\b|أريد\s+(?:أن\s+)?(?:أبدأ|أتابع)|خلينا\s+(?:نبدأ|نبلش|نبدأ\s+بالإجراءات)|يلا\s+نبدأ|ابدأ\s+الآن|نبدأ\s+اليوم|θέλω\s+να\s+ξεκινήσω|ας\s+ξεκινήσουμε|να\s+ξεκινήσουμε\s+τώρα/iu,
     /\b(?:documents are ready|ready to book|let's proceed)\b|المستندات جاهزة|جاهز للحجز|ας προχωρήσουμε/iu,
     /\b(?:please send the contract|can sign today|start the process)\b|أرسلوا العقد|أستطيع التوقيع اليوم|να ξεκινήσουμε τη διαδικασία/iu,
     /\b(?:signed|submitted|payment arranged)\b|وقعت|تم التقديم|تم ترتيب الدفع|έχω υπογράψει|έχω υποβάλει/iu
   ],
   fit: [
-    /\b(?:company formation|business expansion|real estate|property development|construction|investment project|corporate services)\b|تأسيس شركة|توسع تجاري|عقارات|تطوير عقاري|إنشاء|مشروع استثماري|خدمات شركات|ίδρυση εταιρεί|επιχειρηματική επέκταση|ακίνητ|ανάπτυξη ακινήτ|κατασκευή|επενδυτικό έργο/iu,
+    /\b(?:company formation|business expansion|real estate|property development|construction|investment project|corporate services)\b|تأسيس شركة|توسع تجاري|عقارات|تطوير عقاري|إنشاء|مشروع استثماري|خدمات شركات|ίδρυση εταιρεί|ίδρυσης εταιρεί|επιχειρηματική επέκταση|ακίνητ|ανάπτυξη ακινήτ|κατασκευή|επενδυτικό έργο/iu,
     /\b(?:land for development|construction tender|strategic partnership|joint venture)\b|أرض للتطوير|مناقصة إنشاء|شراكة استراتيجية|مشروع مشترك|γη για ανάπτυξη|κατασκευαστικός διαγωνισμός|στρατηγική συνεργασία/iu,
     /\b(?:commercial project|corporate expansion|property acquisition)\b|مشروع تجاري|توسع شركة|شراء عقار|εμπορικό έργο|εταιρική επέκταση/iu,
     /\b(?:Cyprus company|Cyprus property|Cyprus development)\b|شركة في قبرص|عقار في قبرص|تطوير في قبرص|εταιρεία στην Κύπρο|ακίνητο στην Κύπρο/iu,
@@ -173,4 +173,30 @@ function scoreQualification({ evidence = [], previous = null, now = new Date() }
   };
 }
 
-module.exports = { DIMENSIONS, SCORER_VERSION, scoreQualification };
+function hasCloseReadinessDeferral(text) {
+  const value = String(text || "").normalize("NFKC");
+  return /\b(?:not ready to (?:start|proceed|move forward)|still (?:thinking|deciding|comparing)|haven't decided to (?:start|proceed)|have not decided to (?:start|proceed)|not decided to (?:start|proceed))\b|لسا\s+(?:عم\s+)?(?:فكر|بفكر)|ما\s+قررت\s+(?:أبدأ|ابدأ|بلّش|بلش|أتابع|اتابع)|لم\s+أقرر\s+(?:أن\s+)?(?:أبدأ|أتابع)|لسه\s+بفكر|δεν\s+είμαι\s+έτοιμ\p{L}*\s+να\s+(?:ξεκινήσω|προχωρήσω)|δεν\s+έχω\s+αποφασίσει\s+να\s+(?:ξεκινήσω|προχωρήσω)|σκέφτομαι\s+ακόμη/iu.test(value);
+}
+
+/**
+ * A dashboard-only close-readiness signal. A contact request or appointment
+ * question is not purchase intent: the customer must have stated a concrete
+ * need, a matching service context, and a clear wish to begin.
+ */
+function assessCloseReadiness(qualification, { restricted = false, privacyRisk = false, compliance = false, deferred = false } = {}) {
+  const dimensions = qualification?.dimensions || {};
+  const criteria = {
+    clearStartIntent: Number(dimensions.readiness) >= 2,
+    definedNeed: Number(dimensions.need) >= 1,
+    serviceFit: Number(dimensions.fit) >= 1
+  };
+  const ready = !restricted && !privacyRisk && !compliance && !deferred && Object.values(criteria).every(Boolean);
+  return Object.freeze({
+    status: ready ? "ready_to_proceed" : "not_established",
+    ready,
+    reason: deferred ? "customer_deferred" : ready ? "clear_evidence" : "insufficient_evidence",
+    criteria
+  });
+}
+
+module.exports = { DIMENSIONS, SCORER_VERSION, scoreQualification, assessCloseReadiness, hasCloseReadinessDeferral };

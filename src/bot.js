@@ -15,7 +15,7 @@ const { loadProjectEnv } = require("./env");
 const { askOpenRouter, embedText, embedQueryTexts, warmEmbeddingPipeline, DEFAULT_EMBEDDING_MODEL, redactPersonalData } = require("./ai");
 const { getKnowledgeReranker } = require("./knowledgeRerank");
 const { createStore } = require("./supabaseStore");
-const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested } = require("./messageRouter");
+const { routeMessageResult, prepareInboundMessage, recordHistory, buildReplyEditPayload, persistWhatsAppSentMessage, wasNameRequested, resolveInboundLanguage } = require("./messageRouter");
 const { handleBookingMessage } = require("./booking");
 const { generateAndEmailReport } = require("./report");
 const { startMonthlyReportSchedule } = require("./reportScheduler");
@@ -26,7 +26,7 @@ const { isPhoneJid, resolvePhoneJid, needsWhatsAppContactRefresh } = require("./
 const { AI_LIMIT_MESSAGE, checkAiMessage, checkIncomingMessage } = require("./rateLimiter");
 const { detectMessageLanguage, inboundRetryMessage } = require("./language");
 const { sendDisconnectAlert, sendRecoveryAlert } = require("./connectionAlerts");
-const { isPairingOnly } = require("./runtimePolicy");
+const { getTestChatJid, isChatAllowed, isPairingOnly, shouldClearLoggedOutAuth } = require("./runtimePolicy");
 const { classifyLeadTemperature } = require("./leadTemperature");
 const { refreshCustomerTopicSummary } = require("./conversationMemory");
 const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = require("./whatsappPairing");
@@ -35,11 +35,16 @@ const { createMessageExecutor, parseMessageQueueLimit } = require("./messageConc
 const { claimInboundReceipt } = require("./inboundMessageReceipt");
 const { runAgentLiveAnswerTurn: runAgentLiveAnswerTurnComposition } = require("./agentLiveAnswerTurn");
 const { canRunControlledAppointmentWorkflow } = require("./controlledDiagnostics");
+const { VISION_MODEL } = require("./imageUnderstanding");
+const {
+  MAX_ATTACHMENT_BYTES, downloadCustomerAttachment, isAttachmentMessageKindCompatible, safeAttachmentFileName, sniffAttachment, understandCustomerAttachment
+} = require("./attachmentUnderstanding");
 
 const rootDir = path.join(__dirname, "..");
 loadProjectEnv(rootDir);
 
 const pairingOnly = isPairingOnly();
+const testChatJid = getTestChatJid();
 const authPath = process.env.BAILEYS_AUTH_PATH || path.join(rootDir, "auth_info_baileys");
 const allowGroups = process.env.ALLOW_GROUPS === "true";
 const selfTestPrefix = process.env.SELF_TEST_PREFIX || "!rafa";
@@ -182,6 +187,16 @@ function isSupportedChatId(chatId) {
   return chatId.endsWith("@s.whatsapp.net") || chatId.endsWith("@c.us") || chatId.endsWith("@lid");
 }
 
+async function resolveMessageReplyLanguage(message, userId) {
+  const text = extractText(message);
+  let user = null;
+  if (userId) {
+    try { user = await store.getUser(userId); }
+    catch { user = store.data?.users?.[userId] || null; }
+  }
+  return resolveInboundLanguage(text, user, detectMessageLanguage(text));
+}
+
 async function rememberWhatsAppContact(userId, message, socket) {
   const pushName = String(message.pushName || "").trim();
   const phoneJid = await resolvePhoneJid(userId, message, socket?.signalRepository?.lidMapping);
@@ -271,6 +286,93 @@ function extractText(message) {
       content.templateButtonReplyMessage?.selectedDisplayText ||
       ""
   ).trim();
+}
+
+function attachmentContent(message) {
+  const content = unwrapMessage(message?.message);
+  if (content?.imageMessage) return { kind: "image", media: content.imageMessage };
+  if (content?.documentMessage) return { kind: "document", media: content.documentMessage };
+  return null;
+}
+
+function attachmentName(media, kind) {
+  const declared = String(media?.mimetype || "").toLowerCase().split(";")[0].trim();
+  const mimeNames = {
+    "application/pdf": "attachment.pdf",
+    "application/msword": "attachment.doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "attachment.docx",
+    "application/vnd.ms-excel": "attachment.xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "attachment.xlsx",
+    "text/csv": "attachment.csv",
+    "text/tab-separated-values": "attachment.tsv",
+    "text/plain": "attachment.txt",
+    "text/markdown": "attachment.md",
+    "application/json": "attachment.json",
+    "application/xml": "attachment.xml"
+  };
+  return safeAttachmentFileName(media?.fileName || media?.title || mimeNames[declared] || (kind === "image" ? "image" : "attachment"));
+}
+
+function attachmentFailureReply(language) {
+  if (language === "arabic") return "عذرًا، لم أتمكن من قراءة هذا الملف. أرسل صورة أو PDF أو Word أو Excel أو ملفًا نصيًا صالحًا، وبحجم لا يتجاوز 10 ميغابايت.";
+  if (language === "greek") return "Δεν μπόρεσα να διαβάσω αυτό το αρχείο. Στείλτε έγκυρη εικόνα, PDF, Word, Excel ή αρχείο κειμένου έως 10 MB.";
+  return "Sorry, I couldn’t read that attachment. Please resend a valid image, PDF, Word, Excel, or text file up to 10 MB.";
+}
+
+async function processIncomingAttachment(socket, message, remoteJid, providerMessageId, userText, traceId) {
+  const incoming = attachmentContent(message);
+  if (!incoming) return null;
+  const media = incoming.media;
+  const fileName = attachmentName(media, incoming.kind);
+  const declaredMime = media?.mimetype || "";
+  const advertisedSize = Number(media?.fileLength || 0);
+  if (advertisedSize > MAX_ATTACHMENT_BYTES) throw Object.assign(new Error("Attachment is too large."), { code: "ATTACHMENT_TOO_LARGE" });
+  const bytes = await downloadCustomerAttachment(message, socket, downloadMediaMessage);
+  const descriptor = sniffAttachment(bytes, fileName, declaredMime);
+  if (!isAttachmentMessageKindCompatible(incoming.kind, descriptor.kind)) throw Object.assign(new Error("Image type does not match its signature."), { code: "ATTACHMENT_TYPE_MISMATCH" });
+  const extractionStartedAt = performance.now();
+  let understood;
+  const visionBased = descriptor.kind === "image" || descriptor.kind === "pdf";
+  try {
+    understood = await understandCustomerAttachment(bytes, descriptor, userText);
+    await logEvent("attachment_extraction_completed", {
+      traceId,
+      stage: visionBased ? "attachment_vision_extraction" : "attachment_local_text_extraction",
+      durationMs: Math.round(performance.now() - extractionStartedAt),
+      ...(visionBased ? { model: VISION_MODEL } : {}),
+      outputChars: understood.content.length
+    });
+  } catch (error) {
+    await logEvent("attachment_extraction_failed", {
+      traceId,
+      stage: visionBased ? "attachment_vision_extraction" : "attachment_local_text_extraction",
+      durationMs: Math.round(performance.now() - extractionStartedAt),
+      ...(visionBased ? { model: VISION_MODEL } : {}),
+      ...safeErrorDiagnostics(error)
+    });
+    throw error;
+  }
+  const storage = await store.prepareAttachment({
+    userId: remoteJid,
+    messageId: providerMessageId,
+    fileName,
+    contentType: descriptor.mimeType,
+    sizeBytes: bytes.length,
+    sha256: understood.sha256
+  });
+  await store.uploadAttachment(storage, bytes, descriptor.mimeType);
+  const saved = await store.completeAttachment({ userId: remoteJid, messageId: providerMessageId, attachmentId: storage.attachmentId });
+  return {
+    content: understood.content,
+    metadata: {
+      id: saved.id,
+      messageId: providerMessageId,
+      fileName,
+      contentType: descriptor.mimeType,
+      sizeBytes: bytes.length,
+      status: "uploaded"
+    }
+  };
 }
 
 // REFAL-AGENT-030 — the full, unchanged legacy turn. Every booking/handover/
@@ -364,13 +466,14 @@ async function runOperationalBookingTurn(socket, chatId, userId, text, requestTr
 // One contextual composition owns customer answers and correlated telemetry.
 async function runAgentLiveAnswerTurn(socket, chatId, userId, text, requestTrace = {}, providerMessageId = null) {
   return runAgentLiveAnswerTurnComposition(
-    { socket, chatId, userId, text, providerMessageId, traceId: requestTrace.traceId },
+    { socket, chatId, userId, text, providerMessageId, traceId: requestTrace.traceId, attachment: requestTrace.attachment },
     {
       store,
       logEvent,
       setTyping,
       sendStoredTextReply,
-      embedText
+      embedText,
+      hasQueuedAttachment: () => inboundMessageExecutor.hasQueued(userId, (metadata) => metadata.hasAttachment === true)
     }
   );
 }
@@ -421,9 +524,10 @@ async function sendTextReply(socket, chatId, response) {
 }
 
 async function sendStoredTextReply(socket, chatId, response, userId, turn) {
-  const sent = await sendTextReply(socket, chatId, response);
+  const normalizedResponse = require("./whatsappFormatting").normalizeWhatsAppFormatting(response);
+  const sent = await sendTextReply(socket, chatId, normalizedResponse);
   try {
-    await persistWhatsAppSentMessage({ store, userId, response, turn, sentMessage: sent });
+    await persistWhatsAppSentMessage({ store, userId, response: normalizedResponse, turn, sentMessage: sent });
   } catch (error) {
     logEvent("whatsapp_reply_key_persistence_error", {
       turnId: turn?.id || null,
@@ -460,6 +564,7 @@ async function performReplyEdit(request) {
   }
 
   const { userId, text, mode, messageKey } = request;
+  if (!isChatAllowed(userId, testChatJid)) throw new Error("WhatsApp test mode only permits the authorized test chat.");
   if (typeof userId !== "string" || typeof text !== "string" || !text.trim() || text.length > 4000 ||
       !["platform_edit", "correction_resend"].includes(mode)) {
     throw new Error("Invalid reply update request.");
@@ -479,6 +584,7 @@ async function deliverCustomerText(request) {
   try {
     if (!whatsappConnected || !activeSocket || !whatsappIdentityVerified || stopping) throw new Error("WhatsApp worker is not connected.");
     const userId = String(request.userId || "");
+    if (!isChatAllowed(userId, testChatJid)) throw new Error("WhatsApp test mode only permits the authorized test chat.");
     const text = String(request.text || "").trim();
     if (!/^(?:\d+|[A-Za-z0-9._-]+)@(?:s\.whatsapp\.net|c\.us|lid)$/.test(userId) || !text || text.length > 1500) throw new Error("Invalid customer message.");
     const sent = await activeSocket.sendMessage(userId, { text });
@@ -613,7 +719,7 @@ async function handleMessage(socket, message, upsertType) {
         // The durable receipt is the cross-worker duplicate guard. Processing
         // when it cannot be verified could repeat a handover or other action.
         try {
-          await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
+          await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(await resolveMessageReplyLanguage(message, remoteJid)));
         } catch (sendError) {
           logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
         }
@@ -649,7 +755,26 @@ async function handleMessage(socket, message, upsertType) {
     const hadAudio = Boolean(audioMessageContent(message));
     if (hadAudio) logEvent("voice_transcription_unavailable", { messageType: "audio" });
 
-    if (!text) {
+    let attachment = null;
+    if (attachmentContent(message)) {
+      try {
+        attachment = await processIncomingAttachment(socket, message, remoteJid, providerMessageId, text, traceId);
+        await logEvent("attachment_processed", { traceId, contentType: attachment.metadata.contentType, sizeBytes: attachment.metadata.sizeBytes });
+      } catch (error) {
+        const reasonCode = /^[A-Z0-9_]{1,60}$/u.test(String(error?.code || "")) ? error.code : "ATTACHMENT_PROCESSING_FAILED";
+        logEvent("attachment_processing_failed", { traceId, reasonCode });
+        const response = attachmentFailureReply(await resolveMessageReplyLanguage(message, remoteJid));
+        await store.addHistory(remoteJid, "[attachment could not be read]", response, {
+          source: "whatsapp",
+          metadata: { attachment: { messageId: providerMessageId, status: "failed", reasonCode } }
+        });
+        await sendTextReplyWithPresence(socket, remoteJid, response);
+        receiptShouldComplete = true;
+        return;
+      }
+    }
+
+    if (!text && !attachment) {
       const response = hadAudio
         ? "Sorry, I could not transcribe that voice note. Please send it as text."
         : "Please send text only.";
@@ -660,7 +785,7 @@ async function handleMessage(socket, message, upsertType) {
     }
 
     stage("inbound_preprocess", inboundStartedAt, { messageType: messageType(message) });
-    await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt }, providerMessageId);
+    await answerMessage(socket, remoteJid, remoteJid, text, { traceId, startedAt: inboundStartedAt, attachment }, providerMessageId);
     // Contact labels are useful metadata but not a prerequisite for answering.
     // Refresh them after delivery so slow profile persistence cannot hold the
     // customer's reply; unchanged cached metadata avoids a needless write.
@@ -678,7 +803,7 @@ async function handleMessage(socket, message, upsertType) {
     logEvent("error", { mode: "customer", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
       try {
-        await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
+        await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(await resolveMessageReplyLanguage(message, remoteJid)));
         receiptShouldComplete = true;
       } catch (sendError) {
         logEvent("whatsapp_error_reply_failed", safeErrorDiagnostics(sendError));
@@ -746,7 +871,7 @@ async function handleSelfTestMessage(socket, message) {
     console.error("Failed to handle self-test message:", safeErrorDiagnostics(error));
     logEvent("error", { mode: "self-test", ...safeErrorDiagnostics(error) });
     if (remoteJid && isSupportedChatId(remoteJid)) {
-      await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(detectMessageLanguage(extractText(message))));
+      await sendTextReplyWithPresence(socket, remoteJid, inboundRetryMessage(await resolveMessageReplyLanguage(message, remoteJid)));
     }
   }
 }
@@ -808,7 +933,7 @@ async function startBaileysClient() {
       notifyDashboard({ type: "connection", connection: "open", phoneNumber: linkedPhone ? `+${linkedPhone}` : "" });
       void backfillKnownWhatsAppPhoneNumbers(socket);
 
-      if (!pairingOnly) {
+      if (!pairingOnly && !testChatJid) {
         void backfillLeadTemperatures();
         if (followUpTask) followUpTask.stop();
         followUpTask = startFollowUpSchedule({
@@ -820,8 +945,10 @@ async function startBaileysClient() {
         });
         if (reminderTask) reminderTask.stop();
         reminderTask = startReminderSchedule({ store, socket, logEvent });
-      } else {
+      } else if (pairingOnly) {
         console.log("Pairing-only mode: customer messages and scheduled sends are disabled.");
+      } else {
+        console.log("Test-chat mode: replies are limited to the authorized test chat; scheduled sends are disabled.");
       }
 
       console.log("RAFA WhatsApp agent is ready.");
@@ -860,11 +987,15 @@ async function startBaileysClient() {
         if (stopping) {
           console.log("WhatsApp worker stopped by the dashboard; linked-device credentials were preserved.");
         } else {
-          try {
-            await clearLoggedOutAuth(authPath);
-            console.log("WhatsApp logged out; invalid local credentials were cleared for a fresh pairing.");
-          } catch (error) {
-            console.error("Could not clear logged-out WhatsApp credentials:", safeErrorDiagnostics(error));
+          if (shouldClearLoggedOutAuth(testChatJid)) {
+            try {
+              await clearLoggedOutAuth(authPath);
+              console.log("WhatsApp logged out; invalid local credentials were cleared for a fresh pairing.");
+            } catch (error) {
+              console.error("Could not clear logged-out WhatsApp credentials:", safeErrorDiagnostics(error));
+            }
+          } else {
+            console.log("WhatsApp test worker logged out; linked-device credentials were preserved.");
           }
         }
         if (!stopping && process.env.RAFA_DASHBOARD_MANAGED === "true") {
@@ -883,8 +1014,14 @@ async function startBaileysClient() {
     }
     await Promise.all((messages || []).map(async (message) => {
       const userId = message.key?.remoteJid;
+      if (!isChatAllowed(userId, testChatJid)) {
+        logEvent("test_chat_scope_ignored", { type: messageType(message) });
+        return;
+      }
       try {
-        await inboundMessageExecutor.run(userId, () => handleMessage(socket, message, type));
+        await inboundMessageExecutor.run(userId, () => handleMessage(socket, message, type), {
+          hasAttachment: Boolean(attachmentContent(message))
+        });
       } catch (error) {
         if (error?.code !== "MESSAGE_QUEUE_FULL") {
           logEvent("inbound_message_executor_error", safeErrorDiagnostics(error));
@@ -894,7 +1031,7 @@ async function startBaileysClient() {
         logEvent("inbound_message_queue_full", { active: stats.active, queued: stats.queued });
         if (!message.key?.fromMe && isSupportedChatId(userId)) {
           try {
-            await sendTextReplyWithPresence(socket, userId, inboundRetryMessage(detectMessageLanguage(extractText(message)), "busy"));
+            await sendTextReplyWithPresence(socket, userId, inboundRetryMessage(await resolveMessageReplyLanguage(message, userId), "busy"));
           } catch (sendError) {
             logEvent("whatsapp_overload_reply_failed", safeErrorDiagnostics(sendError));
           }
@@ -904,7 +1041,7 @@ async function startBaileysClient() {
   });
 }
 
-if (!pairingOnly) {
+if (!pairingOnly && !testChatJid) {
   notificationTask = startNotificationSchedule({
     store,
     socket: {

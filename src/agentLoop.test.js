@@ -71,6 +71,35 @@ test("a strong earlier same-turn match survives query drift, but clearly stronge
 const { runAgentTurn, validateDecision, DEFAULT_MAX_STEPS } = require("./agentLoop");
 const { buildAgentContext } = require("./agentContext");
 
+test("a recap is composed from customer memory and approved evidence without another model generation", async () => {
+  const context = buildAgentContext({
+    currentMessage: "Please summarize what I told you and what Refalco's official information confirms.",
+    locale: "english"
+  });
+  const history = [
+    { message: "I'm planning a one-person design studio in Cyprus serving clients in Germany and France." },
+    { message: "Which services does Refalco offer?" }
+  ];
+  const source = { source_name: "Approved service overview", source_url: "https://example.invalid/services",
+    document_id: "service-overview", chunk_id: "service-overview-1", review_status: "approved",
+    valid_until: "2099-01-01T00:00:00Z", content: "Refalco offers company formation and registration in Cyprus, corporate administration, and business consulting." };
+  const observation = { step: 1, tool: "searchApprovedKnowledge", args: { query: "Refalco services" }, result: {
+    ok: true, status: "found", modelObservation: require("./agentTools").buildApprovedKnowledgeObservation("found", [source])
+  } };
+  let generations = 0;
+  const result = await require("./agentLoop").runAgentTurn(context, {
+    initialObservations: [observation], recapHistory: history, tools: {},
+    decideNextStep: async () => { generations += 1; return { type: "respond", text: "The answer must use the model." }; },
+    assessDraft: async () => { throw new Error("local recap must not repeat LLM grounding review"); }
+  });
+  assert.equal(result.outcome, "responded", JSON.stringify({ reason: result.reason, response: result.response, steps: result.steps }));
+  assert.equal(result.localRecap, true);
+  assert.equal(generations, 0);
+  assert.match(result.response, /one-person design studio/i);
+  assert.match(result.response, /Approved information: Refalco offers company formation/i);
+  assert.doesNotMatch(result.response, /\?/u);
+});
+
 const BASE_CONTEXT = buildAgentContext({ currentMessage: "What is the price to create a Cyprus company?", locale: "english" });
 
 function scriptedDecider(decisions) {
@@ -82,7 +111,26 @@ test("DEFAULT_MAX_STEPS is a small bounded number, never unlimited", () => {
   assert.equal(DEFAULT_MAX_STEPS, 5);
 });
 
-test("a comprehensive broad retrieval goes straight to composition with multiple complete sections retained", async () => {
+test("model tool-name separators resolve only to one registered tool and invented tools stay rejected", async () => {
+  assert.deepEqual(validateDecision({ type: "tool", tool: "search_approved_knowledge", args: { query: "package details" } },
+    { searchApprovedKnowledge: {} }), { ok: true, type: "tool", tool: "searchApprovedKnowledge", args: { query: "package details" } });
+  assert.equal(validateDecision({ type: "tool", tool: "Search-Approved-Knowledge", args: {} },
+    { searchApprovedKnowledge: {} }).tool, "searchApprovedKnowledge");
+  assert.equal(validateDecision({ type: "tool", tool: "deleteDatabase", args: {} },
+    { searchApprovedKnowledge: {} }).reason, "unknown_tool_requested");
+
+  const events = [];
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    decideNextStep: async () => ({ type: "tool", tool: "person@example.com" }),
+    tools: {},
+    maxSteps: 1,
+    onDecisionRejected: async (event) => events.push(event)
+  });
+  assert.equal(result.outcome, "invalid_decision");
+  assert.deepEqual(events, [{ step: 1, reason: "unknown_tool_requested", requestedTool: null }]);
+});
+
+test("a broad retrieval retains evidence and leaves one focused search available", async () => {
   const decisions = [];
   const result = await runAgentTurn(BASE_CONTEXT, {
     decideNextStep: async ({ step, tools, observations }) => {
@@ -101,9 +149,33 @@ test("a comprehensive broad retrieval goes straight to composition with multiple
     assessDraft: async () => ({ valid: true, reasons: [] })
   });
   assert.equal(result.outcome, "clarified");
-  assert.deepEqual(decisions.map(({ step }) => step), [1, 3]);
-  assert.equal(decisions[1].searchAvailable, false);
+  assert.deepEqual(decisions.map(({ step }) => step), [1, 2]);
+  assert.equal(decisions[1].searchAvailable, true);
   assert.equal(decisions[1].evidenceCount, 3);
+});
+
+test("a focused second search can fill a gap after broad retrieval", async () => {
+  const queries = [];
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    maxSteps: 5,
+    decideNextStep: async ({ step }) => step === 1
+      ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "formation package overview" } }
+      : step === 2
+        ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "formation package processing duration" } }
+        : { type: "respond", text: "The available details are ready to review." },
+    tools: { searchApprovedKnowledge: { run: async ({ query }) => {
+      queries.push(query);
+      const sourceRef = queries.length === 1 ? "overview" : "duration";
+      return { ok: true, status: "found", trace: { comprehensiveSearch: queries.length === 1 }, modelObservation: {
+        type: "approved_knowledge", status: "found", evidence: [{ sourceRef, title: sourceRef, section: sourceRef,
+          language: "english", content: `Approved ${sourceRef} information.` }], policyEvidence: []
+      } };
+    } } },
+    assessDraft: async () => ({ valid: true, reasons: [] })
+  });
+  assert.deepEqual(queries, ["formation package overview", "formation package processing duration"]);
+  assert.equal(result.outcome, "responded");
+  assert.deepEqual(new Set(result.steps.flatMap(item => item.result?.modelObservation?.evidence || []).map(item => item.sourceRef)), new Set(["overview", "duration"]));
 });
 
 test("a failed knowledge search is reported as technical and is not repeated", async () => {
@@ -241,6 +313,26 @@ test("unsupported comparisons receive focused correction guidance without an evi
   assert.equal(result.response, recovered);
 });
 
+test("personalized conclusions receive neutral evidence-backed correction guidance", async () => {
+  let feedback;
+  const { runAgentTurn } = require("./agentLoop");
+  const { buildAgentContext } = require("./agentContext");
+  let calls = 0;
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "How does company registration work?", locale: "english" }), {
+    maxSteps: 2,
+    decideNextStep: async ({ observations }) => {
+      if (calls++ === 0) return { type: "respond", text: "With us, we will register your company." };
+      feedback = observations.find((item) => item.tool === "responsePolicyCheck");
+      return { type: "respond", text: "Company registration starts with the approved name and filing steps." };
+    },
+    assessDraft: async () => ({ valid: false, reasons: ["personalized_marker"],
+      blockedClaims: [{ sentence: "With us, we will register your company.", reasons: ["personalized_marker"] }] }),
+  });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(feedback.result.correction, /Replace it with neutral, evidence-backed information/u);
+  assert.match(feedback.result.correction, /unless approved service evidence directly supports that commitment/u);
+});
+
 test("combined comparison and context rejection directs the agent to remove the repeated span", async () => {
   const draft = "The areas are broader than company formation. We provide company formation, tax, investment, property, and residency services.";
   const response = "Those are the connected areas we discussed. Is there a specific service you have in mind?";
@@ -328,6 +420,165 @@ test("mixed unsupported-service and unsupported-detail feedback preserves neutra
   assert.match(correction, /do not attribute the process to REFAL without explicit service evidence/u);
 });
 
+test("package price feedback accepts approved RAG and Active Offer without treating either as mandatory", () => {
+  const { policyRejectionObservation } = require("./agentLoop");
+  const observation = policyRejectionObservation(2, "respond", {
+    reasons: ["unsupported_price_claim", "unverified_current_offer_claim"]
+  }, ["unsupported_price_claim", "unverified_current_offer_claim"]);
+  assert.match(observation.result.correction, /approved, currently valid RAG pricing evidence or a validated current Active Offer/u);
+  assert.match(observation.result.correction, /Active Offer is an additional source, not a prerequisite/u);
+  assert.match(observation.result.correction, /valid authoritative sources conflict/u);
+});
+
+test("attachment review rejection preserves file evidence and corrects attribution without inventing a handover", () => {
+  const { policyRejectionObservation } = require("./agentLoop");
+  const observation = policyRejectionObservation(1, "respond", {
+    reasons: ["attachment_not_attributed", "unsupported_relation", "context_mismatch"],
+    blockedClaims: [{ sentence: "The file is a checklist.", reasons: ["attachment_not_attributed"] }]
+  }, ["attachment_not_attributed", "unsupported_relation", "context_mismatch"], [], {}, {
+    attachmentReviewContinuation: true,
+    attachmentContent: "Synthetic agenda. The proposed meeting time is 9:30 AM. The date and task owners are not listed."
+  });
+  assert.match(observation.result.correction, /attribute it plainly to the file/u);
+  assert.match(observation.result.correction, /using the extracted attachment content retained in context/u);
+  assert.match(observation.result.correction, /continue it without asking what to review again/u);
+  assert.match(observation.result.correction, /Never claim that a team review or handover was recorded/u);
+  assert.match(observation.result.correction, /Do not replace a valid file summary with a generic approved-information fallback/u);
+  assert.doesNotMatch(observation.result.correction, /ask for a specific area only when useful/u);
+});
+
+test("pending document-review rejection retries the existing task instead of company-information fallback", () => {
+  const { policyRejectionObservation } = require("./agentLoop");
+  const observation = policyRejectionObservation(1, "respond", {
+    text: "I do not have approved information about that detail.",
+    reasons: ["context_mismatch"], blockedClaims: []
+  }, ["context_mismatch"], [], {}, { attachmentReviewPending: true });
+  assert.match(observation.result.correction, /already asked for a document review/u);
+  assert.match(observation.result.correction, /invite the upload/u);
+  assert.match(observation.result.correction, /Do not switch to company-information uncertainty/u);
+});
+
+test("a newly queued attachment stops retries after the first pending-review rejection", async () => {
+  for (const type of ["clarify", "respond"]) {
+    let decisions = 0;
+    let reviews = 0;
+    const result = await require("./agentLoop").runAgentTurn({ currentMessage: "Please review the document I will send.",
+      locale: "english", attachmentReviewPending: true }, {
+      maxSteps: 4,
+      decideNextStep: async () => { decisions += 1; return { type, text: "Please attach the document so I can review it." }; },
+      assessDraft: async () => { reviews += 1; return { valid: false, reasons: ["context_mismatch", "question_not_answered"], blockedClaims: [] }; },
+      shouldStopAfterRejection: async () => true
+    });
+    assert.equal(decisions, 1, `${type} retry stopped`);
+    assert.equal(reviews, 1, `${type} reviewed once`);
+    assert.equal(result.outcome, "response_suppressed");
+  }
+});
+
+test("attachment grounding rejection retries with retained file content and returns the corrected review", async () => {
+  const attachmentContent = "Synthetic agenda. The proposed meeting time is 9:30 AM. Topics: meeting goal and task allocation. The date and task owners are not listed.";
+  const rejected = "It is an agenda for a meeting at 9:30 AM.";
+  const recovered = "بحسب الملف المرفق، هذا جدول أعمال لاجتماع مقترح الساعة ٩:٣٠، ويتناول هدف الاجتماع وتوزيع المهام. لا يحدد الملف التاريخ أو المسؤولين عن المهام.";
+  const corrections = [];
+  let generations = 0;
+  const { runAgentTurn } = require("./agentLoop");
+  const context = {
+    currentMessage: "",
+    locale: "arabic",
+    attachmentContent,
+    attachmentReviewContinuation: true,
+    recentConversation: [{ role: "user", content: "ممكن تراجعلي المستند المرفق وتلخّص محتواه؟" }]
+  };
+  const result = await runAgentTurn(context, {
+    maxSteps: 4,
+    decideNextStep: async ({ observations }) => {
+      generations += 1;
+      const correction = observations.find((item) => item.tool === "responsePolicyCheck")?.result?.correction;
+      if (correction) {
+        corrections.push(correction);
+        assert.match(correction, /extracted attachment content retained in context/u);
+        assert.match(correction, /without asking what to review again/u);
+      }
+      return { type: "respond", text: generations === 1 ? rejected : recovered };
+    },
+    assessDraft: async ({ text, context: draftContext }) => {
+      assert.equal(draftContext.attachmentContent, attachmentContent);
+      return text === recovered ? { valid: true } : {
+        valid: false,
+        reasons: ["attachment_not_attributed"],
+        blockedClaims: [{ sentence: rejected, reasons: ["attachment_not_attributed"] }]
+      };
+    }
+  });
+  assert.equal(generations, 2);
+  assert.equal(corrections.length, 1);
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, recovered);
+  assert.doesNotMatch(result.response, /معلومات معتمدة|ما عندي معلومات/u);
+});
+
+test("attachment attribution rejection is repaired and revalidated without generating an equivalent retry", async () => {
+  const attachmentContent = "Synthetic document. The proposed meeting is at 9:30 AM.";
+  const draft = "The document is a meeting agenda and gives a proposed time of 9:30 AM.";
+  let generations = 0;
+  const assessed = [];
+  const result = await require("./agentLoop").runAgentTurn({ currentMessage: "", locale: "english", attachmentContent, attachmentReviewContinuation: true,
+    recentConversation: [{ role: "user", content: "Please review the attached document." }] }, {
+    maxSteps: 1,
+    decideNextStep: async () => { generations += 1; return { type: "respond", text: draft }; },
+    assessDraft: async ({ text }) => { assessed.push(text); return text.startsWith("According to the attached file,") ? { valid: true } : {
+      valid: false,
+      reasons: ["attachment_not_attributed"],
+      blockedClaims: [{ sentence: draft, reasons: ["attachment_not_attributed"] }]
+    }; }
+  });
+  assert.equal(generations, 1);
+  assert.equal(result.outcome, "responded", JSON.stringify({ reason: result.reason, response: result.response, steps: result.steps, assessed }));
+  assert.match(result.response, /^According to the attached file,/u);
+  assert.doesNotMatch(result.response, /approved information|I cannot confirm/u);
+});
+
+test("attachment repair attributes multiple claims once per sentence", async () => {
+  const attachmentContent = "Synthetic minutes list project tasks but do not name owners.";
+  const draft = "The file lists the project tasks and does not name owners.";
+  const firstClaim = "The file lists the project tasks";
+  const secondClaim = "does not name owners";
+  const result = await require("./agentLoop").runAgentTurn({ currentMessage: "", locale: "english", attachmentContent, attachmentReviewContinuation: true,
+    recentConversation: [{ role: "user", content: "Please review the attached minutes." }] }, {
+    maxSteps: 1,
+    decideNextStep: async () => ({ type: "respond", text: draft }),
+    assessDraft: async ({ text }) => text.startsWith("According to the attached file,")
+      && !text.includes("and According to the attached file,") ? { valid: true } : {
+        valid: false,
+        reasons: ["attachment_not_attributed"],
+        blockedClaims: [firstClaim, secondClaim].map((sentence) => ({ sentence, reasons: ["attachment_not_attributed"] }))
+      }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal((result.response.match(/According to the attached file,/gu) || []).length, 1);
+  assert.match(result.response, /lists the project tasks and does not name owners/u);
+});
+
+test("a repeated missing-approved-evidence rejection can recover as a file-attributed statement after review", async () => {
+  const attachmentContent = "Synthetic document. Meeting agenda for a project planning session.";
+  const draft = "This is a meeting agenda for a project planning session.";
+  let generations = 0;
+  const result = await require("./agentLoop").runAgentTurn({ currentMessage: "", locale: "english", attachmentContent, attachmentReviewContinuation: true,
+    recentConversation: [{ role: "user", content: "Please review the attached document." }] }, {
+    maxSteps: 4,
+    decideNextStep: async () => { generations += 1; return { type: "respond", text: draft }; },
+    assessDraft: async ({ text }) => text.startsWith("According to the attached file,") ? { valid: true } : {
+      valid: false,
+      reasons: ["no_approved_evidence"],
+      blockedClaims: [{ sentence: draft, reasons: ["no_approved_evidence"] }]
+    }
+  });
+  assert.equal(generations, 2);
+  assert.equal(result.outcome, "responded", JSON.stringify({ reason: result.reason, response: result.response }));
+  assert.match(result.response, /^According to the attached file,/u);
+  assert.doesNotMatch(result.response, /approved information|I cannot confirm/u);
+});
+
 test("a no-evidence rejection routes general company facts to one knowledge search before fallback", async () => {
   const { buildApprovedKnowledgeObservation } = require("./agentTools");
   const source = { document_id: "formation-doc", section_index: "1", chunk_id: "package", chunk_index: 0,
@@ -381,13 +632,39 @@ test("a repeated unsupported claim stops when its approved evidence has not chan
     },
     assessDraft: async ({ text }) => text === firstDraft || text === secondDraft
       ? { valid: false, reasons: ["prohibited_claim"], blockedClaims: [
-        { sentence: "Residency follows a separate route with its own requirements.", reasons: ["entities_not_in_evidence"] }
+        { sentence: "Residency follows a separate route with its own requirements.", reasons: ["entities_not_in_evidence", "number_not_in_evidence:15"] }
       ] }
       : { valid: true }
   });
   assert.equal(calls, 3);
   assert.equal(result.outcome, "response_rejected");
   assert.equal(result.reason, "repeated_blocked_claim_without_evidence_progress");
+  assert.equal(result.stepCount, 3);
+  assert.match(result.response, /approved information to confirm that detail/u);
+  assert.match(result.response, /won’t guess/u);
+});
+
+test("repeated unsupported comparison evidence returns a validated grounded partial answer", async () => {
+  const { buildApprovedKnowledgeObservation } = require("./agentTools");
+  const source = { document_id: "cyprus", section_index: 0, chunk_id: "cyprus-process", document_title: "Cyprus formation",
+    heading: "Formation", content: "Cyprus company formation includes preparation and filing of incorporation documents.", relevance: 1 };
+  const evidence = buildApprovedKnowledgeObservation("found", [source]);
+  const draft = "Cyprus formation includes preparation and filing of incorporation documents. Malta offers a faster process for this business type.";
+  const blocked = "Malta offers a faster process for this business type.";
+  const result = await runAgentTurn(buildAgentContext({ currentMessage: "Compare Cyprus and Malta for my business.", locale: "english" }), {
+    maxSteps: 5,
+    initialObservations: [{ step: 0, tool: "searchApprovedKnowledge", args: { query: "Cyprus formation" }, result: { ok: true, status: "found", modelObservation: evidence } }],
+    decideNextStep: async ({ step }) => step === 1 ? { type: "respond", text: draft }
+      : step === 2 ? { type: "tool", tool: "searchApprovedKnowledge", args: { query: "Malta formation comparison" } }
+        : { type: "respond", text: draft },
+    tools: { searchApprovedKnowledge: { run: async () => ({ ok: true, status: "no_evidence", modelObservation: buildApprovedKnowledgeObservation("no_evidence", []) }) } },
+    assessDraft: async ({ text }) => text === draft
+      ? { valid: false, reasons: ["unsupported_relation"], blockedClaims: [{ sentence: blocked, reasons: ["no_approved_evidence", "unsupported_relation"] }] }
+      : { valid: true }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(result.response, "Cyprus formation includes preparation and filing of incorporation documents.");
   assert.equal(result.stepCount, 3);
 });
 
@@ -658,6 +935,7 @@ test("the pre-send gate permits clarification when stored facts are inferred or 
 
 test("a tool call is executed, observed, and the loop continues for a second decision", async () => {
   let searchArgs = null;
+  const context = buildAgentContext({ currentMessage: "Which company services do you provide?", locale: "english" });
   const tools = {
     searchApprovedKnowledge: {
       run: async (args) => {
@@ -665,16 +943,16 @@ test("a tool call is executed, observed, and the loop continues for a second dec
         return {
           ok: true,
           status: "found",
-          data: [{ heading: "Company formation price", content: "EUR 1500" }],
+          data: [{ heading: "Company formation service", content: "Company formation is available in Cyprus." }],
           // REFAL-AGENT-028: the factual-grounding check reads ONLY
           // `modelObservation` (Ticket 027's bounded, approval-filtered
           // surface), never raw `data` — this stub must set it too, matching
-          // the real searchApprovedKnowledge tool's shape, for the "EUR
-          // 1500" respond text below to be grounded.
+          // the real searchApprovedKnowledge tool's shape, for the company
+          // service claim below to be grounded.
           modelObservation: {
             type: "approved_knowledge",
             status: "found",
-            evidence: [{ title: "Company formation price", section: null, content: "EUR 1500", contentTruncated: false, sourceRef: null }],
+            evidence: [{ title: "Company formation service", section: null, content: "Company formation is available in Cyprus.", contentTruncated: false, sourceRef: null }],
             truncated: false
           }
         };
@@ -682,14 +960,14 @@ test("a tool call is executed, observed, and the loop continues for a second dec
     }
   };
   const decide = scriptedDecider([
-    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation price" } },
-    { type: "respond", text: "Company formation is published at EUR 1500." }
+    { type: "tool", tool: "searchApprovedKnowledge", args: { query: "company formation service" } },
+    { type: "respond", text: "Company formation is available in Cyprus." }
   ]);
-  const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools });
+  const result = await runAgentTurn(context, { decideNextStep: decide, tools });
   assert.equal(result.outcome, "responded");
   assert.equal(result.toolsUsed.length, 1);
   assert.equal(result.toolsUsed[0], "searchApprovedKnowledge");
-  assert.deepEqual(searchArgs, { query: "company formation price" });
+  assert.deepEqual(searchArgs, { query: "company formation service" });
   assert.equal(result.stepCount, 2);
 });
 
@@ -821,10 +1099,35 @@ test("one exhausted-search correction does not consume the reserved answer-revie
 
 test("a decision naming an unknown tool stops safely with a deterministic fallback, not a thrown error", async () => {
   const decide = scriptedDecider([{ type: "tool", tool: "sendWireTransfer", args: {} }]);
-  const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools: {} });
+  const result = await runAgentTurn(BASE_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1 });
   assert.equal(result.outcome, "invalid_decision");
   assert.equal(result.reason, "unknown_tool_requested");
   assert.equal(typeof result.response, "string");
+});
+
+test("an invalid tool decision remains an invalid-decision fallback at the reserved final step", async () => {
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    decideNextStep: scriptedDecider([{ type: "tool", tool: "sendWireTransfer", args: {} }]),
+    tools: {}, maxSteps: 3
+  });
+  assert.equal(result.outcome, "invalid_decision");
+  assert.equal(result.reason, "unknown_tool_requested");
+  assert.equal(typeof result.response, "string");
+});
+
+test("an unknown tool request gets one bounded correction decision when steps remain", async () => {
+  const calls = [];
+  const result = await runAgentTurn(BASE_CONTEXT, { tools: {}, maxSteps: 3,
+    decideNextStep: async ({ step, observations }) => {
+      calls.push(step);
+      if (step === 1) return { type: "tool", tool: "inventedTool", args: {} };
+      assert.ok(observations.some((item) => item.tool === "decisionValidation" && item.result.reasonCode === "unknown_tool_requested"));
+      return { type: "clarify", text: "Which part would you like to understand first?" };
+    }
+  });
+  assert.deepEqual(calls, [1, 2]);
+  assert.equal(result.outcome, "clarified");
+  assert.equal(result.response, "Which part would you like to understand first?");
 });
 
 test("a respond draft with too many questions is mechanically corrected to the first question, not discarded", async () => {
@@ -834,6 +1137,85 @@ test("a respond draft with too many questions is mechanically corrected to the f
   assert.equal(result.corrected, true);
   assert.equal(result.response, "What is your budget?");
   assert.equal(result.stepCount, 1);
+});
+
+test("format-only rejections are corrected and fully revalidated without a generation retry", async () => {
+  const context = buildAgentContext({ currentMessage: "What benefits does setting up a company offer?", locale: "english" });
+  const draft = "Thanks for the question. I can explain the relevant information. We can keep the answer focused. Tell me which part matters most?";
+  let generationCalls = 0;
+  let groundingReviews = 0;
+  const result = await runAgentTurn(context, {
+    decideNextStep: async () => { generationCalls += 1; return { type: "respond", text: draft }; },
+    tools: {},
+    assessDraft: async () => { groundingReviews += 1; return { valid: true, reasons: [] }; }
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.corrected, true);
+  assert.equal(generationCalls, 1);
+  assert.equal(groundingReviews, 1);
+  assert.equal(result.stepCount, 1);
+  assert.equal((result.steps || []).filter(step => step.tool === "responsePolicyCheck").length, 0);
+  assert.equal(require("./responsePolicy").validateResponse(result.response,
+    require("./responsePolicy").responseThresholdsForMessage(context.currentMessage)).valid, true);
+});
+
+test("a paraphrased draft with the same rejection and unchanged evidence stops after one recovery", async () => {
+  const context = buildAgentContext({ currentMessage: "Can you summarize the relevant information?", locale: "english" });
+  let generationCalls = 0;
+  let groundingCalls = 0;
+  const drafts = ["That earlier detail is confirmed for you.", "The earlier detail is definitely confirmed for your situation."];
+  const result = await runAgentTurn(context, {
+    maxSteps: 5,
+    decideNextStep: async () => ({ type: "respond", text: drafts[generationCalls++] || drafts.at(-1) }),
+    tools: {},
+    assessDraft: async ({ text }) => {
+      groundingCalls += 1;
+      return { valid: false, reasons: ["context_mismatch"], blockedClaims: [{ sentence: text, reasons: ["context_mismatch"] }] };
+    }
+  });
+  assert.equal(generationCalls, 2);
+  assert.equal(groundingCalls, 2);
+  assert.equal(result.outcome, "response_rejected");
+  assert.equal(result.reason, "repeated_validation_rejection_without_evidence_progress");
+});
+
+test("an overlong unsupported price is not delivered through formatting recovery", async () => {
+  const context = buildAgentContext({ currentMessage: "What is the company formation package price?", locale: "english" });
+  const longDetail = `Additional context ${"that does not support the price claim ".repeat(18)}.`;
+  const draft = `The company formation package costs EUR 999. ${longDetail} The remaining information can be reviewed separately.`;
+  let calls = 0;
+  const result = await runAgentTurn(context, {
+    decideNextStep: async () => {
+      calls += 1;
+      return calls === 1
+        ? { type: "respond", text: draft }
+        : { type: "respond", text: "I can’t confirm the current package price from the information available here." };
+    },
+    tools: {}
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(calls, 2);
+  assert.doesNotMatch(result.response, /EUR 999/u);
+  assert.ok((result.steps || []).some(item => item.tool === "responsePolicyCheck"
+    && /too_long/u.test(item.result.reasonCode)));
+});
+
+test("an overlong price-bearing draft is never shortened in a way that could drop its qualifier", async () => {
+  const context = buildAgentContext({ currentMessage: "What is the package price?", locale: "english" });
+  const draft = `The package costs EUR 999 excluding VAT. ${"Additional details are included here. ".repeat(24)}`;
+  let calls = 0;
+  const result = await runAgentTurn(context, {
+    decideNextStep: async () => {
+      calls += 1;
+      return calls === 1
+        ? { type: "respond", text: draft }
+        : { type: "respond", text: "I can't confirm the current price here. Please ask the team to verify it." };
+    },
+    tools: {}
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(calls, 2);
+  assert.doesNotMatch(result.response, /EUR 999/u);
 });
 
 test("a rejection that can't be mechanically corrected (e.g. too long) gets one retried decision instead of an immediate generic fallback", async () => {
@@ -855,6 +1237,39 @@ test("a rejection that can't be mechanically corrected (e.g. too long) gets one 
   assert.equal(result.steps.length, 1);
   assert.equal(result.steps[0].tool, "responsePolicyCheck");
   assert.match(result.steps[0].result.reasonCode, /too_long/);
+});
+
+test("length rejection feedback gives the next draft the active sentence and character limits", async () => {
+  const overlong = `This draft is too long and needs a focused correction ${"with extra material ".repeat(45)}.`;
+  let correction = "";
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    decideNextStep: async ({ step, observations }) => {
+      if (step === 1) return { type: "respond", text: overlong };
+      correction = observations.find((item) => item.tool === "responsePolicyCheck")?.result?.correction || "";
+      return { type: "respond", text: "I can help with that. What is your main goal?" };
+    },
+    tools: {}
+  });
+  assert.equal(result.outcome, "responded");
+  assert.match(correction, /within 5 sentences and 700 characters/u);
+  assert.match(correction, /Preserve the direct answer, the customer's stated context, and distinct relevant evidence-backed details/u);
+  assert.match(correction, /Remove preambles, source narration, repeated caveats, and unrelated detail before removing a relevant fact/u);
+});
+
+test("repeated unrepairable length failures receive only one model correction attempt", async () => {
+  const overlong = (call) => `This friendly reply ${["amber", "blue", "copper", "green", "silver", "violet"][call - 1]} is too long for the response limit ${"and adds no useful detail ".repeat(40)}.`;
+  let calls = 0;
+  const result = await runAgentTurn(BASE_CONTEXT, {
+    decideNextStep: async () => {
+      calls += 1;
+      return { type: "respond", text: overlong(calls) };
+    },
+    tools: {}
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /too_long/);
+  assert.equal(result.stepCount, 2);
 });
 
 test("a rejection that never becomes compliant exhausts the step budget and falls back to the generic safe reply, not silence", async () => {
@@ -932,9 +1347,32 @@ test("EL expected + EL response: allowed", async () => {
   assert.equal(result.outcome, "responded");
 });
 
+test("explicit translation output language is accepted without changing the customer's conversation locale", async () => {
+  const context = buildAgentContext({ currentMessage: "How would you translate ‘company formation’ into Greek?",
+    locale: "english", responseType: "direct_answer" });
+  const result = await runAgentTurn(context, {
+    decideNextStep: scriptedDecider([{ type: "respond", text: "Σύσταση εταιρείας." }]),
+    tools: {}, maxSteps: 1,
+    assessDraft: async () => ({ valid: true, reasons: [], blockedClaims: [] })
+  });
+  assert.equal(result.outcome, "responded");
+  assert.equal(result.response, "Σύσταση εταιρείας.");
+});
+
 test("EN expected + AR response: rejected (never delivered to a customer expecting English)", async () => {
   const decide = scriptedDecider([{ type: "respond", text: AR_TEXT }]);
-  const result = await runAgentTurn(EN_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1 });
+  const result = await runAgentTurn(EN_CONTEXT, { decideNextStep: decide, tools: {}, maxSteps: 1,
+    assessDraft: async () => ({ valid: true, reasons: [], blockedClaims: [] }) });
+  assert.equal(result.outcome, "response_rejected");
+  assert.match(result.reason, /language_mismatch/);
+});
+
+test("a mostly English reply with an Arabic honorific is rejected even when semantic grounding passes", async () => {
+  const context = buildAgentContext({ currentMessage: "Hi again", locale: "english",
+    contact: { name: "Χάσαν", nameSource: "customer_stated" } });
+  const decide = scriptedDecider([{ type: "respond", text: "Good to hear from you again, أستاذ حسن. What would you like to look at today?" }]);
+  const result = await runAgentTurn(context, { decideNextStep: decide, tools: {}, maxSteps: 1,
+    assessDraft: async () => ({ valid: true, reasons: [], blockedClaims: [] }) });
   assert.equal(result.outcome, "response_rejected");
   assert.match(result.reason, /language_mismatch/);
 });

@@ -135,9 +135,11 @@ function resolveConflict(sources = []) {
   };
 }
 
-// W1.6.3 — general model knowledge may explain a general concept, but must
-// never produce a claim ABOUT Refalco. "VAT is a consumption tax" is fine from
-// model knowledge; "Refalco charges 19% VAT" is not, at any level below 5.
+// Customer-facing facts must come from approved evidence or a trusted live
+// result. In particular, don't fill gaps in services or real-world processes
+// (fees, steps, documents, requirements, deadlines, rules) from model memory.
+// The helper name is retained for callers, but now gates every unsupported
+// factual claim rather than only Refalco-specific wording.
 const REFALCO_SPECIFIC_LATIN = /\b(?:refal(?:co)?(?:\s+group)?)\b|\b(?:our|we|us)\b[^.!?]{0,40}\b(?:charge|offer|price|fee|package|service|office|team|client)\w*\b/iu;
 const REFALCO_SPECIFIC_OTHER = /(?:ريفال|شركتنا|مجموعتنا|أسعارنا|خدماتنا|باقتنا|فريقنا)|(?:η εταιρεία μας|ο όμιλός μας|οι τιμές μας|οι υπηρεσίες μας|η ομάδα μας)/iu;
 
@@ -147,15 +149,11 @@ function isRefalcoSpecificClaim(text) {
 }
 
 /**
- * W1.6.3 gate. A statement sourced from general model knowledge is permitted
- * only while it stays general.
+ * Gate a factual statement whose only source is general model knowledge.
  */
 function assertModelKnowledgeIsGeneral(text, level) {
   if (level !== SOURCE_LEVELS.MODEL_KNOWLEDGE) return { ok: true, label: DECISION_LABELS.NO_CONFLICT };
-  if (isRefalcoSpecificClaim(text)) {
-    return { ok: false, label: "precedence:model_knowledge_refalco_claim_blocked" };
-  }
-  return { ok: true, label: "precedence:model_knowledge_general_ok" };
+  return { ok: false, label: "precedence:model_knowledge_unapproved_fact_blocked" };
 }
 
 module.exports = {

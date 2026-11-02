@@ -43,6 +43,13 @@ function makeStore() {
     saveQualification: async () => {},
     saveIntents: async () => {},
     getKnowledgeVersion: async () => { counts.versionCalls += 1; return "knowledge-version-1"; },
+    lookupDynamicData: async (type) => type === "offers" ? ({ ok: true, status: "found", data: [{
+      code: "formation-package", title_en: "Formation package", amount: 1950, currency: "EUR", vat_note: "plus VAT",
+      inclusions: ["Company registration", "Registered office for the first year", "Opening the tax file"],
+      valid_from: new Date(Date.now() - 1000).toISOString(), effective_from: new Date(Date.now() - 1000).toISOString(),
+      valid_until: new Date(Date.now() + 86400000).toISOString(), verified_at: new Date(Date.now() - 2000).toISOString(),
+      updated_at: new Date(Date.now() - 500).toISOString(), review_status: "approved", active: true, location: "CY", eligibility: null
+    }] }) : ({ ok: true, status: "not_found", data: [] }),
     searchKnowledge: async () => {
       counts.searchCalls += 1;
       return [{ chunk_id: "pkg-1", document_id: "doc-pkg", section_index: "0", chunk_index: 0, heading: "Company formation package",
@@ -55,6 +62,7 @@ const PREFLIGHT = {
   "hi": ["greeting"],
   "thanks": ["small_talk"],
   "How much is the company formation package?": ["pricing", "company_formation"],
+  "What is the current price of the company formation package?": ["pricing", "company_formation"],
   "And what does it include?": ["company_formation"]
 };
 
@@ -73,8 +81,13 @@ function scriptedModels(behaviour) {
     const evidence = observations.flatMap((item) => item?.result?.modelObservation?.evidence || []);
     const social = context.socialOnlyTurn === true;
     if (social) return { type: "respond", text: context.currentMessage === "hi" ? "Hello, I am REFAL. How can I help you today?" : "You are welcome. Happy to help any time." };
+    const asksPrice = /how much|price|cost/iu.test(context.currentMessage);
+    const offer = observations.find((item) => item?.tool === "lookupActiveOffer")?.result?.modelObservation?.records?.[0];
+    if (asksPrice && !offer && tools.lookupActiveOffer) return { type: "tool", tool: "lookupActiveOffer", args: {} };
     if (evidence.length) {
-      return { type: "respond", text: /include/iu.test(context.currentMessage)
+      return { type: "respond", text: asksPrice && offer
+        ? "The company formation package costs 1,950 EUR plus VAT. It includes company registration, the registered office for the first year and opening the tax file."
+        : /include/iu.test(context.currentMessage)
         ? "It includes company registration, the registered office for the first year and opening the tax file."
         : "The company formation package costs 1,950 EUR excluding VAT." };
     }
@@ -117,10 +130,10 @@ async function runConversation({ flagsOn, behaviour, messages, userId, store = m
 
 const CONVERSATION = ["hi", "How much is the company formation package?", "And what does it include?", "thanks"];
 
-test("flags off: the existing flow is unchanged (preflight model call on every turn, every fact turn searches)", async () => {
+test("flags off: ordinary turns retain the existing flow while bare greetings stay social", async () => {
   const turns = await runConversation({ flagsOn: false, behaviour: "tool_first", messages: CONVERSATION, userId: "latency-off" });
-  assert.deepEqual(turns.map((t) => t.preflightCalls), [1, 1, 1, 1]);
-  assert.deepEqual(turns.map((t) => t.llmCalls), [3, 4, 4, 3]);
+  assert.deepEqual(turns.map((t) => t.preflightCalls), [0, 1, 1, 1]);
+  assert.deepEqual(turns.map((t) => t.llmCalls), [2, 5, 4, 3]);
   assert.deepEqual(turns.map((t) => t.knowledgeToolCalls), [0, 1, 1, 0]);
   assert.ok(turns[1].dbSearchCalls > 0 && turns[2].dbSearchCalls > 0);
   assert.deepEqual(turns.map((t) => t.outcome), ["responded", "responded", "responded", "responded"]);
@@ -129,7 +142,7 @@ test("flags off: the existing flow is unchanged (preflight model call on every t
 test("flags on: social turns skip the preflight and tools, fact turns search first, follow-ups reuse approved evidence", async () => {
   const turns = await runConversation({ flagsOn: true, behaviour: "tool_first", messages: CONVERSATION, userId: "latency-on" });
   assert.deepEqual(turns.map((t) => t.preflightCalls), [0, 1, 1, 0]);
-  assert.deepEqual(turns.map((t) => t.llmCalls), [2, 3, 3, 2]);
+  assert.deepEqual(turns.map((t) => t.llmCalls), [2, 4, 3, 2]);
   assert.deepEqual(turns.map((t) => t.fastSocialPath), [true, false, false, true]);
   assert.equal(turns[1].searchFirst, "preflight_intent");
   assert.equal(turns[1].knowledgeToolCalls, 1);
@@ -140,13 +153,23 @@ test("flags on: social turns skip the preflight and tools, fact turns search fir
   assert.deepEqual(turns.map((t) => t.outcome), ["responded", "responded", "responded", "responded"]);
 });
 
+test("a new pricing question searches current approved evidence even when the prior turn has reusable evidence", async () => {
+  const turns = await runConversation({ flagsOn: true, behaviour: "tool_first",
+    messages: ["How much is the company formation package?", "What is the current price of the company formation package?"], userId: "pricing-cache-refresh" });
+  assert.equal(turns[1].evidenceReuse, "hit");
+  assert.equal(turns[1].knowledgeToolCalls, 1);
+  assert.equal(turns[1].dbSearchCalls, 1);
+  assert.match(turns[1].reply, /1,950 EUR/u);
+});
+
 test("a draft-first model loses its rejected-draft round trip when search-first is on, and grounding still decides", async () => {
   const off = await runConversation({ flagsOn: false, behaviour: "draft_first", messages: ["How much is the company formation package?"], userId: "draft-off" });
   const on = await runConversation({ flagsOn: true, behaviour: "draft_first", messages: ["How much is the company formation package?"], userId: "draft-on" });
-  // Off: preflight, unsupported draft (rejected by the deterministic gate, no
-  // reviewer call), search decision, answer, grounding review = 5. On: 3.
-  assert.equal(off[0].llmCalls, 5);
-  assert.equal(on[0].llmCalls, 3);
+  // Off: preflight, unsupported draft, search decision, live-offer lookup,
+  // answer, and grounding review = 6. Search-first avoids the unsupported
+  // draft round trip but still performs the live-offer lookup = 4.
+  assert.equal(off[0].llmCalls, 6);
+  assert.equal(on[0].llmCalls, 4);
   assert.match(off[0].reply, /1,950 EUR/u);
   assert.match(on[0].reply, /1,950 EUR/u);
   assert.doesNotMatch(on[0].reply, /1,500/u);

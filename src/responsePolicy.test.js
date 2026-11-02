@@ -2,16 +2,120 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   validateResponse,
+  formatResponseWithinLimits,
   safeFallbackData,
   sentenceCount,
   questionCount,
   MODEL_DRAFT_THRESHOLDS,
+  BENEFIT_REPLY_THRESHOLDS,
+  AGENT_SUMMARY_THRESHOLDS,
+  requestsExpandedAnswer,
+  responseThresholdsForMessage,
   AGENT_CLARIFY_THRESHOLDS,
   LEGACY_RESPONSE_THRESHOLDS,
   hasVerifiedHandoverClaim,
   hasVerifiedBookingClaim
 } = require("./responsePolicy");
 const { containsProhibitedClaim } = require("./refalcoAnswer");
+
+test("expanded response limits require an explicit detail request in Arabic, English, or Greek", () => {
+  for (const message of ["Please give me the full details", "Summarize all the information about the package", "What does the package include?", "اشرحلي الباقة بالتفصيل", "شو بتشمل الباقة؟", "ممكن تلخّصلي باقة التأسيس؟", "رتّبلي كل معلومات الباقة بشكل واضح", "Πείτε μου αναλυτικά τι περιλαμβάνει", "Κάντε μια σύνοψη όλων των πληροφοριών"]){
+    assert.equal(requestsExpandedAnswer(message), true, message);
+    assert.equal(responseThresholdsForMessage(message), AGENT_SUMMARY_THRESHOLDS, message);
+  }
+  for (const message of ["What is the first step?", "شو أول خطوة بتقترحها؟", "هل أقدر أعمل الإجراءات عن بعد؟", "Ποιο είναι το πρώτο βήμα;"]){
+    assert.equal(requestsExpandedAnswer(message), false, message);
+    assert.equal(responseThresholdsForMessage(message), MODEL_DRAFT_THRESHOLDS, message);
+  }
+});
+
+test("package requests for both inclusions and exclusions receive the expanded answer budget", () => {
+  for (const message of [
+    "Which services are included in and excluded from the €999 company formation package in Cyprus?",
+    "Ποιες υπηρεσίες περιλαμβάνει το πακέτο σύστασης εταιρείας στην Κύπρο και τι δεν περιλαμβάνει;",
+    "شو داخل بباقة التأسيس وشو الأشياء اللي ما بتشملها؟"
+  ]) {
+    assert.equal(requestsExpandedAnswer(message), true, message);
+    assert.equal(responseThresholdsForMessage(message), AGENT_SUMMARY_THRESHOLDS, message);
+  }
+});
+
+test("deterministic formatter joins complete sentence boundaries and preserves their content", () => {
+  const cases = [
+    ["English", "The first point is ready. The second point is clear. We can continue after that.", "english", "; "],
+    ["Arabic", "النقطة الأولى واضحة. النقطة الثانية مؤكدة. يمكننا المتابعة بعد ذلك.", "arabic", "؛ "],
+    ["Greek", "Το πρώτο σημείο είναι σαφές. Το δεύτερο σημείο είναι έτοιμο. Μπορούμε να συνεχίσουμε.", "greek", ", "]
+  ];
+  for (const [name, text, language, separator] of cases) {
+    const formatted = formatResponseWithinLimits(text, { minSentences: 1, maxSentences: 1, maxChars: 300 }, language);
+    assert.ok(formatted, `${name} should be formatted`);
+    assert.ok(formatted.includes(separator), `${name} should use a locale-safe clause separator`);
+    assert.equal(sentenceCount(formatted), 1, `${name} should fit the sentence limit`);
+    for (const word of text.replace(/[.!؟。！？]/gu, " ").split(/\s+/u).filter(word => word.length > 3)) {
+      assert.ok(formatted.includes(word), `${name} dropped content: ${word}`);
+    }
+  }
+});
+
+test("deterministic formatter keeps only a complete leading portion when the character cap requires it", () => {
+  const first = "The initial answer is clear.";
+  const second = `A relevant detail follows ${"with useful support ".repeat(18)}.`;
+  const third = `An extra detail follows ${"with additional context ".repeat(18)}.`;
+  const formatted = formatResponseWithinLimits(`${first} ${second} ${third}`, { minSentences: 1, maxSentences: 3, maxChars: 450 }, "english");
+  assert.ok(formatted);
+  assert.ok(formatted.startsWith(first.slice(0, -1)));
+  assert.ok(formatted.includes("relevant detail"));
+  assert.ok(!formatted.includes("extra detail"));
+  assert.ok(formatted.length <= 450);
+  assert.equal(sentenceCount(formatted), 1);
+});
+
+test("deterministic formatter retains bullet layout and separates the follow-up question", () => {
+  const text = "- The first detail is confirmed.\n- The second detail is relevant.\nWhat should I check next?";
+  const formatted = formatResponseWithinLimits(text, { minSentences: 1, maxSentences: 2, maxChars: 300 }, "english");
+  assert.ok(formatted);
+  assert.match(formatted, /confirmed;\n- The second detail/u);
+  assert.match(formatted, /relevant\.\n\nWhat should I check next\?/u);
+  assert.equal(sentenceCount(formatted), 2);
+});
+
+test("formatting can refuse to truncate a price-bearing reply and its qualifiers", () => {
+  const text = `The quoted amount is EUR 999 excluding VAT. ${"Additional complete details remain important. ".repeat(12)}`;
+  assert.ok(formatResponseWithinLimits(text, { minSentences: 1, maxSentences: 20, maxChars: 90 }, "english"));
+  assert.equal(formatResponseWithinLimits(text, { minSentences: 1, maxSentences: 20, maxChars: 90 }, "english", { preserveAllContent: true }), null);
+});
+
+test("ordinary benefit questions use a short answer budget, while explicit detail still expands", () => {
+  for (const message of [
+    "What benefits does registering a company in Cyprus offer? Would it save tax or give residency?",
+    "شو فوائد تسجيل شركة بقبرص؟",
+    "Ποια είναι τα πλεονεκτήματα της εγγραφής εταιρείας στην Κύπρο;"
+  ]) {
+    assert.equal(requestsExpandedAnswer(message), false, message);
+    assert.equal(responseThresholdsForMessage(message), BENEFIT_REPLY_THRESHOLDS, message);
+  }
+  assert.equal(responseThresholdsForMessage("Give me the full details of the benefits"), AGENT_SUMMARY_THRESHOLDS);
+  assert.deepEqual(BENEFIT_REPLY_THRESHOLDS, { minSentences: 1, maxSentences: 3, maxQuestions: 1, maxChars: 500 });
+});
+
+test("numbered list prefixes do not inflate sentence limits", () => {
+  const reply = "Here is the answer.\n\n1. First supported item.\n2. Second supported item.\n3. Third supported item.\n\nWhat would you like to check next?";
+  assert.equal(sentenceCount(reply), 5);
+  assert.equal(validateResponse(reply, { ...MODEL_DRAFT_THRESHOLDS, language: "english" }).valid, true);
+
+  const decimal = "The first fee is EUR 1.50. The second fee is EUR 2.75.";
+  assert.equal(sentenceCount(decimal), 2);
+});
+
+test("explicit multi-part answers fit the expanded sentence budget while caps remain active", () => {
+  const reply = Array.from({ length: 16 }, (_, index) => `المعلومة رقم ${index + 1} واضحة.`).join("\n");
+  const result = validateResponse(reply, { ...AGENT_SUMMARY_THRESHOLDS, language: "arabic" });
+  assert.equal(result.sentenceCount, 16);
+  assert.equal(result.valid, true, result.reasons.join(", "));
+
+  const tooLong = `${reply}\n\nالمدة تقديرية وليست ضماناً لموعد محدد.`;
+  assert.ok(validateResponse(tooLong, { ...AGENT_SUMMARY_THRESHOLDS, language: "arabic" }).reasons.includes("too_many_sentences"));
+});
 
 test("validates concise two-to-five sentence replies", () => {
   const text = "I understand your goal. We can clarify the available options. What matters most to you?";
@@ -173,6 +277,25 @@ test("outbound requests for passwords, banking credentials, or out-of-band codes
   }
 });
 
+test("identity-document checklists are rejected by the outbound response policy", () => {
+  const result = validateResponse(
+    "What to have ready: a copy of your passport and proof of residential address.",
+    { minSentences: 0 }
+  );
+  assert.equal(result.valid, false);
+  assert.ok(result.reasons.includes("forbidden_credential_request"));
+});
+
+test("a customer-ready, explicit document-submission question permits formation-document guidance only", () => {
+  const answer = "You may upload a copy of your passport here.";
+  const customerMessage = "I am ready to register a Cyprus company. Should I upload my passport here?";
+  assert.equal(validateResponse(answer, { minSentences: 0 }).reasons.includes("forbidden_credential_request"), true);
+  assert.equal(validateResponse(answer, { minSentences: 0, customerMessage }).reasons.includes("forbidden_credential_request"), false);
+  assert.equal(validateResponse(answer, { minSentences: 0, customerMessage: "Can I upload my passport now?",
+    recentConversation: [{ role: "user", content: "I am ready to register a Cyprus company." }] }).reasons.includes("forbidden_credential_request"), false);
+  assert.equal(validateResponse("Please upload your bank statement here.", { minSentences: 0, customerMessage }).reasons.includes("forbidden_credential_request"), true);
+});
+
 test("an unsupported factual claim (legal/tax/immigration/regulatory conclusion) is still rejected (test 19)", () => {
   for (const text of [
     "You will receive the permit without any issues.",
@@ -264,8 +387,8 @@ test("safe fallback data is deterministic and multilingual", () => {
   // keys and silently degraded to the generic "default" text for those
   // categories. Each language now has its own category-specific wording,
   // mirroring the English set, instead of a generic fallback.
-  assert.match(safeFallbackData({ language: "ar" }).text, /من المنطقي إنك تدرس التفاصيل/);
-  assert.match(safeFallbackData({ language: "el" }).text, /Είναι λογικό να αξιολογήσετε/);
+  assert.match(safeFallbackData({ language: "ar" }).text, /ما عندي معلومات معتمدة بتأكد هالتفصيل/u);
+  assert.match(safeFallbackData({ language: "el" }).text, /Δεν έχω εγκεκριμένες πληροφορίες/u);
   assert.match(safeFallbackData({ language: "ar", category: "default" }).text, /فيني وضّحلك/);
   assert.match(safeFallbackData({ language: "el", category: "default" }).text, /Μπορώ να σας εξηγήσω/);
   assert.match(safeFallbackData({ language: "ar", category: "price" }).text, /الميزانية/u);
@@ -276,6 +399,13 @@ test("safe fallback data is deterministic and multilingual", () => {
   assert.doesNotMatch(safeFallbackData({ language: "en", category: "timing" }).text, /when would you ideally|move forward/iu);
   assert.match(safeFallbackData({ language: "ar", category: "timing" }).text, /خذ وقتك/u);
   assert.match(safeFallbackData({ language: "el", category: "not_ready" }).text, /δικό σας ρυθμό/u);
+  assert.match(safeFallbackData({ language: "ar", category: "business_information_gap" }).text, /ما عندي معلومات معتمدة بتأكد هالتفصيل/u);
+  assert.match(safeFallbackData({ language: "en", category: "business_information_gap" }).text, /approved information to confirm that detail/u);
+  assert.match(safeFallbackData({ language: "el", category: "business_information_gap" }).text, /Δεν έχω εγκεκριμένες πληροφορίες/u);
+  for (const language of ["en", "ar", "el"]) {
+    const reply = safeFallbackData({ language, category: "pricing_conflict" }).text;
+    assert.doesNotMatch(reply, /\b(?:EUR|USD|GBP)\s?\d+|[€$£]\s?\d+/u);
+  }
   // Runtime language detection returns the full word "greek". Preserve that
   // public input form as well as locale codes so a fallback never changes the
   // customer's language during an error path.
@@ -372,6 +502,12 @@ test("request-recording claims require verified handover state", () => {
     assert.ok(validateResponse(response, { minSentences: 0 }).reasons.includes("unverified_handover_action"), response);
     assert.equal(validateResponse(response, { minSentences: 0, allowVerifiedHandoverClaim: true }).unverifiedHandoverAction, false, response);
   }
+});
+
+test("contact commitments pass only when the caller has verified and persisted a consent-bound handover", () => {
+  const arabicHandover = "سجّلت طلبك لمراجعتها، ورح يتواصل معك حدا من الفريق خلال 24 ساعة.";
+  assert.ok(validateResponse(arabicHandover, { minSentences: 0 }).reasons.includes("unconsented_contact_commitment"));
+  assert.equal(validateResponse(arabicHandover, { minSentences: 0, allowVerifiedHandoverClaim: true }).valid, true);
 });
 
 test("a negated Arabic booking suggestion is allowed while actual booking commitments remain blocked", () => {

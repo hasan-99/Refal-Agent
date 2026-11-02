@@ -265,16 +265,35 @@ test("only obvious greetings, thanks, goodbyes and emoji skip the model prefligh
   assert.equal(obviousSocialClassification("مرحبا").language, "arabic");
 });
 
-test("the contextual preflight uses the social fast path only when the flag is on", async () => {
+test("plain greetings stay social while the flag controls the other social fast paths", async () => {
   let modelCalls = 0;
   const callModel = async () => { modelCalls += 1; return JSON.stringify({ intents: ["greeting"], language: "english", operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false }); };
   const fast = await classifyContextualMessage({ message: "hello", user: { history: [] } }, { callModel, fastSocialPath: true });
   assert.equal(fast.source, "deterministic_social_fast_path");
   assert.equal(modelCalls, 0);
   const normal = await classifyContextualMessage({ message: "hello", user: { history: [] } }, { callModel, fastSocialPath: false });
-  assert.equal(normal.source, "contextual_model");
+  assert.equal(normal.source, "deterministic_social_fast_path");
+  assert.equal(modelCalls, 0);
+  const thanks = await classifyContextualMessage({ message: "thanks", user: { history: [] } }, { callModel, fastSocialPath: false });
+  assert.equal(thanks.source, "contextual_model");
   await classifyContextualMessage({ message: "hello, what does the package include", user: { history: [] } }, { callModel, fastSocialPath: true });
   assert.equal(modelCalls, 2);
+});
+
+test("a recognized colloquial greeting stays social when the optional social fast-path flag is off", async () => {
+  let modelCalls = 0;
+  const result = await classifyContextualMessage({ message: "أهلين", user: { history: [] } }, {
+    fastSocialPath: false,
+    callModel: async () => {
+      modelCalls += 1;
+      return JSON.stringify({ intents: ["unknown"], language: "arabic", operation: "none",
+        offerSourceTurnId: null, noProactiveBookingOrContact: false });
+    }
+  });
+  assert.equal(result.source, "deterministic_social_fast_path");
+  assert.deepEqual(result.intents, ["greeting"]);
+  assert.equal(result.language, "arabic");
+  assert.equal(modelCalls, 0);
 });
 
 test("a fast social turn gets no tools and its draft is still grounding-reviewed", async () => {

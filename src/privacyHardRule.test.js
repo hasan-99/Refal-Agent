@@ -48,6 +48,51 @@ test("an outbound request for a PIN or banking credentials is caught", () => {
   assert.ok(requestsForbiddenCredential("Send me your online banking login").kinds.includes(CREDENTIAL_KINDS.BANKING_CREDENTIALS));
 });
 
+test("outbound identity-document requests and preparation checklists are blocked", () => {
+  for (const text of [
+    "Please upload a copy of your passport here.",
+    "What to have ready: a copy of your passport and proof of residential address.",
+    "Bring your passport and address proof to get started.",
+    "أرسل صورة جواز السفر وإثبات السكن هنا.",
+    "Στείλτε μου το διαβατήριό σας."
+  ]) {
+    assert.ok(requestsForbiddenCredential(text).kinds.includes(CREDENTIAL_KINDS.IDENTITY_DOCUMENT), text);
+  }
+  for (const text of [
+    "Please do not send your passport or proof of address in this chat.",
+    "A passport is an identity document."
+  ]) assert.equal(requestsForbiddenCredential(text).violation, false, text);
+});
+
+test("a ready customer can explicitly submit formation identity documents through the private WhatsApp intake", () => {
+  const cases = [
+    ["I am ready to register a Cyprus company. Should I upload my passport here?", "You may attach your passport through this WhatsApp chat."],
+    ["My co-founder and I are ready to register a company. Can I send our passport copies and bank reference letters here for your team to review?", "You may attach the passport copies and bank-reference letters you mentioned here."],
+    ["نحن جاهزون لتسجيل شركة. هل يمكنني إرسال صور جوازات السفر ومراجع البنك هنا؟", "فيني أرفق مستندات التأسيس بهالمحادثة."],
+    ["أنا جاهز أسجل شركة بقبرص. أرسل جواز السفر ومرجع البنك عبر واتساب؟", "فيني أرفق مستندات التأسيس المطلوبة بهالمحادثة."],
+    ["Είμαι έτοιμος να ιδρύσω εταιρεία. Μπορώ να επισυνάψω το διαβατήριό μου εδώ;", "Μπορείτε να επισυνάψετε τα έγγραφα σύστασης σε αυτή τη συνομιλία."]
+  ];
+  for (const [customerMessage, answer] of cases) {
+    assert.equal(requestsForbiddenCredential(answer, { customerMessage }).violation, false, customerMessage);
+  }
+  assert.equal(requestsForbiddenCredential("Please upload a copy of your passport here.").violation, true,
+    "document requests stay blocked without customer readiness and an explicit question");
+  assert.equal(requestsForbiddenCredential("Please upload your bank statement here.", {
+    customerMessage: cases[0][0]
+  }).violation, true, "bank statements remain outside the permitted intake");
+  assert.equal(requestsForbiddenCredential("Please send me your password.", {
+    customerMessage: cases[0][0]
+  }).violation, true, "credentials remain forbidden even during document intake");
+  assert.equal(requestsForbiddenCredential("You may attach your passport here.", {
+    customerMessage: "Can I upload my passport now?",
+    recentConversation: [{ role: "user", content: "I am ready to register a Cyprus company." }]
+  }).violation, false, "customer-stated readiness is retained across a genuine follow-up");
+  assert.equal(requestsForbiddenCredential("You may attach your passport here.", {
+    customerMessage: "Can I upload my passport now?",
+    recentConversation: [{ role: "assistant", content: "You said you are ready to register a company." }]
+  }).violation, true, "assistant text cannot create consent or readiness");
+});
+
 test("asking the customer to forward a code another institution sent is an out of band OTP request", () => {
   for (const text of [
     "Please forward the OTP your bank sent you",

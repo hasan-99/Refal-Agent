@@ -87,21 +87,24 @@ async function runAgentTurnForContact({
   knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, fastSocialTurn = false, consentState, allowedCapabilities,
   leadTier, buyingSignals, conversationPreferences, contextualWorkflow, store, user, userId, language, embedText,
   embeddingModel, matchCount, inboundMessageId, sourceTurnId, policy, responseStyle, businessGuidance, companyIdentity,
-  sessionState = null, conversationFeatures = null, conversationQuality = null
+  sessionState = null, conversationFeatures = null, conversationQuality = null, responseType = "direct_answer", attachmentContent = "", attachmentStatus = "",
+  attachmentReviewContinuation = false, attachmentReviewPending = false, attachmentReviewRequest = ""
 } = {}, {
   decideNextStep = defaultDecideNextStep, onModelCall, onModelUsage,
-  onToolCall, onPolicyRejection, onPromptBudget, assessDraft = assessAgentDraft, tools: registry = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS,
+  onToolCall, onPolicyRejection, onDecisionRejected, onPromptBudget, shouldStopAfterRejection, assessDraft = assessAgentDraft, tools: registry = TOOL_REGISTRY, maxSteps = DEFAULT_MAX_STEPS,
   initialObservations = []
 } = {}) {
   // RAFA_FAST_SOCIAL_PATH: a deterministic social turn gets no tools at all,
   // so it can neither search nor act. The draft is still grounding-reviewed.
   const tools = fastSocialTurn === true && socialOnlyTurn === true ? {} : registry;
-  const context = buildAgentContext({
+  const context = { ...buildAgentContext({
     currentMessage, locale, contact, recentConversation, priorConfiguredIntroduction, intents, conversationState,
     knownCustomerFacts, currentOpenQuestion, socialOnlyTurn, fastSocialTurn, consentState, allowedCapabilities,
-    leadTier, buyingSignals, conversationPreferences, contextualWorkflow, responseStyle, businessGuidance, companyIdentity,
-    sessionState, conversationFeatures, conversationQuality
-  });
+    leadTier, buyingSignals, conversationPreferences, contextualWorkflow, responseStyle, responseType, businessGuidance, companyIdentity,
+    sessionState, conversationFeatures, conversationQuality, attachmentStatus, attachmentReviewPending
+  }), ...(attachmentContent ? { attachmentContent: String(attachmentContent).slice(0, 9000) } : {}),
+    attachmentReviewContinuation: attachmentReviewContinuation === true,
+    ...(attachmentReviewRequest ? { attachmentReviewRequest: String(attachmentReviewRequest).slice(0, 1200) } : {}) };
   const toolContext = buildToolContext({
     store, user, userId, intents, language, embedText, embeddingModel, matchCount,
     inboundMessageId, sourceTurnId, consentState, allowedCapabilities, policy, currentMessage
@@ -112,7 +115,9 @@ async function runAgentTurnForContact({
   if (typeof assessDraft !== "function") throw new TypeError("Production Agent requires independent grounding assessment.");
   const measuredAssessDraft = (args) => assessDraft(args, { onModelCall, onModelUsage });
 
-  return runAgentTurn(context, { decideNextStep: measuredDecideNextStep, assessDraft: measuredAssessDraft, tools, toolContext, maxSteps, onToolCall, onPolicyRejection, onPromptBudget,
+  const recapHistory = Array.isArray(user?.history) ? user.history.filter((turn) => !sourceTurnId || turn?.id !== sourceTurnId) : [];
+  return runAgentTurn(context, { decideNextStep: measuredDecideNextStep, assessDraft: measuredAssessDraft, tools, toolContext, maxSteps, onToolCall, onPolicyRejection, onDecisionRejected, onPromptBudget, shouldStopAfterRejection,
+    recapHistory,
     initialObservations: Object.keys(tools).length ? initialObservations : [] });
 }
 

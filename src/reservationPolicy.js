@@ -1,4 +1,5 @@
 const { detectMessageLanguage, foldArabicLetters, foldRulePatterns } = require("./language");
+const { splitClaims } = require("./claimPolicy");
 
 // P2.4 — Reservation deposit, ROI and property VAT guards.
 //
@@ -332,17 +333,24 @@ function classifyVatStatement(text, { language } = {}) {
   const reasons = [];
   if (!value) return { mentionsVat: false, statesRate: false, personalizedRateConclusion: false, allowed: true, reasons: ["no_vat_statement"] };
 
-  const rateIdiom = PATTERNS.vatRateIdiom.test(value);
-  const mentionsVat = PATTERNS.vatTerm.test(value) || rateIdiom;
-  const statesRate = PATTERNS.vatRate.test(value) || rateIdiom;
+  // Scope the personal-rate check to the sentence that mentions VAT. Looking
+  // for "applies to you" anywhere in a multi-sentence answer made an unrelated
+  // closing question trigger the VAT guard whenever an earlier sentence merely
+  // named VAT (e.g. "Which of these benefits applies to you?").
+  const statements = splitClaims(value.replace(/[;؛]/gu, ","));
+  const vatStatements = statements.filter((statement) => PATTERNS.vatTerm.test(statement)
+    || PATTERNS.vatRateIdiom.test(statement));
+  const mentionsVat = vatStatements.length > 0;
+  const statesRate = vatStatements.some((statement) => PATTERNS.vatRate.test(statement)
+    || PATTERNS.vatRateIdiom.test(statement));
   // A sentence that says the rate still NEEDS CHECKING is the opposite of a
   // personalized conclusion. "وانطباق الرسوم أو الباقة على حالتك بحاجة إلى تأكيد"
   // ("whether the fee or package applies to your case needs confirmation") is
   // REFAL doing exactly what MB-F45 asks, and it was being blocked for the word
   // "حالتك". Surfaced when this guard went live for P2.6: it deleted the Arabic
   // conversation recap, which is a customer-facing summary, not a verdict.
-  const hedged = PATTERNS.needsConfirmation.test(value);
-  const personalizedRateConclusion = (mentionsVat || statesRate) && !hedged && PATTERNS.personalizedRate.test(value);
+  const personalizedRateConclusion = vatStatements.some((statement) => !PATTERNS.needsConfirmation.test(statement)
+    && PATTERNS.personalizedRate.test(statement));
 
   if (personalizedRateConclusion) reasons.push("personalized_vat_rate_conclusion");
   else if (statesRate) reasons.push("vat_rate_is_a_stateable_programme_fact");

@@ -50,6 +50,14 @@ test("administrator response preferences reach the decision prompt with bounded 
   assert.match(prompt[0].content, /never override safety, accuracy, approved evidence, or appointment rules/u);
 });
 
+test("the selected response type reaches generation as a task instruction", async () => {
+  const context = buildAgentContext({ responseType: "pricing_answer", intents: ["pricing"] });
+  let prompt;
+  await composeOffline(context, "A supported price answer.", (messages) => { prompt = messages; });
+  assert.equal(context.responseType, "pricing_answer");
+  assert.ok(prompt[0].content.includes("Required response type: pricing_answer."));
+});
+
 test("administrator business rules and localized hooks reach the WhatsApp decision prompt without becoming evidence or scripts", async () => {
   const context = buildAgentContext({ locale: "arabic", businessGuidance: {
     rules: [{ id: "rule-1", title: "Answer first", language: "all", instruction: "Answer the current question before asking a follow-up.", enabled: true }],
@@ -70,6 +78,15 @@ test("buildAgentContext excludes contact labels without customer-stated provenan
   const context = buildAgentContext({ contact: { name: "Imported WhatsApp Label", nameSource: "contact_label" } });
   assert.equal(context.contact.name, null);
   assert.equal(context.contact.nameSource, null);
+});
+
+test("only a verified uploaded attachment status reaches the customer-facing decision context", () => {
+  const { buildAgentContext } = require("./agentContext");
+  const uploaded = buildAgentContext({ currentMessage: "I am ready to register", attachmentStatus: "uploaded" });
+  assert.deepEqual(uploaded.attachmentReceipt, { status: "uploaded" });
+  const unknown = buildAgentContext({ attachmentStatus: "pending", storagePath: "private/secret/path" });
+  assert.equal(unknown.attachmentReceipt, null);
+  assert.equal("storagePath" in unknown, false);
 });
 
 test("social-only context is explicit and cannot be injected through unrelated fields", () => {

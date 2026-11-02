@@ -8,12 +8,14 @@ test("inbox list refresh replaces a push-name/number label with the newly saved 
   let rows = [{ userId: selectedId, user: { id: selectedId, name: savedName } }];
   let leads = [{ id: selectedId, name: savedName }];
   const fetcher = async (url, options) => {
+    assert.equal(url, "/api/conversations", "one list request refreshes both inbox views");
     assert.equal(options.cache, "no-store");
     assert.equal(options.credentials, "include");
     assert.equal(options.method, undefined, "refresh must not mutate or delete data");
-    const payload = url === "/api/conversations"
-      ? { conversations: [{ userId: selectedId, user: { id: selectedId, name: savedName } }] }
-      : { users: [{ id: selectedId, name: savedName }] };
+    const payload = {
+      conversations: [{ userId: selectedId, user: { id: selectedId, name: savedName } }],
+      leads: [{ id: selectedId, name: savedName }]
+    };
     return { ok: true, json: async () => payload };
   };
 

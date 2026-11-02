@@ -10,6 +10,7 @@ const {
   containsGuaranteeMarker,
   containsPersonalizedConclusion
 } = require("./claimPolicy");
+const { containsUnconditionalProhibition } = require("./refalcoAnswer");
 const { MB_CANDIDATES, LANGUAGES, LANGUAGE_NAMES } = require("./brainMbCandidates");
 
 // G2 for P2.1. The gate is the MB corpus itself, driven as a table in all three
@@ -458,6 +459,26 @@ test("a contracted statement that approval is not guaranteed remains a permitted
   assert.equal(mixed.allowed, false);
 });
 
+test("an attribution that a general point is not a guarantee is not treated as a promise", () => {
+  const sentence = "These are general attractions cited by Invest Cyprus rather than as guarantees.";
+  assert.equal(containsGuaranteeMarker(sentence), false);
+  const verdict = classifyClaim(sentence, { evidence: [approved(sentence)] });
+  assert.notEqual(verdict.claimClass, CLAIM_CLASSES.GUARANTEE);
+  assert.equal(verdict.allowed, true);
+  const mixed = "These are general attractions rather than guarantees, but we guarantee bank approval.";
+  assert.equal(containsGuaranteeMarker(mixed), true);
+});
+
+test("a disclaimer that a reply is not personal tax advice is not a personalized advice claim", () => {
+  const disclaimer = "These are general factors, not personal tax advice.";
+  assert.equal(containsPersonalizedConclusion(disclaimer), false);
+  assert.equal(classifyClaim(disclaimer, { evidence: [] }).allowed, true);
+
+  const mixed = "This is not personal tax advice, but your company qualifies for the tax benefit.";
+  assert.equal(containsPersonalizedConclusion(mixed), true);
+  assert.equal(classifyClaim(mixed, { evidence: [] }).allowed, false);
+});
+
 test("a passive refusal that approval cannot be guaranteed remains safe without masking a later promise", () => {
   for (const sentence of [
     "An account can't be guaranteed.",
@@ -488,6 +509,17 @@ test("a bare refusal to guarantee is not itself a guarantee", () => {
     assert.notEqual(verdict.claimClass, CLAIM_CLASSES.GUARANTEE, sentence);
     assert.equal(verdict.allowed, true, sentence);
   }
+});
+
+test("doesn't guarantee clauses remain safe while affirmative guarantees stay blocked", () => {
+  for (const sentence of [
+    "Registering a company doesn't guarantee bank account approval.",
+    "Registering a company doesn’t guarantee bank account approval."
+  ]) {
+    assert.equal(containsGuaranteeMarker(sentence), false, sentence);
+    assert.equal(containsUnconditionalProhibition(sentence), false, sentence);
+  }
+  assert.equal(containsUnconditionalProhibition("We guarantee bank account approval."), true);
 });
 
 test("a refusal to guarantee does NOT rescue a guarantee in the same clause", () => {

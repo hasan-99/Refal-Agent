@@ -1,7 +1,8 @@
 const { redactPersonalData } = require("./ai");
 const { detectExplicitLanguageRequest } = require("./language");
+const { INTENTS, detectIntents } = require("./intent");
 
-const CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION = /(?:\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and that|what about it)\b|(?:كم|قديش).{0,24}(?:تكلف|سعر|رسوم)|(?:بدي|بدّي|اعطيني|أعطيني).{0,20}تفاصيل|تفاصيل\s*(?:أكثر|اكتر)|شو\s*(?:بيشمل|بتشمل)|(?:πόσο|τιμή|κόστος|χρέωση|πες μου περισσότερα|περισσότερες πληροφορίες|τι περιλαμβάνει))/iu;
+const CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION = /(?:\b(?:how much|price|cost|fee|what does (?:it|that) include|what(?:'s| is) included|tell me more|more details|and that|what about it)\b|\b(?:which|what|what kind of)\s+(?:documents?|paperwork|forms?)\b|\b(?:documents?|paperwork|forms?)\s+(?:do i need|are needed|required|should i prepare)\b|(?:كم|قديش).{0,24}(?:تكلف|سعر|رسوم)|(?:بدي|بدّي|اعطيني|أعطيني).{0,20}تفاصيل|تفاصيل\s*(?:أكثر|اكتر)|شو\s*(?:بيشمل|بتشمل)|(?:ما|شو|اي|أي)\s*(?:هي\s*)?(?:الأوراق|اوراق|المستندات|مستندات|الوثائق|وثائق)|(?:πόσο|τιμή|κόστος|χρέωση|πες μου περισσότερα|περισσότερες πληροφορίες|τι περιλαμβάνει|ποια\s+έγγραφα|τι\s+έγγραφα))/iu;
 const NON_CONTEXT_RESPONSES = /(?:ما عندي معلومة معتمدة|لا تتوفر لديّ حالياً|ما عندي سعر معتمد|I don['’]t have approved information|I don['’]t have an approved company formation fee|Δεν έχω εγκεκριμένη)/iu;
 const BROAD_KNOWLEDGE_INTENTS = new Set(["company_info", "business_areas", "services"]);
 const PACKAGE_DETAIL_QUESTION = /(?:\b(?:package|formation package|setup package|what does .{0,20} include|what(?:'s| is) included|what do i get(?:\s+with|\s+if)?|what will i get(?:\s+with|\s+if)?|what is part of)\b|باقة|شو\s*(?:بتشمل|بيشمل|باخد|باخد\s*اذا)|ماذا\s*تشمل|ماذا\s*احصل\s*(?:عليه|عليها)|πακέτο|τι\s*περιλαμβάνει|τι\s*παίρνω(?:\s+αν)?|τι\s+περιλαμβάνει\s+η\s+υπηρεσία)/iu;
@@ -9,6 +10,12 @@ const PACKAGE_TITLE_QUERY = Object.freeze({
   english: "What the Cyprus company formation package includes",
   arabic: "شو بتشمل باقة تأسيس الشركة القبرصية بالضبط",
   greek: "Τι περιλαμβάνει το πακέτο ίδρυσης κυπριακής εταιρείας"
+});
+const COMPANY_FORMATION_BENEFITS_QUESTION = /\b(?:benefit|benefits|advantage|advantages|why\s+(?:register|incorporate|set\s+up|form))\b|(?:فوائد|فائدة|الفوائد|الفائدة|مزايا|ميزة|مميزات|ليش\s+(?:أسس|تأسس|سجل|تسجل)|لماذا\s+(?:أسس|تأسس|تسجيل)|شو\s+(?:الفائدة|الفوائد|المزايا))|(?:πλεονεκτήμα\p{L}*|οφέλη|όφελος|γιατί\s+(?:να\s+)?(?:ιδρύσω|εγγράψω))/iu;
+const COMPANY_FORMATION_BENEFITS_QUERY = Object.freeze({
+  english: "Benefits and advantages of registering or incorporating a company in Cyprus",
+  arabic: "مزايا وفوائد تأسيس شركة في قبرص",
+  greek: "Πλεονεκτήματα και οφέλη από την ίδρυση εταιρείας στην Κύπρο"
 });
 const COMPANY_PROFILE_QUERY = Object.freeze({
   // These are the approved profile's actual section headings in each
@@ -32,6 +39,12 @@ function normalizedLanguage(language) {
 function buildKnowledgeSearchQuery(currentMessage, user, intents = []) {
   const current = redactPersonalData(String(currentMessage || "").trim()).slice(0, 1000);
   if (!current || current.length > 140 || !CONTEXT_DEPENDENT_KNOWLEDGE_QUESTION.test(current)) return current;
+  const topicalIntents = detectIntents(current).filter((intent) => ![
+    INTENTS.UNKNOWN, INTENTS.PRICING, INTENTS.DOCUMENT_REQUEST, INTENTS.GREETING, INTENTS.SMALL_TALK
+  ].includes(intent));
+  // A fully scoped current question is its own retrieval target. History is
+  // used for elliptical follow-ups, not appended to an independent request.
+  if (topicalIntents.length) return current;
 
   const history = Array.isArray(user?.history) ? user.history : [];
   const priorTopic = [...history].reverse().find((turn) => {
@@ -50,8 +63,15 @@ function buildKnowledgeSearchQuery(currentMessage, user, intents = []) {
 
 function buildKnowledgeSearchQueries(currentMessage, user, intents = [], language = "english") {
   const base = buildKnowledgeSearchQuery(currentMessage, user, intents);
-  if (!Array.isArray(intents) || !intents.some((intent) => BROAD_KNOWLEDGE_INTENTS.has(intent))) return [base];
   const key = normalizedLanguage(language);
+  // Benefit questions often embed a specific customer's use case (product,
+  // origin, destination, tax concerns). Searching that whole sentence alone
+  // can rank unrelated country guidance above the approved benefits overview.
+  // Search the general benefits topic first, then retain the exact question
+  // for personalization and limitations; the evidence gate still decides
+  // what may be stated.
+  if (COMPANY_FORMATION_BENEFITS_QUESTION.test(base)) return [COMPANY_FORMATION_BENEFITS_QUERY[key], base];
+  if (!Array.isArray(intents) || !intents.some((intent) => BROAD_KNOWLEDGE_INTENTS.has(intent))) return [base];
   // A focused question must not fan out over unrelated service domains merely
   // because its classifier used a broad corporate-services label. This keeps
   // banking, tax, property and other specifics tied to the customer's query.
@@ -137,4 +157,5 @@ async function retrieveKnowledgeForTurn(currentMessage, {
 }
 
 
-module.exports = { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn, MAX_TURN_EVIDENCE_CHUNKS, MAX_TURN_EVIDENCE_CHARS };
+module.exports = { buildKnowledgeSearchQuery, buildKnowledgeSearchQueries, retrieveKnowledgeForTurn, COMPANY_FORMATION_BENEFITS_QUERY,
+  COMPANY_FORMATION_BENEFITS_QUESTION, MAX_TURN_EVIDENCE_CHUNKS, MAX_TURN_EVIDENCE_CHARS };

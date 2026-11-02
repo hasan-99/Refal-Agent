@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { RESPONSE_STYLE_DEFAULTS, validateResponseStyle, responseStyleInstruction } = require("./responseStyle");
+const { RESPONSE_STYLE_DEFAULTS, validateResponseStyle, responseStyleInstruction, formatResponseForStyle } = require("./responseStyle");
 const { buildBrainPrompt } = require("./brainPrompt");
 
 test("response style defaults to short paragraphs, hyphen bullets, sparse bold labels, and adaptive useful continuations", () => {
@@ -13,6 +13,8 @@ test("response style defaults to short paragraphs, hyphen bullets, sparse bold l
   assert.match(instruction, /Keep replies conversational/u);
   assert.match(instruction, /hyphen bullets/u);
   assert.match(instruction, /bold style sparingly/u);
+  assert.match(instruction, /one asterisk on each side/u);
+  assert.match(instruction, /do not use Markdown double asterisks/u);
   assert.match(instruction, /one concise, specific next-step question or helpful piece of information/u);
   assert.match(instruction, /Skip this when the answer stands on its own/u);
   assert.match(instruction, /you may add at most one related service suggestion/u);
@@ -28,7 +30,9 @@ test("response style accepts only bounded presentation options", () => {
   assert.equal(validateResponseStyle({ paragraphLength: "detailed" }).paragraphLength, "detailed");
   assert.match(responseStyleInstruction({ tone: "natural_conversational" }), /natural, friendly conversational tone/u);
   const structured = responseStyleInstruction({ presentation: "structured", sectionIcons: true });
-  assert.match(structured, /relevant short section headings, compact bullets/u);
+  assert.match(structured, /one short, standalone heading for each requested topic, with compact bullets beneath it/u);
+  assert.match(structured, /one short, standalone heading for each requested topic/u);
+  assert.match(structured, /never prefix a heading with a bullet/u);
   assert.match(structured, /✅ for inclusions/u);
   assert.match(structured, /omit empty sections/u);
   assert.throws(() => validateResponseStyle({ presentation: "markdown_everything" }), /supported message layout/u);
@@ -40,6 +44,43 @@ test("response style accepts only bounded presentation options", () => {
   assert.throws(() => validateResponseStyle({ continuationStyle: "always_ask" }), /supported conversation continuation/u);
   assert.throws(() => validateResponseStyle({ allowRelevantServiceSuggestions: "yes" }), /enabled or disabled/u);
   assert.match(responseStyleInstruction({ allowRelevantServiceSuggestions: false }), /Do not add unsolicited related-service suggestions/u);
+});
+
+test("structured WhatsApp headings are normalized without changing answer wording", () => {
+  const response = [
+    "أستاذ حسن، هاي تفاصيل الباقة:",
+    "•السعر وطريقة الدفع*",
+    "•الباقة بـ 999 يورو غير شاملة ضريبة القيمة المضافة، دفعة واحدة.",
+    "•السعر شامل للخدمات المذكورة دون رسوم خفية.",
+    "•المشمول*",
+    "•حجز الاسم والحصول على الموافقة.",
+    "⏳ المدة",
+    "•نحو 14 يوم عمل بعد استلام المستندات كاملة.",
+    "•ما لا تشمله*",
+    "•فتح حساب بنكي."
+  ].join("\n");
+  const formatted = formatResponseForStyle(response, { presentation: "structured", sectionIcons: true, boldLabels: true });
+  assert.equal(formatted, [
+    "أستاذ حسن، هاي تفاصيل الباقة:",
+    "",
+    "*السعر وطريقة الدفع*",
+    "",
+    "•الباقة بـ 999 يورو غير شاملة ضريبة القيمة المضافة، دفعة واحدة.",
+    "•السعر شامل للخدمات المذكورة دون رسوم خفية.",
+    "",
+    "*المشمول*",
+    "",
+    "•حجز الاسم والحصول على الموافقة.",
+    "",
+    "*⏳ المدة*",
+    "",
+    "•نحو 14 يوم عمل بعد استلام المستندات كاملة.",
+    "",
+    "*ما لا تشمله*",
+    "",
+    "•فتح حساب بنكي."
+  ].join("\n"));
+  assert.equal(formatResponseForStyle(response, { presentation: "conversational" }), response);
 });
 
 test("Edge response-style mirror stays byte-for-byte aligned for every supported profile", async () => {

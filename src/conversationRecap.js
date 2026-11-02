@@ -8,6 +8,11 @@ const { answerFromEvidence, containsProhibitedClaim } = require("./refalcoAnswer
 const RECAP_REQUEST = /\b(?:summari[sz]e|summary|recap)\b.{0,100}\b(?:what\s+(?:i|we)\s+(?:said|told|discussed|asked)|what(?:'s|\s+is)\s+been\s+discussed|our\s+conversation|this\s+conversation|what\s+(?:you\s+)?(?:recorded|saved)|(?:my|our)\s+(?:goal|request|preferences)|what\s+(?:action|has been done)|action\s+status)\b|\bwhat\s+(?:did\s+i\s+tell\s+you|have\s+we\s+discussed|have\s+you\s+recorded)\b|لخّص.{0,80}(?:قلتلك|المحادثة|طلب|سجلتم|تسجل)|لخص.{0,80}(?:قلتلك|المحادثة|طلب|سجلتم|تسجل)|شو قلتلك|ماذا قلت.{0,40}(?:لكم|لك)|ما الذي سجلتموه|τι είπα.{0,60}(?:σας|στη συζήτηση)|συνοψ.{0,80}(?:τι\s+(?:σας\s+)?(?:είπα|ζήτησα|καταγράφηκε|καταγράψατε)|τη\s+συζήτηση)|τι καταγράψατε/iu;
 const NON_RECAP_CONTENT = /^(?:hi|hello|hey|thanks|thank you|yes|no|ok|okay|مرحبا|أهلا|تمام|شكرا|نعم|لا|ναι|όχι|εντάξει)[.!،؟?\s]*$/iu;
 const PUBLISHED_INFO_QUERY = /\b(?:published|approved|official)\b.{0,100}\b(?:estimates?|case|check|confirmed|person)\b|\b(?:estimates?|case|check|confirmed|person)\b.{0,100}\b(?:published|approved|official)\b|معلومات\s*(?:منشورة|معتمدة|رسمية).{0,100}(?:تقدير|تأكد|حالتي|مختص)|δημοσιευμέν(?:ες|α).{0,100}(?:εκτίμηση|επιβεβαίωση|ειδικό)/iu;
+const CONFIRMED_COMPANY_INFO_REQUEST = /\b(?:business|refal(?:co)?(?:\s+group)?)\b.{0,80}\b(?:approved|official|published|confirmed|confirm)\b|\b(?:approved|official|published)\s+(?:business\s+)?(?:company\s+)?(?:information|facts|services)\b.{0,80}\b(?:confirm|say|list|include)\b|معلومات\s*(?:الشركة|معتمدة|رسمية).{0,60}(?:تؤكد|تقول|تذكر)|εγκεκριμέν(?:ες|η)\s+πληροφορί(?:ες|α).{0,80}(?:επιβεβαιώνουν|αναφέρουν)/iu;
+
+function recapRequestsApprovedCompanyInfo(message) {
+  return CONFIRMED_COMPANY_INFO_REQUEST.test(String(message || ""));
+}
 
 const RECAP_PATTERNS = {
   goal: /\b(?:want|looking|trying|plan(?:ning)?|need|hope)\b.{0,100}\b(?:set up|start|form|establish|incorporat|company|business|develop|develop(?:ment)?|invest|investment|portfolio|construction|tender|partner|land)\b|\b(?:company|business|startup)\b.{0,100}\b(?:setup|formation|in cyprus|will|to)\b|بدي.{0,100}(?:أسس|تأسيس|شركة|استثمار|أطور|أرض|مشروع)|(?:الشركة|مشروعي|مشروعنا|أرضي|أرضنا).{0,100}(?:قبرص|استثمار|تطوير|عملاء|نشاط)|(?:θέλω|σχεδιάζουμε|χρειαζόμαστε|εταιρεία|επιχείρηση|επένδυση|ανάπτυξη|οικόπεδο).{0,100}(?:εταιρεία|Κύπρο|επένδυ|ανάπτυξ|πελάτ|γη)/iu,
@@ -33,6 +38,11 @@ const RECAP_PATTERNS = {
   noCredentials: /\b(?:won't|will not|do not|don't)\s+send\s+(?:any\s+)?(?:passwords?|codes?|one[- ]time\s+codes?)\b|\bno\s+(?:passwords?|one[- ]time\s+codes?)\b|ما\s*رح\s*(?:أرسل|ابعت)\s*(?:كلمات\s*المرور|رموز)|δεν\s+θα\s+στείλω\s+(?:κωδικούς|κωδικό|κωδικό\s+μιας\s+χρήσης)/iu,
   deadline: /\b(?:by|before|within)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+\s+days?|\d+\s+weeks?)\b|\b(?:timeline|how long|when will)\b|قبل\s*(?:الجمعة|الإثنين|يوم)|خلال\s*\d+\s*(?:أيام|أسابيع)|قديش\s*المدة|πόσο\s+χρόνο|προθεσμία|μέχρι\s+(?:την\s+)?(?:Παρασκευή|Δευτέρα)/iu
 };
+
+// Keep common customer-described business formats in local recaps without
+// requiring a particular industry label.
+RECAP_PATTERNS.goal = new RegExp(`${RECAP_PATTERNS.goal.source}|\\b(?:studio|agency|practice|consultancy)\\b`, "iu");
+RECAP_PATTERNS.activity = new RegExp(`${RECAP_PATTERNS.activity.source}|\\b(?:business activity|my business|studio|agency|practice|consultancy|serves? clients)\\b`, "iu");
 
 // Greek text does not form JavaScript's ASCII-style `\b` word boundaries.
 RECAP_PATTERNS.goal = new RegExp(`${RECAP_PATTERNS.goal.source}|(?:θέλω.{0,100}(?:ιδρύσω|εταιρεία|Κύπρο|επενδύ)|σχεδιάζουμε.{0,100}(?:εταιρεία|επένδυ|ανάπτυξη)|(?:εταιρεία|επιχείρηση|επένδυση|ανάπτυξη|οικόπεδο).{0,100}(?:Κύπρο|πελάτ|κεφάλαια))`, "iu");
@@ -148,7 +158,7 @@ function composeRecap({ facts, language, boundedEvidence, actionStatusAsked, ver
     clauses.push(complaint);
   }
   else if (facts.goal) clauses.push(language === "arabic" ? `هدفك: ${recapCustomerStatement(facts.goal, language)}` : language === "greek" ? `Στόχος σας: ${recapCustomerStatement(facts.goal, language)}` : `Your goal: ${recapCustomerStatement(facts.goal, language)}`);
-  if (facts.activity) clauses.push(language === "arabic" ? `والنشاط المذكور: ${recapCustomerStatement(facts.activity, language)}` : language === "greek" ? `Δραστηριότητα που αναφέρατε: ${recapCustomerStatement(facts.activity, language)}` : `Activity you mentioned: ${recapCustomerStatement(facts.activity, language)}`);
+  if (facts.activity && facts.activity !== facts.goal) clauses.push(language === "arabic" ? `والنشاط المذكور: ${recapCustomerStatement(facts.activity, language)}` : language === "greek" ? `Δραστηριότητα που αναφέρατε: ${recapCustomerStatement(facts.activity, language)}` : `Activity you mentioned: ${recapCustomerStatement(facts.activity, language)}`);
 
   const preferences = [];
   if (facts.noContact) preferences.push(language === "arabic" ? "ما بدك تواصل أو مشاركة بياناتك" : language === "greek" ? "δεν θέλετε επικοινωνία χωρίς συγκατάθεση" : "you prefer no contact or sharing of your details without consent");
@@ -197,7 +207,7 @@ function buildLocalConversationRecap({ history = [], evidence = [], currentMessa
     .filter((message) => message && !NON_RECAP_CONTENT.test(message) && (detectMessageLanguage(message) === key || RECAP_PATTERNS.noContact.test(message) || RECAP_PATTERNS.noCommitment.test(message) || RECAP_PATTERNS.priceApplicability.test(message) || PUBLISHED_INFO_QUERY.test(message)));
   if (!eligibleHistory.length) return null;
   const facts = collectRecapFacts(history, key);
-  const asksConfirmedCompanyInfo = /\b(?:business|refal(?:co)?(?:\s+group)?)\b.{0,80}\b(?:approved|official|published|confirmed|confirm)\b|\b(?:approved|official|published)\s+(?:business\s+)?(?:company\s+)?(?:information|facts|services)\b.{0,80}\b(?:confirm|say|list|include)\b|معلومات\s*(?:الشركة|معتمدة|رسمية).{0,60}(?:تؤكد|تقول|تذكر)|εγκεκριμέν(?:ες|η)\s+πληροφορί(?:ες|α).{0,80}(?:επιβεβαιώνουν|αναφέρουν)/iu.test(currentMessage);
+  const asksConfirmedCompanyInfo = recapRequestsApprovedCompanyInfo(currentMessage);
   const publishedInfoQuestion = eligibleHistory.find((message) => PUBLISHED_INFO_QUERY.test(message));
   const priceQuestion = eligibleHistory.some((message) => RECAP_PATTERNS.priceApplicability.test(message));
   const evidenceForAnswer = priceQuestion && Array.isArray(evidence)
@@ -227,8 +237,9 @@ function buildLocalConversationRecap({ history = [], evidence = [], currentMessa
   const response = composeRecap({ facts, language: key, boundedEvidence, actionStatusAsked, verifiedHandoverStatus });
   return {
     response,
+    companyInfoRequested: asksConfirmedCompanyInfo || Boolean(publishedInfoQuestion),
     citations: boundedEvidence ? grounded?.citations || [] : []
   };
 }
 
-module.exports = { RECAP_REQUEST, buildLocalConversationRecap };
+module.exports = { RECAP_REQUEST, recapRequestsApprovedCompanyInfo, buildLocalConversationRecap };

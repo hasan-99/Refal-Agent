@@ -135,10 +135,10 @@ test("[W3.10.8] the verdict is PER CLAIM: one answer, one grounded sentence and 
   assert.equal(assessment.claims[1].grounded, false);
   assert.equal(assessment.claims[1].blocked, true);
   assert.equal(assessment.ok, false);
-  assert.equal(assessment.label, "precedence:model_knowledge_refalco_claim_blocked");
+  assert.equal(assessment.label, "precedence:model_knowledge_unapproved_fact_blocked");
 });
 
-test("[W1.6.3] an ungrounded sentence that stays GENERAL is still allowed — level 6 may explain, it may not claim", () => {
+test("an ungrounded general process fact is blocked even without a company name or number", () => {
   const assessment = assessClaimGroundedness(
     "A limited company is a separate legal person.",
     { evidence: [chunk("Refalco Group office hours are Monday to Friday.")] }
@@ -146,21 +146,12 @@ test("[W1.6.3] an ungrounded sentence that stays GENERAL is still allowed — le
 
   assert.equal(assessment.claims[0].sourceLevel, SOURCE_LEVELS.MODEL_KNOWLEDGE);
   assert.equal(assessment.claims[0].grounded, false);
-  assert.equal(assessment.claims[0].blocked, false);
-  assert.equal(assessment.ok, true);
-  // Ungrounded is still LOW CONFIDENCE even when it is not blocked, which is
-  // the signal W3.10.5 keys on.
+  assert.equal(assessment.claims[0].blocked, true);
+  assert.equal(assessment.ok, false);
   assert.equal(assessment.lowConfidence, true);
 });
 
-test("[BLK-1 discipline] an ungrounded sentence with NO checkable value is reported, not deleted", () => {
-  // The boundary of the gate, asserted on purpose so narrowing it is a
-  // decision and not an accident. "Refalco Group can help you set up a company
-  // in Cyprus" overlaps a contact-page chunk by two tokens out of six and so
-  // fails claimPolicy's `entities_not_in_evidence` heuristic — but it states no
-  // value, it is true, and P1.1/W1.1.4 deliberately made REFAL free to say who
-  // it works for (BLK-3). Deleting it would be BLK-1 returning through a new
-  // door, so it is flagged low confidence and left standing.
+test("an unsupported company service claim is blocked even when it has no number", () => {
   const assessment = assessClaimGroundedness(
     "Refalco Group can help you set up a company in Cyprus.",
     { evidence: UNRELATED_EVIDENCE }
@@ -169,9 +160,9 @@ test("[BLK-1 discipline] an ungrounded sentence with NO checkable value is repor
   assert.equal(assessment.claims[0].sourceLevel, SOURCE_LEVELS.MODEL_KNOWLEDGE);
   assert.equal(assessment.claims[0].grounded, false);
   assert.deepEqual(assessment.claims[0].unsupportedValues, []);
-  assert.equal(assessment.claims[0].blocked, false);
+  assert.equal(assessment.claims[0].blocked, true);
   assert.equal(assessment.lowConfidence, true);
-  assert.equal(assessment.ok, true);
+  assert.equal(assessment.ok, false);
 
   // Add ONE invented figure to the same sentence and it is deleted.
   const withValue = assessClaimGroundedness(
@@ -233,7 +224,7 @@ test("[M2 trap] the refusal strip stops at a contrastive conjunction, never at a
   // refusal, so the sentence must not be blocked for it; it is judged on the
   // half after "but".
   const hedged = assessClaimGroundedness(
-    "I cannot guarantee our team's response time, but company formation takes two weeks.",
+    "I cannot guarantee our team's response time, but I can explain the approved information.",
     { evidence: [chunk("Refalco Group office hours are Monday to Friday.")] }
   );
   assert.equal(hedged.ok, true, "a refusal clause was read as the claim it declines to make");

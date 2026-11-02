@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { redactPersonalData } = require("./ai");
-const { DEFAULT_OPENROUTER_MODEL, DEFAULT_OPENROUTER_FALLBACK_MODEL, resolveOpenRouterModel, withOpenRouterPrivacyPolicy } = require("./openrouterPrivacy");
+const { DEFAULT_OPENROUTER_MODEL, DEFAULT_OPENROUTER_FALLBACK_MODEL, LOW_EFFORT_REASONING_MODELS, resolveOpenRouterModel, withOpenRouterPrivacyPolicy } = require("./openrouterPrivacy");
 
 test("default chat routes select Claude Sonnet 5.5 with a GPT-6 Luna fallback and compatible private requests", () => {
   assert.equal(DEFAULT_OPENROUTER_MODEL, "anthropic/claude-sonnet-5.5");
@@ -25,6 +25,18 @@ test("strict-JSON Anthropic requests only route to endpoints that honour every p
   assert.deepEqual(withOpenRouterPrivacyPolicy({ model: DEFAULT_OPENROUTER_FALLBACK_MODEL, response_format: schema }).provider,
     { data_collection: "deny", zdr: true });
   assert.deepEqual(withOpenRouterPrivacyPolicy({ model: DEFAULT_OPENROUTER_MODEL }).provider, { data_collection: "deny", zdr: true });
+});
+
+test("DeepSeek V4.1 Flash uses low-effort reasoning without dropping supported sampling settings", () => {
+  const model = "deepseek/deepseek-v4.1-flash-1017";
+  assert.equal(LOW_EFFORT_REASONING_MODELS.has(model), true);
+  const request = withOpenRouterPrivacyPolicy({ model, temperature: 0.2, top_p: 0.8 });
+  assert.deepEqual(request.reasoning, { effort: "low", exclude: true });
+  assert.equal(request.temperature, 0.2);
+  assert.equal(request.top_p, 0.8);
+  assert.deepEqual(request.provider, { data_collection: "deny", zdr: true });
+  assert.deepEqual(withOpenRouterPrivacyPolicy({ model, reasoning: { enabled: false, exclude: true } }).reasoning,
+    { effort: "none", exclude: true });
 });
 
 test("model and RAG query sanitizer removes bank and identity secrets while preserving Refalco Group question", () => {

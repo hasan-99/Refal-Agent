@@ -97,6 +97,7 @@ test("without a reranker the existing retrieval path and trace are unchanged", a
   assert.equal(Object.hasOwn(result.trace, "rerank"), false);
 });
 
+
 test("a failing reranker leaves the first-stage order in place", async () => {
   const store = { searchKnowledge: async () => [row("first", 3), row("second", 2)] };
   const reranker = { rerank: (question, sections) => rerankSections(question, sections, { scorer: async () => { throw new Error("model missing"); } }) };

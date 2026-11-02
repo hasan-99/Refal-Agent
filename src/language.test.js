@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { detectMessageLanguage, detectExplicitLanguageRequest, languageInstruction, inboundRetryMessage } = require("./language");
+const { resolveInboundLanguage } = require("./messageRouter");
 
 test("detects script Arabic, Syrian Arabizi, and Greek reliably", () => {
   assert.equal(detectMessageLanguage("شو خدمات الشركة؟"), "arabic");
@@ -118,7 +119,15 @@ test("temporary inbound failures and overload notices use the customer's languag
   assert.match(inboundRetryMessage("greek", "busy"), /στείλτε ξανά το μήνυμά σας/);
   assert.match(inboundRetryMessage("english", "busy"), /resend your message/);
   assert.match(inboundRetryMessage("unknown"), /checking your message/);
+  const attachmentOnlyUser = { history: [
+    { message: "راجع الملف التجريبي المرفق ولخّص محتواه واذكر المعلومات الناقصة." },
+    { message: "[document]", metadata: { attachment: { status: "uploaded" } } }
+  ] };
+  assert.equal(resolveInboundLanguage("", attachmentOnlyUser), "arabic",
+    "captionless attachment failures inherit the latest clear customer language");
   const workerSource = readFileSync(require.resolve("./bot"), "utf8");
   assert.doesNotMatch(workerSource, /Sorry, something went wrong\. Please try again\./u);
-  assert.match(workerSource, /Failed to handle message:[\s\S]*?inboundRetryMessage\(detectMessageLanguage\(extractText\(message\)\)\)/u);
+  assert.equal(workerSource.includes("async function resolveMessageReplyLanguage(message, userId)"), true);
+  assert.equal(workerSource.includes("inboundRetryMessage(await resolveMessageReplyLanguage(message, remoteJid))"), true);
+  assert.equal(workerSource.includes("attachmentFailureReply(await resolveMessageReplyLanguage(message, remoteJid))"), true);
 });

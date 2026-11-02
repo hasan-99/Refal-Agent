@@ -22,7 +22,7 @@ import { hasPurposeBoundFollowUpConsent } from "../supabase/functions/rafa-agent
 import { registerDynamicDataAdminRoutes } from "./dynamicDataAdmin.js";
 import { registerContactCorrectionAdminRoutes } from "./contactCorrectionAdmin.js";
 import { approveKnowledgeDocumentAfterIndex, deleteKnowledgeSource, previewKnowledgeAcrossLanguages, reviewKnowledgeDocument, setKnowledgeSourceArchived } from "./knowledgeReview.js";
-import { normalizeHandoverLanguage } from "./handoverFilters.js";
+import { handoverLanguage } from "./handoverFilters.js";
 import { readAllRows, withStableCreatedAtIdOrder, withStableIdOrder } from "./readAllRows.js";
 import { mapWithConcurrency } from "./mapWithConcurrency.js";
 import { HandoverStatusSyncError, syncHandoverStatus } from "./handoverStatusSync.js";
@@ -31,6 +31,7 @@ import { loadDashboardEnv, stripWorkerCalendarCredentials } from "./dashboardEnv
 import { shapeDatabaseAuditEvents, shapeLegacyAdminEvents } from "./adminAudit.js";
 import { COMPANY_IDENTITY_CHANGE_REASONS, companyIdentityView } from "./companyIdentity.js";
 import { createDefaultGapVerifier, knowledgeGapsDashboardEnabled, registerKnowledgeGapAdminRoutes } from "./knowledgeGapsAdmin.js";
+import { registerPrivateAttachmentPreviewRoute } from "./privateAttachmentPreview.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -710,7 +711,7 @@ app.get("/api/openrouter/credits", requireAdmin, async (_req, res) => {
 });
 
 app.get("/api/leads", async (req, res) => {
-  const users = Object.values((await readUsers()).users || {}).map((user) => userSummary(user));
+  const users = (await readUserSummaries()).map((user) => userSummary(user));
   try {
     const appointments = await supabaseRest("rafa_appointments?select=whatsapp_jid,status,starts_at&order=starts_at.desc&limit=500");
     const latestBooking = new Map();
@@ -738,26 +739,29 @@ app.get("/api/leads/:id", async (req, res) => {
 
 app.get("/api/conversations", async (req, res) => {
   try {
-    const users = Object.values((await readUsers()).users || {});
+    const users = await readUserSummaries();
     const conversations = users.map((user) => {
       const history = Array.isArray(user.history) ? user.history : [];
       const lastTurn = history.at(-1) || {};
-      const lastMessage = String(lastTurn.response || lastTurn.message || "");
+      const summary = user.historySummary;
+      const lastMessage = summary ? String(summary.last_message || "") : String(lastTurn.response || lastTurn.message || "");
+      const messageCount = summary ? Number(summary.message_count) || 0
+        : history.reduce((count, turn) => count + Number(Boolean(turn.message)) + Number(Boolean(turn.response)), 0);
       return {
         userId: user.id,
         user: userSummary(user, { includeHandoverSummary: req.dashboardUser.role === "admin" }),
         lastMessage,
-        lastMessageAt: lastTurn.at || user.updatedAt || "",
-        lastMessageDirection: lastTurn.response ? "outgoing" : "incoming",
-        messageCount: history.reduce((count, turn) => count + Number(Boolean(turn.message)) + Number(Boolean(turn.response)), 0),
-        hasAgentReply: history.some((turn) => Boolean(turn.response)),
-        hasCustomerMessage: history.some((turn) => Boolean(turn.message)),
-        needsReply: Boolean(lastTurn.message && !lastTurn.response)
+        lastMessageAt: summary ? summary.last_message_at || "" : lastTurn.at || user.updatedAt || "",
+        lastMessageDirection: summary ? summary.last_message_direction : lastTurn.response ? "outgoing" : "incoming",
+        messageCount,
+        hasAgentReply: summary ? summary.has_agent_reply : history.some((turn) => Boolean(turn.response)),
+        hasCustomerMessage: summary ? summary.has_customer_message : history.some((turn) => Boolean(turn.message)),
+        needsReply: summary ? summary.needs_reply : Boolean(lastTurn.message && !lastTurn.response)
       };
     }).filter((item) => item.messageCount > 0)
       .sort((a, b) => dateValue(b.lastMessageAt) - dateValue(a.lastMessageAt));
     res.setHeader("Cache-Control", "no-store");
-    res.json({ conversations });
+    res.json({ conversations, leads: users.map((user) => userSummary(user)) });
   } catch (error) {
     res.status(502).json({ error: error.message || "Could not load conversations." });
   }
@@ -776,7 +780,8 @@ app.get("/api/conversations/:userId", async (req, res) => {
         role: "customer",
         direction: "incoming",
         content: String(turn.message),
-        at: turn.at
+        at: turn.at,
+        attachment: turn.metadata?.attachment || null
       });
       if (turn.response) {
         const key = turn.metadata?.whatsapp?.messageKey;
@@ -791,6 +796,7 @@ app.get("/api/conversations/:userId", async (req, res) => {
           at: turn.at,
           source: turn.source || "whatsapp",
           delivery: turn.metadata?.delivery || null,
+          responseType: typeof turn.metadata?.responseType === "string" ? turn.metadata.responseType : null,
           editability: {
             canEditOnWhatsApp,
             canSendCorrection: whatsapp.state === "connected" && whatsapp.managed !== false,
@@ -807,11 +813,30 @@ app.get("/api/conversations/:userId", async (req, res) => {
   }
 });
 
-app.get("/api/conversations/:userId/diagnostics", requireAdmin, async (req, res) => {
-  try {
-    const inspections = await store.listControlledInspections(req.params.userId);
-    res.json({ inspections });
-  } catch (error) { res.status(Number(error.status) || 502).json({ error: "Controlled diagnostics unavailable." }); }
+registerPrivateAttachmentPreviewRoute(app, {
+  requireAdmin,
+  findConversationTurn: async (userId, attachmentId) => {
+    const user = await store.getUser(userId, { includeHistory: true });
+    return (user?.history || []).find((turn) => turn.metadata?.attachment?.id === attachmentId) || null;
+  },
+  readLinkedAttachment: async ({ attachmentId, turnId, messageId }) => {
+    const rows = await supabaseRest("rpc/rafa_dashboard_attachment_preview_metadata", {
+      method: "POST",
+      body: JSON.stringify({
+        p_attachment_id: attachmentId,
+        p_conversation_turn_id: turnId,
+        p_provider_message_id: messageId
+      })
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return row?.storage_path ? { storagePath: row.storage_path, status: "linked" } : null;
+  },
+  createSignedPreviewUrl: async (storagePath, req, res) => {
+    const client = createRequestAuthClient(req, res);
+    const { data, error } = await client.storage.from("rafa-private-attachments").createSignedUrl(storagePath, 120);
+    if (error || !data?.signedUrl) throw new Error("Private attachment signing failed.");
+    return data.signedUrl;
+  }
 });
 
 app.delete("/api/conversations/:userId", requireAdmin, authRateLimit, async (req, res) => {
@@ -986,7 +1011,9 @@ app.get("/api/handovers/summary", requireAdmin, async (_req, res) => {
     const openCount = countUniqueHandoverContacts(openRows);
     const deliveryIssueCount = problemRows.length;
     res.setHeader("Cache-Control", "no-store");
-    res.json({ openCount, deliveryIssueCount, totalCount: openCount + deliveryIssueCount, capped: false });
+    // The badge mirrors the visible open-request queue. A failed email alert
+    // belongs to its handover card and must not count the same request twice.
+    res.json({ openCount, deliveryIssueCount, totalCount: openCount, capped: false });
   } catch (error) { res.status(502).json({ error: String(error?.message || "Could not load notification count.").slice(0, 250) }); }
 });
 
@@ -1019,7 +1046,7 @@ app.get("/api/handovers", requireAdmin, async (_req, res) => {
         status: row.status,
         summary: row.summary || {},
         createdAt: row.created_at,
-        language: normalizeHandoverLanguage(row.summary?.language || profile.preferredLanguage || profile.language),
+        language: handoverLanguage({ summary: row.summary, profile }),
         contact: {
           id: contact.id,
           userId: contact.whatsapp_jid,
@@ -1029,7 +1056,7 @@ app.get("/api/handovers", requireAdmin, async (_req, res) => {
           whatsappJid: contact.whatsapp_jid || ""
         },
         drafts: jobs.filter((job) => job.handover_id === row.id && job.kind === "admin_followup"),
-        alerts: jobs.filter((job) => job.handover_id === row.id && job.kind === "handover_review").map(({ id, status, created_at, last_error }) => ({ id, status, createdAt: created_at, lastError: last_error || "" }))
+        alerts: jobs.filter((job) => job.handover_id === row.id && job.kind === "handover_review").map(({ id, channel, status, created_at, last_error }) => ({ id, channel, status, createdAt: created_at, lastError: last_error || "" }))
       };
     }) });
   } catch (error) { res.status(502).json({ error: String(error?.message || "Could not load specialist follow-ups.").slice(0, 250) }); }
@@ -1685,6 +1712,24 @@ async function readUsers() {
   return store.toJsonData({ includeHistory: true });
 }
 
+async function readUserSummaries() {
+  if (typeof store.listUserSummaries !== "function") {
+    return Object.values((await readUsers()).users || {});
+  }
+  try {
+    return await store.listUserSummaries();
+  } catch (error) {
+    if (Number(error?.status) !== 404) throw error;
+    if (!dashboardSummaryFallbackWarned) {
+      dashboardSummaryFallbackWarned = true;
+      console.warn("Compact dashboard contact summaries are not available from the Edge Function yet; list refreshes are temporarily using full conversation histories.");
+    }
+    return Object.values((await readUsers()).users || {});
+  }
+}
+
+let dashboardSummaryFallbackWarned = false;
+
 async function readEvents() {
   if (store.listEvents) return store.listEvents({ limit: 5000 });
   return [];
@@ -1844,6 +1889,7 @@ async function cleanupTempReport(directory) {
 function userSummary(user, { includeHandoverSummary = false } = {}) {
   const history = user.history || [];
   const last = history.reduce((latest, item) => dateValue(item.at) > dateValue(latest?.at) ? item : latest, null) || {};
+  const historySummary = user.historySummary;
   const rawContactId = user.id || user.phone;
   const workflow = operatorSignals(user);
   if (!includeHandoverSummary) workflow.handover = { ...workflow.handover, summary: "" };
@@ -1872,9 +1918,9 @@ function userSummary(user, { includeHandoverSummary = false } = {}) {
     handoverRequired: workflow.handover.required,
     followUpConsent: workflow.consent.followUp,
     bookingStatus: user.booking?.status || "none",
-    conversationCount: history.length,
-    lastMessageAt: last.at || "",
-    lastMessagePreview: String(last.message || last.response || "").slice(0, 160)
+    conversationCount: historySummary ? Number(historySummary.conversation_count) || 0 : history.length,
+    lastMessageAt: historySummary ? historySummary.last_message_at || "" : last.at || "",
+    lastMessagePreview: historySummary ? String(historySummary.last_message_preview || "") : String(last.message || last.response || "").slice(0, 160)
   };
 }
 

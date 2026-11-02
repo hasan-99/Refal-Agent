@@ -36,7 +36,8 @@ const CREDENTIAL_KINDS = Object.freeze({
   CARD_DATA: "card_data",
   OTP_OUT_OF_BAND: "otp_out_of_band",
   BANK_STATEMENT: "bank_statement",
-  BANKING_CREDENTIALS: "banking_credentials"
+  BANKING_CREDENTIALS: "banking_credentials",
+  IDENTITY_DOCUMENT: "identity_document"
 });
 
 const EN_REQUEST = "(?:send|sending|share|sharing|provide|providing|give|giving|type|typing|enter|entering|paste|reply with|confirm|forward|upload|attach|email|tell me|tell us|(?:could|can|would) you tell (?:me|us)|i need|we need|please supply|supply|what is|what's|what’s|may i have|can you give)";
@@ -82,6 +83,12 @@ const rawRules = [
     "(?:online banking (?:login|credentials|password|details)|banking credentials|bank login|internet banking details|e[- ]?banking (?:login|password|credentials))",
     "(?:بيانات الدخول للبنك|بيانات الدخول البنكية|معلومات الدخول البنكية|بيانات البنك|حساب البنك الإلكتروني)",
     "(?:τραπεζικά διαπιστευτήρια|κωδικούς e-banking|στοιχεία e-banking|κωδικό ηλεκτρονικής τραπεζικής)"
+  ),
+  requestRule(
+    CREDENTIAL_KINDS.IDENTITY_DOCUMENT,
+    "(?:passport(?: copy| scan| photo)?|national id(?:entity card)?|identity card|proof of (?:residential )?address|address proof|utility bill)",
+    "(?:جواز السفر|صورة الجواز|الهوية الشخصية|بطاقة الهوية|إثبات العنوان|إثبات السكن)",
+    "(?:διαβατηρ\\p{L}*|διαβατήρι\\p{L}*|ταυτότητ\\p{L}*|απόδειξ\\p{L}* διεύθυνσ\\p{L}*|αποδεικτικ\\p{L}* κατοικία\\p{L}*)"
   )
 ];
 
@@ -150,12 +157,36 @@ function hasUnnegatedRequest(pattern, text) {
  *
  * Fail safe on empty input: nothing to send means nothing to violate.
  */
-function requestsForbiddenCredential(text) {
+function customerReadyForCompanyDocumentIntake(customerMessage, recentConversation = []) {
+  const value = normalizeOutboundText(customerMessage);
+  if (!value) return false;
+  const priorCustomerText = (Array.isArray(recentConversation) ? recentConversation : [])
+    .filter((turn) => turn?.role === "user" && typeof turn.content === "string")
+    .slice(-8).map((turn) => normalizeOutboundText(turn.content)).join(" ");
+  const ready = /\b(?:(?:i(?:'m| am)|we(?:'re| are))\s+ready|(?:my|our)\s+(?:co[- ]?)?founder\s+and\s+i\s+are\s+ready|(?:my|our)\s+(?:business\s+)?partner\s+and\s+i\s+are\s+ready)\s+to\s+(?:register|form|incorporate)\b|(?:نحن|احنا).{0,30}(?:جاهز|مستعد).{0,35}(?:تسجيل|تأسيس|نؤسس|نسجل)|(?:أنا\s*)?(?:جاهز|جاهزة|مستعد|مستعدة).{0,45}(?:سجل|أسس|أسجل|أسسّس)|(?:είμαι|είμαστε)\s+έτοιμ\p{L}*.{0,45}(?:ιδρύ|συστήσ|εγγράψ)/iu.test(value);
+  const readyPreviously = /\b(?:(?:i(?:'m| am)|we(?:'re| are))\s+ready|(?:my|our)\s+(?:co[- ]?)?founder\s+and\s+i\s+are\s+ready|(?:my|our)\s+(?:business\s+)?partner\s+and\s+i\s+are\s+ready)\s+to\s+(?:register|form|incorporate)\b|(?:نحن|احنا).{0,30}(?:جاهز|مستعد).{0,35}(?:تسجيل|تأسيس|نؤسس|نسجل)|(?:أنا\s*)?(?:جاهز|جاهزة|مستعد|مستعدة).{0,45}(?:سجل|أسس|أسجل|أسسّس)|(?:είμαι|είμαστε)\s+έτοιμ\p{L}*.{0,45}(?:ιδρύ|συστήσ|εγγράψ)/iu.test(priorCustomerText);
+  const asksToSend = /\b(?:can|may|should|could)\s+i\s+(?:send|upload|attach|share)\b|\b(?:send|upload|attach)\s+(?:my|our|the)\b|(?:هل\s*(?:يمكنني|بقدر)\s*(?:أن\s*)?(?:أرسل|ارسل|أرفق|ارفع|ابعث)|(?:إرسال|ارسال|ارسل|أرسل|ارفع|ارفق|أرفق|ابعث).{0,45}(?:؟|واتساب|هنا)?)|(?:μπορώ|να)\s+(?:στείλω|ανεβάσω|επισυνάψω)/iu.test(value);
+  const companyDocument = /\b(?:passport|identity document|proof of address|bank reference letter|beneficial owner documents?)\b|(?:جواز(?:ات)? السفر|صورة الجواز|إثبات العنوان|مرجع البنك|مراجع البنك|المرجع البنكي|مستندات المستفيد الحقيقي)|(?:διαβατηρ\p{L}*|αποδεικτικ\p{L}* διεύθυνσ\p{L}*|τραπεζικ\p{L}* συστατικ\p{L}* επιστολ\p{L}*)/iu.test(value);
+  return (ready || readyPreviously) && asksToSend && companyDocument;
+}
+
+function requestsForbiddenCredential(text, { customerMessage = "", recentConversation = [] } = {}) {
   const value = normalizeOutboundText(text);
   const language = detectMessageLanguage(text);
   if (!value) return { violation: false, kinds: [], language };
 
-  const kinds = rules.filter(([, pattern]) => hasUnnegatedRequest(pattern, value)).map(([kind]) => kind);
+  const allowCustomerRequestedIdentityDocument = customerReadyForCompanyDocumentIntake(customerMessage, recentConversation);
+  const kinds = rules.filter(([kind, pattern]) =>
+    !(allowCustomerRequestedIdentityDocument && kind === CREDENTIAL_KINDS.IDENTITY_DOCUMENT)
+      && hasUnnegatedRequest(pattern, value)).map(([kind]) => kind);
+
+  // A preparation checklist is still a request for identity documents in chat,
+  // even when it avoids an imperative such as "send" (e.g. "what to have
+  // ready: a copy of your passport and proof of address").
+  const identityChecklist = /\b(?:what to have ready|have ready|prepare|bring|documents? needed|documents? required)\b[^.!?]{0,100}\b(?:passport(?: copy| scan| photo)?|national id(?:entity card)?|identity card|proof of (?:residential )?address|address proof|utility bill)\b|\b(?:passport(?: copy| scan| photo)?|national id(?:entity card)?|identity card|proof of (?:residential )?address|address proof|utility bill)\b[^.!?]{0,70}\b(?:have ready|prepare|bring|send|upload|attach)\b/iu;
+  if (!allowCustomerRequestedIdentityDocument && identityChecklist.test(value) && !/\b(?:do not|don't|never|should not|shouldn't|must not|mustn't|cannot|can't)\s+[^.!?]{0,70}\b(?:passport|national id|identity card|proof of (?:residential )?address|address proof|utility bill)\b/iu.test(value)) {
+    kinds.push(CREDENTIAL_KINDS.IDENTITY_DOCUMENT);
+  }
 
   if (hasUnnegatedRequest(otpParts.verb, value) && otpParts.code.test(value)
       && (otpParts.thirdParty.test(value) || OTP_PAIRED_SENSITIVE_TARGET.test(value))) {
@@ -175,4 +206,4 @@ function safePrivacyRedirect(language) {
   return block.privacy;
 }
 
-module.exports = { CREDENTIAL_KINDS, requestsForbiddenCredential, safePrivacyRedirect };
+module.exports = { CREDENTIAL_KINDS, requestsForbiddenCredential, safePrivacyRedirect, customerReadyForCompanyDocumentIntake };

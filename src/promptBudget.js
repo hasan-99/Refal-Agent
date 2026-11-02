@@ -42,6 +42,17 @@ function truncateToBytes(text, maxBytes) {
   return `${value.trimEnd()} …`;
 }
 
+function compactRepeatedReplySentences(text) {
+  const sentences = String(text || "").split(/(?<=[.!?؟])\s+/u);
+  let previous = null;
+  return sentences.filter((sentence) => {
+    const key = sentence.trim();
+    if (!key || key === previous) return false;
+    previous = key;
+    return true;
+  }).join(" ");
+}
+
 /**
  * Bounds a {role, content} transcript to maxBytes, in this order:
  *   1. the latest two turns (normally the last customer message and the last
@@ -62,6 +73,7 @@ function boundRecentConversation(turns = [], maxBytes = DECISION_PROMPT_BUDGET.h
   const tail = list.length - 2;
   for (let index = list.length - 1; index >= Math.max(0, tail); index -= 1) {
     let content = String(list[index]?.content || "");
+    if (list[index]?.role === "assistant") content = compactRepeatedReplySentences(content);
     if (used + cost(content) > maxBytes) content = truncateToBytes(content, Math.max(240, maxBytes - used - 24));
     keep.set(index, content);
     used += cost(content);
@@ -69,7 +81,9 @@ function boundRecentConversation(turns = [], maxBytes = DECISION_PROMPT_BUDGET.h
   for (const role of ["user", "assistant"]) {
     for (let index = tail - 1; index >= 0; index -= 1) {
       if ((list[index]?.role === "assistant" ? "assistant" : "user") !== role) continue;
-      const content = role === "assistant" ? truncateToBytes(String(list[index]?.content || ""), 900) : String(list[index]?.content || "");
+      const raw = String(list[index]?.content || "");
+      const original = role === "assistant" ? compactRepeatedReplySentences(raw) : raw;
+      const content = role === "assistant" ? truncateToBytes(original, 900) : original;
       if (used + cost(content) > maxBytes) continue;
       keep.set(index, content);
       used += cost(content);

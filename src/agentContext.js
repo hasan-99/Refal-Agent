@@ -9,6 +9,8 @@ const { RESPONSE_STYLE_DEFAULTS, validateResponseStyle } = require("./responseSt
 const { profile } = require("./companyProfile");
 const { identityFromProfile, validateCompanyIdentity } = require("./companyIdentitySettings");
 const { BUSINESS_GUIDANCE_DEFAULTS, validateBusinessGuidance } = require("./businessGuidance");
+const { deriveContinuedLookupRequest } = require("./openQuestion");
+const { isResponseType } = require("./responseType");
 
 function safeTrim(value, max) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -33,11 +35,14 @@ function buildAgentContext({
   conversationPreferences = {},
   contextualWorkflow = "none",
   responseStyle = RESPONSE_STYLE_DEFAULTS,
+  responseType = "direct_answer",
   companyIdentity = null,
   businessGuidance = BUSINESS_GUIDANCE_DEFAULTS,
   sessionState = null,
   conversationFeatures = null,
-  conversationQuality = null
+  conversationQuality = null,
+  attachmentStatus = "",
+  attachmentReviewPending = false
 } = {}) {
   const safeLeadTier = ["informational", "cold", "warm", "hot", "strategic"].includes(leadTier) ? leadTier : "";
   const safeBuyingSignals = [...new Set((Array.isArray(buyingSignals) ? buyingSignals : [])
@@ -73,12 +78,19 @@ function buildAgentContext({
     conversationState: Object.freeze({ ...conversationState }),
     knownCustomerFacts: Object.freeze({ ...knownCustomerFacts }),
     currentOpenQuestion: currentOpenQuestion ? safeTrim(currentOpenQuestion, 300) : null,
+    activeRequest: deriveContinuedLookupRequest(currentMessage, recentConversation),
     socialOnlyTurn: socialOnlyTurn === true,
     fastSocialTurn: fastSocialTurn === true && socialOnlyTurn === true,
+    // Pass only the backend-verified status. Never expose storage paths,
+    // attachment IDs, filenames, or extracted content through this field.
+    attachmentReceipt: attachmentStatus === "uploaded" || attachmentStatus === "linked"
+      ? Object.freeze({ status: attachmentStatus }) : null,
+    attachmentReviewPending: attachmentReviewPending === true,
     consentState: safeTrim(consentState, 20) || "unknown",
     conversationPreferences: Object.freeze({ noProactiveBookingOrContact: conversationPreferences.noProactiveBookingOrContact === true }),
     contextualWorkflow: safeTrim(contextualWorkflow, 40),
     responseStyle: validateResponseStyle(responseStyle),
+    responseType: isResponseType(responseType) ? responseType : "direct_answer",
     companyIdentity: validateCompanyIdentity(companyIdentity || identityFromProfile(profile)),
     businessGuidance: validateBusinessGuidance(businessGuidance),
     leadTier: safeLeadTier,

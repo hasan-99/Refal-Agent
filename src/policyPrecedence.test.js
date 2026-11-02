@@ -147,14 +147,15 @@ test("W1.6.4: equal dates remain a genuine tie", () => {
   assert.equal(result.mustDisclose, true);
 });
 
-test("W1.6.3: model knowledge may explain a general concept", () => {
+test("customer-facing business and process facts require approved evidence, even when general", () => {
   for (const text of [
     "A limited company is a separate legal person.",
     "الشركة المحدودة كيان قانوني منفصل.",
     "Η ΕΠΕ είναι χωριστό νομικό πρόσωπο."
   ]) {
     const gate = assertModelKnowledgeIsGeneral(text, SOURCE_LEVELS.MODEL_KNOWLEDGE);
-    assert.equal(gate.ok, true, text);
+    assert.equal(gate.ok, false, text);
+    assert.equal(gate.label, "precedence:model_knowledge_unapproved_fact_blocked");
   }
 });
 
@@ -166,7 +167,7 @@ test("W1.6.3: model knowledge may NEVER make a Refalco-specific claim", () => {
   ]) {
     const gate = assertModelKnowledgeIsGeneral(text, SOURCE_LEVELS.MODEL_KNOWLEDGE);
     assert.equal(gate.ok, false, text);
-    assert.match(gate.label, /refalco_claim_blocked/);
+    assert.equal(gate.label, "precedence:model_knowledge_unapproved_fact_blocked");
     assert.equal(isRefalcoSpecificClaim(text), true, text);
   }
 });

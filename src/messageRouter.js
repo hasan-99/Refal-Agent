@@ -1,4 +1,4 @@
-const { detectMessageLanguage } = require("./language");
+const { detectMessageLanguage, detectExplicitLanguageRequest } = require("./language");
 const { restrictedRefalcoReply, allowsGroundedProgrammeAnswer } = require("./refalcoAnswer");
 const { detectIntent, INTENTS } = require("./intent");
 const { classifySafety, safeLocalizedFallback } = require("./safetyPolicy");
@@ -6,7 +6,7 @@ const { qualifyLead, consentFromText, getConsentState } = require("./leadQualifi
 const { detectBuyingSignals } = require("./buyingSignals");
 const { classifyLeadTier } = require("./leadTiers");
 const { detectStrategicEscalation } = require("./strategicEscalation");
-const { scoreQualification } = require("./qualificationEngine");
+const { scoreQualification, assessCloseReadiness, hasCloseReadinessDeferral } = require("./qualificationEngine");
 const { assessPriority } = require("./priorityRules");
 const { handleComplaint } = require("./complaintWorkflow");
 const {
@@ -18,11 +18,12 @@ const {
 const { createHandover } = require("./handover");
 const { safeFallbackData, validateResponse, hasVerifiedHandoverClaim, hasVerifiedBookingClaim, LEGACY_RESPONSE_THRESHOLDS } = require("./responsePolicy");
 const { createCorrectionEvent } = require("./correctionWorkflow");
-const { updateIntake, intakeTypesForIntents, typeForIntents } = require("./opportunityIntake");
+const { updateIntake, intakeTypesForIntents, typeForIntents, isAttachmentPlaceholder } = require("./opportunityIntake");
 const { assessRedFlags } = require("./redFlagRules");
 const { detectComplianceEscalation, buildComplianceEscalation, applyComplianceLock, isComplianceLocked } = require("./complianceEscalation");
 const { extractSafeRequestFromPrivacyMessage } = require("./privacyIntent");
 const { probesAnotherCustomer, crossCustomerRefusal } = require("./crossCustomerPolicy");
+const { customerReadyForCompanyDocumentIntake } = require("./privacyHardRule");
 const { safeErrorDiagnostics } = require("./operationalTelemetry");
 const { isSpecificAppointmentAvailabilityInquiry } = require("./contextualPreflight");
 const { conversationFlags } = require("./conversationFlags");
@@ -130,18 +131,36 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
       await store.updateHistoryTurn(userId, turn.id, { response: safeResponse, metadata: { followUpConsent: metadata.followUpConsent } });
     }
   }
+  let qualificationProfileWrite = null;
   if (!privacyTurn && qualificationEvidence) {
     const evidence = qualificationEvidence.map((item) => item.sourceRef === "pending-current" ? { ...item, sourceRef: turn?.id || "" } : item);
     const scored = scoreQualification({ evidence });
     metadata.qualification = { ...metadata.qualification, ...scored };
     if (typeof store.updateUser === "function") {
-      try { await store.updateUser(userId, (draft) => {
+      qualificationProfileWrite = Promise.resolve().then(() => store.updateUser(userId, (draft) => {
         draft.profile = { ...(draft.profile || {}), leadQualification: { ...metadata.qualification, updatedAt: scored.scoredAt, source: "qualification_engine_v1" } };
+        if (metadata.closeReadiness?.ready === true) {
+          draft.profile.closeReadiness = {
+            status: "ready_to_proceed",
+            detectedAt: scored.scoredAt,
+            sourceTurnId: turn?.id || null,
+            criteria: metadata.closeReadiness.criteria,
+            evidenceReferences: Object.fromEntries(["need", "fit", "readiness"].map((key) => [key, scored.evidenceReferences?.[key] || []])),
+            evidenceFingerprint: scored.evidenceFingerprint
+          };
+        } else if (metadata.closeReadiness?.reason === "customer_deferred") {
+          draft.profile.closeReadiness = {
+            ...(draft.profile.closeReadiness || {}),
+            status: "deferred",
+            deferredAt: scored.scoredAt,
+            sourceTurnId: turn?.id || null
+          };
+        }
         if (metadata.opportunityIntake) draft.profile.opportunityIntake = metadata.opportunityIntake;
         if (Object.keys(metadata.opportunityIntakes || {}).length) {
           draft.profile.opportunityIntakes = { ...(draft.profile.opportunityIntakes || {}), ...metadata.opportunityIntakes };
         }
-      }); } catch { /* The score and intake snapshots remain authoritative. */ }
+      })).catch(() => { /* The score and intake snapshots remain authoritative. */ });
     }
   }
   // Agent writes require the source turn to be durable before any tool runs,
@@ -157,6 +176,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
   const writeNames = [];
   const queueWrite = (name, promise) => { writeNames.push(name); writes.push(promise); };
   let handoverWrite = null;
+  let specialistConsentWrite = null;
   let complianceAuditWrite = null;
   const qualification = metadata.qualification;
   if (!privacyTurn && qualification && typeof store.saveQualification === "function") {
@@ -178,15 +198,22 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     } else if (metadata.automatedReminderConsent) {
       queueWrite("saveConsent", store.saveConsent(userId, state, { consentType: "automated_reminder", purpose: "automated_reminder", sourceTurnId: turn?.id, offerSourceTurnId: metadata.automatedReminderConsent.offerSourceTurnId || null, language: metadata.automatedReminderConsent.language || language, channel: "whatsapp" }));
     } else {
-      queueWrite("saveConsent", store.saveConsent(userId, state, { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" }));
+      specialistConsentWrite = store.saveConsent(userId, state, { consentType: "follow_up", purpose: "specialist_contact", sourceTurnId: turn?.id, language, channel: "whatsapp" });
+      queueWrite("saveConsent", specialistConsentWrite);
     }
   }
   if (handover && typeof store.createHandover === "function") {
-    handoverWrite = store.createHandover(userId, {
-      department: handover.routing?.department || "general",
-      priority: handover.routing?.priority || "normal",
-      summary: handover.summary || {},
-      sourceTurnId: turn?.id
+    handoverWrite = Promise.resolve().then(async () => {
+      // The Edge action verifies durable, purpose-specific consent. Persist the
+      // grant first so a simultaneous consent/handover request cannot race and
+      // falsely fail as unconsented.
+      if (consentGranted && specialistConsentWrite) await specialistConsentWrite;
+      return store.createHandover(userId, {
+        department: handover.routing?.department || "general",
+        priority: handover.routing?.priority || "normal",
+        summary: handover.summary || {},
+        sourceTurnId: turn?.id
+      });
     });
     queueWrite("createHandover", handoverWrite);
   }
@@ -271,6 +298,7 @@ async function recordHistory(store, userId, message, response, extra, { bestEffo
     queueWrite("logAuditEvent", store.logAuditEvent(userId, "red_flags_detected", metadata.redFlags, "system"));
   }
   const writeResults = await Promise.allSettled(writes);
+  if (qualificationProfileWrite) await qualificationProfileWrite;
   const workflowFailures = writeResults.flatMap((result, index) => result.status === "rejected" ? [{ operation: writeNames[index] || "workflow", error: result.reason }] : []);
   for (const failure of workflowFailures) {
     try { await store.logEvent?.("agent_workflow_persistence_failed", { sourceTurnId: turn?.id || null, tool: failure.operation, reasonCode: "WORKFLOW_WRITE_FAILED", ...safeErrorDiagnostics(failure.error) }); } catch { /* Diagnostic failure cannot retry a durable source turn. */ }
@@ -429,6 +457,41 @@ function handoverFor({ user, userId, incoming, inquiry, inquiryMetadata = {}, cl
   });
 }
 
+function formationDocumentReviewRequested(incoming, user) {
+  const recentCustomerConversation = (Array.isArray(user?.history) ? user.history : []).slice(-8).flatMap((turn) => [
+    ...(typeof turn?.message === "string" ? [{ role: "user", content: turn.message }] : []),
+    ...(typeof turn?.response === "string" ? [{ role: "assistant", content: turn.response }] : [])
+  ]);
+  return customerReadyForCompanyDocumentIntake(incoming, recentCustomerConversation)
+    && /\b(?:for\s+(?:your|the)\s+(?:team|specialist|adviser)\s+to\s+review|(?:your|the)\s+(?:team|specialist|adviser)\s+(?:can\s+)?review\s+(?:them|these\s+documents?)|review\s+(?:them|these\s+documents?)\s+and\s+(?:get\s+back|contact|reply|respond))\b|(?:ليراجع(?:ها|هم)|مراجعة\s+(?:الفريق|المختص)|الفريق\s+يراجع(?:ها|هم)|يراجع(?:ها|هم)\s+الفريق)|(?:να\s+τα\s+ελέγξει\s+η\s+ομάδα|να\s+τα\s+δει\s+ειδικός|να\s+επικοινωνήσει\s+η\s+ομάδα)/iu.test(String(incoming || ""));
+}
+
+async function recordFormationDocumentReview({ userId, incoming, user, store, prepared, language }) {
+  const response = localized(language, {
+    english: "Yes, you can attach the formation documents you mentioned here. Uploaded files are saved in private storage linked to this conversation. I’ve recorded your request for the team to review them and get back to you within 24 hours. Please do not send bank statements, passwords, verification codes, or banking login details.",
+    arabic: "إي، فيك ترفق مستندات التأسيس اللي ذكرتها هون. الملفات المرفوعة بتنحفظ بتخزين خاص ومرتبطة بهالمحادثة. سجّلت طلبك لمراجعتها، ورح يتواصل معك حدا من الفريق خلال 24 ساعة. بس لا تبعت كشوفات حساب أو كلمات سر أو رموز تحقق أو بيانات دخول بنكية.",
+    greek: "Ναι, μπορείτε να επισυνάψετε εδώ τα έγγραφα σύστασης που αναφέρατε. Τα αρχεία αποθηκεύονται σε ιδιωτικό χώρο και συνδέονται με αυτή τη συνομιλία. Κατέγραψα το αίτημά σας για έλεγχο και η ομάδα θα επικοινωνήσει μαζί σας μέσα σε 24 ώρες. Μην στείλετε τραπεζικά αντίγραφα, κωδικούς πρόσβασης, κωδικούς επαλήθευσης ή στοιχεία σύνδεσης στην τράπεζά σας."
+  });
+  const handover = handoverFor({
+    user, userId, incoming, inquiry: incoming, inquiryMetadata: prepared.metadata,
+    classification: prepared.classification, language, response,
+    currentTurnCustomerName: prepared.currentTurnCustomerName
+  });
+  const metadata = {
+    ...prepared.metadata,
+    handover,
+    specialistFollowUp: { consented: true, purpose: "specialist_follow_up", trackedOffer: false, requestedAt: new Date().toISOString() }
+  };
+  if (typeof store.updateUser === "function") {
+    const handoverState = { required: true, status: "open", department: handover.routing.department,
+      priority: handover.routing.priority, summary: handover.summary, nextAction: "Review submitted formation documents and follow up within 24 hours" };
+    await store.updateUser(userId, (draft) => { draft.profile = { ...(draft.profile || {}), specialistFollowUp: metadata.specialistFollowUp, handover: handoverState }; });
+    user.profile = { ...(user.profile || {}), specialistFollowUp: metadata.specialistFollowUp, handover: handoverState };
+  }
+  const history = await recordHistory(store, userId, incoming, response, { metadata });
+  return resultWithHistory({ response, user, metadata, handover, history, customerMessage: incoming });
+}
+
 async function prepareInboundMessage({ userId, incoming, user, store, contextual = false, classifyMessage, onModelCall, onUsage }) {
   const safety = classifySafety(incoming);
   const privacyRisk = safety.risks.includes("privacy");
@@ -443,6 +506,8 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     : contextual
     ? await (classifyMessage || require("./contextualPreflight").classifyContextualMessage)({ message: routingText, user }, { onModelCall, onUsage })
     : detectIntent(routingText);
+  const replyLanguage = resolveInboundLanguage(incoming, user, classification.language, safety.language);
+  if (classification.language !== replyLanguage) classification = Object.freeze({ ...classification, language: replyLanguage });
   if (contextual && !crossCustomerProbe && isSpecificAppointmentAvailabilityInquiry(routingText)
     && classification.noProactiveBookingOrContact !== true) {
     const intents = [INTENTS.APPOINTMENT, ...(classification.intents || []).filter((intent) => intent !== INTENTS.APPOINTMENT)];
@@ -502,6 +567,12 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     { text: incoming, sourceRef: "pending-current" }
   ];
   const evidenceScore = scoreQualification({ evidence: qualificationEvidence, previous: user.profile?.leadQualification });
+  const closeReadiness = assessCloseReadiness(evidenceScore, {
+    restricted: safety.restricted,
+    privacyRisk,
+    compliance: complianceTriggers.length > 0,
+    deferred: hasCloseReadinessDeferral(incoming)
+  });
   qualification.dimensions = evidenceScore.dimensions;
   qualification.total = evidenceScore.total;
   qualification.evidenceReferences = evidenceScore.evidenceReferences;
@@ -560,6 +631,7 @@ async function prepareInboundMessage({ userId, incoming, user, store, contextual
     priority: { level: priority.level, triggers: priority.triggers, handoverRequired: priority.handoverRequired },
     qualification: { dimensions: qualification.dimensions, total: qualification.total, status: qualification.status, thresholds: qualification.thresholds,
       scorerVersion: qualification.scorerVersion, evidenceFingerprint: qualification.evidenceFingerprint, evidenceReferences: qualification.evidenceReferences },
+    closeReadiness,
     leadTier: tierAction.tier,
     tierAction,
     buyingSignals,
@@ -601,7 +673,7 @@ const NON_ANSWER = /^(?:yes|yeah|yep|no|nope|ok(?:ay)?|تمام|اي|إي|نعم
 
 function pendingIntakeAnswer({ user, lastTurn, incoming, classification, existingIntakes }) {
   const response = String(lastTurn?.response || "");
-  if (!COMPANY_ACTIVITY_QUESTION.test(response) || !incoming.trim() || incoming.length > 180 || /[?؟]/u.test(incoming) || NON_ANSWER.test(incoming.trim())) return null;
+  if (!COMPANY_ACTIVITY_QUESTION.test(response) || !incoming.trim() || incoming.length > 180 || /[?؟]/u.test(incoming) || NON_ANSWER.test(incoming.trim()) || isAttachmentPlaceholder(incoming)) return null;
   if (classification.intents.some((intent) => INTAKE_CONTINUATION_BLOCKED_INTENTS.has(intent))) return null;
   const intake = existingIntakes?.company_formation || user.profile?.opportunityIntake;
   if (intake?.type !== "company_formation" || intake.status !== "in_progress") return null;
@@ -785,6 +857,38 @@ function namePrompt(language) {
   });
 }
 
+function clearMessageLanguage(message) {
+  const text = String(message || "").normalize("NFKC").trim();
+  if (!text || isAttachmentPlaceholder(text)) return null;
+  const detected = detectMessageLanguage(text);
+  const explicit = detectExplicitLanguageRequest(text);
+  const hasArabicOrGreekScript = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0370-\u03FF\u1F00-\u1FFF]/u.test(text);
+  const words = text.match(/[\p{L}\p{N}]+/gu) || [];
+  // Script, recognized transliteration and explicit language requests are
+  // clear even when short. Brief Latin replies use the last clear preference.
+  if (explicit || hasArabicOrGreekScript || detected !== "english" || words.length > 2) return detected;
+  return null;
+}
+
+function supportedLanguage(value) {
+  const language = String(value || "").trim().toLowerCase();
+  if (language === "ar") return "arabic";
+  if (language === "el" || language === "gr") return "greek";
+  return ["arabic", "english", "greek"].includes(language) ? language : null;
+}
+
+function resolveInboundLanguage(message, user, classifiedLanguage, detectedLanguage) {
+  const current = clearMessageLanguage(message);
+  if (current) return current;
+  for (const turn of [...(Array.isArray(user?.history) ? user.history : [])].reverse()) {
+    if (turn?.metadata?.attachment) continue;
+    const previous = clearMessageLanguage(turn?.message || turn?.text);
+    if (previous) return previous;
+  }
+  return supportedLanguage(user?.profile?.language) || supportedLanguage(classifiedLanguage)
+    || supportedLanguage(detectedLanguage) || "english";
+}
+
 function normalizeSmallTalk(text) {
   return String(text || "")
     .normalize("NFKC")
@@ -822,7 +926,11 @@ async function routeContextualMessageResult({ userId, incoming, user, store, pre
     && (!declined || (Number.isFinite(declinedAt) && offerAt > declinedAt));
   const directRequest = operation === "specialist_request" && !classification.noProactiveBookingOrContact;
   const controlledTest = user.profile?.qaControlledDiagnostics === true && user.profile?.followUpBlocked === true;
-  if (!controlledTest && !safety.restricted && (acceptedOffer || directRequest)) {
+  // Explicit, current human-contact consent is allowed to create its internal
+  // handover during controlled WhatsApp QA. The QA block still excludes tracked
+  // offers and automated reminders, which could otherwise create unintended
+  // proactive contact.
+  if ((!controlledTest || directRequest) && !safety.restricted && (acceptedOffer || directRequest)) {
     const inquiryTurn = acceptedOffer ? offerTurn : null;
     const handover = handoverFor({ user, userId, incoming, inquiry: inquiryTurn?.message || incoming,
       inquiryMetadata: inquiryTurn?.metadata || metadata, classification, language: classification.language, response: "",
@@ -830,6 +938,16 @@ async function routeContextualMessageResult({ userId, incoming, user, store, pre
     metadata.handover = handover;
     metadata.specialistFollowUp = { consented: true, purpose: "specialist_follow_up", trackedOffer: acceptedOffer,
       offerSourceTurnId: inquiryTurn?.id || null, requestedAt: new Date().toISOString() };
+  }
+  if (directRequest && metadata.handover) {
+    const handover = metadata.handover;
+    const response = localized(classification.language, {
+      english: "I can’t confirm whether a time is available tomorrow or when the team will reply. Your request needs an adviser’s review.",
+      arabic: "ما فيني أأكد إذا في وقت متاح بكرا أو إمتى بيردّ الفريق. طلبك يحتاج مراجعة مستشار.",
+      greek: "Δεν μπορώ να επιβεβαιώσω αν υπάρχει διαθέσιμη ώρα για αύριο ή πότε θα απαντήσει η ομάδα. Το αίτημά σας χρειάζεται αξιολόγηση από σύμβουλο."
+    });
+    const history = await recordHistory(store, userId, incoming, response, { metadata });
+    return resultWithHistory({ response, user, metadata, handover, history, customerMessage: incoming });
   }
   const reminderAt = Date.parse(lastTurn?.metadata?.automatedReminderOffer?.offeredAt || lastTurn?.at || "");
   if (!controlledTest && operation === "accept_reminder_offer" && offerTurn === lastTurn
@@ -950,6 +1068,10 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
     return resultWithHistory({ response, user, metadata: prepared.metadata, history, customerMessage: incoming });
   }
 
+  const documentReviewRequest = formationDocumentReviewRequested(incoming, user);
+  if (documentReviewRequest && !["denied", "revoked"].includes(consentFromText(incoming))) {
+    return recordFormationDocumentReview({ userId, incoming, user, store, prepared, language: prepared.metadata?.intent?.language || classification.language });
+  }
   if (classification.source === "contextual_model" || classification.source === "contextual_fallback") {
     return routeContextualMessageResult({ userId, incoming: prepared.metadata.privacySafeQuestion || incoming, user, store, prepared });
   }
@@ -1062,7 +1184,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const naturalDirectContactRequest = /\b(?:i|we)\s+(?:request|ask)\s+(?:(?:a|the)\s+)?(?:specialist|team)\s+(?:to\s+)?(?:contact|call)\s+me\b/iu.test(incoming);
   const directFollowUpRequest = /\b(?:please\s+)?(?:have|ask)\s+(?:a|the)\s+(?:specialist|team)\s+(?:to\s+)?follow\s+up\b|\bplease\s+arrange\s+(?:a\s+)?specialist\s+follow.?up\b/iu.test(incoming);
   const directConnectionRequest = /\b(?:please\s+)?connect\s+me\s+(?:to|with)\s+(?:someone|a\s+human|a\s+specialist|the\s+team)\b/iu.test(incoming);
-  const directContactRequest = naturalDirectContactRequest || directFollowUpRequest || directConnectionRequest || /(?:please have (?:a|the) (?:specialist|team) contact me|ask (?:a|the) specialist to contact me|contact me about this|i want (?:a )?(?:human|specialist) to contact me|(?:i|we) (?:request|ask) (?:a|the) specialist to contact me|please (?:call|contact) me|have (?:someone|the team) call me|خلي\s*(?:ال)?مختص\s*يتواصل\s*معي|خلي\s*(?:ال)?فريق\s*يتواصل\s*معي|بدي\s*(?:حدا|شخص|مختص)\s*(?:من\s*الفريق\s*)?يتواصل\s*معي|اطلبوا\s*من\s*(?:ال)?مختص\s*يتواصل\s*معي|(?<![\p{L}\p{M}])تواصلوا\s+معي(?![\p{L}\p{M}])|ζητ(?:ώ|ήστε)\s+(?:από\s+)?(?:έναν?\s+)?ειδικ(?:ό|ός)|επικοινωνήστε\s+μαζί\s+μου(?:\s+για\s+αυτό)?|θέλω\s+(?:να\s+)?(?:επικοινωνήσει|μιλήσω\s+με)\s+(?:ένας?\s+)?ειδικ(?:ός|ό)|\bepikoinoniste\s+mazi\s+mu\b|\bthelo\s+na\s+miliso\s+me\s+(?:enan?\s+)?eidiko\b)/iu.test(incoming);
+  const directContactRequest = documentReviewRequest || naturalDirectContactRequest || directFollowUpRequest || directConnectionRequest || /(?:please have (?:a|the) (?:specialist|team) contact me|ask (?:a|the) specialist to contact me|contact me about this|i want (?:a )?(?:human|specialist) to contact me|(?:i|we) (?:request|ask) (?:a|the) specialist to contact me|please (?:call|contact) me|have (?:someone|the team) call me|خلي\s*(?:ال)?مختص\s*يتواصل\s*معي|خلي\s*(?:ال)?فريق\s*يتواصل\s*معي|بدي\s*(?:حدا|شخص|مختص)\s*(?:من\s*الفريق\s*)?يتواصل\s*معي|اطلبوا\s*من\s*(?:ال)?مختص\s*يتواصل\s*معي|(?<![\p{L}\p{M}])تواصلوا\s+معي(?![\p{L}\p{M}])|(?:أنا\s+)?(?:موافق(?:ة)?|أوافق|بوافق).{0,60}(?:تشاركوا|تشارك|شاركوا|مشاركة).{0,100}(?:الفريق|فريق\s+(?:الشركة|عملكم)|فريقكم).{0,60}(?:ليتواصل(?:وا)?\s+معي|للتواصل\s+معي|يتواصل(?:وا)?\s+معي)|(?:please\s+)?(?:share|pass)\s+(?:my\s+)?(?:request|details|summary)\s+with\s+(?:your\s+)?team.{0,60}(?:contact|call|reach)\s+me|(?:i\s+)?(?:agree|consent)\s+to\s+(?:share|sharing)\s+(?:my\s+)?(?:request|details)\s+with\s+(?:your\s+)?team.{0,60}(?:contact|call|reach)\s+me|ζητ(?:ώ|ήστε)\s+(?:από\s+)?(?:έναν?\s+)?ειδικ(?:ό|ός)|επικοινωνήστε\s+μαζί\s+μου(?:\s+για\s+αυτό)?|θέλω\s+(?:να\s+)?(?:επικοινωνήσει|μιλήσω\s+με)\s+(?:ένας?\s+)?ειδικ(?:ός|ό)|\bepikoinoniste\s+mazi\s+mu\b|\bthelo\s+na\s+miliso\s+me\s+(?:enan?\s+)?eidiko\b)/iu.test(incoming);
   const consentDecision = consentFromText(incoming);
   const consentDeniedOrRevoked = consentDecision === "revoked" || consentDecision === "denied";
   const storedConsentState = getConsentState({ user });
@@ -1072,7 +1194,7 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
   const hasNewOfferSinceStoredDecline = Number.isFinite(storedConsentAt) && Number.isFinite(trackedOfferAt) && trackedOfferAt > storedConsentAt;
   if (storedConsentDeclined && !hasNewOfferSinceStoredDecline) affirmativeToTrackedOffer = false;
   if (!consentDeniedOrRevoked && (affirmativeToTrackedOffer || directContactRequest)) {
-    const activeHandoverAlreadyRecorded = user.profile?.handover?.required === true &&
+    const activeHandoverAlreadyRecorded = !documentReviewRequest && user.profile?.handover?.required === true &&
       ["open", "pending_review", "awaiting_review"].includes(user.profile.handover.status) &&
       storedConsentState === "granted";
     if (activeHandoverAlreadyRecorded) {
@@ -1089,7 +1211,11 @@ async function routeMessageResult({ userId, text, store, existingUser = null, pr
       const history = await recordHistory(store, userId, incoming, response, { metadata });
       return resultWithHistory({ response, user, metadata, history, customerMessage: incoming });
     }
-    response = localized(language, {
+    response = documentReviewRequest ? localized(language, {
+      english: "Yes, you can attach the formation documents you mentioned here. Uploaded files are saved in private storage linked to this conversation. I’ve recorded your request for the team to review them and get back to you within 24 hours. Please do not send bank statements, passwords, verification codes, or banking login details.",
+      arabic: "إي، فيك ترفق مستندات التأسيس اللي ذكرتها هون. الملفات المرفوعة بتنحفظ بتخزين خاص ومرتبطة بهالمحادثة. سجّلت طلبك لمراجعتها، ورح يتواصل معك حدا من الفريق خلال 24 ساعة. بس لا تبعت كشوفات حساب أو كلمات سر أو رموز تحقق أو بيانات دخول بنكية.",
+      greek: "Ναι, μπορείτε να επισυνάψετε εδώ τα έγγραφα σύστασης που αναφέρατε. Τα αρχεία αποθηκεύονται σε ιδιωτικό χώρο και συνδέονται με αυτή τη συνομιλία. Κατέγραψα το αίτημά σας για έλεγχο και η ομάδα θα επικοινωνήσει μαζί σας μέσα σε 24 ώρες. Μην στείλετε τραπεζικά αντίγραφα, κωδικούς πρόσβασης, κωδικούς επαλήθευσης ή στοιχεία σύνδεσης στην τράπεζά σας."
+    }) : localized(language, {
       english: `I’ve recorded your request for a specialist to review this inquiry. I can’t confirm when they may respond.${!isPlausibleCustomerName(user.profile?.name) ? " If you want, you can share the name you’d like included; it’s optional." : ""}`,
       arabic: `سجّلت طلبك لمراجعة مختص بهالاستفسار. ما فيني أكّد إمتى ممكن يوصلك رد.${!isPlausibleCustomerName(user.profile?.name) ? " وإذا بتحب، فيك تعطيني الاسم اللي بدك ياه ينضاف للطلب، وهو اختياري." : ""}`,
       greek: `Κατέγραψα το αίτημά σας για αξιολόγηση αυτού του ερωτήματος από ειδικό. Δεν μπορώ να επιβεβαιώσω πότε θα απαντήσει.${!isPlausibleCustomerName(user.profile?.name) ? " Αν θέλετε, μπορείτε να δώσετε το όνομα που θα συμπεριληφθεί· είναι προαιρετικό." : ""}`
@@ -1205,4 +1331,4 @@ async function routeMessage({ userId, text, store }) {
   return result.response;
 }
 
-module.exports = { routeMessage, routeMessageResult, prepareInboundMessage, recordHistory, profileText, extractCustomerName, extractExplicitCustomerName, latestCustomerStatedName, extractCustomerNeed, namePrompt, normalizeSmallTalk, isValidWhatsAppReplyKey, buildReplyEditPayload, persistWhatsAppSentMessage, isPlausibleCustomerName, wasNameRequested };
+module.exports = { routeMessage, routeMessageResult, prepareInboundMessage, recordHistory, profileText, extractCustomerName, extractExplicitCustomerName, latestCustomerStatedName, extractCustomerNeed, namePrompt, normalizeSmallTalk, isValidWhatsAppReplyKey, buildReplyEditPayload, persistWhatsAppSentMessage, isPlausibleCustomerName, wasNameRequested, resolveInboundLanguage };

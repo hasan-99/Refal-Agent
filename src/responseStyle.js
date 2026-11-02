@@ -50,16 +50,16 @@ function responseStyleInstruction(value) {
     : "When a list helps, use hyphen bullets with each item on its own line.";
   const labels = style.boldLabels
     ? style.presentation === "structured"
-      ? "Use short bold section headings on their own line in structured replies, and emphasize key prices or conditions sparingly with the channel's supported bold style."
-      : "Use the channel's supported bold style sparingly for short labels only."
+      ? "Use short bold section headings on their own line in structured replies, and emphasize key prices or conditions sparingly. On WhatsApp, enclose each heading exactly as *Heading* with no spaces just inside the asterisks; never prefix a heading with a bullet. Do not use Markdown double asterisks."
+      : "Use the channel's supported bold style sparingly for short labels only. On WhatsApp, format bold text with one asterisk on each side (*label*); do not use Markdown double asterisks."
     : "Do not use bold styling.";
   const presentation = style.presentation === "structured"
-    ? "For detailed or multi-part answers, use a clear opening followed by only the relevant short section headings, compact bullets, and blank lines between sections. Use headings such as price, inclusions, offer, timing, ongoing costs, exclusions, or next step only when they fit the customer's request and approved evidence; omit empty sections. Keep greetings and simple answers natural instead of forcing a template."
+    ? "For detailed or multi-part answers, use a clear opening followed by one short, standalone heading for each requested topic, with compact bullets beneath it and a blank line between sections. Never combine different sections into one long paragraph. Use headings such as price, inclusions, offer, timing, ongoing costs, exclusions, or next step only when they fit the customer's request and approved evidence; omit empty sections. Keep greetings and simple answers natural instead of forcing a template."
     : style.presentation === "bullet_points"
       ? "For answers with several details, give a brief direct opening and then organize the key points as a short, easy-to-scan bullet list. Skip headings unless the answer is long enough to need them. Keep simple answers conversational."
     : "Keep replies conversational; add headings only when a genuinely long or multi-part answer benefits from them.";
   const icons = style.presentation !== "conversational" && style.sectionIcons
-    ? "Use restrained visual markers: prefix major section headings, or a few key bullets when there are no headings, with at most one relevant emoji such as 💶 for price, ✅ for inclusions, ⏳ for timing, or ❌ for exclusions. Do not decorate every line."
+    ? "Use restrained visual markers: prefix major section headings, or a few key bullets when there are no headings, with at most one relevant emoji such as 💶 for price, ✅ for inclusions, ⏳ for timing, or ❌ for exclusions. Do not decorate every line or put an emoji where it damages the heading format."
     : "Do not add decorative emoji or icons to headings.";
   const tone = {
     warm_professional: "Use a warm, approachable and respectful professional tone; sound natural in the customer's language without becoming overfamiliar.",
@@ -79,4 +79,40 @@ function responseStyleInstruction(value) {
   return `Administrator response preferences: ${tone} ${paragraph} ${presentation} ${list} ${labels} ${icons} ${continuation} ${serviceSuggestions} These preferences never override safety, accuracy, approved evidence, or appointment rules.`;
 }
 
-module.exports = { RESPONSE_STYLE_DEFAULTS, validateResponseStyle, responseStyleInstruction };
+const STRUCTURED_HEADING = /^(?:price(?: and payment)?|pricing|payment|what(?:'s| is) included|inclusions?|package includes|special offer|current offer|offer|duration|timing|ongoing costs?|fees after (?:the )?offer|exclusions?|not included|next step|السعر(?: وطريقة الدفع)?|طريقة الدفع|ما تشمله(?: الباقة)?|ما يشمله(?: الباقة)?|ماذا تشمل(?: الباقة)?|تشمل الباقة|المشمول|العرض(?: الحالي| الخاص)?|المدة|مدة التأسيس|الرسوم بعد(?: العرض)?|بعد انتهاء العرض|ما لا تشمله(?: الباقة)?|ما لا يشمله(?: الباقة)?|الخدمات غير المشمولة|الاستثناءات|الخطوة التالية|τιμή(?: και πληρωμή)?|πληρωμή|τι περιλαμβάνει|περιλαμβάνονται|προσφορά|διάρκεια|χρονικό πλαίσιο|εξαιρέσεις|δεν περιλαμβάνονται|επόμενο βήμα)(?:$|[\s:：])/iu;
+
+/** Normalize only WhatsApp section markers for the selected structured style.
+ * This changes presentation markers and spacing, never the customer's facts.
+ */
+function formatResponseForStyle(response, value) {
+  const text = String(response || "").trim();
+  if (!text || validateResponseStyle(value || RESPONSE_STYLE_DEFAULTS).presentation !== "structured") return text;
+
+  const output = [];
+  for (const rawLine of text.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (output.length && output.at(-1) !== "") output.push("");
+      continue;
+    }
+
+    const candidate = line
+      .replace(/^(?:[•*\-–—]\s*)+/u, "")
+      .replace(/^[\p{Extended_Pictographic}\uFE0F]+\s*/u, "")
+      .replace(/\*+/gu, "")
+      .trim();
+    if (candidate.length <= 80 && !/[.!?؟。！？…]$/u.test(candidate) && STRUCTURED_HEADING.test(candidate)) {
+      while (output.at(-1) === "") output.pop();
+      if (output.length) output.push("");
+      output.push(value?.boldLabels === false ? line.replace(/^(?:[•*\-–—]\s*)+/u, "").replace(/\*+/gu, "").trim()
+        : `*${line.replace(/^(?:[•*\-–—]\s*)+/u, "").replace(/\*+/gu, "").trim()}*`);
+      output.push("");
+      continue;
+    }
+    output.push(line);
+  }
+  while (output.at(-1) === "") output.pop();
+  return output.join("\n");
+}
+
+module.exports = { RESPONSE_STYLE_DEFAULTS, validateResponseStyle, responseStyleInstruction, formatResponseForStyle };

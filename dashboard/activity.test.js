@@ -82,6 +82,16 @@ test("operator signals render structured handover summaries as readable text", (
   assert.doesNotMatch(signals.handover.summary, /\[object Object\]/);
 });
 
+test("operator signals surface a persisted close-readiness alert with its evidence references", () => {
+  const signals = operatorSignals({ profile: { closeReadiness: {
+    status: "ready_to_proceed", detectedAt: "2026-10-28T12:00:00Z", sourceTurnId: "turn-1",
+    criteria: { clearStartIntent: true, definedNeed: true, serviceFit: true }, evidenceReferences: { readiness: ["turn-1"] }
+  } } });
+  assert.equal(signals.closeReadiness.status, "ready_to_proceed");
+  assert.equal(signals.closeReadiness.sourceTurnId, "turn-1");
+  assert.equal(operatorSignals({ profile: {} }).closeReadiness.status, "not_established");
+});
+
 test("operator signals expose durable follow-up delivery state without provider error details", () => {
   const signals = operatorSignals({
     lastFollowUpSent: "2026-10-10T12:00:00.000Z",

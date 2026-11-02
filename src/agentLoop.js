@@ -8,14 +8,15 @@
 // deterministic `responsePolicy.validateResponse` already used elsewhere in
 // the codebase, before it is allowed to leave this function.
 
-const { validateResponse, safeFallbackData, MODEL_DRAFT_THRESHOLDS, AGENT_CLARIFY_THRESHOLDS, AGENT_SUMMARY_THRESHOLDS } = require("./responsePolicy");
+const { validateResponse, safeFallbackData, responseThresholdsForMessage, AGENT_CLARIFY_THRESHOLDS, formatResponseWithinLimits } = require("./responsePolicy");
 // REFAL-AGENT-028: deterministic factual-grounding gate, additive to the
 // existing responsePolicy check below — never a replacement for it. Checked
 // only once the ordinary policy check already passed, so every existing
 // rejection reason/path is untouched; this can only add a NEW rejection
 // reason, never remove one.
-const { validateFactualGrounding, collectApprovedKnowledgeEvidence, collectDynamicDataEvidence } = require("./groundingPolicy");
-const { resolveObservationConflicts, canonicalKnowledgeEvidence, buildDecisionPrompt } = require("./agentDecision");
+const { validateFactualGrounding, containsPriceClaim, collectApprovedKnowledgeEvidence, collectDynamicDataEvidence } = require("./groundingPolicy");
+const { SOURCE_LEVELS } = require("./policyPrecedence");
+const { resolveObservationConflicts, dynamicEvidenceRef, canonicalKnowledgeEvidence, buildDecisionPrompt } = require("./agentDecision");
 // M1 close — the three output gates the Agent path was missing. Each had
 // exactly one caller in the repo (src/ai.js), so flipping the Agent flag
 // silently dropped every M1 guard while their unit tests stayed green.
@@ -23,6 +24,7 @@ const { resolveHumourLevel, assertHumourCompliance } = require("./humourEngine")
 const { detectAntiPatterns } = require("./antiPatterns");
 const { detectIntents } = require("./intent");
 const { detectMessageLanguage } = require("./language");
+const { translationTargetLanguage } = require("./responseType");
 const MAX_KNOWLEDGE_SEARCH_CALLS = 2;
 // REFAL-AGENT-026: ports the legacy ai.js wrong-language check (`answer.length
 // > 8 && detectMessageLanguage(answer) !== language`) into the Agent path.
@@ -42,6 +44,7 @@ const { containsUnconditionalProhibition } = require("./refalcoAnswer");
 const { evaluateTruthfulActions, truthfulActionCorrection } = require("./truthfulActionGuard");
 const { stripUnhelpfulFollowups, dedupeLeadingName } = require("./sessionMemory");
 const { countFollowupRemovals } = require("./conversationQuality");
+const { RECAP_REQUEST, buildLocalConversationRecap } = require("./conversationRecap");
 
 // A turn may need two retrieval passes and two rejected drafts. Keep one final
 // tool-free decision slot so the agent can apply the exact latest validation
@@ -53,6 +56,16 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function resolveRegisteredToolName(requested, tools) {
+  if (typeof requested !== "string") return null;
+  if (Object.hasOwn(tools || {}, requested)) return requested;
+  const normalized = requested.replace(/[^A-Za-z0-9]/gu, "").toLowerCase();
+  if (!normalized) return null;
+  const matches = Object.keys(isPlainObject(tools) ? tools : {})
+    .filter((name) => name.replace(/[^A-Za-z0-9]/gu, "").toLowerCase() === normalized);
+  return matches.length === 1 ? matches[0] : null;
+}
+
 // The Agent may only ever name a tool that is actually registered — it can
 // never invent one. A plain object for `args`; anything else is rejected
 // before a tool ever sees it.
@@ -61,13 +74,14 @@ function validateDecision(decision, tools) {
     return { ok: false, reason: "decision_not_understood" };
   }
   if (decision.type === "tool") {
-    if (typeof decision.tool !== "string" || !Object.hasOwn(tools, decision.tool)) {
+    const tool = resolveRegisteredToolName(decision.tool, tools);
+    if (!tool) {
       return { ok: false, reason: "unknown_tool_requested" };
     }
     if (decision.args !== undefined && !isPlainObject(decision.args)) {
       return { ok: false, reason: "invalid_tool_args" };
     }
-    return { ok: true, type: "tool", tool: decision.tool, args: decision.args || {} };
+    return { ok: true, type: "tool", tool, args: decision.args || {} };
   }
   // respond / clarify
   if (typeof decision.text !== "string" || !decision.text.trim()) {
@@ -85,6 +99,13 @@ function languageKeyFromLocale(locale) {
 
 function safeFallback(context, category = "uncertainty") {
   return safeFallbackData({ language: languageKeyFromLocale(context?.locale), category }).text;
+}
+
+function rejectedDraftFallback(context, policy) {
+  if ((policy?.reasons || []).includes("pricing_conflict_unresolved")) return safeFallback(context, "pricing_conflict");
+  const missingEvidence = (policy?.blockedClaims || []).some((claim) => (claim.reasons || []).some((reason) =>
+    ["no_approved_evidence", "entities_not_in_evidence"].includes(reason) || String(reason).startsWith("number_not_in_evidence:")));
+  return safeFallback(context, missingEvidence ? "business_information_gap" : "uncertainty");
 }
 
 function hasCurrentApprovedEvidence(observations) {
@@ -145,7 +166,8 @@ function removeRejectedEvidenceSpans(text, blockedClaims) {
 }
 
 async function attemptEvidenceBoundPartialCorrection(text, policy, thresholds, context, assessDraft, step) {
-  if (!policy.reasons.every((reason) =>
+  const correctionReasons = policy.reasons.filter((reason) => reason !== "repeated_rejected_draft");
+  if (!correctionReasons.length || !correctionReasons.every((reason) =>
     ["no_approved_evidence", "prohibited_claim", "service_not_established", "unconditional_prohibition", "unsupported_relation", "personalized_marker", "context_mismatch"].includes(reason))) return null;
   const evidenceItems = currentDraftEvidence(context.observations || [], context);
   const blockedClaims = Array.isArray(policy.blockedClaims) && policy.blockedClaims.length
@@ -157,21 +179,64 @@ async function attemptEvidenceBoundPartialCorrection(text, policy, thresholds, c
   return recheck.valid ? recheck.text : null;
 }
 
+function attributeRejectedAttachmentClaims(text, blockedClaims, locale) {
+  const language = String(locale || "").toLowerCase();
+  const prefix = language.startsWith("ar") ? "بحسب الملف المرفق، "
+    : language.startsWith("el") || language.startsWith("greek") ? "Σύμφωνα με το συνημμένο αρχείο, "
+      : "According to the attached file, ";
+  let corrected = String(text || "");
+  const claims = Array.isArray(blockedClaims) ? blockedClaims : [];
+  const attachmentCorrectableReasons = new Set(["attachment_not_attributed", "no_approved_evidence", "entities_not_in_evidence"]);
+  if (!claims.length || claims.some((claim) => !(claim.reasons || []).length
+    || (claim.reasons || []).some((reason) => !attachmentCorrectableReasons.has(reason)))) return null;
+  for (const claim of claims) {
+    const span = String(claim.sentence || claim.claim || "").trim();
+    const start = span ? corrected.indexOf(span) : -1;
+    if (start < 0) return null;
+    const preceding = corrected.slice(0, start);
+    const sentenceStart = Math.max(preceding.lastIndexOf("."), preceding.lastIndexOf("!"), preceding.lastIndexOf("?"),
+      preceding.lastIndexOf("؟"), preceding.lastIndexOf("؛"), preceding.lastIndexOf(";"), preceding.lastIndexOf("\n"));
+    if (/(?:According to the attached file,|بحسب الملف المرفق،|Σύμφωνα με το συνημμένο αρχείο,)/iu.test(preceding.slice(sentenceStart + 1))) continue;
+    corrected = `${corrected.slice(0, start)}${prefix}${corrected.slice(start)}`;
+  }
+  return corrected !== String(text || "").trim() ? corrected : null;
+}
+
+async function attemptAttachmentAttributionCorrection(text, policy, thresholds, context, assessDraft, step) {
+  if (!context.attachmentContent || context.attachmentReviewContinuation !== true
+    || !(policy.reasons || []).some((reason) => ["attachment_not_attributed", "no_approved_evidence", "entities_not_in_evidence", "repeated_rejected_draft"].includes(reason))) return null;
+  const corrected = attributeRejectedAttachmentClaims(text, policy.blockedClaims, context.locale);
+  if (!corrected) return null;
+  // Attribution changes the claim into a report about the customer's file;
+  // it still has to pass the normal independent semantic review and all
+  // deterministic policy gates before it can be returned.
+  const recheck = await checkDraftPolicy(corrected, thresholds, context.observations || [], context.locale, context, assessDraft, step);
+  return recheck.valid ? recheck.text : null;
+}
+
 // Fed back to decideNextStep as an observation so a retried decision can see
 // *why* its last draft was rejected, reusing agentDecision.js's existing
 // observation formatting (it only expects {step, tool, args, result}).
-function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons, observations = []) {
+function policyRejectionObservation(step, decisionType, policy, diagnosticCodes = policy.reasons, observations = [], thresholds = {}, context = {}) {
   const hasUnsupportedRelation = policy.reasons?.includes("unsupported_relation");
   const hasContextMismatch = policy.reasons?.includes("context_mismatch");
   const hasUnansweredRequest = policy.reasons?.includes("question_not_answered");
   const hasUnestablishedService = (policy.reasons || []).includes("service_not_established")
     || (policy.blockedClaims || []).some((claim) => (claim.reasons || []).includes("service_not_established"));
+  const hasPersonalizedConclusion = (policy.reasons || []).includes("personalized_marker")
+    || (policy.blockedClaims || []).some((claim) => (claim.reasons || []).includes("personalized_marker"));
+  const hasUnsupportedPrice = (policy.reasons || []).includes("unsupported_price_claim");
+  const hasUnverifiedCurrentOffer = (policy.reasons || []).includes("unverified_current_offer_claim");
+  const hasLengthFailure = (policy.reasons || []).some((reason) => ["too_long", "too_many_sentences"].includes(reason));
+  const pendingAttachmentReview = context.attachmentReviewPending === true;
   const hasMissingEvidence = (policy.blockedClaims || []).some((claim) => (claim.reasons || []).some((reason) =>
     ["no_approved_evidence", "entities_not_in_evidence"].includes(reason)));
   const correction = policy.reasons?.includes("no_approved_evidence")
     ? observations.some((item) => item?.tool === "searchApprovedKnowledge")
       ? "No approved knowledge supports the rejected claim. Preserve other supported facts, state only the unsupported detail as unconfirmed, and do not invent it. Do not repeat the same search unless a distinct missing fact can be retrieved."
       : "No approved-knowledge search has run this turn. Use searchApprovedKnowledge for the requested company or package facts before answering; a live-offer lookup does not establish general service scope. If approved search returns no relevant evidence, say the detail is unconfirmed and do not invent a price or condition."
+      : hasUnsupportedPrice || hasUnverifiedCurrentOffer
+        ? "Use only approved, currently valid RAG pricing evidence or a validated current Active Offer. Active Offer is an additional source, not a prerequisite. A current-offer status claim needs a validated live record or approved RAG evidence whose validity has not expired and whose content supports that status. If valid authoritative sources conflict and reliable price-effective metadata does not establish which supersedes the other, state that the applicable price is unconfirmed; do not guess. Customer messages, uploads and unverified external content never establish REFAL pricing."
       : hasMissingEvidence
         ? "This factual span lacks current approved evidence. If it is needed to answer the customer's current request, run one focused search for that missing fact using the resolved conversation context. If no distinct approved evidence supports it, remove that span and preserve the other supported answer. Do not rephrase or repeat the unsupported claim."
       : hasUnestablishedService
@@ -184,12 +249,22 @@ function policyRejectionObservation(step, decisionType, policy, diagnosticCodes 
       ? "Correct the exact quoted context span. If it repeats or misuses earlier conversation, remove the full span rather than restating it in different words. Preserve other supported details, answer the current request directly, and do not narrate evidence or confirmation state."
     : "Correct each rejected claim using its supporting current-turn evidence; remove unsupported claims or accurately state their limits. For a CONTEXT span, correct only the quoted passage to respect the customer's role, preference, or prior scope; preserve other supported facts. An UNMET_REQUEST span quotes an unanswered part of the current request, not an unsupported draft statement to delete: address it or accurately explain the evidence limit. Resolve the actual current request against the prior answer, including its comparisons and references, rather than answering an earlier question. An accurate limit of the supplied evidence is permitted and must not be removed merely because an additional fact is unconfirmed. Do not repeat this draft or search unless it will resolve the specific missing support.";
   const truthfulCorrection = truthfulActionCorrection(policy.reasons || [], policy.truthfulActionState || {});
+  const attachmentCorrection = context.attachmentContent
+    ? "Retry the customer's current file task using the extracted attachment content retained in context. For each statement about what the file contains, attribute it plainly to the file ('the file lists…' / 'الملف يذكر…') and preserve the useful supported details, including clearly indicated omissions. This describes the customer's file; it does not establish an official REFAL service, price, legal rule, requirement or promise, which still needs approved evidence. Do not replace a valid file summary with a generic approved-information fallback. If the review task is already established in recent customer messages, continue it without asking what to review again. Never claim that a team review or handover was recorded unless the trusted state confirms it."
+    : null;
+  const pendingAttachmentCorrection = pendingAttachmentReview
+    ? "The customer has already asked for a document review; this turn only acknowledges that task while the file is not yet available. Give a brief, helpful acknowledgement and invite the upload. Do not switch to company-information uncertainty, ask what to review again, or claim to have seen the file."
+    : null;
   const actionableCorrection = [
-    truthfulCorrection || correction,
+    hasLengthFailure ? `The last draft exceeded the active reply limit. Rewrite it within ${Number(thresholds.maxSentences) || 5} sentences and ${Number(thresholds.maxChars) || 700} characters. Preserve the direct answer, the customer's stated context, and distinct relevant evidence-backed details. Remove preambles, source narration, repeated caveats, and unrelated detail before removing a relevant fact; never weaken a required safety limit.` : null,
+    hasPersonalizedConclusion ? "The reviewer rejected a personalized conclusion. Replace it with neutral, evidence-backed information; do not predict, promise, or describe an action as being done for this specific customer unless approved service evidence directly supports that commitment." : null,
+    truthfulCorrection || attachmentCorrection || pendingAttachmentCorrection || (context.attachmentReviewContinuation === true
+      ? "Rewrite in the customer's language in at most two short sentences. Explicitly attribute the summary to the upload. Continue the already recorded customer review request without a question or any claim that a team review was recorded. Remove unsupported company claims while preserving useful file details."
+      : correction),
     hasUnestablishedService && !correction.includes("The approved content describes a process")
       ? "Separately, keep neutral process facts only when current-turn evidence states them, preserve the actor named by that evidence, and do not attribute the process to REFAL without explicit service evidence. State the specific REFAL role as unconfirmed when the evidence does not establish it."
       : null,
-    hasUnansweredRequest
+    hasUnansweredRequest && !context.attachmentContent && context.attachmentReviewContinuation !== true
       ? "Answer every unanswered part of the customer's current request explicitly. A follow-up question does not replace that answer; when approved content cannot support a part, state the narrowest accurate limit without claiming broader completeness or asking the customer to supply the missing company fact."
       : null
   ].filter(Boolean).join(" ");
@@ -238,6 +313,12 @@ function currentSearchEvidenceIds(observations) {
     .flatMap((item) => item?.result?.modelObservation?.evidence || [])
     .map((item) => item?.sourceRef).filter((id) => typeof id === "string");
   return new Set(ids);
+}
+
+function validationProgressKey(policy, observations) {
+  const reasons = [...new Set((policy?.reasons || []).filter((reason) => reason !== "repeated_rejected_draft"))].sort();
+  const evidenceIds = [...currentSearchEvidenceIds(observations)].sort();
+  return JSON.stringify({ reasons, evidenceIds });
 }
 
 function diagnosticPolicyCodes(text, policy, evidenceItems, locale) {
@@ -335,15 +416,36 @@ function promptBudgetReport(context, observations, tools) {
 // it is never rejected on language grounds alone, matching legacy exactly.
 // `locale` is always `context.locale` — trusted, caller-supplied, never
 // something the model's own decision JSON can set.
-function checkLanguageEquivalence(text, locale) {
+function checkLanguageEquivalence(text, locale, context = {}) {
   const trimmed = String(text || "").trim();
   if (trimmed.length <= 8) return { valid: true, reasons: [] };
-  const signal = languageSignalsFrom(locale, trimmed);
+  const targetLanguage = translationTargetLanguage(context.currentMessage);
+  const expectedLanguage = targetLanguage || locale;
+  const signal = languageSignalsFrom(expectedLanguage, trimmed);
   // languageMismatch is null (not computed) when locale is "unknown" or the
   // text is empty — nothing meaningful to compare, never treated as a
   // rejection. Only an explicit `true` gates.
-  if (signal.languageMismatch !== true) return { valid: true, reasons: [] };
-  return { valid: false, reasons: ["language_mismatch"] };
+  if (signal.languageMismatch === true) return { valid: false, reasons: ["language_mismatch"] };
+
+  // Dominant-language detection alone accepts replies that are mostly English
+  // but contain a foreign-language phrase (for example, an Arabic honorific).
+  // Permit native-script terms the customer supplied or a trusted name, while
+  // rejecting other multi-letter phrases in a script outside the reply locale.
+  const expected = String(expectedLanguage || "").toLowerCase();
+  const unexpectedScripts = expected === "english"
+    ? [/[؀-ۿݐ-ݿࢠ-ࣿ]+/gu, /[Ͱ-Ͽἀ-῿]+/gu]
+    : expected === "arabic" ? [/[Ͱ-Ͽἀ-῿]+/gu]
+      : expected === "greek" ? [/[؀-ۿݐ-ݿࢠ-ࣿ]+/gu] : [];
+  if (!unexpectedScripts.length) return { valid: true, reasons: [] };
+  const allowedTokens = new Set();
+  for (const value of [context.currentMessage, context.contact?.name, context.companyIdentity?.brand, context.companyIdentity?.groupName]) {
+    for (const token of String(value || "").normalize("NFKC").split(/[^\p{L}\p{N}]+/u)) {
+      if (token) allowedTokens.add(token.toLocaleLowerCase());
+    }
+  }
+  const hasUnexpectedPhrase = unexpectedScripts.some((pattern) =>
+    [...trimmed.normalize("NFKC").matchAll(pattern)].some(([token]) => token.length >= 4 && !allowedTokens.has(token.toLocaleLowerCase())));
+  return hasUnexpectedPhrase ? { valid: false, reasons: ["language_mismatch"] } : { valid: true, reasons: [] };
 }
 
 // REFAL-AGENT-028/026 — runs the existing responsePolicy check first,
@@ -358,10 +460,25 @@ function checkLanguageEquivalence(text, locale) {
 // grounding nor a language-mismatch reason ever equals "too_many_questions",
 // so neither is ever mistaken for one the mechanical correction knows how to
 // fix — both only ever go through retry-then-fallback, never a silent text edit.
-function currentDraftEvidence(observations, context = {}) {
-  const conflicts = resolveObservationConflicts(context, observations);
+function currentDraftEvidence(observations, context = {}, conflicts = resolveObservationConflicts(context, observations)) {
   return canonicalKnowledgeEvidence(collectApprovedKnowledgeEvidence(observations)
     .filter((item) => !item.sourceRef || !conflicts.staleRefs.has(item.sourceRef)));
+}
+
+function currentDraftDynamicEvidence(observations, context = {}, conflicts = resolveObservationConflicts(context, observations)) {
+  const items = collectDynamicDataEvidence(observations).filter((item) => !conflicts.staleDynamicRefs.has(dynamicEvidenceRef(item)));
+  if (["uploaded", "linked"].includes(context.attachmentReceipt?.status)) {
+    items.push({
+      content: "Verified system state: the customer's current-turn attachment was uploaded to private contact-linked storage and associated with this conversation.",
+      kind: "attachment_receipt",
+      sourceLevel: SOURCE_LEVELS.LIVE_DATA,
+      sourceType: "verified_attachment_receipt",
+      sourceRef: "system:current-turn-attachment-receipt",
+      trustedDynamic: true,
+      record: { status: context.attachmentReceipt.status }
+    });
+  }
+  return items;
 }
 
 function draftProgressKey(text, observations, context) {
@@ -399,9 +516,11 @@ async function checkDraftPolicy(text, thresholds, observations, locale, context 
     if (context.conversationQuality) context.conversationQuality.clarificationLimitHits += 1;
     return { valid: false, text, reasons: ["smart_followup:clarification_limit"] };
   }
-  const evidenceItems = currentDraftEvidence(observations, context);
+  const conflicts = resolveObservationConflicts(context, observations);
+  const evidenceItems = currentDraftEvidence(observations, context, conflicts);
+  const dynamicEvidenceItems = currentDraftDynamicEvidence(observations, context, conflicts);
   const semanticGrounding = typeof assessDraft === "function";
-  const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage, evidence: evidenceItems, language: locale, semanticGrounding });
+  const policy = validateResponse(text, { ...thresholds, customerMessage: context.currentMessage, recentConversation: context.recentConversation, evidence: [...evidenceItems, ...dynamicEvidenceItems], language: locale, semanticGrounding });
   if (!policy.valid) return policy;
   const repeatedFields = findRepeatedQuestion(text, context.knownCustomerFacts);
   if (repeatedFields.length) return { ...policy, valid: false, reasons: repeatedFields.map((field) => `never_reask:${field}`) };
@@ -419,17 +538,18 @@ async function checkDraftPolicy(text, thresholds, observations, locale, context 
       policy.text = truthful.text;
     }
   }
-  const dynamicEvidenceItems = collectDynamicDataEvidence(observations);
-  const grounding = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems, semanticGrounding });
+  const grounding = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems, semanticGrounding, attachmentContent: context.attachmentContent });
+  if (conflicts.unresolvedPricingConflict && containsPriceClaim(text)) {
+    return { ...policy, valid: false, reasons: [...grounding.reasons, "pricing_conflict_unresolved"] };
+  }
   if (!grounding.valid) return { ...policy, valid: false, reasons: grounding.reasons };
   if (semanticGrounding) {
     const review = await assessDraft({ text, evidenceItems, dynamicEvidenceItems, context, step });
     if (!review?.valid) return { ...policy, valid: false, reasons: review?.reasons || ["grounding_verdict_invalid"],
       blockedClaims: review?.blockedClaims || [], technicalFailure: review?.technicalFailure === true, errorCode: review?.errorCode };
-  } else {
-    const language = checkLanguageEquivalence(text, locale);
-    if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };
   }
+  const language = checkLanguageEquivalence(text, locale, context);
+  if (!language.valid) return { ...policy, valid: false, reasons: language.reasons };
 
   // M1 close — the Agent path was running THREE fewer output gates than the
   // legacy path. detectAntiPatterns, assertHumourCompliance and
@@ -477,12 +597,21 @@ async function checkDraftPolicy(text, thresholds, observations, locale, context 
   return { ...policy, text: cleaned };
 }
 
+async function attemptFormattingCorrection(text, policy, thresholds, observations, locale, context, assessDraft, step) {
+  const formatReasons = new Set(["too_long", "too_many_sentences"]);
+  if (!policy.reasons?.length || !policy.reasons.every((reason) => formatReasons.has(reason))) return null;
+  const corrected = formatResponseWithinLimits(text, thresholds, locale, { preserveAllContent: containsPriceClaim(text) });
+  if (!corrected) return null;
+  const checked = await checkDraftPolicy(corrected, thresholds, observations, locale, context, assessDraft, step);
+  return { text: corrected, policy: checked };
+}
+
 // deps:
 //   decideNextStep({ context, observations, step }) -> a raw, untrusted decision object (model-driven)
 //   tools: { [name]: { run(args, toolContext) } }       -- the deterministic tool registry
 //   toolContext: extra data (store, user, etc.) passed through to every tool.run call
 //   maxSteps: bounded step budget, default 5 (never unlimited)
-async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [], onToolCall = async () => {}, onPolicyRejection = async () => {}, onPromptBudget = async () => {} } = {}) {
+async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools = {}, toolContext = {}, maxSteps = DEFAULT_MAX_STEPS, initialObservations = [], recapHistory = [], onToolCall = async () => {}, onPolicyRejection = async () => {}, onDecisionRejected = async () => {}, onPromptBudget = async () => {}, shouldStopAfterRejection = async () => false } = {}) {
   if (typeof decideNextStep !== "function") throw new Error("runAgentTurn requires a decideNextStep function.");
   const observations = Array.isArray(initialObservations) ? [...initialObservations] : [];
   const toolsUsed = [...new Set(observations.map((item) => item?.tool).filter((name) => typeof name === "string"))];
@@ -498,8 +627,27 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
   let knowledgeSearchExhausted = knowledgeSearchFailed || knowledgeSearchCalls >= MAX_KNOWLEDGE_SEARCH_CALLS;
   const rejectedDrafts = new Map();
   const rejectedClaims = new Map();
+  const rejectedValidationStates = new Set();
+  const attemptedPartialCorrections = new Set();
+  let formattingRetryUsed = false;
 
   for (let step = 1; step <= maxSteps; step += 1) {
+    if (RECAP_REQUEST.test(String(context?.currentMessage || ""))) {
+      const evidenceItems = collectApprovedKnowledgeEvidence(observations);
+      const recap = buildLocalConversationRecap({ history: recapHistory, evidence: evidenceItems,
+        currentMessage: context.currentMessage, language: context.locale });
+      if (recap && (!recap.companyInfoRequested || recap.citations.length > 0)) {
+        const recapThresholds = responseThresholdsForMessage(context.currentMessage);
+        // The recap is composed locally from customer-attributed memory and
+        // approved evidence. Keep deterministic grounding and response gates,
+        // while marking the local composition as semantically reviewed so
+        // lexical-only prohibition checks do not reject supported paraphrases.
+        const localRecapReview = async () => ({ valid: true, reasons: [] });
+        const policy = await checkDraftPolicy(recap.response, recapThresholds, observations, context.locale, context, localRecapReview, step);
+        if (policy.valid) return { finished: true, outcome: "responded", response: policy.text, steps: observations,
+          toolsUsed, stepCount: Math.max(0, step - 1), corrected: true, localRecap: true };
+      }
+    }
     let rawDecision;
     try {
       // Reserve the final model call for composing an answer. It receives no
@@ -535,7 +683,8 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         toolsUsed, stepCount: step, reason: rawDecision.errorCode || "MODEL_CALL_FAILED" };
     }
 
-    if (step === maxSteps && maxSteps > 1 && rawDecision?.type === "tool") {
+    if (step === maxSteps && maxSteps > 1 && rawDecision?.type === "tool"
+      && validateDecision(rawDecision, tools).ok) {
       return {
         finished: true, outcome: "max_steps_reached", response: safeFallback(context),
         steps: observations, toolsUsed, stepCount: step, reason: "step_limit_reached"
@@ -547,6 +696,11 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         : tools;
     const validated = validateDecision(rawDecision, availableTools);
     if (!validated.ok) {
+      try {
+        const requestedTool = typeof rawDecision?.tool === "string" && /^[A-Za-z0-9_]{1,48}$/u.test(rawDecision.tool)
+          ? rawDecision.tool : null;
+        await onDecisionRejected({ step, reason: validated.reason, requestedTool });
+      } catch { /* Diagnostics never alter the fail-closed decision path. */ }
       if (step < maxSteps && knowledgeSearchExhausted && validated.reason === "unknown_tool_requested"
         && rawDecision?.tool === "searchApprovedKnowledge") {
         observations.push({ step, tool: "searchApprovedKnowledge", args: {},
@@ -567,7 +721,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
         step = Math.max(step, maxSteps - 2);
         continue;
       }
-      if (step < maxSteps && validated.reason !== "unknown_tool_requested") {
+      if (step < maxSteps) {
         observations.push({ step, tool: "decisionValidation", args: {},
           result: { ok: false, status: "invalid_decision", reasonCode: validated.reason } });
         continue;
@@ -625,20 +779,9 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
           if (observation.result.modelObservation) observation.result.modelObservation.status = "no_new_evidence";
         }
       }
-      // Broad searches already run the approved profile, generated facets,
-      // and exact customer wording in parallel. The next search-selection
-      // model call tends to paraphrase that same bundle and often returns no
-      // additional section. Drop the large retrieval tool description from
-      // the answer prompt, keep the remaining review/correction steps, and go
-      // directly to composition with the complete bounded evidence bundle.
-      if (validated.tool === "searchApprovedKnowledge" && result?.ok === true
-        && result.status === "found" && result.trace?.comprehensiveSearch === true
-        && evidenceBudget?.newEvidenceCount > 0) {
-        knowledgeSearchExhausted = true;
-        if (!toolsUsed.includes(validated.tool)) toolsUsed.push(validated.tool);
-        step = Math.max(step, maxSteps - 3);
-        continue;
-      }
+      // A broad retrieval can still miss a requested aspect. Keep the one
+      // remaining search available for a distinct focused recovery; repeated
+      // queries and the two-call limit are still enforced below.
       // A search call can already combine the current message, two
       // complementary model queries, and the customer's prior-language
       // wording. One focused recovery call is enough when the first search
@@ -663,23 +806,37 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
     }
 
     if (validated.type === "respond") {
-      const thresholds = assessDraft ? AGENT_SUMMARY_THRESHOLDS : MODEL_DRAFT_THRESHOLDS;
+      const thresholds = responseThresholdsForMessage(context?.currentMessage);
       const progressKey = draftProgressKey(validated.text, observations, context);
-      const policy = rejectedDrafts.has(progressKey)
+      let policy = rejectedDrafts.has(progressKey)
         ? { ...rejectedDrafts.get(progressKey), valid: false, text: validated.text, reasons: [...rejectedDrafts.get(progressKey).reasons, "repeated_rejected_draft"] }
         : await checkDraftPolicy(validated.text, thresholds, observations, context?.locale, context, assessDraft, step);
       if (!policy.valid) {
         rejectedDrafts.set(progressKey, policy);
         const evidenceItems = currentDraftEvidence(observations, context);
         try { await onPolicyRejection({ step, type: "respond", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
+        try { if (await shouldStopAfterRejection() === true) return { finished: true, outcome: "response_suppressed", response: "", steps: observations, toolsUsed, stepCount: step, reason: "queued_attachment_review" }; } catch {}
+        if ((policy.reasons || []).includes("attachment_not_attributed")) {
+          const attachmentCorrection = await attemptAttachmentAttributionCorrection(validated.text, policy, thresholds,
+            { ...context, observations }, assessDraft, step);
+          if (attachmentCorrection) return { finished: true, outcome: "responded", response: attachmentCorrection, steps: observations, toolsUsed, stepCount: step, corrected: true };
+        }
+        const formatted = await attemptFormattingCorrection(validated.text, policy, thresholds, observations, context?.locale, context, assessDraft, step);
+        if (formatted?.policy.valid) return { finished: true, outcome: "responded", response: formatted.policy.text, steps: observations, toolsUsed, stepCount: step, corrected: true };
+        if (formatted) {
+          validated.text = formatted.text;
+          policy = formatted.policy;
+        }
         if (knowledgeSearchFailed && !hasCurrentApprovedEvidence(observations)) return {
           finished: true, outcome: "knowledge_unavailable", response: safeFallback(context),
           steps: observations, toolsUsed, stepCount: step,
           reason: knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED"
         };
+        const validationState = validationProgressKey(policy, observations);
+        const repeatedValidationState = rejectedValidationStates.has(validationState);
         const evidenceIds = currentSearchEvidenceIds(observations);
         const blockedClaims = policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked;
-        const repeatedBlockedClaimWithoutEvidenceProgress = policy.reasons.some((reason) => ["prohibited_claim", "no_approved_evidence"].includes(reason)) && blockedClaims.some((claim) => {
+        const repeatedBlockedClaimWithoutEvidenceProgress = policy.reasons.some((reason) => ["prohibited_claim", "no_approved_evidence", "unsupported_relation"].includes(reason)) && blockedClaims.some((claim) => {
           if (!(claim.reasons || []).some((reason) => ["no_approved_evidence", "entities_not_in_evidence"].includes(reason))) return false;
           const key = normalizeBlockedClaimKey(claim);
           if (!key) return false;
@@ -688,27 +845,58 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
           rejectedClaims.set(key, new Set([...(previousEvidence || []), ...evidenceIds]));
           return previousEvidence !== undefined && !evidenceProgress;
         });
+        if (!policy.technicalFailure && (policy.reasons.includes("repeated_rejected_draft") || repeatedValidationState || repeatedBlockedClaimWithoutEvidenceProgress)) {
+          const attachmentCorrection = await attemptAttachmentAttributionCorrection(validated.text, policy, thresholds,
+            { ...context, observations }, assessDraft, step);
+          if (attachmentCorrection) return { finished: true, outcome: "responded", response: attachmentCorrection, steps: observations, toolsUsed, stepCount: step, corrected: true };
+        }
+        if (repeatedBlockedClaimWithoutEvidenceProgress) {
+          const partial = await attemptEvidenceBoundPartialCorrection(validated.text, policy, thresholds,
+            { ...context, observations }, assessDraft, step);
+          if (partial) return { finished: true, outcome: "responded", response: partial, steps: observations, toolsUsed, stepCount: step, corrected: true };
+        }
         if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft") || repeatedBlockedClaimWithoutEvidenceProgress) return {
-          finished: true, outcome: policy.technicalFailure ? "validation_failed" : "response_rejected", response: safeFallback(context),
+          finished: true, outcome: policy.technicalFailure ? "validation_failed" : "response_rejected", response: rejectedDraftFallback(context, policy),
           steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || (repeatedBlockedClaimWithoutEvidenceProgress ? "repeated_blocked_claim_without_evidence_progress" : policy.reasons.join(","))
         };
         const corrected = assessDraft ? null : attemptDeterministicCorrection(validated.text, policy, thresholds, { ...context, observations });
         if (corrected) {
           return { finished: true, outcome: "responded", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
-        const evidenceBoundPartial = await attemptEvidenceBoundPartialCorrection(validated.text, policy, thresholds,
-          { ...context, observations }, assessDraft, step);
+        // Removing an unsupported relationship can erase the very part the
+        // customer asked about. When a distinct recovery search is still
+        // available, let the next decision seek that evidence before accepting
+        // a partial correction. The existing bounded fallback remains once
+        // retrieval is exhausted or no composition step remains.
+        const seekMissingEvidence = !knowledgeSearchExhausted && Boolean(tools.searchApprovedKnowledge)
+          && step < maxSteps - 1 && policy.reasons.some(reason => ["unsupported_relation", "question_not_answered"].includes(reason));
+        const evidenceBoundPartial = seekMissingEvidence || attemptedPartialCorrections.has(validationState) ? null
+          : await attemptEvidenceBoundPartialCorrection(validated.text, policy, thresholds, { ...context, observations }, assessDraft, step);
+        if (!seekMissingEvidence) attemptedPartialCorrections.add(validationState);
         if (evidenceBoundPartial) {
           return { finished: true, outcome: "responded", response: evidenceBoundPartial, steps: observations, toolsUsed, stepCount: step, corrected: true };
         }
+        rejectedValidationStates.add(validationState);
+        const formattingOnly = policy.reasons.length > 0 && policy.reasons.every((reason) => ["too_long", "too_many_sentences"].includes(reason));
+        if (formattingOnly && formattingRetryUsed) return {
+          finished: true, outcome: "response_rejected", response: rejectedDraftFallback(context, policy),
+          steps: observations, toolsUsed, stepCount: step, reason: policy.reasons.join(",")
+        };
+        if (repeatedValidationState) return {
+          finished: true, outcome: "response_rejected", response: rejectedDraftFallback(context, policy),
+          steps: observations, toolsUsed, stepCount: step, reason: "repeated_validation_rejection_without_evidence_progress"
+        };
         if (step < maxSteps) {
-        observations.push(policyRejectionObservation(step, "respond", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations));
+        if (formattingOnly) formattingRetryUsed = true;
+        const feedback = policyRejectionObservation(step, "respond", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations, thresholds, context);
+        if (seekMissingEvidence) feedback.result.correction += " If the rejected relationship or unanswered part is material to the customer's question, use one focused approved-knowledge search for that missing relationship before answering. If it remains unavailable, preserve supported facts and say only that part is unconfirmed.";
+        observations.push(feedback);
           continue;
         }
         return {
           finished: true,
           outcome: "response_rejected",
-          response: safeFallback(context),
+          response: rejectedDraftFallback(context, policy),
           steps: observations,
           toolsUsed,
           stepCount: step,
@@ -722,7 +910,7 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
     // single clarifying question is exactly what this path is for.
     const clarifyThresholds = AGENT_CLARIFY_THRESHOLDS;
     const progressKey = draftProgressKey(validated.text, observations, context);
-    const policy = rejectedDrafts.has(progressKey)
+    let policy = rejectedDrafts.has(progressKey)
       ? { ...rejectedDrafts.get(progressKey), valid: false, text: validated.text, reasons: [...rejectedDrafts.get(progressKey).reasons, "repeated_rejected_draft"] }
       : await checkDraftPolicy(validated.text, clarifyThresholds, observations, context?.locale, context, assessDraft, step);
     if (!policy.valid && policy.reasons?.includes("smart_followup:clarification_limit")) {
@@ -734,27 +922,40 @@ async function runAgentTurn(context, { decideNextStep, assessDraft = null, tools
       rejectedDrafts.set(progressKey, policy);
       const evidenceItems = currentDraftEvidence(observations, context);
       try { await onPolicyRejection({ step, type: "clarify", reasonCodes: diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), draft: validated.text, evidence: evidenceItems, claims: policy.blockedClaims || evaluateAnswerClaims(validated.text, { evidence: evidenceItems, language: context?.locale }).blocked }); } catch {}
+      try { if (await shouldStopAfterRejection() === true) return { finished: true, outcome: "response_suppressed", response: "", steps: observations, toolsUsed, stepCount: step, reason: "queued_attachment_review" }; } catch {}
+      const formatted = await attemptFormattingCorrection(validated.text, policy, clarifyThresholds, observations, context?.locale, context, assessDraft, step);
+      if (formatted?.policy.valid) return { finished: true, outcome: "clarified", response: formatted.policy.text, steps: observations, toolsUsed, stepCount: step, corrected: true };
+      if (formatted) {
+        validated.text = formatted.text;
+        policy = formatted.policy;
+      }
       if (knowledgeSearchFailed && !hasCurrentApprovedEvidence(observations)) return {
         finished: true, outcome: "knowledge_unavailable", response: safeFallback(context),
         steps: observations, toolsUsed, stepCount: step,
         reason: knowledgeSearchFailureReason || "KNOWLEDGE_SEARCH_FAILED"
       };
       if (policy.technicalFailure || policy.reasons.includes("repeated_rejected_draft")) return {
-        finished: true, outcome: policy.technicalFailure ? "validation_failed" : "clarify_rejected", response: safeFallback(context),
+        finished: true, outcome: policy.technicalFailure ? "validation_failed" : "clarify_rejected", response: rejectedDraftFallback(context, policy),
         steps: observations, toolsUsed, stepCount: step, reason: policy.errorCode || policy.reasons.join(",")
       };
       const corrected = assessDraft ? null : attemptDeterministicCorrection(validated.text, policy, clarifyThresholds, { ...context, observations });
       if (corrected) {
         return { finished: true, outcome: "clarified", response: corrected, steps: observations, toolsUsed, stepCount: step, corrected: true };
       }
+      const formattingOnly = policy.reasons.length > 0 && policy.reasons.every((reason) => ["too_long", "too_many_sentences"].includes(reason));
+      if (formattingOnly && formattingRetryUsed) return {
+        finished: true, outcome: "clarify_rejected", response: rejectedDraftFallback(context, policy),
+        steps: observations, toolsUsed, stepCount: step, reason: policy.reasons.join(",")
+      };
       if (step < maxSteps) {
-        observations.push(policyRejectionObservation(step, "clarify", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations));
+        if (formattingOnly) formattingRetryUsed = true;
+        observations.push(policyRejectionObservation(step, "clarify", policy, diagnosticPolicyCodes(validated.text, policy, evidenceItems, context?.locale), observations, clarifyThresholds, context));
         continue;
       }
       return {
         finished: true,
         outcome: "clarify_rejected",
-        response: safeFallback(context),
+        response: rejectedDraftFallback(context, policy),
         steps: observations,
         toolsUsed,
         stepCount: step,

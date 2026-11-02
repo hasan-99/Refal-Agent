@@ -33,6 +33,25 @@ test("operational events retain trace stages but remove customer and provider id
   }
 });
 
+test("attachment extraction telemetry records the Vision method without persisting extracted content", () => {
+  const event = buildOperationalEvent("attachment_extraction_completed", {
+    traceId: "1c3ba6c2-55f2-4c5e-9cc0-c42008333444",
+    stage: "attachment_vision_extraction",
+    durationMs: 1824,
+    model: "deepseek/deepseek-v4.1-flash-1017",
+    outputChars: 143,
+    extractedText: "Private customer document contents must not be persisted in telemetry."
+  });
+  assert.deepEqual(event.fields, {
+    traceId: "1c3ba6c2-55f2-4c5e-9cc0-c42008333444",
+    stage: "attachment_vision_extraction",
+    durationMs: 1824,
+    model: "deepseek/deepseek-v4.1-flash-1017",
+    outputChars: 143
+  });
+  assert.doesNotMatch(JSON.stringify(event), /Private customer document contents/u);
+});
+
 test("AI usage events keep aggregate accounting metrics but never persist a customer identifier", () => {
   let storedEvent;
   const persistViaSanitizedLogger = (event, fields) => {

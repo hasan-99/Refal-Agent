@@ -23,6 +23,6 @@ export function containsProhibitedConstructionEstimate(customerMessage, response
   return CONSTRUCTION_TENDER_MESSAGE.test(String(customerMessage || ""))
     && CONSTRUCTION_PRICE_ESTIMATE.test(String(response || ""));
 }
-export function containsForbiddenCredentialRequest(text) {
-  return requestsForbiddenCredential(text).violation;
+export function containsForbiddenCredentialRequest(text, customerMessage = "", recentConversation = []) {
+  return requestsForbiddenCredential(text, { customerMessage, recentConversation }).violation;
 }

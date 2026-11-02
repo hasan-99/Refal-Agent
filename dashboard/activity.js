@@ -103,6 +103,7 @@ function operatorSignals(user) {
   const handoverSummary = cleanHandoverSummary(rawHandoverSummary);
   const department = cleanOperatorText(firstValue(handover.department, handover.routing?.department, classification.department), 80);
   const nextAction = cleanOperatorText(firstValue(handover.nextAction, handover.followUpAction, profile.nextAction), 180);
+  const closeReadiness = profile.closeReadiness || {};
 
   return {
     intent: primaryIntent,
@@ -121,6 +122,12 @@ function operatorSignals(user) {
       deliveryClaimedAt: durableFollowUpState.delivery_claimed_at || durableFollowUpState.claimedAt || null
     },
     handover: { required: Boolean(handover.required || handover.handoverRequired || profile.handoverRequired), department: department || "general", summary: handoverSummary, nextAction },
+    closeReadiness: closeReadiness.status === "ready_to_proceed" ? {
+      status: "ready_to_proceed",
+      detectedAt: closeReadiness.detectedAt || null,
+      sourceTurnId: closeReadiness.sourceTurnId || null,
+      criteria: closeReadiness.criteria || {}
+    } : { status: "not_established" },
     flags: { complaint: Boolean(profile.isComplaint || profile.complaint || classification.complaint || primaryIntent === "complaint"), existingClient: Boolean(profile.existingClient || profile.isExistingClient || classification.existingClient || primaryIntent === "existing_client") }
   };
 }

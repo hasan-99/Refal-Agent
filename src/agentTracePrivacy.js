@@ -18,7 +18,15 @@ const TRACE_FIELDS = new Set([
   "totalTokens", "costUsd", "estimatedCostUsd", "usage", "inputTokens", "outputTokens",
   "setupDurationMs", "preflightDurationMs", "routeDurationMs", "sourceTurnPersistDurationMs",
   "contextLoadDurationMs", "agentExecutionDurationMs", "turnUpdateDurationMs", "topicSummaryDurationMs",
-  "replyDeliveryDurationMs", "postAnswerDurationMs", "totalDurationMs"
+  "replyDeliveryDurationMs", "postAnswerDurationMs", "totalDurationMs",
+  // Per-turn performance counters are safe numeric measurements. These are
+  // emitted by agentLiveAnswerTurn but were previously discarded here, which
+  // made cache effectiveness and retry costs impossible to measure.
+  "llmCalls", "decisionModelCalls", "decisionModelMs", "groundingModelCalls", "groundingModelMs",
+  "finalAnswerModelMs", "knowledgeSearches", "knowledgeSearchMs", "dbSearchMs", "embeddingMs", "fusionMs",
+  "rerankMs", "versionCheckMs", "dbRpcMs", "dbExpandMs", "dbPolicyMs", "searchCacheHits", "searchCacheMisses",
+  "rerankCacheHits", "rerankCacheMisses", "repeatedSearchesSkipped", "evidenceReuseLookupDurationMs",
+  "searchFirstDecisionDurationMs", "evidenceReuse", "searchFirst", "searchFirstSupportIntent", "fastSocialPath"
 ]);
 const TRACE_CODES = new Set(["validationReasons", "rejectionReasonCodes", "toolsUsed", "decisionTypesUsed"]);
 const TRACE_CODE = /^[A-Za-z0-9_.:/,-]{1,160}$/u;

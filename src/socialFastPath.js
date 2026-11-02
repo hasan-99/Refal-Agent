@@ -36,6 +36,11 @@ const GOODBYE_PHRASES = [
   "مع السلامة", "باي", "الله معك", "تصبح على خير", "تصبحي على خير",
   "αντιο", "καληνυχτα", "τα λεμε"
 ];
+const SMALL_TALK_QUESTIONS = [
+  "how are you", "how are you today", "how's it going", "what's up", "how are things", "how is your day",
+  "شو اخبارك", "شو اخبارك اليوم", "كيفك", "كيفك اليوم", "كيف حالك", "كيف امورك", "كيف الامور", "كيف يومك",
+  "τι κάνεις", "πώς είσαι", "πώς πάει"
+];
 
 function fold(text) {
   return String(text || "").normalize("NFKD")
@@ -51,9 +56,10 @@ const phrasePattern = (phrases) => phrases.map(fold).sort((a, b) => b.length - a
   .map((phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&").replace(/ /gu, "\\s+")).join("|");
 const SOCIAL_SEQUENCE = new RegExp(`^(?:(?:${phrasePattern([...GREETING_PHRASES, ...THANKS_PHRASES, ...GOODBYE_PHRASES])})\\s*){1,3}$`, "u");
 const GREETING_ONLY = new RegExp(`^(?:(?:${phrasePattern(GREETING_PHRASES)})\\s*){1,3}$`, "u");
+const SMALL_TALK_ONLY = new RegExp(`^(?:${phrasePattern(SMALL_TALK_QUESTIONS)})$`, "u");
 const EMOJI = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f\u20e3]/gu;
 const HAS_PICTOGRAPH = /\p{Extended_Pictographic}/u;
-const SOCIAL_PUNCTUATION = /[!.,،~\-–—:;؛…()"'«»]/gu;
+const SOCIAL_PUNCTUATION = /[!?؟!.,،~\-–—:;؛…()"'«»]/gu;
 
 function lastAssistantCarriedOffer(user) {
   const last = Array.isArray(user?.history) ? user.history.at(-1) : null;
@@ -75,12 +81,16 @@ function fallbackLanguage(user) {
  */
 function obviousSocialClassification(message, user = {}) {
   const raw = String(message || "").trim();
-  if (!raw || raw.length > MAX_SOCIAL_CHARS || /[?؟;\d٠-٩@#/\\]/u.test(raw)) return null;
+  if (!raw || raw.length > MAX_SOCIAL_CHARS || /[;\d٠-٩@#/\\]/u.test(raw)) return null;
+  const hasQuestionMark = /[?؟]/u.test(raw);
   if (lastAssistantCarriedOffer(user)) return null;
   const words = fold(raw).replace(EMOJI, " ").replace(SOCIAL_PUNCTUATION, " ").replace(/\s+/gu, " ").trim();
+  if (hasQuestionMark && !SMALL_TALK_ONLY.test(words)) return null;
   let intent;
   if (!words) {
     if (!HAS_PICTOGRAPH.test(raw)) return null;
+    intent = INTENTS.SMALL_TALK;
+  } else if (SMALL_TALK_ONLY.test(words)) {
     intent = INTENTS.SMALL_TALK;
   } else if (SOCIAL_SEQUENCE.test(words)) {
     intent = GREETING_ONLY.test(words) ? INTENTS.GREETING : INTENTS.SMALL_TALK;

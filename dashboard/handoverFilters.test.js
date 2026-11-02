@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterHandovers, normalizeHandoverLanguage } from "./handoverFilters.js";
+import { filterHandovers, handoverLanguage, normalizeHandoverLanguage } from "./handoverFilters.js";
 import { groupHandoversByContact } from "./handoverGrouping.js";
 
 const records = [
@@ -24,6 +24,11 @@ test("combined filters exclude missing dates for a selected date range and unkno
 
 test("language aliases normalize to the dashboard's three language codes", () => {
   assert.deepEqual(["English", "العربية", "Ελληνικά", "unsupported"].map(normalizeHandoverLanguage), ["en", "ar", "el", "unknown"]);
+});
+
+test("handover language reads the language nested in the saved lead summary", () => {
+  assert.equal(handoverLanguage({ summary: { customer: { language: "arabic" } }, profile: {} }), "ar");
+  assert.equal(handoverLanguage({ summary: {}, profile: { preferredLanguage: "greek" } }), "el");
 });
 
 test("filters keep a contact group visible when its matching department, language, and date belong to an older request", () => {

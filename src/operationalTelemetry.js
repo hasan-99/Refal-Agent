@@ -25,7 +25,7 @@ const SAFE_FIELDS = new Set([
   "userCount", "rowCount", "promptVersion", "leadTier", "buyingSignals",
   "fromMe", "upsertType", "type", "duplicate", "blocked", "active", "queued", "deletedSelfTest",
   "deletedDirect", "shouldReconnect", "messageType", "count", "errorName", "errorCode",
-  "persistenceUpdated", "delivered"
+  "persistenceUpdated", "delivered", "contentType", "sizeBytes", "outputChars"
 ]);
 
 function redactString(value) {

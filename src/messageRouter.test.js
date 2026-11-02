@@ -646,6 +646,16 @@ test("company activity continuation expires and does not capture a clear topic s
   }
 });
 
+test("an attachment review caption is not captured as a company activity answer", async () => {
+  const intake = { type: "company_formation", status: "in_progress", data: {}, provenance: {}, updatedAt: new Date().toISOString(), missingFields: ["businessActivity"] };
+  const user = { id: "activity-attachment-caption", profile: { opportunityIntake: intake, opportunityIntakes: { company_formation: intake } }, history: [
+    { message: "I want to form a company", response: "What will the company do?" }
+  ] };
+  const prepared = await prepareInboundMessage({ userId: user.id, incoming: "Please review the attached file.", user, store: integrationStore(user) });
+  assert.equal(prepared.metadata.opportunityIntakes.company_formation, undefined);
+  assert.equal(prepared.metadata.opportunityIntake, null);
+});
+
 test("explicit customer service interest is saved as personal memory, not mistaken for a name", async () => {
   assert.equal(extractCustomerNeed("I'm interested in property management"), "property management");
   assert.equal(extractCustomerNeed("بدي مساعدة في إدارة العقارات"), "إدارة العقارات");
@@ -759,6 +769,32 @@ test("contextual preflight writes qualification and intake once, after the sourc
   assert.equal(user.workflowCalls.some(([kind]) => kind === "opportunity_intake"), true);
 });
 
+test("clear start intent with service context persists a dashboard close-readiness signal", async () => {
+  const user = { id: "close-ready-profile", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const addHistory = store.addHistory;
+  store.addHistory = async (...args) => { const turn = await addHistory(...args); turn.id = "turn-close-ready"; return turn; };
+  const prepared = await prepareInboundMessage({ userId: user.id, incoming: "I want to start company formation in Cyprus now.", user, store, contextual: true,
+    classifyMessage: async () => ({ primary: "company_formation", intents: ["company_formation"], isMultiIntent: false,
+      language: "english", source: "contextual_model", operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false }) });
+
+  assert.equal(prepared.metadata.closeReadiness.status, "ready_to_proceed");
+  const { turn } = await recordHistory(store, user.id, "I want to start company formation in Cyprus now.", "I can explain the supported next steps.",
+    { metadata: prepared.metadata }, { bestEffortWorkflowWrites: true });
+  assert.equal(user.profile.closeReadiness.status, "ready_to_proceed");
+  assert.equal(user.profile.closeReadiness.sourceTurnId, turn.id);
+  assert.deepEqual(user.profile.closeReadiness.criteria, { clearStartIntent: true, definedNeed: true, serviceFit: true });
+  assert.ok(user.profile.closeReadiness.evidenceReferences.readiness.includes(turn.id));
+
+  const deferredText = "لسا عم فكّر وما قررت أبدأ بعد.";
+  const deferred = await prepareInboundMessage({ userId: user.id, incoming: deferredText, user, store, contextual: true,
+    classifyMessage: async () => ({ primary: "company_formation", intents: ["company_formation"], isMultiIntent: false,
+      language: "arabic", source: "contextual_model", operation: "none", offerSourceTurnId: null, noProactiveBookingOrContact: false }) });
+  assert.equal(deferred.metadata.closeReadiness.reason, "customer_deferred");
+  await recordHistory(store, user.id, deferredText, "طبعاً، خذ وقتك.", { metadata: deferred.metadata }, { bestEffortWorkflowWrites: true });
+  assert.equal(user.profile.closeReadiness.status, "deferred", "a clear customer deferral clears the active dashboard alert");
+});
+
 test("Greeklish closure reaches the model with Greek response language", async () => {
   for (const [text, language, intent] of [["Den exo kati allo, an xreiaso kati tha to zitiso","greek","small_talk"]]) {
     const user = { id: "contextual-router-case", profile: {}, history: [] };
@@ -856,6 +892,30 @@ test("recordHistory runs independent post-turn workflow writes concurrently", as
     }
   });
   assert.equal(peak, 4, "all independent writes should overlap after turn creation");
+});
+
+test("recordHistory does not serialize independent profile and qualification writes", async () => {
+  let releaseProfile;
+  let profileStarted = false;
+  let workflowStarted = false;
+  const profileGate = new Promise((resolve) => { releaseProfile = resolve; });
+  const user = { id: "profile-workflow-overlap", profile: {}, history: [] };
+  const prepared = await prepareInboundMessage({ userId: user.id, incoming: "I need help with business setup", user, store: integrationStore(user) });
+  const store = {
+    addHistory: async () => ({ id: "turn-profile-overlap" }),
+    updateUser: async (_id, updater) => {
+      profileStarted = true;
+      await profileGate;
+      return updater({ profile: {} });
+    },
+    saveQualification: async () => { workflowStarted = true; }
+  };
+  const pending = recordHistory(store, user.id, "I need help with business setup", "I can help.", { metadata: prepared.metadata });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(profileStarted, true);
+  assert.equal(workflowStarted, true, "the qualification workflow write is independent of the profile update");
+  releaseProfile();
+  await pending;
 });
 
 test("REFAL-AGENT-011: recordHistory stores a real deterministic booking confirmation as-is only when metadata.verifiedBookingConfirmed is true", async () => {
@@ -960,6 +1020,29 @@ test("direct contact requests in Arabic and Greek scripts create the purpose-bou
   }
 });
 
+test("an explicit Arabic request to share the inquiry and contact the customer reopens a declined contact preference", async () => {
+  const user = { id: "qa-explicit-contact-regrant", profile: { qaControlledDiagnostics: true, followUpBlocked: true,
+    conversationPreferences: { noProactiveBookingOrContact: true } }, history: [], consent: { followUp: "denied" } };
+  const text = "أنا موافق تشاركوا ملخص طلبي مع فريق الشركة ليتواصل معي خلال 24 ساعة إذا أمكن.";
+  const events = [];
+  const store = integrationStore(user);
+  store.saveConsent = async (_id, state, options) => {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events.push("consent");
+    user.workflowCalls.push(["consent", _id, state, options]);
+  };
+  store.createHandover = async (...args) => {
+    assert.ok(events.includes("consent"), "the consent write must finish before the handover action validates it");
+    events.push("handover");
+    user.workflowCalls.push(["handover", ...args]);
+    return { id: "qa-handover" };
+  };
+  const result = await routeMessageResult({ userId: user.id, text, store });
+  assert.equal(result.metadata.specialistFollowUp?.consented, true);
+  assert.ok(user.workflowCalls.some(([kind]) => kind === "handover"), "a direct, current human-contact request may create an internal review item in controlled QA");
+  assert.deepEqual(events, ["consent", "handover"]);
+});
+
 test("explicit denials persist as non-granted consent states", async () => {
   for (const [text, state] of [["Do not follow up", "revoked"], ["لا بدي متابعة", "denied"], ["Μην επικοινωνήσετε μαζί μου", "revoked"]]) {
     const user = { id: `deny-${Math.random()}`, profile: {}, history: [] };
@@ -999,6 +1082,33 @@ test("a persisted denial blocks a bare yes to an older offer but a new direct re
   });
   assert.equal(directRequest.metadata.specialistFollowUp?.consented, true);
   assert.ok(directRequest.handover);
+  assert.ok(user.workflowCalls.some(([kind]) => kind === "handover"));
+});
+
+test("ready formation customers asking for document review get the approved private upload and recorded follow-up", async () => {
+  const user = { id: "formation-document-review", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const text = "My co-founder and I are ready to register a company. Can I send our passport copies and bank reference letters here for your team to review?";
+  const result = await routeMessageResult({ userId: user.id, text, store, existingUser: user });
+
+  assert.match(result.response, /attach the formation documents you mentioned here/i);
+  assert.match(result.response, /private storage linked to this conversation/i);
+  assert.match(result.response, /team.*within 24 hours/i);
+  assert.match(result.response, /do not send bank statements/i);
+  assert.equal(result.metadata.specialistFollowUp?.consented, true);
+  assert.equal(result.metadata.handover?.summary?.sharingScope, "current_inquiry_only");
+  assert.ok(user.workflowCalls.some(([kind]) => kind === "handover"));
+});
+
+test("Arabic ready-to-register document review is localized and recorded", async () => {
+  const user = { id: "formation-document-review-ar", profile: {}, history: [] };
+  const store = integrationStore(user);
+  const text = "نحن جاهزون لتسجيل شركة. هل يمكنني إرسال صور جوازات السفر ومراجع البنك هنا حتى يراجعها الفريق ويتواصل معنا؟";
+  const result = await routeMessageResult({ userId: user.id, text, store, existingUser: user });
+
+  assert.match(result.response, /فيك ترفق مستندات التأسيس/);
+  assert.match(result.response, /خلال 24 ساعة/);
+  assert.equal(result.metadata.specialistFollowUp?.consented, true);
   assert.ok(user.workflowCalls.some(([kind]) => kind === "handover"));
 });
 

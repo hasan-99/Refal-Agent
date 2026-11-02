@@ -30,6 +30,7 @@
 // See the block above assessClaimGroundedness, at the end of this file.
 
 const { splitClaims, classifyClaim, CLAIM_CLASSES } = require("./claimPolicy");
+const { explicitlyDescribesAttachment } = require("./attachmentGrounding");
 const { withoutRefusalClauses } = require("./outputGuards");
 const { SOURCE_LEVELS, assertModelKnowledgeIsGeneral } = require("./policyPrecedence");
 
@@ -143,6 +144,7 @@ function collectApprovedKnowledgeEvidence(observations) {
           ...item,
           review_status: policy.review_status,
           valid_until: policy.valid_until,
+          approved_at: policy.approved_at || null,
           metadata: policy.metadata || {}
         } : item);
       }
@@ -307,11 +309,43 @@ function extractPriceValues(text) {
 // Case 1/2/3 of the required PRICE tests: a stated price must be one of the
 // prices actually present in this turn's evidence; a price stated with zero
 // supporting evidence is treated the same as a mismatched one (invented).
-function containsUnsupportedPriceValueClaim(text, evidenceItems = []) {
-  const claimed = extractPriceValues(text);
-  if (claimed.length === 0) return false;
+function extractPriceFacts(text) {
+  const facts = [];
+  const re = new RegExp(CURRENCY_NUMBER_RE.source, CURRENCY_NUMBER_RE.flags);
+  let match;
+  while ((match = re.exec(String(text || "")))) {
+    const value = normalizeDigits(match[1] || match[2] || match[3] || match[4]).replace(/^0+(?=\d)/, "");
+    const token = match[0].toLowerCase();
+    const currency = /€|\beur\b|euros?|يورو|ευρώ/u.test(token) ? "EUR"
+      : /£|\bgbp\b|pounds?|جنيه/u.test(token) ? "GBP" : /\busd\b|\$|dollars?|دولار/u.test(token) ? "USD" : null;
+    if (value && currency) facts.push({ value, currency });
+  }
+  return facts;
+}
+
+function attachmentExplicitlyStatesPrice(sentence, attachmentContent) {
+  const sourceFacts = new Set(extractPriceFacts(attachmentContent).map(({ value, currency }) => `${currency}:${value}`));
+  const attribution = /\b(?:quote|document|file|invoice|image|screenshot)\b[^.!?؟;；,،]{0,70}\b(?:shows?|lists?|states?|says?|records?|indicates?)\b|\b(?:attached|uploaded|provided|enclosed)\b[^.!?؟;；,،]{0,45}\b(?:quote|document|file|invoice|image|screenshot)\b[^.!?؟;；,،]{0,70}\b(?:shows?|lists?|states?|says?|records?|indicates?)\b/iu;
+  const facts = extractPriceFacts(sentence);
+  return facts.length > 0 && attribution.test(sentence)
+    && facts.every(({ value, currency }) => sourceFacts.has(`${currency}:${value}`));
+}
+
+function containsUnsupportedPriceValueClaim(text, evidenceItems = [], attachmentContent = "") {
   const supported = new Set(extractPriceValues(combinedEvidenceText(evidenceItems)));
-  return claimed.some((value) => !supported.has(value));
+  const clauses = String(text || "").split(/(?<=[.!?؟;；,،])\s+|\b(?:but|while|whereas|and)\b/iu);
+  return clauses.some((clause) => extractPriceValues(clause).some((value) => !supported.has(value)
+    && !attachmentExplicitlyStatesPrice(clause, attachmentContent)));
+}
+
+const FEE_ASSURANCE_PATTERN = /\b(?:no|without(?:\s+any)?)\s+(?:hidden|unexpected|additional)\s+(?:fees?|costs?|charges?)\b|(?:بدون|من دون|دون|ما في|لا توجد|لا يوجد)\s+(?:أي\s+)?(?:رسوم|تكاليف|مصاريف)\s+(?:مخفية|إضافية|غير متوقعة)|(?:χωρίς|δεν υπάρχουν)\s+(?:κρυφές|επιπλέον|απρόσμενες)\s+(?:χρεώσεις|κόστη|τέλη)/iu;
+
+function containsUnsupportedFeeAssurance(text, evidenceItems = []) {
+  const value = String(text || "");
+  if (!FEE_ASSURANCE_PATTERN.test(value)) return false;
+  const qualification = /\b(?:cannot|can't|can’t|unable to|not able to)\s+(?:confirm|promise|assure|guarantee)\b|(?:لا أستطيع|ما فيني|ما بقدر|غير قادر(?:ة)? على)\s+(?:أن\s+)?(?:أؤكد|أضمن|أعد)/iu;
+  if (qualification.test(value)) return false;
+  return !FEE_ASSURANCE_PATTERN.test(combinedEvidenceText(evidenceItems));
 }
 
 // A price clause ("for EUR 1500") is stripped out of a captured offer-list
@@ -468,15 +502,18 @@ const DURATION_RE = /\b(\d+)\s*(?:business\s+)?(?:days?|weeks?|months?|years?)\b
 // existing test corpus: no scripted fixture anywhere uses a spelled-out
 // number in a respond/clarify draft, so this scoping causes zero regressions
 // today).
-function containsUnsupportedNumericClaim(text, evidenceItems = []) {
+function containsUnsupportedNumericClaim(text, evidenceItems = [], attachmentContent = "") {
   const value = String(text || "");
   const evidenceDigits = normalizeDigits(combinedEvidenceText(evidenceItems));
+  const attachmentDigits = normalizeDigits(attachmentContent);
+  const attributedAttachment = Boolean(attachmentDigits) && explicitlyDescribesAttachment(value);
   for (const pattern of [PERCENTAGE_RE, DURATION_RE]) {
     const re = new RegExp(pattern.source, pattern.flags);
     let match;
     while ((match = re.exec(value))) {
       const digits = normalizeDigits(match[1] || match[2] || match[3]);
-      if (digits && !evidenceDigits.includes(digits)) return true;
+      if (digits && !evidenceDigits.includes(digits)
+        && !(attributedAttachment && attachmentDigits.includes(digits))) return true;
     }
   }
   return false;
@@ -498,7 +535,7 @@ function containsUnsupportedNumericClaim(text, evidenceItems = []) {
 // ingestion"), a claim that happens to reuse the same digits would read as
 // "supported" by this check. The approval workflow, not this validator, is
 // the control for that.
-function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [], semanticGrounding = false } = {}) {
+function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceItems = [], semanticGrounding = false, attachmentContent = "" } = {}) {
   const boundedDynamic = (Array.isArray(dynamicEvidenceItems) ? dynamicEvidenceItems : [])
     .filter((item) => item?.trustedDynamic === true && item?.sourceLevel === SOURCE_LEVELS.LIVE_DATA)
     .slice(0, 20);
@@ -506,11 +543,29 @@ function validateFactualGrounding(text, { evidenceItems = [], dynamicEvidenceIte
   const reasons = [];
   const add = (code, triggered) => { if (triggered && !reasons.includes(code)) reasons.push(code); };
 
-  add("unsupported_price_claim", containsUnsupportedPriceValueClaim(text, allEvidence));
+  const textValue = String(text || "");
+  const mentionsFormationPackage = /\b(?:company\s+formation|formation|incorporation|company\s+formation\s+package|incorporation\s+package|formation\s+package)\b|(?:تأسيس|باقة\s*(?:التأسيس|الشركة)|σύσταση|πακέτο\s*σύστασης)/iu.test(textValue);
+  const statesCurrentOfferStatus = /\b(?:current|currently|still\s+(?:listed|active|available)|published|time[- ]limited)\s+(?:offer|promotion)|\b(?:offer|promotion)\s+(?:is\s+)?(?:active|valid|available|published)\b|(?:العرض\s+(?:الحالي|ساري|متاح)|προσφορά\s+(?:ισχύει|ενεργή))/iu.test(textValue)
+    && !/\b(?:can(?:not|'t|’t)|could(?:not|'t|’t)|unable to|not able to)\s+(?:confirm|verify|check)\b[^.!?]{0,180}\b(?:whether|if|offer|promotion)\b/iu.test(textValue);
+  const now = Date.now();
+  const hasFormationOfferEvidence = boundedDynamic.some((item) => item.kind === "offers" && item.record?.code === "formation-package")
+    || (Array.isArray(evidenceItems) ? evidenceItems : []).some((item) => {
+      const validUntil = Date.parse(item?.valid_until);
+      return item?.review_status === "approved"
+        && Number.isFinite(validUntil) && validUntil > now
+        && /(?:company\s+formation|incorporat|formation package|تأسيس|σύσταση)/iu.test(String(item.content || ""))
+        && /(?:offer|promotion|limited[- ]time|العرض|προσφορά)/iu.test(String(item.content || ""));
+    });
+  // Approved, current RAG text and validated live offers are both authoritative
+  // pricing evidence. Customer uploads are deliberately not part of allEvidence.
+  add("unsupported_price_claim", containsUnsupportedPriceValueClaim(text, allEvidence, attachmentContent));
+  add("unsupported_fee_assurance", containsUnsupportedFeeAssurance(text, allEvidence));
+  add("unverified_current_offer_claim", mentionsFormationPackage && statesCurrentOfferStatus && !hasFormationOfferEvidence);
   if (!semanticGrounding) add("unsupported_package_claim", containsUnsupportedPackageInclusion(text, allEvidence) || containsUnsupportedServiceListClaim(text, allEvidence) || containsUnsupportedNamedPackageInclusion(text, allEvidence));
   add("unsupported_url_claim", containsUnsupportedUrlClaim(text, allEvidence));
   if (!semanticGrounding) add("unsupported_brand_claim", containsUnsupportedBrandHistoryClaim(text, allEvidence));
-  add("unsupported_numeric_claim", containsUnsupportedNumericClaim(text, allEvidence));
+  add("unsupported_numeric_claim", containsUnsupportedNumericClaim(text, allEvidence,
+    semanticGrounding ? attachmentContent : ""));
 
   return { valid: reasons.length === 0, reasons };
 }
@@ -666,14 +721,14 @@ function retrievedGroundingEvidence(evidence) {
  * Each claim carries the precedence level it actually sits at:
  *   APPROVED_KNOWLEDGE  the retrieved evidence backs this sentence (rank 5)
  *   MODEL_KNOWLEDGE     it does not, so the sentence can only have come from
- *                       the model (rank 6) — permitted while it stays general,
- *                       blocked the moment it makes a Refalco-specific claim
+ *                       the model (rank 6) — unsupported business and process
+ *                       facts are blocked whether or not they mention Refalco
  *   null                the sentence asserts no programme fact (a question, a
  *                       refusal, a greeting), so the ladder does not apply
  *
- * `ok === false` means at least one sentence is an ungrounded Refalco-specific
- * claim carrying an unsupported value. `lowConfidence === true` is the weaker,
- * wider signal W3.10.5 keys on: at least one sentence is ungrounded at all.
+ * `ok === false` means at least one customer-facing business or process fact
+ * is unsupported by the retrieved evidence. `lowConfidence === true` records
+ * that at least one factual sentence was not grounded.
  */
 function assessClaimGroundedness(answer, { evidence = [], dynamicEvidence = [], language } = {}) {
   const boundedDynamic = (Array.isArray(dynamicEvidence) ? dynamicEvidence : [])
@@ -707,7 +762,7 @@ function assessClaimGroundedness(answer, { evidence = [], dynamicEvidence = [], 
       unsupportedValues,
       sourceLevel: SOURCE_LEVELS.MODEL_KNOWLEDGE,
       grounded: false,
-      blocked: !gate.ok && unsupportedValues.length > 0,
+      blocked: !gate.ok,
       label: gate.label,
       unconditional: false
     });
@@ -741,6 +796,7 @@ module.exports = {
   combinedEvidenceText,
   // new, Agent-path-only
   containsUnsupportedPriceValueClaim,
+  containsUnsupportedFeeAssurance,
   containsUnsupportedServiceListClaim,
   containsUnsupportedNamedPackageInclusion,
   containsUnsupportedUrlClaim,

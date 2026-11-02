@@ -33,16 +33,16 @@ export function responseStyleInstruction(value) {
   const list = style.listMarker === "numbered" ? "When a list helps, use a numbered list with each item on its own line." : "When a list helps, use hyphen bullets with each item on its own line.";
   const labels = style.boldLabels
     ? style.presentation === "structured"
-      ? "Use short bold section headings on their own line in structured replies, and emphasize key prices or conditions sparingly with the channel's supported bold style."
-      : "Use the channel's supported bold style sparingly for short labels only."
+      ? "Use short bold section headings on their own line in structured replies, and emphasize key prices or conditions sparingly. On WhatsApp, enclose each heading exactly as *Heading* with no spaces just inside the asterisks; never prefix a heading with a bullet. Do not use Markdown double asterisks."
+      : "Use the channel's supported bold style sparingly for short labels only. On WhatsApp, format bold text with one asterisk on each side (*label*); do not use Markdown double asterisks."
     : "Do not use bold styling.";
   const presentation = style.presentation === "structured"
-    ? "For detailed or multi-part answers, use a clear opening followed by only the relevant short section headings, compact bullets, and blank lines between sections. Use headings such as price, inclusions, offer, timing, ongoing costs, exclusions, or next step only when they fit the customer's request and approved evidence; omit empty sections. Keep greetings and simple answers natural instead of forcing a template."
+    ? "For detailed or multi-part answers, use a clear opening followed by one short, standalone heading for each requested topic, with compact bullets beneath it and a blank line between sections. Never combine different sections into one long paragraph. Use headings such as price, inclusions, offer, timing, ongoing costs, exclusions, or next step only when they fit the customer's request and approved evidence; omit empty sections. Keep greetings and simple answers natural instead of forcing a template."
     : style.presentation === "bullet_points"
       ? "For answers with several details, give a brief direct opening and then organize the key points as a short, easy-to-scan bullet list. Skip headings unless the answer is long enough to need them. Keep simple answers conversational."
     : "Keep replies conversational; add headings only when a genuinely long or multi-part answer benefits from them.";
   const icons = style.presentation !== "conversational" && style.sectionIcons
-    ? "Use restrained visual markers: prefix major section headings, or a few key bullets when there are no headings, with at most one relevant emoji such as 💶 for price, ✅ for inclusions, ⏳ for timing, or ❌ for exclusions. Do not decorate every line."
+    ? "Use restrained visual markers: prefix major section headings, or a few key bullets when there are no headings, with at most one relevant emoji such as 💶 for price, ✅ for inclusions, ⏳ for timing, or ❌ for exclusions. Do not decorate every line or put an emoji where it damages the heading format."
     : "Do not add decorative emoji or icons to headings.";
   const tone = {
     warm_professional: "Use a warm, approachable and respectful professional tone; sound natural in the customer's language without becoming overfamiliar.",

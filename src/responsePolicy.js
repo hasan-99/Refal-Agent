@@ -34,8 +34,44 @@ const { requestsForbiddenCredential } = require("./privacyHardRule");
 // Deliberately NOT raised further: the point of the budget is brevity, and
 // EXPANDED (1800) already exists for an explicit request for detail.
 const MODEL_DRAFT_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 5, maxQuestions: 1, maxChars: 700 });
-const AGENT_SUMMARY_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 12, maxQuestions: 1, maxChars: 1800 });
+// Ordinary benefit questions should stay brief even when they also ask about
+// tax or residency. Explicit requests for detail still use the expanded budget.
+const BENEFIT_REPLY_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 3, maxQuestions: 1, maxChars: 500 });
+// A customer can explicitly request several package facts at once (price,
+// inclusions, offer, timing, ongoing fees, and exclusions). Twelve sentences
+// made the validated reply budget narrower than the content contract and
+// caused the Agent to discard grounded answers as a generic fallback. Keep
+// the character cap as the primary size bound while allowing those complete
+// multi-part answers to fit.
+const AGENT_SUMMARY_THRESHOLDS = Object.freeze({ minSentences: 1, maxSentences: 16, maxQuestions: 1, maxChars: 1800 });
 const AGENT_CLARIFY_THRESHOLDS = Object.freeze({ minSentences: 0, maxSentences: 2, maxQuestions: 1, maxChars: 300 });
+const EXPLICIT_DETAIL_REQUEST = /\b(?:full details|all the details|all (?:the )?information|more details|in detail|detailed overview|detailed explanation|breakdown|step by step|summari[sz]e|summary|overview|what(?:'s| is) included|what does .{0,40} include|list all)\b|تفاصيل(?:\s+(?:كاملة|أكثر|اكتر))?|بالتفصيل|(?:شو|ماذا|ما الذي).{0,20}(?:بتشمل|بيشمل|يشمل|تشمل|يتضمن|تتضمن)|(?:اشرح|شرح).{0,24}(?:الخدمة|الباقة|التأسيس)|خطوة\s*بخطوة|(?:لخّص|لخص|تلخيص|ملخّص|ملخص|تلخّص|تلخص|رتّب|رتب).{0,32}(?:لي|ليّ|لنا|الباقة|الخدمة|المعلومات|التفاصيل|كل)|كل\s+(?:المعلومات|التفاصيل)|(?:αναλυτικά|λεπτομέρειες|όλες τις λεπτομέρειες|τι περιλαμβάνει|αναλυτική παρουσίαση|σύνοψη|συνοψίστε)/iu;
+
+// Distinct requested topics can need a structured answer even when the
+// customer does not literally ask for "details". This affects length only;
+// it does not decide facts, eligibility, or what evidence is approved.
+const REQUEST_ASPECTS = [
+  /\b(?:tax|taxes|vat)\b|الضرايب|الضرائب|ضريبة|ضرايب|φορολογ|φόρος/iu,
+  /\b(?:price|costs?|fees?|expenses?|charges?)\b|سعر|تكلف|رسوم|مصاريف|مصاويف|έξοδα|κόστος|χρεώσεις/iu,
+  /\b(?:steps?|process|procedure|requirements?)\b|الخطوات|خطوات|إجراءات|الاجراءات|متطلبات|διαδικασία|βήματα/iu,
+  /\b(?:duration|timeline|how long)\b|المدة|مدة|قديش الوقت|διάρκεια/iu,
+  /\b(?:included|inclusions|excluded|exclusions|services)\b|المشمول|تشمل|يشمل|غير مشمول|الخدمات|περιλαμβάνει|υπηρεσίες/iu
+];
+
+function requestsExpandedAnswer(message) {
+  const text = String(message || "").normalize("NFKC");
+  const asksPackageBreakdown = /\b(?:package|bundle|formation package)\b|باقة|حزمة|πακέτ\p{L}*/iu.test(text)
+    && /\b(?:include[sd]?|inclusions?|cover(?:ed|s)?)\b|داخل|تشمل|يشمل|περιλαμβάν\p{L}*/iu.test(text)
+    && /\b(?:exclude[sd]?|exclusions?|not included|doesn['’]?t include)\b|ما\s*بتشمل|ما\s*يشمل|لا\s*تشمل|غير\s*شامل|δεν\s+περιλαμβάν\p{L}*|τι\s+δεν\s+περιλαμβάν\p{L}*/iu.test(text);
+  return EXPLICIT_DETAIL_REQUEST.test(text) || asksPackageBreakdown || REQUEST_ASPECTS.filter(pattern => pattern.test(text)).length >= 3;
+}
+
+function responseThresholdsForMessage(message) {
+  if (requestsExpandedAnswer(message)) return AGENT_SUMMARY_THRESHOLDS;
+  const text = String(message || "").normalize("NFKC");
+  if (/\b(?:benefits?|advantages?)\b|الفوائد|فوائد|مزايا|ميزة|شو\s+بستفيد|πλεονεκτήματ\p{L}*|οφέλη/iu.test(text)) return BENEFIT_REPLY_THRESHOLDS;
+  return MODEL_DRAFT_THRESHOLDS;
+}
 // Legacy deterministic replies (messageRouter.js) are allowed more room: many
 // are multi-part (e.g. an existing-client notice plus a follow-up question)
 // and are composed by code, not a model, so the stricter model-draft length
@@ -135,9 +171,79 @@ function containsUnconsentedContactCommitment(text) {
 }
 
 function sentenceCount(text) {
-  const value = String(text || "").trim();
+  // A numbered-list prefix is a visual marker, not a sentence. Remove only
+  // line-leading item numbers so decimals and punctuation within prose remain
+  // part of the sentence count.
+  const value = String(text || "").replace(/(^|\n)[\t ]*\d+[.)][\t ]+/gu, "$1").trim();
   if (!value) return 0;
   return value.split(/[.!?؟。！？]+(?:["'”»)]*)?(?=\s|$)|(?<=\p{Script=Greek})[;;](?:["'”»)]*)?(?=\s|$)/u).map((part) => part.trim()).filter(Boolean).length;
+}
+
+function responseSentenceParts(text) {
+  const value = String(text || "").trim();
+  if (!value) return [];
+  const parts = [];
+  const boundary = /[.!?؟。！？]+(?:["'”»)]*)?(?=\s|$)|(?<=\p{Script=Greek})[;;](?:["'”»)]*)?(?=\s|$)/gu;
+  let start = 0;
+  let match;
+  while ((match = boundary.exec(value))) {
+    const lineStart = value.lastIndexOf("\n", match.index - 1) + 1;
+    const linePrefix = value.slice(lineStart, match.index);
+    // Numbered-list markers are formatting, not sentence boundaries.
+    if (match[0].startsWith(".") && /^\s*\d+$/u.test(linePrefix)) continue;
+    const end = match.index + match[0].length;
+    const part = value.slice(start, end).trim();
+    if (part) parts.push(part);
+    start = end;
+  }
+  const tail = value.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+// Repair formatting-only failures without asking the model to restate facts.
+// Complete sentence content is preserved when possible; if the character cap
+// makes that impossible, retain the longest complete leading portion and let
+// the normal factual/safety gates validate it before delivery.
+function formatResponseWithinLimits(text, thresholds = {}, language = "en", { preserveAllContent = false } = {}) {
+  const maxChars = Number.isInteger(thresholds.maxChars) ? thresholds.maxChars : DEFAULT_MAX_CHARS;
+  const maxSentences = Number.isInteger(thresholds.maxSentences) ? thresholds.maxSentences : DEFAULT_MAX_SENTENCES;
+  const minSentences = Number.isInteger(thresholds.minSentences) ? thresholds.minSentences : DEFAULT_MIN_SENTENCES;
+  const original = String(text || "").trim();
+  const parts = responseSentenceParts(original);
+  if (!parts.length || (parts.length === 1 && original.length > maxChars)) return null;
+  const locale = languagePackKey(language);
+  const separator = locale === "ar" ? "؛ " : locale === "el" ? ", " : "; ";
+  const join = (items) => {
+    let result = "";
+    for (let index = 0; index < items.length; index += 1) {
+      const part = items[index];
+      if (index === items.length - 1) { result += part; break; }
+      const next = items[index + 1];
+      // Keep a final question as its own readable paragraph.
+      if (/[?؟]$/u.test(next)) { result += `${part}\n\n`; continue; }
+      // Preserve visible list structure while joining sentence boundaries.
+      const nextIsListItem = /^\s*(?:[-*•]|\d+[.)])\s+/u.test(next);
+      if (/[?؟]$/u.test(part)) {
+        result += `${part}${nextIsListItem ? "\n" : " "}`;
+        continue;
+      }
+      result += `${part.replace(/[.!。！？]+["'”»)]*$/u, "")}${separator.trimEnd()}${nextIsListItem ? "\n" : " "}`;
+    }
+    return result.trim();
+  };
+
+  // Try the fullest complete prefix first, so we only omit content when the
+  // active character budget requires it. Joining sentence boundaries keeps
+  // every claim and its conditions while satisfying the sentence budget.
+  for (let count = parts.length; count >= (preserveAllContent ? parts.length : 1); count -= 1) {
+    const candidate = join(parts.slice(0, count));
+    const finalText = /[.!?؟。！？]$/u.test(candidate) ? candidate : `${candidate}.`;
+    const sentences = sentenceCount(finalText);
+    if (finalText !== original && sentences <= maxSentences
+      && sentences >= minSentences && finalText.length <= maxChars) return finalText;
+  }
+  return null;
 }
 
 function questionCount(text) {
@@ -194,8 +300,8 @@ function findPattern(text, patterns) {
   return patterns.find((pattern) => pattern.test(String(text || ""))) || null;
 }
 
-function containsForbiddenCredentialRequest(text) {
-  return requestsForbiddenCredential(text).violation;
+function containsForbiddenCredentialRequest(text, customerMessage = "", recentConversation = []) {
+  return requestsForbiddenCredential(text, { customerMessage, recentConversation }).violation;
 }
 
 function validateResponse(response, options = {}) {
@@ -211,11 +317,11 @@ function validateResponse(response, options = {}) {
   // behaviour, so every existing caller is unaffected. A caller that HAS the
   // approved chunks passes them and an approved programme fact survives.
   const prohibitedClaim = containsProhibitedClaim(text, { evidence: options.evidence, language: options.language, semanticGrounding: options.semanticGrounding }) ? PROHIBITED_CLAIM_PATTERNS[0] : null;
-  const unconsentedContactCommitment = containsUnconsentedContactCommitment(text);
+  const unconsentedContactCommitment = options.allowVerifiedHandoverClaim !== true && containsUnconsentedContactCommitment(text);
   const unverifiedHandoverAction = options.allowVerifiedHandoverClaim !== true && HANDOVER_ACTION_CLAIM.test(text);
   const unverifiedBookingAction = options.allowVerifiedBookingClaim !== true && containsUnverifiedBookingAction(text);
   const sensitiveValueEcho = containsRawSecretValue(text) || containsLabeledSensitiveValue(text);
-  const forbiddenCredentialRequest = containsForbiddenCredentialRequest(text);
+  const forbiddenCredentialRequest = containsForbiddenCredentialRequest(text, options.customerMessage, options.recentConversation);
   const constructionPriceEstimate = options.customerMessage
     ? containsProhibitedConstructionEstimate(options.customerMessage, text)
     : false;
@@ -300,26 +406,32 @@ function safeFallbackData({ language = "en", category = "uncertainty" } = {}) {
   const fallbacks = {
     en: {
       price: "I understand that cost matters. We can first clarify your needs and then arrange a review of the suitable options. What budget range should we keep in mind?",
+      pricing_conflict: "I found conflicting approved prices, so I can’t confirm which currently applies. Please have the team verify it before relying on a figure.",
       trust: "It is reasonable to want clear information before proceeding. We can review the relevant details with you and answer your questions. What would you like us to clarify first?",
       timing: "Understood. Take the time you need; I can answer questions whenever it is useful.",
       not_ready: "Understood. You can compare options at your own pace. I can clarify a specific detail whenever useful.",
-      uncertainty: "It is sensible to assess the details before deciding. We can help clarify the options and any information still needed. What is your main concern?",
+      uncertainty: "I don’t have approved information to confirm that detail, so I won’t guess. I can still clarify any part supported by the information we have.",
+      business_information_gap: "I don’t have approved information to confirm that detail, so I won’t guess. I can still clarify any part supported by the information we have.",
       default: "I can help clarify the approved information. What part would you like to understand first?"
     },
     ar: {
       price: "أتفهم إنو موضوع التكلفة مهم. فينا أول شي نوضّح احتياجاتك وبعدين نراجع الخيارات المناسبة. شو الميزانية التقريبية يلي بدنا ناخدها بعين الاعتبار؟",
+      pricing_conflict: "لقيت أسعار معتمدة متضاربة، وما بقدر أكد أي سعر بينطبق حالياً. الأفضل تتأكد من الفريق قبل ما تعتمد أي رقم.",
       trust: "من المنطقي إنك تحب توضح المعلومات قبل ما تتابع. فينا نراجع معك التفاصيل المتعلقة ونجاوب على أسئلتك. شو أول نقطة بدك نوضحها؟",
       timing: "تمام، خذ وقتك. فيني ساعدك بأي سؤال لما تكون جاهز.",
       not_ready: "أكيد، خذ وقتك بالمقارنة وما في داعي تستعجل. فيني وضّحلك أي تفصيل وقت ما بدك.",
-      uncertainty: "من المنطقي إنك تدرس التفاصيل قبل ما تقرر. فينا نساعدك توضح الخيارات وأي معلومة لسا ناقصة. شو أكتر شي بيشغل بالك؟",
+      uncertainty: "ما عندي معلومات معتمدة بتأكد هالتفصيل، وما بدي خمّن. فيني وضّحلك أي جزء بتدعمه المعلومات المتاحة.",
+      business_information_gap: "ما عندي معلومات معتمدة بتأكد هالتفصيل، وما بدي خمّن. فيني وضّحلك أي جزء بتدعمه المعلومات المتاحة.",
       default: "أكيد، فيني وضّحلك المعلومات المتاحة. شو النقطة اللي بدك تعرف عنها أكتر؟"
     },
     el: {
       price: "Καταλαβαίνω ότι το κόστος έχει σημασία. Μπορούμε πρώτα να διευκρινίσουμε τις ανάγκες σας και μετά να δούμε τις κατάλληλες επιλογές. Ποιο εύρος προϋπολογισμού να έχουμε υπόψη;",
+      pricing_conflict: "Βρήκα διαφορετικές εγκεκριμένες τιμές και δεν μπορώ να επιβεβαιώσω ποια ισχύει τώρα. Καλύτερα να το ελέγξει η ομάδα πριν βασιστείτε σε κάποιο ποσό.",
       trust: "Είναι λογικό να θέλετε σαφείς πληροφορίες πριν προχωρήσετε. Μπορούμε να δούμε μαζί τις σχετικές λεπτομέρειες και να απαντήσουμε στις ερωτήσεις σας. Τι θα θέλατε να διευκρινίσουμε πρώτα;",
       timing: "Κατανοητό. Πάρτε τον χρόνο σας· μπορώ να βοηθήσω με ερωτήσεις όποτε θέλετε.",
       not_ready: "Κατανοητό. Συγκρίνετε τις επιλογές σας με τον δικό σας ρυθμό. Μπορώ να διευκρινίσω κάτι όταν το θελήσετε.",
-      uncertainty: "Είναι λογικό να αξιολογήσετε τις λεπτομέρειες πριν αποφασίσετε. Μπορούμε να βοηθήσουμε να διευκρινιστούν οι επιλογές και όποια πληροφορία λείπει ακόμα. Ποιο είναι το κύριο μέλημά σας;",
+      uncertainty: "Δεν έχω εγκεκριμένες πληροφορίες που να επιβεβαιώνουν αυτή τη λεπτομέρεια, οπότε δεν θα υποθέσω. Μπορώ να διευκρινίσω όσα υποστηρίζονται από τις διαθέσιμες πληροφορίες.",
+      business_information_gap: "Δεν έχω εγκεκριμένες πληροφορίες που να επιβεβαιώνουν αυτή τη λεπτομέρεια, οπότε δεν θα υποθέσω. Μπορώ να διευκρινίσω όσα υποστηρίζονται από τις διαθέσιμες πληροφορίες.",
       default: "Μπορώ να σας εξηγήσω τις διαθέσιμες πληροφορίες. Ποιο σημείο θα θέλατε να διευκρινίσουμε;"
     }
   };
@@ -428,8 +540,11 @@ module.exports = {
   DEFAULT_MAX_SENTENCES,
   DEFAULT_MAX_QUESTIONS,
   MODEL_DRAFT_THRESHOLDS,
+  BENEFIT_REPLY_THRESHOLDS,
   AGENT_SUMMARY_THRESHOLDS,
   AGENT_CLARIFY_THRESHOLDS,
+  requestsExpandedAnswer,
+  responseThresholdsForMessage,
   LEGACY_RESPONSE_THRESHOLDS,
   INTERNAL_REASONING_PATTERNS,
   PROHIBITED_CLAIM_PATTERNS,
@@ -439,6 +554,8 @@ module.exports = {
   containsUnconsentedContactCommitment,
   containsProhibitedConstructionEstimate,
   sentenceCount,
+  responseSentenceParts,
+  formatResponseWithinLimits,
   questionCount,
   questionsAreCoupled,
   validateResponse,

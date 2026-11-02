@@ -335,11 +335,9 @@ async function askOpenRouter({ text, evidence, onUsage, includeSources = true, c
     }
     // P1.6 / W1.6.3 — precedence gate on the answer composer.
     //
-    // When no approved evidence backed this turn, anything Refalco-specific in
-    // the draft can only have come from general model knowledge, which is the
-    // bottom rung of the ladder and may NEVER produce a Refalco-specific claim.
-    // A general explanation ("a limited company is a separate legal person") is
-    // fine; "Refalco charges X" is not.
+    // When no approved evidence backed this turn, customer-facing factual claims
+    // can only have come from model memory. The policy gate blocks those claims;
+    // identity and non-factual conversation stay available.
     const sourceLevel = Array.isArray(evidence) && evidence.length > 0
       ? SOURCE_LEVELS.APPROVED_KNOWLEDGE
       : SOURCE_LEVELS.MODEL_KNOWLEDGE;

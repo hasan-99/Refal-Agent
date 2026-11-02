@@ -83,6 +83,50 @@ test("colloquial Syrian request to register an investment company detects both i
   assert.ok(intents.includes(INTENTS.INVESTMENT));
 });
 
+test("common Levantine company-formation phrasings detect company formation", () => {
+  for (const text of [
+    "بدي افتح شركة",
+    "شو بدي عشان افتح شركة بقبرص",
+    "بدي اسس شركة",
+    "كيف بفتح شركة؟",
+    "حابب اعمل شركة بقبرص"
+  ]) assert.ok(detectIntents(text).includes(INTENTS.COMPANY_FORMATION), text);
+});
+
+test("English questions about starting a company detect company formation", () => {
+  assert.ok(detectIntents("I'm thinking about starting a small one-person IT consulting company in Cyprus. What should I know first?")
+    .includes(INTENTS.COMPANY_FORMATION));
+});
+
+test("commercial package pricing stays primary when tax is only a VAT qualifier", () => {
+  for (const message of [
+    "What is the formation package price including VAT?",
+    "How much does the company setup package cost including tax?"
+  ]) {
+    const result = detectIntent(message);
+    assert.equal(result.primary, INTENTS.PRICING, message);
+    assert.ok(result.intents.includes(INTENTS.TAX), "keep the tax qualifier visible as a secondary intent");
+  }
+  assert.equal(detectIntent("How much tax would my company owe?").primary, INTENTS.TAX);
+});
+
+test("approved knowledge wording is not misclassified as a customer approval request", () => {
+  const summary = detectIntent("Summarize the Refalco services discussed and distinguish them from approved company information.");
+  assert.ok(summary.intents.includes(INTENTS.SERVICES));
+  assert.equal(summary.intents.includes(INTENTS.APPROVAL), false);
+  assert.ok(detectIntent("Will the bank approve my application?").intents.includes(INTENTS.APPROVAL));
+});
+
+test("document requests are recognized and company formation remains the more specific route", () => {
+  assert.equal(detectIntent("Which documents are needed to form a company?").primary, INTENTS.COMPANY_FORMATION);
+  assert.equal(detectIntent("What paperwork should I prepare before registering a company?").primary, INTENTS.COMPANY_FORMATION);
+  for (const message of [
+    "What documents do I need?",
+    "ما الأوراق المطلوبة؟",
+    "Ποια έγγραφα χρειάζομαι;"
+  ]) assert.equal(detectIntent(message).primary, INTENTS.DOCUMENT_REQUEST, message);
+});
+
 test("owner business areas include infrastructure, technology, operations, and strategic assets", () => {
   assert.ok(detectIntents("We need infrastructure project support").includes(INTENTS.INFRASTRUCTURE));
   assert.ok(detectIntents("نحتاج إلى التحول الرقمي والتكنولوجيا").includes(INTENTS.TECHNOLOGY));
@@ -154,6 +198,11 @@ test("company setup cost questions are not escalated as construction projects", 
   assert.ok(result.intents.includes(INTENTS.COMPANY_FORMATION));
   assert.ok(result.intents.includes(INTENTS.PRICING));
   assert.ok(!result.intents.includes(INTENTS.CONSTRUCTION));
+});
+
+test("Arabic package follow-ups that ask about the price and separate charges remain pricing", () => {
+  const result = detectIntent("وذكرت السعر، ممكن توضحلي شو بتشمل الباقة وشو بينحسب خارجها؟");
+  assert.ok(result.intents.includes(INTENTS.PRICING));
 });
 
 test("Greeklish company setup price questions are recognized as pricing", () => {

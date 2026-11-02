@@ -11,6 +11,7 @@ const INTENTS = Object.freeze({
   SERVICES: "services",
   CONTACT: "contact",
   COMPANY_FORMATION: "company_formation",
+  DOCUMENT_REQUEST: "document_request",
   ACCOUNTING: "accounting",
   VAT: "vat",
   CYPRUS_BUSINESS_EXPANSION: "cyprus_business_expansion",
@@ -68,8 +69,9 @@ const rawPatterns = [
   // flow. Explicit existing-client statements and account status/update
   // requests remain covered in all supported languages.
   [INTENTS.EXISTING_CLIENT, /\b(?:existing client|i(?:'m| am) an? existing client|as an? existing client|client number|customer number|account (?:status|balance|issue|problem|update|reference|number)|(?:status|update|issue|problem|progress|reference|number) (?:of|for|on) my (?:account|contract|case)|my (?:account|contract|case) (?:status|issue|problem|update|number|reference)|help with my (?:account|contract|case))\b|عميل\s+حالي|رقم\s+(?:العميل|الحساب)|(?:حسابي|عقدي|ملفي).{0,30}(?:مشكلة|حالة|تحديث|رقم|متابعة|استفسار)|(?:مشكلة|حالة|تحديث|متابعة|استفسار).{0,30}(?:حسابي|عقدي|ملفي)|υφιστάμενος πελάτης|(?:κατάσταση|ενημέρωση|πρόβλημα|αριθμός|αναφορά)\s+(?:του\s+)?(?:λογαριασμού|συμβολαίου|υπόθεσής)\s+μου|(?:ο\s+)?(?:λογαριασμός|συμβόλαιο|υπόθεσή)\s+μου.{0,30}(?:κατάσταση|ενημέρωση|πρόβλημα|αριθμός|αναφορά)/iu],
-  [INTENTS.COMPANY_FORMATION, /company formation|company setup|set up a company|incorporat|register(?:ing)? (?:an? )?(?:investment )?company|(?:بدي|اريد|أريد|حابب|حابة)\s+(?:اسجل|أسجل|أسس|أؤسس|افتح|أفتح)\s+(?:لي\s+)?(?:شركة|شركه)|(?:اسجل|أسجل|تسجيل|تأسيس|تاسيس|إنشاء)\s+(?:شركة|شركه)(?:\s+(?:استثمار|استثمارية|تجارية|تقنية|عقارية))?|شركة\s+استثمارية|ίδρυση εταιρείας|σύσταση εταιρείας/iu],
-  [INTENTS.PRICING, /\b(?:how much|price|prices|pricing|cost|costs|fee|fees|quote|quotation)\b|كم\s+(?:(?:ال)?تكلفة|يكلف|(?:ال)?سعر|الأسعار)|تكلفة تأسيس|رسوم (?:تأسيس|إنشاء)|قديش\s+(?:(?:ال)?تكلفة|رسوم|(?:ال)?سعر)|(?:χρεώσ|τιμές|τιμή|εκτιμώμεν|κόστος ίδρυσης|πόσο κοστίζει)|πακέτ.{0,55}(?:περίπτω|δεδομέν|σίγουρ|επιβεβαιώ|χρέω|τιμ)|\bposo\s+kostizei\b|\bti\s+(?:timi|times|kostos)\b|\b(?:timi|timh|times|ektimisi|kostos|poso)\b|\b(?:paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|mesa\s+sto)\b.{0,45}\b(?:paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|999|tesseres\s+mines)\b|\b(?:perilamvanei|perilambanei|perilamvanetai|perilambanetai|mesa\s+sto)\b.{0,35}\b\d{2,}\b|\b\d{2,}\b.{0,55}\b(?:perilamvanei|perilambanei|perilamvanetai|perilambanetai|kostos|timi|timh|times|ektimisi|epipleon|xehoro|isxyoun|isxyei|epivevaiose|anthropos|teliko|desmeftiko|periptosi|kathorisei)\b/iu],
+  [INTENTS.COMPANY_FORMATION, /company formation|company setup|set up a company|\bstart(?:ing)?\s+(?:(?:a|my|new)\s+)?(?:[a-z0-9-]+\s+){0,4}company\b|\bform(?:ing)?\s+(?:a|an|the)\s+company\b|incorporat|register(?:ing)? (?:an? )?(?:investment )?company|(?:بدي|اريد|أريد|حابب|حابة)\s+(?:اسجل|أسجل|أسس|أؤسس|افتح|أفتح)\s+(?:لي\s+)?(?:شركة|شركه)|(?:بدي|اريد|أريد|حابب|حابة).{0,24}(?:افتح|بفتح|اسس|أسس|بعمل|اعمل|أعمل|أؤسس).{0,16}(?:شركة|شركه)|(?:كيف|شو).{0,20}(?:افتح|بفتح|اسس|أسس|بعمل|اعمل|أعمل|أؤسس).{0,16}(?:شركة|شركه)|(?:اسجل|أسجل|تسجيل|تأسيس|تاسيس|إنشاء)\s+(?:شركة|شركه)(?:\s+(?:استثمار|استثمارية|تجارية|تقنية|عقارية))?|شركة\s+استثمارية|ίδρυση εταιρείας|σύσταση εταιρείας/iu],
+  [INTENTS.DOCUMENT_REQUEST, /\b(?:which|what|what kind of)\s+(?:documents?|paperwork|forms?)\b|\b(?:documents?|paperwork|forms?)\s+(?:do i need|are needed|required|should i prepare|to prepare|to provide)\b|\bwhat\s+(?:do i need to bring|should i prepare)\b|(?:ما|شو|اي|أي)\s+(?:هي\s+)?(?:الأوراق|اوراق|المستندات|مستندات|الوثائق|وثائق)\s*(?:المطلوبة|اللازمة|اللي بحتاجها)?|(?:الأوراق|اوراق|المستندات|مستندات|الوثائق|وثائق)\s*(?:المطلوبة|اللازمة)|(?:ποια|τι)\s+(?:έγγραφα|δικαιολογητικά)\s+(?:χρειάζομαι|απαιτούνται|χρειάζονται)|(?:έγγραφα|δικαιολογητικά)\s+(?:που\s+)?(?:χρειάζομαι|απαιτούνται|χρειάζονται)/iu],
+  [INTENTS.PRICING, /\b(?:how much|price|prices|pricing|cost|costs|fee|fees|quote|quotation)\b|كم\s+(?:(?:ال)?تكلفة|يكلف|(?:ال)?سعر|الأسعار)|تكلفة تأسيس|رسوم (?:تأسيس|إنشاء)|قديش\s+(?:(?:ال)?تكلفة|رسوم|(?:ال)?سعر)|(?:ال)?سعر|(?:χρεώσ|τιμές|τιμή|εκτιμώμεν|κόστος ίδρυσης|πόσο κοστίζει)|πακέτ.{0,55}(?:περίπτω|δεδομέν|σίγουρ|επιβεβαιώ|χρέω|τιμ)|\bposo\s+kostizei\b|\bti\s+(?:timi|times|kostos)\b|\b(?:timi|timh|times|ektimisi|kostos|poso)\b|\b(?:paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|mesa\s+sto)\b.{0,45}\b(?:paketo|perilamvanei|perilambanei|perilamvanetai|perilambanetai|999|tesseres\s+mines)\b|\b(?:perilamvanei|perilambanei|perilamvanetai|perilambanetai|mesa\s+sto)\b.{0,35}\b\d{2,}\b|\b\d{2,}\b.{0,55}\b(?:perilamvanei|perilambanei|perilamvanetai|perilambanetai|kostos|timi|timh|times|ektimisi|epipleon|xehoro|isxyoun|isxyei|epivevaiose|anthropos|teliko|desmeftiko|periptosi|kathorisei)\b/iu],
   [INTENTS.ACCOUNTING, /account(?:ing|ancy)|bookkeeping|financial statements|محاسب|محاسبة|مسك الدفاتر|λογιστ(?:ική|ής)|τήρηση βιβλίων/iu],
   [INTENTS.VAT, /\bvat\b|value added tax|ضريبة القيمة المضافة|ضريبة القيمة|φπα|φόρος προστιθέμενης αξίας/iu],
   [INTENTS.CYPRUS_BUSINESS_EXPANSION, /(?:business|company|corporate) expansion|expand(?:ing)? (?:to|in) cyprus|توسع (?:تجاري|الشركة)|توسعة الأعمال|επέκταση επιχειρηματικής δραστηριότητας|επέκταση στην κύπρο/iu],
@@ -102,7 +104,9 @@ const rawPatterns = [
   [INTENTS.LEGAL, /legal|lawyer|solicitor|law|contract|lawsuit|litigation|قانوني|محامي|محاماة|عقد|دعوى|νομικ|δικηγόρ|σύμβαση|αγωγή/iu],
   [INTENTS.BANKING, /bank|mortgage|loan|financing|finance|credit|bank account|بنك|تمويل|رهن|قرض|حساب بنكي|τραπεζ|στεγαστικό|δάνειο|χρηματοδότηση/iu],
   [INTENTS.PERMIT, /permit|licen[cs]e|planning permission|zoning|رخصة|ترخيص|تصريح|تخطيط|άδεια|πολεοδομ|αδειοδότηση/iu],
-  [INTENTS.APPROVAL, /approval|approved|approve|government decision|guarantee(?:d)? approval|موافقة|اعتماد|مقبول|قرار حكومي|έγκριση|εγκριθεί|κρατική απόφαση/iu],
+  // “Approved” often describes knowledge, not a customer's approval need.
+  // Keep approval routing for the noun/verb and explicit government outcomes.
+  [INTENTS.APPROVAL, /\bapproval\b|\bapprove\b|government decision|guarantee(?:d)? approval|موافقة|اعتماد|مقبول|قرار حكومي|έγκριση|εγκριθεί|κρατική απόφαση/iu],
   [INTENTS.INVESTMENT, /invest(?:ment|or|ing)?|portfolio|return|returns|roi|irr|yield|fund|capital|استثمار|مستثمر|محفظة|عائد|عوائد|ربح|رأس المال|επένδυση|επενδυτής|απόδοση|χαρτοφυλάκιο|κεφάλαιο/iu],
   [INTENTS.PARTNERSHIP, /partner(?:ship)?|joint venture|strategic|collaborat|partnership|شراكة|تعاون|مشروع مشترك|استراتيجي|συνεργασία|συνεταιρισμός|κοινή επιχείρηση/iu],
   [INTENTS.LAND_DEVELOPMENT, /land|plot|development|developer|masterplan|أرض|تطوير|مطور|مخطط|οικόπεδο|ανάπτυξη|developer|πολεοδομικό/iu],
@@ -120,7 +124,7 @@ const rawPatterns = [
   [INTENTS.GREETING, /^(?:(?:hi|hello|hey)(?: there)?|start|مرحبا|مرحبًا|أهلا|اهلا|السلام عليكم|γεια(?:\s+σας)?|καλημέρα|καλησπέρα)(?:[،,\s]+(?:who are you|what do you do|شو بتعمل|مين (?:أنت|انت)|ما عملكم|ما هي خدماتكم))?[!.؟?\s]*$/iu]
 ];
 
-const PRIORITY = [INTENTS.PROMPT_INJECTION, INTENTS.COMPLAINT, INTENTS.EXISTING_CLIENT, INTENTS.LEGAL, INTENTS.TAX, INTENTS.IMMIGRATION, INTENTS.BANKING, INTENTS.PERMIT, INTENTS.APPROVAL, INTENTS.COMPANY_FORMATION, INTENTS.INVESTMENT, INTENTS.PRICING, INTENTS.APPOINTMENT, INTENTS.PARTNERSHIP, INTENTS.PROJECT_ENQUIRY, INTENTS.CONSTRUCTION, INTENTS.LAND_DEVELOPMENT, INTENTS.REAL_ESTATE, INTENTS.CORPORATE_SERVICES, INTENTS.BUSINESS_AREAS, INTENTS.LANGUAGE_CAPABILITY, INTENTS.AGENT_IDENTITY, INTENTS.SERVICES, INTENTS.CONTACT, INTENTS.COMPANY_INFO, INTENTS.SMALL_TALK, INTENTS.GREETING];
+const PRIORITY = [INTENTS.PROMPT_INJECTION, INTENTS.COMPLAINT, INTENTS.EXISTING_CLIENT, INTENTS.LEGAL, INTENTS.TAX, INTENTS.IMMIGRATION, INTENTS.BANKING, INTENTS.PERMIT, INTENTS.APPROVAL, INTENTS.COMPANY_FORMATION, INTENTS.INVESTMENT, INTENTS.PRICING, INTENTS.APPOINTMENT, INTENTS.PARTNERSHIP, INTENTS.PROJECT_ENQUIRY, INTENTS.CONSTRUCTION, INTENTS.LAND_DEVELOPMENT, INTENTS.REAL_ESTATE, INTENTS.CORPORATE_SERVICES, INTENTS.BUSINESS_AREAS, INTENTS.LANGUAGE_CAPABILITY, INTENTS.AGENT_IDENTITY, INTENTS.SERVICES, INTENTS.CONTACT, INTENTS.COMPANY_INFO, INTENTS.DOCUMENT_REQUEST, INTENTS.SMALL_TALK, INTENTS.GREETING];
 
 const patterns = foldRulePatterns(rawPatterns);
 
@@ -151,7 +155,13 @@ function explicitlyDeclinesMeeting(text) {
 
 function detectIntent(text) {
   const intents = detectIntents(text);
-  const primary = PRIORITY.find((intent) => intents.includes(intent)) || INTENTS.UNKNOWN;
+  // Mentioning VAT/tax as a price qualifier does not turn a commercial quote
+  // request into regulated tax advice. Keep tax primary when the customer is
+  // asking about an amount, rate, calculation, or liability owed.
+  const normalized = normalizeIntentText(text);
+  const taxAmountRequest = /\b(?:how much\s+(?:tax|vat)|(?:tax|vat) rate|tax liability|calculate\s+(?:my\s+)?(?:tax|vat)|what (?:tax|vat) (?:do|would|will) i (?:owe|pay)|taxes? (?:do|would|will) i (?:owe|pay))\b|\b(?:tax|vat)\b.{0,35}\b(?:owe|payable|liability)\b|(?:كم|قديش)\s*(?:مقدار\s*)?(?:ضريبة|ضرائب|الضريبة|الضرائب)|(?:معدل|نسبة)\s*(?:ضريبة|الضريبة)|(?:πόσο|ποσό|υπολογισ|συντελεστ)\p{L}*.{0,40}(?:φόρο|φόρος|φπα)/iu.test(normalized);
+  const pricingIsPrimary = intents.includes(INTENTS.PRICING) && intents.includes(INTENTS.TAX) && !taxAmountRequest;
+  const primary = pricingIsPrimary ? INTENTS.PRICING : PRIORITY.find((intent) => intents.includes(intent)) || INTENTS.UNKNOWN;
   return { primary, intents, language: detectMessageLanguage(text), isMultiIntent: intents.length > 1 };
 }
 

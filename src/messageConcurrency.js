@@ -36,13 +36,13 @@ function createMessageExecutor({ concurrency = 8, maxQueue = 200 } = {}) {
   }
 
   return {
-    run(contactKey, run) {
+    run(contactKey, run, metadata = {}) {
       if (typeof run !== "function") return Promise.reject(new TypeError("A message task is required."));
       const key = String(contactKey || "").trim();
       if (!key) return Promise.reject(new TypeError("A contact key is required."));
       const schedulingKey = canonicalContactKey(key);
       return new Promise((resolve, reject) => {
-        const job = { contactKey: schedulingKey, run, resolve, reject };
+        const job = { contactKey: schedulingKey, run, metadata: metadata && typeof metadata === "object" ? metadata : {}, resolve, reject };
         queue.push(job);
         pump();
         // Queue capacity applies only to jobs still waiting after all runnable
@@ -60,6 +60,10 @@ function createMessageExecutor({ concurrency = 8, maxQueue = 200 } = {}) {
     },
     getStats() {
       return { active, queued: queue.length, activeContacts: activeContacts.size, concurrency: maxConcurrent, maxQueue: queueLimit };
+    },
+    hasQueued(contactKey, predicate = () => true) {
+      const key = canonicalContactKey(String(contactKey || "").trim());
+      return queue.some((job) => job.contactKey === key && predicate(job.metadata));
     }
   };
 }

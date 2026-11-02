@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { DIMENSIONS, SCORER_VERSION, scoreQualification } = require("./qualificationEngine");
+const { DIMENSIONS, SCORER_VERSION, scoreQualification, assessCloseReadiness, hasCloseReadinessDeferral } = require("./qualificationEngine");
 
 test("scores six evidence-backed dimensions in the 0 to 5 range with source references", () => {
   const result = scoreQualification({ evidence: [
@@ -12,8 +12,8 @@ test("scores six evidence-backed dimensions in the 0 to 5 range with source refe
     { sourceRef: "turn:6", text: "We have land for development." }
   ], now: "2026-10-10T09:00:00Z" });
   assert.deepEqual(Object.keys(result.dimensions), DIMENSIONS);
-  assert.deepEqual(result.dimensions, { need: 2, value: 2, timing: 4, authority: 2, readiness: 1, fit: 2 });
-  assert.equal(result.total, 13);
+  assert.deepEqual(result.dimensions, { need: 2, value: 2, timing: 4, authority: 2, readiness: 2, fit: 2 });
+  assert.equal(result.total, 14);
   assert.equal(result.max, 30);
   assert.equal(result.scorerVersion, SCORER_VERSION);
   assert.equal(result.assessedAt, result.scoredAt);
@@ -163,4 +163,29 @@ test("returns prior score without recomputing unless meaningful evidence changes
   assert.notEqual(changed.evidenceFingerprint, first.evidenceFingerprint);
   assert.equal(changed.scoredAt, "2026-10-11T09:00:00.000Z");
   assert.ok(changed.total > first.total);
+});
+
+test("close-readiness alert requires a defined service need, service fit, and clear intent to start", () => {
+  const score = (texts) => scoreQualification({ evidence: texts.map((text, index) => ({ sourceRef: `turn:${index + 1}`, text })) });
+  const ready = score(["I need company formation services in Cyprus.", "I want to start the process now."]);
+  assert.equal(assessCloseReadiness(ready).status, "ready_to_proceed");
+  assert.deepEqual(assessCloseReadiness(ready).criteria, { clearStartIntent: true, definedNeed: true, serviceFit: true });
+
+  const contactOnly = score(["I want to form a company in Cyprus.", "Can someone from your team call me tomorrow?"]);
+  assert.equal(assessCloseReadiness(contactOnly).status, "not_established", "a callback request alone must not be marked sales-ready");
+  const researchOnly = score(["I am looking for company formation in Cyprus.", "What is the price?"]);
+  assert.equal(assessCloseReadiness(researchOnly).status, "not_established", "questions and research are not a commitment to start");
+  assert.equal(assessCloseReadiness(ready, { restricted: true }).status, "not_established");
+  assert.equal(assessCloseReadiness(ready, { privacyRisk: true }).status, "not_established");
+  for (const deferred of ["I am still deciding and not ready to start.", "لسا عم فكّر وما قررت أبدأ بعد.", "Σκέφτομαι ακόμη και δεν έχω αποφασίσει να ξεκινήσω."]) {
+    assert.equal(hasCloseReadinessDeferral(deferred), true, deferred);
+    assert.equal(assessCloseReadiness(ready, { deferred: true }).status, "not_established", deferred);
+  }
+});
+
+test("Arabic and Greek explicit start intent can qualify when service context is present", () => {
+  for (const text of ["أريد أن أبدأ إجراءات تأسيس شركة في قبرص.", "Θέλω να ξεκινήσω τη διαδικασία ίδρυσης εταιρείας στην Κύπρο."]) {
+    const result = assessCloseReadiness(scoreQualification({ evidence: [{ sourceRef: "turn:1", text }] }));
+    assert.equal(result.status, "ready_to_proceed", text);
+  }
 });

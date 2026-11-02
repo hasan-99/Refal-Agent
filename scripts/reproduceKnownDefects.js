@@ -48,10 +48,14 @@ function fix1() {
     ["MB-F19 corporate tax ar", "ضريبة الشركات الأساسية في قبرص تبدأ من 15% اعتباراً من سنة 2026."],
     ["MB-F45 property VAT", "Reduced VAT of 5% can apply to a first permanent residence, subject to the current conditions."],
   ];
-  const blocked = facts.filter(([, s]) => containsProhibitedClaim(s) || restrictedRefalcoReply(s) !== null);
+  const blocked = facts.filter(([, sentence]) => {
+    const evidence = [{ content: sentence, review_status: "approved", valid_until: new Date(Date.now() + 86400000).toISOString() }];
+    return containsProhibitedClaim(sentence, { evidence }) || restrictedRefalcoReply(sentence, { evidence }) !== null;
+  });
+  const ungroundedBlocked = facts.filter(([, sentence]) => containsProhibitedClaim(sentence) || restrictedRefalcoReply(sentence) !== null).length;
   record("FIX-1", "Programme facts deleted by the claim gate",
     blocked.length ? "REPRODUCED" : "ALREADY-FIXED",
-    `${blocked.length}/${facts.length} approved MB facts blocked: ${blocked.map(([n]) => n).join(" · ")}. Full sweep: 27/66 (40.9%) in CONFLICT-REGISTER.md.`,
+    `${blocked.length}/${facts.length} facts blocked with synthetic approved, unexpired evidence; ${ungroundedBlocked}/${facts.length} remain blocked without evidence. Full evidence sweep is scripts/auditClaimGates.js.`,
     "P2.2");
 }
 
@@ -93,7 +97,7 @@ function fix13() {
     missed.length ? "REPRODUCED" : "ALREADY-FIXED (detection only)",
     missed.length
       ? `agent_identity intent missed in: ${missed.map(([l]) => l).join(", ")}`
-      : "agent_identity detected in ar/en/el. The defect is NOT detection — it is the answer, which still says \"the business\" (BLK-3 / CR-009, 222 occurrences). Detection repro is green; answer repro needs P1.1.",
+      : "agent_identity detected in ar/en/el. This offline detector harness does not grade the generated identity answer; response checks live in company-profile and answer-workflow tests.",
     "P1.1, P1.2");
 }
 
@@ -199,14 +203,13 @@ function corpusGatedDefects() {
       "handover rows plus dashboard counts, which requires WRITING test data. Read-only access is available "
       + "(SUPABASE-ACCESS-GUIDE.md) but writes to application tables need BOSS's per-change authorization.", "P6.5, P12.3"],
     ["FIX-10", "Output leaks: internal reasoning, retrieval fallback text",
-      "a live model round trip in 3 languages. Blocked on OPENROUTER_API_KEY, not on the database — the key in "
-      + ".env is rejected with 401. See REFAL-AGENT-016.", "P11.2"],
+      "a live model round trip in 3 languages. This offline defect harness does not call the provider; current local provider access is verified separately, but the leakage verdict remains open.", "P11.2"],
     ["FIX-11", "Specialist offer not persisted, so it repeats",
       "a multi-turn conversation persisted across turns, which requires WRITING test data. Same authorization "
       + "boundary as FIX-9.", "P5.4"],
     ["FIX-12", "Phone metadata treated as consent",
       "consent rows carrying a source field, which requires WRITING test data. Same authorization boundary as "
-      + "FIX-9. Note rafa_contact_consents currently has RLS enabled with ZERO policies (W0.1.3 block 09).", "P9.1"],
+      + "FIX-9; current live consent-source behavior is not measured by this offline harness.", "P9.1"],
   ];
   for (const [fix, defect, blocker, repairedBy] of gated) {
     record(fix, defect, "NOT-TESTABLE", `Requires ${blocker}`, repairedBy);

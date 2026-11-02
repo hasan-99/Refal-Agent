@@ -20,9 +20,9 @@ const FORBIDDEN_INTENTS = new Set([
 ]);
 
 const SAFE_FALLBACKS = Object.freeze({
-  en: "I can’t confirm that right now. Please try again later.",
-  ar: "ما فيني أكّد هالشي هلأ. جرّب مرة تانية لاحقًا.",
-  el: "Δεν μπορώ να το επιβεβαιώσω αυτή τη στιγμή. Δοκιμάστε ξανά αργότερα."
+  en: "Sorry, I couldn’t prepare a reliable answer just now, and I don’t want to guess. I can still help clarify another detail.",
+  ar: "آسف، ما قدرت جهّز جواب موثوق هلأ، وما بدي خمّن. فيني ساعدك بتوضيح نقطة تانية.",
+  el: "Συγγνώμη, δεν μπόρεσα να ετοιμάσω αξιόπιστη απάντηση αυτή τη στιγμή και δεν θέλω να υποθέσω. Μπορώ να βοηθήσω με κάποια άλλη διευκρίνιση."
 });
 
 function nonEmptyArray(value) {
@@ -133,6 +133,7 @@ async function runAgentAfterPreflight({
   updateTurn,
   afterTurnPersisted,
   send,
+  shouldSuppressResponse,
   safeFallback
 } = {}) {
   if (typeof send !== "function") throw new TypeError("runAgentAfterPreflight requires a send function.");
@@ -152,7 +153,10 @@ async function runAgentAfterPreflight({
     throw new TypeError("AI-eligible Agent turns require persistTurn, runAgent, and updateTurn functions.");
   }
   if (typeof userId !== "string" || !userId.trim()) throw new TypeError("Agent turns require a trusted user ID.");
-  if (typeof sourceMessage !== "string" || !sourceMessage.trim()) throw new TypeError("Agent turns require the current source message.");
+  const verifiedAttachmentOnlyTurn = metadata?.attachment?.status === "uploaded";
+  if (typeof sourceMessage !== "string" || (!sourceMessage.trim() && !verifiedAttachmentOnlyTurn)) {
+    throw new TypeError("Agent turns require a current source message or a verified uploaded attachment.");
+  }
 
   // No model or action may run without a durable, contact-scoped source turn.
   // A rejected insert can be an ambiguous commit (the server may have saved
@@ -201,6 +205,16 @@ async function runAgentAfterPreflight({
     response = await fallbackText(safeFallback, { stage: "agent", error: agentError, locale, turn, userId });
   }
 
+  // A reply to a "send me the file" turn can become stale while generation
+  // runs. If that promised attachment is already queued, let its own turn
+  // answer the request instead of sending an obsolete no-file/fallback reply.
+  let responseSuppressed = false;
+  try {
+    responseSuppressed = typeof shouldSuppressResponse === "function"
+      && await shouldSuppressResponse({ response, turn, sourceMessage }) === true;
+  } catch { responseSuppressed = false; }
+  if (responseSuppressed) response = "";
+
   let persistenceUpdated = true;
   try {
     const patched = await updateTurn({
@@ -213,24 +227,40 @@ async function runAgentAfterPreflight({
     // The response is still sent once, but it cannot be represented as saved.
     // Use neutral wording and never retry the patch or the legacy turn.
     persistenceUpdated = false;
-    response = await fallbackText(safeFallback, { stage: "update", error, locale, turn, userId });
+    if (!responseSuppressed) response = await fallbackText(safeFallback, { stage: "update", error, locale, turn, userId });
+  }
+
+  // Close the small race where the upload enters the FIFO while the history
+  // patch is in flight. Once suppressed, do not restore or send a fallback.
+  if (!responseSuppressed && typeof shouldSuppressResponse === "function") {
+    try { responseSuppressed = await shouldSuppressResponse({ response, turn: updatedTurn, sourceMessage }) === true; }
+    catch { responseSuppressed = false; }
+    if (responseSuppressed) {
+      response = "";
+      try {
+        const patched = await updateTurn({ userId, turnId: sourceTurnId, patch: { response } });
+        if (patched && typeof patched === "object") updatedTurn = patched;
+      } catch { persistenceUpdated = false; }
+    }
   }
 
   let sent = false;
   let deliveryError;
-  try {
-    await send(response, updatedTurn);
-    sent = true;
-  } catch (error) {
-    // Never throw after source-turn persistence: the outer router must not
-    // retry and potentially duplicate a committed action or customer send.
-    deliveryError = error;
+  if (!responseSuppressed) {
+    try {
+      await send(response, updatedTurn);
+      sent = true;
+    } catch (error) {
+      // Never throw after source-turn persistence: the outer router must not
+      // retry and potentially duplicate a committed action or customer send.
+      deliveryError = error;
+    }
   }
 
   // Refresh continuity after the send attempt so a slow profile write does
   // not delay the reply. Await it before releasing the contact's turn, which
   // keeps the next inbound message behind the completed summary update.
-  if (persistenceUpdated && typeof afterTurnPersisted === "function") {
+  if (!responseSuppressed && persistenceUpdated && typeof afterTurnPersisted === "function") {
     try {
       await afterTurnPersisted({ userId, turnId: sourceTurnId, message: sourceMessage, response, turn: updatedTurn });
     } catch {
@@ -244,6 +274,7 @@ async function runAgentAfterPreflight({
     turn: updatedTurn,
     sourceTurnId,
     allowedCapabilities,
+    responseSuppressed,
     sent,
     persistenceUpdated,
     ...(deliveryError ? { deliveryError } : {}),

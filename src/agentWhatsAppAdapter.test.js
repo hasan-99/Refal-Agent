@@ -174,6 +174,39 @@ test("AI outcome persists before Agent, passes turn id and narrow grants, then u
   assert.equal(result.persistenceUpdated, true);
 });
 
+test("a queued attachment suppresses a stale pending-review reply and clears it from history", async () => {
+  const events = [];
+  const result = await runAgentAfterPreflight({
+    ...eligibleInput(), userId: "contact-review", sourceMessage: "Please review my document when I send it.", locale: "english"
+  }, {
+    persistTurn: async () => { events.push("persist"); return { id: "review-request-turn" }; },
+    runAgent: async () => "I have not received the document yet. Please attach it.",
+    updateTurn: async ({ patch }) => { events.push(["update", patch.response]); return { id: "review-request-turn", response: patch.response }; },
+    shouldSuppressResponse: async () => true,
+    send: async (response) => events.push(["send", response])
+  });
+  assert.equal(result.responseSuppressed, true);
+  assert.equal(result.sent, false);
+  assert.deepEqual(events, ["persist", ["update", ""]], "only the queued attachment turn should answer this review task");
+});
+
+test("an attachment queued during the source-turn patch is also suppressed before delivery", async () => {
+  const events = [];
+  let checks = 0;
+  const result = await runAgentAfterPreflight({
+    ...eligibleInput(), userId: "contact-review-race", sourceMessage: "Please review my document when I send it.", locale: "english"
+  }, {
+    persistTurn: async () => ({ id: "review-request-turn" }),
+    runAgent: async () => "Please attach the document and I will review it.",
+    updateTurn: async ({ patch }) => { events.push(["update", patch.response]); return { id: "review-request-turn", response: patch.response }; },
+    shouldSuppressResponse: async () => { checks += 1; return checks > 1; },
+    send: async (response) => events.push(["send", response])
+  });
+  assert.equal(result.responseSuppressed, true);
+  assert.equal(result.sent, false);
+  assert.deepEqual(events, [["update", "Please attach the document and I will review it."], ["update", ""]]);
+});
+
 test("full synthetic customer-answer path retrieves approved fixture evidence, runs Agent gates, persists and sends one answer", async () => {
   const events = [];
   const turn = { id: "turn-e2e-1" };
@@ -412,7 +445,7 @@ test("a throwing fallback provider uses a localized neutral fallback", async () 
     send: async (response) => { events.push(["send", response]); },
     safeFallback: async () => { throw new Error("fallback failed"); }
   });
-  assert.equal(events[0][1], "ما فيني أكّد هالشي هلأ. جرّب مرة تانية لاحقًا.");
+  assert.equal(events[0][1], "آسف، ما قدرت جهّز جواب موثوق هلأ، وما بدي خمّن. فيني ساعدك بتوضيح نقطة تانية.");
   assert.equal(events[1][1], events[0][1]);
   assert.equal(result.sent, true);
 });

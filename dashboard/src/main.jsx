@@ -317,8 +317,8 @@ function App() {
                 key={item.id}
                 className={active === item.id ? "nav-item active" : "nav-item"}
                 onClick={() => setActive(item.id)}
-                aria-label={item.id === "follow-ups" && notificationCountUnavailable ? `${item.label}, count unavailable` : item.id === "follow-ups" && outstandingNotificationCount ? `${item.label}, ${notificationBadgeText(outstandingNotificationCount)} outstanding notifications` : item.label}
-                title={sidebarCollapsed ? (item.id === "follow-ups" && notificationCountUnavailable ? `${item.label} · count unavailable` : item.id === "follow-ups" && outstandingNotificationCount ? `${item.label} · ${notificationBadgeText(outstandingNotificationCount)} notifications` : item.label) : undefined}
+                aria-label={item.id === "follow-ups" && notificationCountUnavailable ? `${item.label}, count unavailable` : item.id === "follow-ups" && outstandingNotificationCount ? `${item.label}, ${notificationBadgeText(outstandingNotificationCount)} active request${outstandingNotificationCount === 1 ? "" : "s"}` : item.label}
+                title={sidebarCollapsed ? (item.id === "follow-ups" && notificationCountUnavailable ? `${item.label} · count unavailable` : item.id === "follow-ups" && outstandingNotificationCount ? `${item.label} · ${notificationBadgeText(outstandingNotificationCount)} active request${outstandingNotificationCount === 1 ? "" : "s"}` : item.label) : undefined}
               >
                 <Icon size={18} />
                 <span className="nav-label">{item.label}</span>

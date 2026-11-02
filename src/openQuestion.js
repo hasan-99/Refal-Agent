@@ -24,4 +24,22 @@ function deriveOpenQuestion(lastTurn) {
   return question ? question.slice(0, 300) : null;
 }
 
-module.exports = { deriveOpenQuestion };
+function deriveContinuedLookupRequest(currentMessage, recentConversation = []) {
+  const current = String(currentMessage || "").normalize("NFKC").trim();
+  const turns = Array.isArray(recentConversation) ? recentConversation : [];
+  const assistant = [...turns].reverse().find((turn) => turn?.role === "assistant");
+  const user = [...turns].reverse().find((turn) => turn?.role === "user");
+  if (!assistant || !user || turns.indexOf(user) > turns.indexOf(assistant)) return null;
+
+  const affirmative = /^(?:yes|yeah|sure|okay|ok|please|go ahead|do that|نعم|اي|إي|أكيد|اكيد|تمام|من فضلك|لو سمحت|ναι|βεβαίως|βεβαιως|φυσικά|φυσικα|παρακαλώ|παρακαλω)(?:[\s,.،!؟؛;]|$)/iu.test(current);
+  if (!affirmative) return null;
+
+  const offer = String(assistant.content || "").normalize("NFKC");
+  const englishOffer = /\b(?:i can|i could|let me)\b.{0,100}\b(?:look\s+up|check|search|find\s+out|verify|confirm)\b.{0,100}\b(?:if you(?:'d| would) like|if you want|if helpful)\b|\b(?:look\s+up|check|search|find\s+out|verify|confirm)\b.{0,100}\b(?:if you(?:'d| would) like|if you want|if helpful)\b/iu.test(offer);
+  const arabicOffer = /(?:فيني|يمكنني|أستطيع|استطيع).{0,100}(?:ابحث|أبحث|دور|تحقق|تأكد|شوف|راجع).{0,100}(?:إذا|لو|إن).{0,30}(?:تحب|بدك|أردت|رغبت)|(?:ابحث|أبحث|دور|تحقق|تأكد|شوف|راجع).{0,100}(?:إذا|لو|إن).{0,30}(?:تحب|بدك|أردت|رغبت)/u.test(offer);
+  const greekOffer = /(?:μπορώ|μπορουμε|μπορούμε|να σας).{0,100}(?:ελέγξω|ψάξω|αναζητήσω|επιβεβαιώσω|ελέγξουμε).{0,100}(?:αν θέλετε|αν το θέλετε|εφόσον θέλετε)/iu.test(offer);
+  const request = String(user.content || "").trim();
+  return (englishOffer || arabicOffer || greekOffer) && request ? request.slice(0, 1000) : null;
+}
+
+module.exports = { deriveOpenQuestion, deriveContinuedLookupRequest };

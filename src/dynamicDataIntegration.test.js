@@ -47,7 +47,7 @@ test("CF-05: changed current offers win, while expired or missing offers suppres
       assert.match(prompt, /Company name reservation/u);
     } else {
       assert.match(prompt, /unavailable/u, scenario.name);
-      assert.match(prompt, /Stale approved chunks excluded by source precedence: approved-formation-doc/u, scenario.name);
+      assert.match(prompt, /Approved chunks excluded by pricing\/source precedence: approved-formation-doc/u, scenario.name);
     }
   }
 });
@@ -98,6 +98,6 @@ test("CF-05 integration: real Agent loop composes approved inclusions with the c
   assert.match(composedMessages, /Company name reservation/u);
   assert.match(composedMessages, /"amount":999/u);
   assert.doesNotMatch(composedMessages, /EUR 899/u);
-  assert.match(composedMessages, /Stale approved chunks excluded by source precedence: approved-formation-doc/u);
+  assert.match(composedMessages, /Approved chunks excluded by pricing\/source precedence: approved-formation-doc/u);
   assert.deepEqual(result.steps.map((step) => step.tool), ["searchApprovedKnowledge", "lookupActiveOffer"]);
 });

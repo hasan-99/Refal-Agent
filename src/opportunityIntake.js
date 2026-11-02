@@ -19,6 +19,13 @@ const FIELDS = Object.freeze({
 });
 
 function clean(value, max = 500) { return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max); }
+function isAttachmentPlaceholder(value) {
+  const text = clean(value, 180);
+  return /^(?:please\s+)?(?:review|check|see|look\s+at)\s+(?:(?:the|this)\s+)?(?:attached|uploaded)\s+(?:file|image|photo|document|screenshot|spreadsheet)(?:\s+please)?[.!؟?]*$/iu.test(text)
+    || /^(?:see\s+attached|attached\s+(?:is\s+)?(?:the\s+)?(?:file|image|photo|document)|(?:file|image|document)\s+attached)[.!؟?]*$/iu.test(text)
+    || /^(?:يرجى\s+)?(?:مراجعة|راجع|شوف|انظر)\s+(?:ال)?(?:ملف|صورة|مستند)\s+(?:ال)?مرفق[.!؟?]*$/iu.test(text)
+    || /^(?:δείτε|δες|παρακαλώ\s+δείτε)\s+(?:το\s+)?(?:συνημμένο|επισυναπτόμενο)(?:\s+(?:αρχείο|έγγραφο|εικόνα))?[.!؟?]*$/iu.test(text);
+}
 function typeForIntents(intents = []) {
   const values = new Set(intents);
   if (values.has("company_formation") || values.has("accounting") || values.has("vat") || values.has("corporate_services")) return TYPES.COMPANY_FORMATION;
@@ -111,9 +118,12 @@ function updateIntake(existing = null, { intents = [], text = "", source = "cust
   if (!type) return existing || null;
   const allowed = new Set(FIELDS[type] || []);
   const facts = Object.fromEntries(Object.entries(inferFacts(type, text)).filter(([key, value]) => allowed.has(key) && value != null && value !== ""));
-  const data = { ...(existing?.data || {}), ...facts };
+  const data = { ...(existing?.data || {}) };
+  if (isAttachmentPlaceholder(data.businessActivity)) delete data.businessActivity;
+  Object.assign(data, facts);
   const provenance = { ...(existing?.provenance || {}) };
+  if (!data.businessActivity && isAttachmentPlaceholder(existing?.data?.businessActivity)) delete provenance.businessActivity;
   for (const key of Object.keys(facts)) provenance[key] = source;
   return { type, data, provenance, status: "in_progress", updatedAt: now, missingFields: (FIELDS[type] || []).filter((field) => data[field] == null || data[field] === "") };
 }
-module.exports = { TYPES, FIELDS, typeForIntents, intakeTypesForIntents, inferFacts, updateIntake };
+module.exports = { TYPES, FIELDS, typeForIntents, intakeTypesForIntents, inferFacts, updateIntake, isAttachmentPlaceholder };

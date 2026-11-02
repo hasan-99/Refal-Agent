@@ -273,7 +273,7 @@ function splitClaims(text) {
 // `[^.!?;,]{0,90}` wildcard the verb forms carry: they strip only the negated
 // phrase itself, so "النتيجة غير مضمونة ولكن نضمن الموافقة" still blocks on its
 // second clause.
-const rawNegatedGuarantee = /(?:\b(?:i|we|refal|refalco|business)\s+)?\b(?:can(?:not|['’]t)|cannot|could\s+not|couldn['’]t|do(?:es)?\s+not|don['’]t|will\s+not|won['’]t|never)\s+(?:guarantee|guarantees|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:لا\s+(?:أستطيع|نستطيع|يمكنني|يمكننا)|ما\s+(?:فيني|فينا|بقدر|منقدر|بنقدر))\s+(?:أضمن|ضمان|تأكيد|أؤكد|نضمن|أعد)[^.!?;,؟؛،]{0,90}|δεν\s+μπορ\p{L}+\s+να\s+(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}|\b(?:(?:is|are|was|were|it['’]s)?\s*(?:not|no)|(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t))\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b|\b(?:cannot|can['’]t|could\s+not|couldn['’]t|will\s+not|won['’]t)\s+be\s+guaranteed\b|\bwithout\s+(?:any\s+)?guarantee(?:s)?\b|(?:ليست|ليس|غير|مو|مش)(?:\s+\S+){0,3}\s*مضمون\p{L}*|ما\s+(?:في|فيه|فيها|إلها|إله|لها|له)\s+(?:موعد|تاريخ|وقت|مدة)(?:\s+\S+){0,2}\s+مضمون\p{L}*|δεν\s+είναι\s+εγγυημέν\p{L}*|χωρίς\s+(?:καμία\s+)?εγγύηση|\b(?:nobody|no\s*-?\s*one|none\s+of\s+us|no\s+adviser|no\s+agent)\s+(?:can|could|will|may|is\s+able\s+to)\s+(?:guarantee|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:ما\s+(?:حد|في\s+حدا)|محدا|لا\s+أحد|ولا\s+حد)(?:\s+\S+){0,2}\s*(?:يضمن|بيضمن|يقدر\s+يضمن|بيقدر\s+يضمن|يوعد|بيوعد|يؤكد)[^.!?;,؟؛،]{0,90}|κανείς\s+δεν\s+(?:μπορεί\s+να\s+)?(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}/giu;
+const rawNegatedGuarantee = /(?:\b(?:i|we|refal|refalco|business)\s+)?\b(?:can(?:not|['’]t)|cannot|could\s+not|couldn['’]t|do(?:es)?\s+not|don['’]t|doesn['’]t|will\s+not|won['’]t|never)\s+(?:guarantee|guarantees|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:لا\s+(?:أستطيع|نستطيع|يمكنني|يمكننا)|ما\s+(?:فيني|فينا|بقدر|منقدر|بنقدر))\s+(?:أضمن|ضمان|تأكيد|أؤكد|نضمن|أعد)[^.!?;,؟؛،]{0,90}|δεν\s+μπορ\p{L}+\s+να\s+(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}|\b(?:(?:is|are|was|were|it['’]s)?\s*(?:not|no)|(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t))\s+(?:a\s+|an\s+)?guarantee(?:d|s)?\b|\b(?:cannot|can['’]t|could\s+not|couldn['’]t|will\s+not|won['’]t)\s+be\s+guaranteed\b|\bwithout\s+(?:any\s+)?guarantee(?:s)?\b|\brather\s+than\s+(?:as\s+)?(?:a\s+)?guarantees?\b|(?:ليست|ليس|غير|مو|مش)(?:\s+\S+){0,3}\s*مضمون\p{L}*|ما\s+(?:في|فيه|فيها|إلها|إله|لها|له)\s+(?:موعد|تاريخ|وقت|مدة)(?:\s+\S+){0,2}\s+مضمون\p{L}*|δεν\s+είναι\s+εγγυημέν\p{L}*|χωρίς\s+(?:καμία\s+)?εγγύηση|\b(?:nobody|no\s*-?\s*one|none\s+of\s+us|no\s+adviser|no\s+agent)\s+(?:can|could|will|may|is\s+able\s+to)\s+(?:guarantee|promise|assure|confirm)\b[^.!?;,؟؛،]{0,90}|(?:ما\s+(?:حد|في\s+حدا)|محدا|لا\s+أحد|ولا\s+حد)(?:\s+\S+){0,2}\s*(?:يضمن|بيضمن|يقدر\s+يضمن|بيقدر\s+يضمن|يوعد|بيوعد|يؤكد)[^.!?;,؟؛،]{0,90}|κανείς\s+δεν\s+(?:μπορεί\s+να\s+)?(?:εγγυηθ\p{L}+|υποσχεθ\p{L}+|επιβεβαιώσ\p{L}+)[^.!?;,؟؛،]{0,90}/giu;
 const [, NEGATED_GUARANTEE] = foldRulePatterns([["negated_guarantee", rawNegatedGuarantee]])[0];
 
 // P2.6 defect CLAIM-4 (High). `NEGATED_GUARANTEE` above only covers a refusal to
@@ -373,6 +373,11 @@ const entityRules = foldRulePatterns(rawEntityRules);
 // to the ordinary personalized-conclusion rules.
 const NEGATED_PERSONALIZED_OUTCOME = /\b(?:i|we)\s+(?:cannot|can['’]t|can not|do not|don['’]t)\s+(?:confirm|determine|assess|establish|say)\b[^.!?;]{0,100}\b(?:your\s+(?:eligibility|suitability|qualification)|whether\s+you\s+(?:qualify|are\s+eligible|are\s+suitable))\b|(?:لا\s+(?:أستطيع|يمكنني)|ما\s+(?:فيني|بقدر))\s+(?:تأكيد|تحديد|تقييم)\s+[^.!؟؛]{0,100}(?:أهليتك|استحقاقك|إذا\s+كنت\s+مؤهل(?:اً|ة)?|إذا\s+كنت\s+مناسب(?:اً|ة)?)|δεν\s+μπορ\p{L}*\s+να\s+(?:επιβεβαιώσ\p{L}*|καθορίσ\p{L}*|αξιολογήσ\p{L}*)\s+[^.!?;]{0,100}(?:επιλεξιμότητ\p{L}*|αν\s+είστε\s+επιλέξιμ\p{L}*)/giu;
 
+// A disclaimer that a reply is not personal tax/legal advice must not be
+// mistaken for a claim to provide that advice. Strip only the explicit
+// negated disclaimer; affirmative advice claims remain subject to the rules.
+const NEGATED_PERSONALIZED_ADVICE = /\b(?:not|isn['’]t|aren['’]t|wasn['’]t|weren['’]t)\s+(?:personal(?:i[sz]ed)?\s+)?(?:tax|legal|financial|investment|immigration)\s+advice\b/giu;
+
 // -------------------------------------------------------------- entity overlap
 
 const CLAIM_STOPWORDS = new Set([
@@ -446,7 +451,7 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
   // the customer, nor a programme fact needing evidence. The strip stops at a
   // contrastive conjunction, so "I cannot advise, but your company qualifies"
   // keeps its second half and still blocks.
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(NEGATED_PERSONALIZED_ADVICE, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["disclaimer_only"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
@@ -477,6 +482,15 @@ function classifyClaim(sentence, { evidence = [], language } = {}) {
   // dressed as a question is still blocked.
   if (isInterrogative(original, resolvedLanguage)) {
     return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["question"], language: resolvedLanguage, unsupportedNumbers: [] };
+  }
+
+  // A short acknowledgement mirrors a concern the customer just expressed;
+  // it is conversational, not a source of business/process information. Keep
+  // the whitelist limited to the three authored fallback phrasings so factual
+  // clauses continue through the evidence gate.
+  const concernAcknowledgement = /^(?:i\s+understand\s+that\s+cost\s+matters\.|أتفهم\s+إنو\s+موضوع\s+التكلفة\s+مهم\.|καταλαβαίνω\s+ότι\s+το\s+κόστος\s+έχει\s+σημασία\.)$/iu;
+  if (concernAcknowledgement.test(original.trim())) {
+    return { claimClass: CLAIM_CLASSES.NEUTRAL, allowed: true, reasons: ["customer_concern_acknowledgement"], language: resolvedLanguage, unsupportedNumbers: [] };
   }
 
   if (personalizedRules.some(([, pattern]) => pattern.test(assertedText))) {
@@ -556,7 +570,7 @@ function containsPersonalizedConclusion(text) {
 function assertedClaimText(text, rules) {
   const normalized = normalizeClaimText(text);
   if (!hasContent(normalized)) return false;
-  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(REFUSAL_TO_PROVIDE, " ");
+  const assertedText = normalized.replace(NEGATED_GUARANTEE, " ").replace(NEGATED_RETURN_GUARANTEE, " ").replace(NEGATED_PERSONALIZED_OUTCOME, " ").replace(NEGATED_PERSONALIZED_ADVICE, " ").replace(REFUSAL_TO_PROVIDE, " ");
   if (!hasContent(assertedText)) return false;
   return rules.some(([, pattern]) => pattern.test(assertedText));
 }

@@ -1,17 +1,11 @@
 export async function fetchConversationLists(fetcher = globalThis.fetch, signal) {
-  const [conversationResponse, leadResponse] = await Promise.all([
-    fetcher("/api/conversations", { credentials: "include", cache: "no-store", signal }),
-    fetcher("/api/leads", { credentials: "include", cache: "no-store", signal })
-  ]);
-  const [conversationPayload, leadPayload] = await Promise.all([
-    conversationResponse.json().catch(() => ({})), leadResponse.json().catch(() => ({}))
-  ]);
-  if (!conversationResponse.ok) throw new Error(conversationPayload.error || `Could not load conversations (${conversationResponse.status}).`);
-  if (!leadResponse.ok) throw new Error(leadPayload.error || `Could not load leads (${leadResponse.status}).`);
-  if (!Array.isArray(conversationPayload.conversations) || !Array.isArray(leadPayload.users)) {
+  const response = await fetcher("/api/conversations", { credentials: "include", cache: "no-store", signal });
+  const conversationPayload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(conversationPayload.error || `Could not load conversations (${response.status}).`);
+  if (!Array.isArray(conversationPayload.conversations) || !Array.isArray(conversationPayload.leads)) {
     throw new Error("The inbox service returned an invalid response.");
   }
-  return { rows: conversationPayload.conversations, leads: leadPayload.users };
+  return { rows: conversationPayload.conversations, leads: conversationPayload.leads };
 }
 
 export function watchForConversationListChanges({

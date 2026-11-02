@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown, ArrowDownLeft, ArrowLeft, ArrowUp, ArrowUpDown, ArrowUpRight, BadgeCheck,
-  CalendarCheck2, CalendarClock, CalendarDays, Check, ChevronDown, CircleAlert, CircleDashed,
+  CalendarCheck2, CalendarClock, CalendarDays, Check, ChevronDown, CircleAlert, CircleDashed, Download,
   Clock3, Flame, MessageCircle, MessageCircleMore, MoreHorizontal, Pencil, RefreshCw,
   RotateCcw, Search, Send, SlidersHorizontal, Snowflake, Sun, UsersRound, X, Save, Trash2
 } from "lucide-react";
@@ -11,28 +11,6 @@ import { fetchConversationLists, watchForConversationListChanges } from "./conve
 import { LeadTemperatureSummary } from "./leadTemperatureSummary.js";
 
 const EMPTY = [];
-const DIAGNOSTIC_REASON_COPY = {
-  no_approved_evidence: "The approved information available for this reply did not support this statement.",
-  entities_not_in_evidence: "A name, place, number, or other specific detail was missing from the approved information.",
-  prohibited_claim: "A reply rule blocks this kind of claim. Check the flagged part and the evidence before changing anything.",
-  unconditional_prohibition: "The wording made a broad statement where the rule requires a limit or condition.",
-  personalized_marker: "The draft made a conclusion about this customer’s personal eligibility or situation without enough support.",
-  context_mismatch: "The draft did not fit something the customer said earlier, such as a preference or limit.",
-  service_not_established: "The available approved information did not establish that Refalco provides this as a service.",
-  unsupported_relation: "The information did not support the connection or conclusion made in the draft.",
-  question_not_answered: "The draft did not clearly answer every part of the customer’s question."
-};
-
-function diagnosticReasonText(code) {
-  return DIAGNOSTIC_REASON_COPY[code] || "A reply check flagged this draft. Review the exact span and evidence below.";
-}
-
-function diagnosticReasons(record) {
-  const explicit = record.inspection?.reasonCodes || record.inspection?.reasons || [];
-  const fromClaims = (record.inspection?.claims || []).flatMap((claim) => claim.reasons || []);
-  return [...new Set([...explicit, ...fromClaims].filter((reason) => typeof reason === "string"))];
-}
-
 export default function Conversations({ isAdmin, onNavigate, view: initialView = "inbox", onViewChange, selectedConversationId = "", onSelectedConversationChange }) {
   const [rows, setRows] = useState(EMPTY);
   const [leads, setLeads] = useState(EMPTY);
@@ -393,17 +371,9 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
   const [contactDraft, setContactDraft] = useState({ nameOverride: "", phoneOverride: "" });
   const [contactSaving, setContactSaving] = useState(false);
   const [contactNotice, setContactNotice] = useState("");
-  const [inspections, setInspections] = useState(null);
-  const [inspectionError, setInspectionError] = useState("");
-  const loadInspections = async () => {
-    setInspectionError("");
-    try {
-      const response = await fetch(`/api/conversations/${encodeURIComponent(id)}/diagnostics`, { credentials: "include" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Controlled diagnostics unavailable.");
-      setInspections(payload.inspections || []);
-    } catch (cause) { setInspectionError(cause.message); }
-  };
+  const attachments = (detail?.turns || []).flatMap((turn) => turn.attachment && typeof turn.attachment === "object"
+    ? [{ ...turn.attachment, turnAt: turn.at, turnId: turn.turnId || turn.id }]
+    : []);
   const contactName = detail?.user?.name || detail?.user?.pushName || detail?.user?.phone || id;
   const contactPhone = detail?.user?.phone || "WhatsApp conversation";
 
@@ -466,68 +436,7 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
     </form>}
     {contactNotice && <p className="conversation-contact-notice" role="status">{contactNotice}</p>}
     {detail && <WorkflowSummary workflow={detail.user?.workflow} isAdmin={isAdmin} />}
-    {isAdmin && detail && <section className="conversation-diagnostics" aria-labelledby="conversation-diagnostics-title">
-      <div className="conversation-diagnostics-heading">
-        <div>
-          <span className="conversation-diagnostics-kicker">TEST REPLY REVIEW</span>
-          <h2 id="conversation-diagnostics-title">Understand and improve a flagged reply</h2>
-          <p>See what REFAL drafted, which check flagged it, and what information REFAL had available.</p>
-        </div>
-        <button type="button" className="conversation-diagnostics-load" onClick={loadInspections}>
-          {inspections === null ? "Show flagged drafts" : "Refresh flagged drafts"}
-        </button>
-      </div>
-      <div className="conversation-diagnostics-guide">
-        <strong>How this helps</strong>
-        <ol>
-          <li>Read the flagged part and why the check stopped it.</li>
-          <li>Open the evidence and compare it with that statement.</li>
-          <li>If the information is missing, improve approved knowledge. If the evidence supports the draft, use the trace details to review the rule.</li>
-        </ol>
-      </div>
-      <p className="conversation-diagnostics-note">This is an internal review; nothing here is sent to the customer. A flagged draft may differ from the delivered reply, which appears in the transcript above.</p>
-      {inspectionError && <p className="conversation-diagnostics-error" role="alert">Could not load the review details: {inspectionError}</p>}
-      {inspections && inspections.length === 0 && <p className="conversation-diagnostics-empty">No rejected drafts were saved for this controlled test conversation.</p>}
-      {inspections && [...inspections].reverse().map((record, index) => {
-        const reasons = diagnosticReasons(record);
-        const claims = record.inspection?.claims || [];
-        const evidence = record.inspection?.evidence || [];
-        return <details className="conversation-diagnostic-record" key={record.id}>
-          <summary>
-            <span><strong>Flagged draft {inspections.length - index}</strong><small>{formatDate(record.at)} · reply step {record.inspection?.step ?? "unknown"}</small></span>
-            <span className="conversation-diagnostic-count">{reasons.length} {reasons.length === 1 ? "check" : "checks"}</span>
-          </summary>
-          <div className="conversation-diagnostic-body">
-            <h3>Why it was flagged</h3>
-            {reasons.length ? <ul className="conversation-diagnostic-reasons">{reasons.map((reason) => <li key={reason}>
-              <span>{diagnosticReasonText(reason)}</span><code>{reason}</code>
-            </li>)}</ul> : <p>The reason was not included in this saved record.</p>}
-            {claims.length > 0 && <div className="conversation-diagnostic-claims">
-              <h3>Part that needs review</h3>
-              {claims.map((claim, claimIndex) => <blockquote key={claimIndex} dir="auto">{claim.sentence || claim.claim}</blockquote>)}
-            </div>}
-            <div className="conversation-diagnostic-draft">
-              <h3>What REFAL drafted</h3>
-              <p dir="auto">{record.inspection?.draft || "Draft text was not saved."}</p>
-            </div>
-            <div className="conversation-diagnostic-evidence">
-              <h3>Information available to REFAL <span>{evidence.length} {evidence.length === 1 ? "passage" : "passages"}</span></h3>
-              {evidence.length ? evidence.map((item, evidenceIndex) => <details key={`${item.sourceRef || item.title || "source"}-${evidenceIndex}`}>
-                <summary><span>{item.title || "Approved knowledge"}</span><small>{item.section || "Section not named"}</small></summary>
-                <pre dir="auto">{item.content || "No passage text was saved."}</pre>
-                {item.sourceRef && <code className="conversation-diagnostic-source">Source reference: {item.sourceRef}</code>}
-              </details>) : <p>No evidence passages were saved with this draft.</p>}
-            </div>
-            <details className="conversation-diagnostic-technical">
-              <summary>Technical details for a developer</summary>
-              <dl><dt>Trace ID</dt><dd><code>{record.inspection?.traceId || "Not recorded"}</code></dd>
-                <dt>Step</dt><dd>{record.inspection?.step ?? "Not recorded"}</dd>
-                <dt>Rule codes</dt><dd><code>{reasons.join(", ") || "Not recorded"}</code></dd></dl>
-            </details>
-          </div>
-        </details>;
-      })}
-    </section>}
+    {detail && <ConversationAttachments attachments={attachments} userId={id} />}
     {loading && <div className="conversation-detail-state"><span className="conversation-spinner" />Loading conversation</div>}
     {error && <div className="conversation-alert" role="alert"><span>{error}</span><button type="button" onClick={onBack}>Back to inbox</button></div>}
     {detail && !loading && <div className="conversation-thread-wrap">
@@ -539,9 +448,90 @@ function ConversationDetail({ id, detail, loading, error, isAdmin, onBack, onRef
   </section>;
 }
 
+function ConversationAttachments({ attachments, userId }) {
+  const [selected, setSelected] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+  const [preview, setPreview] = useState({ attachmentId: "", url: "", loading: false, error: false });
+  useEffect(() => {
+    if (!selected) return undefined;
+    const closeOnEscape = (event) => { if (event.key === "Escape") setSelected(null); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selected]);
+  useEffect(() => {
+    if (!selected) { setPreview({ attachmentId: "", url: "", loading: false, error: false }); return undefined; }
+    const existingUrl = safeAttachmentUrl(selected.previewUrl || selected.url || selected.signedUrl);
+    if (existingUrl) { setPreview({ attachmentId: selected.id || "", url: existingUrl, loading: false, error: false }); return undefined; }
+    if (!selected.id || !userId) { setPreview({ attachmentId: selected.id || "", url: "", loading: false, error: true }); return undefined; }
+    let active = true;
+    const attachmentId = selected.id;
+    setPreview({ attachmentId, url: "", loading: true, error: false });
+    fetch(`/api/conversations/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attachmentId)}/preview`, { credentials: "include" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || typeof body.url !== "string") throw new Error("Preview unavailable");
+        const url = safeAttachmentUrl(body.url);
+        if (!url) throw new Error("Preview unavailable");
+        if (active) setPreview({ attachmentId, url, loading: false, error: false });
+      })
+      .catch(() => { if (active) setPreview({ attachmentId, url: "", loading: false, error: true }); });
+    return () => { active = false; };
+  }, [selected, userId]);
+  if (!attachments.length) return null;
+  const previewUrl = safeAttachmentUrl(selected?.previewUrl || selected?.url || selected?.signedUrl)
+    || (preview.attachmentId === selected?.id ? preview.url : "");
+  const contentType = String(selected?.contentType || "").toLowerCase();
+  const isImage = contentType.startsWith("image/");
+  const isPdf = contentType === "application/pdf" || String(selected?.fileName || "").toLowerCase().endsWith(".pdf");
+  const orderedAttachments = attachments.map((attachment, index) => ({ attachment, index }))
+    .sort((a, b) => dateValue(b.attachment.turnAt) - dateValue(a.attachment.turnAt) || b.index - a.index)
+    .map(({ attachment }) => attachment);
+  const visibleAttachments = expanded ? orderedAttachments : orderedAttachments.slice(0, 1);
+  return <>
+    <section className="conversation-attachments" aria-labelledby="conversation-attachments-title">
+      <div className="conversation-attachments-heading">
+        <div><span className="conversation-section-label">SHARED FILES</span><h2 id="conversation-attachments-title">Attachments</h2></div>
+        <div className="conversation-attachments-actions">
+          <span>{attachments.length} {attachments.length === 1 ? "file" : "files"}</span>
+          {attachments.length > 1 && <button type="button" className="conversation-attachments-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+            {expanded ? "Show latest only" : `Show all ${attachments.length}`}
+          </button>}
+        </div>
+      </div>
+      <div className={`conversation-attachments-grid${expanded ? " is-expanded" : " is-compact"}`}>
+        {visibleAttachments.map((attachment, index) => {
+        const name = attachment.fileName || attachment.filename || "Attachment";
+        const type = String(attachment.contentType || "File");
+        const image = type.startsWith("image/");
+        const key = attachment.id || `${attachment.turnId || "turn"}-${name}-${index}`;
+        return <button className="conversation-file-card" type="button" key={key} onClick={() => setSelected(attachment)} aria-label={`Preview ${name}`}>
+          <span className="conversation-file-thumb">{image && safeAttachmentUrl(attachment.previewUrl || attachment.url || attachment.signedUrl) ? <img src={safeAttachmentUrl(attachment.previewUrl || attachment.url || attachment.signedUrl)} alt="" /> : <span className="conversation-attachment-icon">{image ? "IMG" : name.split(".").pop().slice(0, 4).toUpperCase()}</span>}</span>
+          <span className="conversation-file-copy"><strong title={name}>{name}</strong><small>{type}{Number.isFinite(Number(attachment.sizeBytes)) ? ` · ${formatAttachmentSize(attachment.sizeBytes)}` : ""}</small><small>{formatDate(attachment.turnAt)}</small></span>
+          <span className="conversation-file-open">Preview</span>
+        </button>;
+      })}</div>
+    </section>
+    {selected && <div className="conversation-file-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
+      <section className="conversation-file-modal" role="dialog" aria-modal="true" aria-labelledby="conversation-file-modal-title">
+        <header><div><span className="conversation-section-label">ATTACHMENT</span><h2 id="conversation-file-modal-title">{selected.fileName || selected.filename || "Attachment"}</h2></div><button type="button" onClick={() => setSelected(null)} aria-label="Close preview"><X size={18} /></button></header>
+        <div className="conversation-file-preview">{preview.loading ? <div className="conversation-file-loading" role="status">Loading secure preview…</div> : previewUrl && isImage ? <img src={previewUrl} alt={selected.fileName || "Shared image"} /> : previewUrl && isPdf ? <iframe title={`Preview ${selected.fileName || "PDF"}`} src={previewUrl} /> : <div className="conversation-file-unavailable"><span className="conversation-attachment-icon">{isImage ? "IMG" : String(selected.fileName || "FILE").split(".").pop().slice(0, 4).toUpperCase()}</span><strong>{previewUrl ? "This file type opens in a new tab." : preview.error ? "Secure preview unavailable" : "Preparing secure preview"}</strong><p>{previewUrl ? "Use the temporary secure link to view or download this attachment." : preview.error ? "The file is still private. Refresh the conversation and try again." : "A short-lived private link is being prepared."}</p></div>}</div>
+        <footer><span>{selected.contentType || "File"}{Number.isFinite(Number(selected.sizeBytes)) ? ` · ${formatAttachmentSize(selected.sizeBytes)}` : ""}</span>{previewUrl && <a href={previewUrl} target="_blank" rel="noreferrer" download><Download size={14} /> Open file</a>}</footer>
+      </section>
+    </div>}
+  </>;
+}
+
+function safeAttachmentUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const url = new URL(value, window.location.origin);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch { return ""; }
+}
+
 function WorkflowBadges({ workflow }) {
   if (!workflow) return null;
-  const flags = [workflow.flags?.complaint && "Complaint", workflow.flags?.existingClient && "Existing client", workflow.handover?.required && "Handover", ["high", "urgent"].includes(workflow.priority) && `${statusLabel(workflow.priority)} priority`].filter(Boolean);
+  const flags = [workflow.closeReadiness?.status === "ready_to_proceed" && "Ready to proceed", workflow.flags?.complaint && "Complaint", workflow.flags?.existingClient && "Existing client", workflow.handover?.required && "Handover", ["high", "urgent"].includes(workflow.priority) && `${statusLabel(workflow.priority)} priority`].filter(Boolean);
   return <span className="conversation-workflow-badges" aria-label="Workflow signals">{flags.slice(0, 3).map((flag) => <span className="conversation-workflow-badge" key={flag}>{flag}</span>)}</span>;
 }
 
@@ -551,6 +541,7 @@ function WorkflowSummary({ workflow, isAdmin }) {
   return <aside className="conversation-workflow-summary" aria-label="Operator workflow summary">
     <div className="conversation-workflow-heading"><div><span className="conversation-section-label">OPERATOR SIGNALS</span><strong>{workflow.intent || "unknown"}</strong></div><span className={`conversation-priority ${workflow.priority || "normal"}`}>{statusLabel(workflow.priority || "normal")}</span></div>
     <div className="conversation-workflow-grid"><span><small>Classification</small><strong>{workflow.classification || "Unclassified"}</strong></span><span><small>Follow-up consent</small><strong>{statusLabel(workflow.consent?.followUp || "unknown")}</strong></span><span><small>Follow-up</small><strong>{statusLabel(workflow.followUp?.status || "consent required")}</strong></span><span><small>Handover</small><strong>{workflow.handover?.required ? workflow.handover.department || "Required" : "Not required"}</strong></span></div>
+    {workflow.closeReadiness?.status === "ready_to_proceed" && <div className="conversation-close-ready" role="status"><strong>Ready to proceed</strong><span>Clear start intent, a defined need, and service fit were found in the customer’s messages. Review the transcript before arranging follow-up; no response time is promised.</span></div>}
     <div className="conversation-dimension-list" aria-label="Six qualification dimensions">{["need", "value", "timing", "authority", "readiness", "fit"].map((key) => <span key={key}><small>{key}</small><b>{dimensions[key] ?? "—"}/5</b></span>)}</div>
     {(workflow.flags?.complaint || workflow.flags?.existingClient) && <div className="conversation-flag-list">{workflow.flags.complaint && <span>Complaint review</span>}{workflow.flags.existingClient && <span>Existing-client verification</span>}</div>}
     {isAdmin && workflow.handover?.summary && <p className="conversation-handover-summary"><strong>Handover summary</strong>{workflow.handover.summary}</p>}
@@ -560,6 +551,7 @@ function WorkflowSummary({ workflow, isAdmin }) {
 function MessageTurn({ turn, userId, isAdmin, onNavigate, onSaved }) {
   const isAgent = ["assistant", "agent", "rafa", "bot"].includes(String(turn.role || turn.sender || turn.direction || "").toLowerCase());
   const body = turn.text || turn.content || turn.message || "";
+  const attachment = !isAgent && turn.attachment && typeof turn.attachment === "object" ? turn.attachment : null;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(body);
   const [saving, setSaving] = useState(false);
@@ -599,12 +591,21 @@ function MessageTurn({ turn, userId, isAdmin, onNavigate, onSaved }) {
       <textarea dir="auto" aria-label="Edit REFAL reply" value={draft} maxLength={3900} onChange={(event) => setDraft(event.target.value)} rows={Math.min(8, Math.max(3, draft.split("\n").length + 1))} autoFocus />
       <div className="conversation-edit-note">{canPlatformEdit ? "WhatsApp edit is available for this message." : canSendCorrection ? "The edit window has passed or the original message key is unavailable. Saving sends a correction; the original remains unchanged." : "WhatsApp delivery is not available from this dashboard process. Saving updates the dashboard transcript only."}</div>
       <div className="conversation-edit-actions"><button type="button" className="conversation-subtle-button" onClick={() => { setEditing(false); setDraft(body); setNotice(null); }} disabled={saving}>Cancel</button>{!canPlatformEdit && !canSendCorrection && <button type="button" className="conversation-subtle-button" onClick={() => onNavigate?.("agent-status")}>Connection status</button>}<button type="button" className="conversation-save-button" onClick={save} disabled={saving || !draft.trim() || draft.trim() === body || (!canPlatformEdit && !canSendCorrection && !canSaveLocally)}>{saving ? <span className="conversation-spinner small" /> : <Send size={14} />}{saving ? "Saving" : canPlatformEdit ? "Save edit" : canSendCorrection ? "Send correction" : "Save in dashboard"}</button></div>
-    </div> : <p className="conversation-message-body" dir="auto">{body || "(Empty message)"}</p>}</div>
+    </div> : <><p className="conversation-message-body" dir="auto">{body || "(Empty message)"}</p>{attachment && <div className="conversation-attachment" aria-label="Customer attachment"><span className="conversation-attachment-icon">{String(attachment.contentType || "").startsWith("image/") ? "IMG" : String(attachment.fileName || "FILE").split(".").pop().slice(0, 4).toUpperCase()}</span><span className="conversation-attachment-details"><strong>{attachment.fileName || "Attachment"}</strong><small>{attachment.contentType || "File"}{Number.isFinite(Number(attachment.sizeBytes)) ? ` · ${formatAttachmentSize(attachment.sizeBytes)}` : ""}</small></span>{attachment.status && <span className="conversation-attachment-status">{attachment.status === "uploaded" ? "Received" : attachment.status}</span>}</div>}</>}</div>
     <div className="conversation-message-footer"><time dateTime={turn.at || turn.createdAt || undefined}>{formatDate(turn.at || turn.createdAt, true)}</time>
+      {isAgent && turn.responseType && <span className="conversation-response-type" aria-label={`Response type: ${turn.responseType}`}>Response type · {turn.responseType.replaceAll("_", " ")}</span>}
       {isAgent && isAdmin && !editing && <button type="button" className="conversation-edit-button" onClick={() => { setNotice(null); setEditing(true); }} aria-label="Edit REFAL reply"><Pencil size={12} /> Edit</button>}
     </div>
     {notice && <div className={`conversation-delivery-note ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.kind === "success" && <Check size={14} />}{notice.text}</div>}
   </article>;
+}
+
+function formatAttachmentSize(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function deliveryMessage(delivery, wasEditable) {

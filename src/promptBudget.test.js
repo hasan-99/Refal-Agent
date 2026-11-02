@@ -5,6 +5,7 @@ const {
   PROMPT_MESSAGE_FRAMING_TOKEN_RESERVE,
   PROMPT_GLOBAL_FRAMING_TOKEN_RESERVE,
   promptTokenUpperBound,
+  boundRecentConversation,
   assertPromptWithinTokenCeiling
 } = require("./promptBudget");
 
@@ -36,4 +37,19 @@ test("prompt budget includes request-level response schema and generation option
   const extended = { ...base, response_format: { json_schema: { schema: { properties: { answer: { description: "x".repeat(MAX_PROMPT_TOKEN_CEILING + 1) } } } } } };
   assert.ok(promptTokenUpperBound(extended) > MAX_PROMPT_TOKEN_CEILING);
   assert.ok(promptTokenUpperBound(extended) > promptTokenUpperBound(base));
+});
+
+test("bounded conversation keeps a concise explicit customer exclusion when repeated older messages are trimmed", () => {
+  const repeatedQuestion = "عندي سؤال عن تأسيس شركة في قبرص ".repeat(12);
+  const turns = [
+    ...Array.from({ length: 7 }, () => ({ role: "user", content: repeatedQuestion })),
+    { role: "user", content: "I only want company formation; I am not interested in property." },
+    ...Array.from({ length: 4 }, () => ({ role: "user", content: repeatedQuestion })),
+    { role: "user", content: repeatedQuestion },
+    { role: "assistant", content: "Our package covers registration and the registered office. ".repeat(30) }
+  ];
+
+  const bounded = boundRecentConversation(turns, 4000);
+  const customerTurns = bounded.turns.filter((turn) => turn.role === "user");
+  assert.ok(customerTurns.some((turn) => /not interested in property/u.test(turn.content)));
 });

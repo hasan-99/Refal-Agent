@@ -12,7 +12,7 @@ const { generateConversationReport } = require("./report");
 const { FOLLOW_UP_MESSAGE, runFollowUpCheck, shouldSendFollowUp } = require("./followUp");
 const { AI_LIMIT_MESSAGE, allowAiMessage, allowIncomingMessage, resetRateLimiters } = require("./rateLimiter");
 const { validateBookingPolicy } = require("./bookingPolicy");
-const { isPairingOnly } = require("./runtimePolicy");
+const { getTestChatJid, isChatAllowed, isPairingOnly } = require("./runtimePolicy");
 const { clearLoggedOutAuth, pairingFailureMessage, shouldRequestPairingCode } = require("./whatsappPairing");
 
 async function main() {
@@ -34,6 +34,11 @@ assert.equal(fs.existsSync(path.join(authFixture, "notes.txt")), true);
 assert.equal(isPairingOnly({}), false);
 assert.equal(isPairingOnly({ RAFA_PAIRING_ONLY: "false" }), false);
 assert.equal(isPairingOnly({ RAFA_PAIRING_ONLY: " TRUE " }), true);
+assert.equal(getTestChatJid({ RAFA_TEST_CHAT_JID: "210277387751547@lid" }), "210277387751547@lid");
+assert.equal(isChatAllowed("210277387751547@lid", "210277387751547@lid"), true);
+assert.equal(isChatAllowed("unrelated@s.whatsapp.net", "210277387751547@lid"), false);
+assert.equal(isChatAllowed("unrelated@s.whatsapp.net"), true);
+assert.throws(() => getTestChatJid({ RAFA_TEST_CHAT_JID: "not-a-jid" }), /exact WhatsApp JID/);
 const store = new MemoryStore();
 await assert.rejects(
   () => generateConversationReport({ outputDir: path.join(tempDir, "reports") }),

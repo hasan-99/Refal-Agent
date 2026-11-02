@@ -276,7 +276,7 @@ const TARGETS = [
     sources: ["src/reservationPolicy.js"],
     build() {
       return mirrorModule(path.join(REPO, "src", "reservationPolicy.js"), {
-        importMap: { "./language": "./language.mjs" }
+        importMap: { "./language": "./language.mjs", "./claimPolicy": "./claimPolicy.mjs" }
       });
     }
   },

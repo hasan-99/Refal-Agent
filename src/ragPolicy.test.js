@@ -349,6 +349,19 @@ test("knowledge retrieval uses only the current question and actual conversation
   assert.equal(buildKnowledgeSearchQuery("بدي تفاصيل اكتر", { history: [] }), "بدي تفاصيل اكتر");
 });
 
+test("retrieval adds history to ambiguous document follow-ups but not fully scoped questions", () => {
+  const history = { history: [{ message: "I'm considering company formation.", response: "The company setup process can be reviewed with the approved information." }] };
+  const followup = buildKnowledgeSearchQuery("What documents do I need?", history);
+  assert.match(followup, /Relevant prior topic/u);
+  assert.match(followup, /company formation/u);
+
+  const scopedFormation = "Which documents are needed to form a company?";
+  assert.equal(buildKnowledgeSearchQuery(scopedFormation, history), scopedFormation);
+
+  const scopedTax = "How much tax would my company owe?";
+  assert.equal(buildKnowledgeSearchQuery(scopedTax, history), scopedTax);
+});
+
 test("meeting references are removed after a customer declines in Arabic, English, or Greek", () => {
   const english = "The package includes the incorporation documents. I will not suggest a meeting. What activity will the company have?";
   const greek = "Η εταιρεία παρέχει τις αναφερόμενες υπηρεσίες. Κατανοητό, δεν θα προτείνω ραντεβού. Κοιτάζετε εταιρική ή φορολογική υποστήριξη;";
@@ -414,6 +427,12 @@ test("broad company questions start from approved company scope without hard-cod
   assert.match(focusedBanking[0], /business bank account/u);
   assert.doesNotMatch([...focusedBanking, ...arabic, ...greek].join(" "), /landowner partnerships|مناقصات الإنشاءات|κατασκευαστικοί διαγωνισμοί/iu);
   assert.deepEqual(buildKnowledgeSearchQueries("مين أنتم؟", {}, ["company_info"], "arabic"), ["مو مكتب تسجيل شركات ضيق", "مين أنتم؟"]);
+  assert.deepEqual(buildKnowledgeSearchQueries("شو الفوائد من تأسيس شركة بقبرص لمتجري؟", {}, [], "arabic"),
+    ["مزايا وفوائد تأسيس شركة في قبرص", "شو الفوائد من تأسيس شركة بقبرص لمتجري؟"]);
+  assert.deepEqual(buildKnowledgeSearchQueries("What are the benefits of registering a company in Cyprus?", {}, [], "english"),
+    ["Benefits and advantages of registering or incorporating a company in Cyprus", "What are the benefits of registering a company in Cyprus?"]);
+  assert.deepEqual(buildKnowledgeSearchQueries("Ποια είναι τα πλεονεκτήματα ίδρυσης εταιρείας στην Κύπρο;", {}, [], "greek"),
+    ["Πλεονεκτήματα και οφέλη από την ίδρυση εταιρείας στην Κύπρο", "Ποια είναι τα πλεονεκτήματα ίδρυσης εταιρείας στην Κύπρο;"]);
 });
 
 test("targeted company-profile query retains approved profile evidence", async () => {
@@ -731,7 +750,7 @@ test("W1.4.3 / BLK-4: a compliant 501-700 character reply is NOT rejected", asyn
     else process.env.OPENROUTER_API_KEY = originalApiKey;
   });
 
-  const answer = await askOpenRouter({ text: "Where are your offices?", evidence: [evidenceFixture], includeSources: false });
+  const answer = await askOpenRouter({ text: "Where are your offices?", evidence: [{ ...evidenceFixture, content: reply }], includeSources: false });
   assert.equal(answer, reply, "a compliant reply inside the ORDINARY budget was rejected");
 });
 
@@ -1297,7 +1316,11 @@ test("a content-policy rejection from the primary model gets one retry on the co
     }
   });
 
-  const answer = await askOpenRouter({ text: "Can you help me set up a company in Cyprus?", evidence: [evidenceFixture], includeSources: false });
+  const answer = await askOpenRouter({
+    text: "Can you help me set up a company in Cyprus?",
+    evidence: [{ ...evidenceFixture, content: "Refalco Group can help you set up a company in Cyprus." }],
+    includeSources: false
+  });
   assert.deepEqual(requestedModels, ["primary/test", "fallback/test"]);
   assert.equal(answer, "Refalco Group can help you set up a company in Cyprus.");
 });

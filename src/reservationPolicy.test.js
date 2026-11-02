@@ -424,3 +424,10 @@ test("classifyVatStatement is safe on null, empty and undefined input", () => {
   }
   assert.deepEqual(classifyVatStatement(null, {}), classifyVatStatement(undefined));
 });
+
+test("VAT personalization is scoped to the VAT sentence, not a later benefits question", () => {
+  const unrelatedQuestion = classifyVatStatement("Some goods may require VAT registration. Which of these benefits genuinely applies to you?");
+  assert.equal(unrelatedQuestion.personalizedRateConclusion, false);
+  const directConclusion = classifyVatStatement("VAT is 5%, which is the rate that applies to you.");
+  assert.equal(directConclusion.personalizedRateConclusion, true);
+});

@@ -5,7 +5,7 @@
 const { validateFactualGrounding } = require("../../src/groundingPolicy");
 const { languageSignalsFrom } = require("../../src/agentObservability");
 function scriptedGrounding({ text, evidenceItems, dynamicEvidenceItems, context }) {
-  const factual = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems });
+  const factual = validateFactualGrounding(text, { evidenceItems, dynamicEvidenceItems, attachmentContent: context?.attachmentContent });
   if (!factual.valid) return factual;
   const language = languageSignalsFrom(context.locale, text);
   return { valid: !language.languageMismatch, reasons: language.languageMismatch ? ["language_mismatch"] : [] };
